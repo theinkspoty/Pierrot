@@ -41,7 +41,6 @@ protected:
     void resizeEvent(QResizeEvent*) override;
 private:
     void tick();
-    void drawRulers(QPainter& p, int rulerW, int rulerH, const QRect& canvas);
     void drawEmptyMonitor(QPainter& p, const QRect& canvas);
     void updateFrame();
     void applyCrop();
@@ -70,7 +69,6 @@ private:
     QWidget* m_topBar = nullptr;
     double m_zoom = 0.0; // 0 = ajustar à área; senão fração (1.0 = 100%)
     QRect m_videoRect;
-    QRect m_canvasRect;
     double m_lastSrcT = -1.0;
     int m_lastDecodeW = -1;
     QString m_lastFile;

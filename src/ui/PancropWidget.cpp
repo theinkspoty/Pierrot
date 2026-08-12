@@ -24,8 +24,25 @@ constexpr int kPanMax = 100;   // % da largura/altura do projeto
 enum Prop { P_CropL, P_CropR, P_CropT, P_CropB, P_Scale, P_PanX, P_PanY };
 }
 
+// Viewfinder: widget que exibe o frame com a caixa de recorte/janela de saída
+// e recebe os eventos de mouse/roda. Só delega para o PancropWidget dono.
+class PancropWidget::Viewport : public QWidget {
+public:
+    explicit Viewport(PancropWidget* owner) : QWidget(owner), m_owner(owner) {
+        setMinimumSize(220, 200);
+    }
+protected:
+    void paintEvent(QPaintEvent*) override { m_owner->paintViewfinder(this); }
+    void mousePressEvent(QMouseEvent* e) override { m_owner->viewportPress(this, e); }
+    void mouseMoveEvent(QMouseEvent* e) override { m_owner->viewportMove(this, e); }
+    void mouseReleaseEvent(QMouseEvent* e) override { m_owner->viewportRelease(this, e); }
+    void wheelEvent(QWheelEvent* e) override { m_owner->viewportWheel(this, e); }
+private:
+    PancropWidget* m_owner;
+};
+
 PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
-    setMinimumSize(320, 400);
+    setMinimumSize(480, 360);
 
     auto makeSlider = [this](int min, int max) {
         auto* s = new QSlider(Qt::Horizontal, this);
@@ -118,7 +135,7 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
                 }
             }
             updateValueLabels();
-            update();
+            m_view->update();
         });
     };
     connectSlider(m_cropL, P_CropL);
@@ -135,7 +152,7 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
         b->setToolTip(tip);
         connect(b, &QPushButton::clicked, this, [this, idx]() {
             applyPreset(idx);
-            update();
+            m_view->update();
         });
         return b;
     };
@@ -172,7 +189,7 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
         }
         m_undoPushed = false;
         updateValueLabels();
-        update();
+        m_view->update();
         if (c) emitChange();
     });
     presets->addWidget(resetBtn, 2, 2, 1, 2);
@@ -205,15 +222,25 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     kfBar->addStretch(1);
     kfBar->addWidget(m_kfAuto);
 
-    auto* lay = new QVBoxLayout(this);
+    // Viewfinder de um lado, controles de transformação do outro (lado a lado)
+    // — assim a tela não fica atrás/embaixo dos sliders.
+    m_view = new Viewport(this);
+    auto* controls = new QWidget(this);
+    auto* ctlLay = new QVBoxLayout(controls);
+    ctlLay->setContentsMargins(0, 0, 0, 0);
+    ctlLay->setSpacing(5);
+    ctlLay->addLayout(kfBar);
+    ctlLay->addWidget(cropBox);
+    ctlLay->addWidget(moveBox);
+    ctlLay->addLayout(presets);
+    ctlLay->addWidget(hint);
+    ctlLay->addStretch(1);
+
+    auto* lay = new QHBoxLayout(this);
     lay->setContentsMargins(4, 4, 4, 4);
-    lay->setSpacing(5);
-    lay->addLayout(kfBar);
-    lay->addWidget(cropBox);
-    lay->addWidget(moveBox);
-    lay->addLayout(presets);
-    lay->addWidget(hint);
-    lay->addStretch(1);
+    lay->setSpacing(6);
+    lay->addWidget(m_view, 1);
+    lay->addWidget(controls);
 
     refreshDiamonds();
 }
@@ -224,7 +251,7 @@ void PancropWidget::setProject(Project* p) {
     m_frame = QImage();
     m_framePath.clear();
     m_undoPushed = false;
-    update();
+    m_view->update();
 }
 
 void PancropWidget::setClipId(const QString& id) {
@@ -233,24 +260,24 @@ void PancropWidget::setClipId(const QString& id) {
     m_undoPushed = false;
     loadFrame();
     syncFromClip();
-    update();
+    m_view->update();
 }
 
 void PancropWidget::setPlayhead(double t) {
     m_playhead = t;
     syncFromClip();
-    update();
+    m_view->update();
 }
 
 void PancropWidget::refresh() {
     loadFrame();
     syncFromClip();
-    update();
+    m_view->update();
 }
 
 void PancropWidget::sync() {
     syncFromClip();
-    update();
+    m_view->update();
 }
 
 Clip* PancropWidget::activeClip() {
@@ -369,7 +396,7 @@ void PancropWidget::toggleKeyframe(int prop) {
             kf->removeAt(i);
             emitChange();
             refreshDiamonds();
-            update();
+            m_view->update();
             return;
         }
     }
@@ -383,7 +410,7 @@ void PancropWidget::toggleKeyframe(int prop) {
               [](const Keyframe& a, const Keyframe& b) { return a.time < b.time; });
     emitChange();
     refreshDiamonds();
-    update();
+    m_view->update();
 }
 
 void PancropWidget::writeKeyframe(int prop, double value) {
@@ -489,7 +516,7 @@ void PancropWidget::setCropValues(double L, double R, double T, double B) {
     commitSlider(P_CropT, T);
     commitSlider(P_CropB, B);
     updateValueLabels();
-    update();
+    m_view->update();
 }
 
 void PancropWidget::emitChange() {
@@ -609,12 +636,13 @@ void PancropWidget::computeView(double s, double tx, double ty, int w0, int h0,
                    w, h);
 }
 
-void PancropWidget::screenToSource(const QPoint& sp, double* sx, double* sy) const {
+void PancropWidget::screenToSource(const QRect& viewRect, const QPoint& sp,
+                                   double* sx, double* sy) const {
     const int w0 = m_frame.width();
     const int h0 = m_frame.height();
     if (w0 <= 0 || h0 <= 0) return;
     const int M = 12;
-    const QRectF screen = QRectF(rect()).adjusted(M, M, -M, -M);
+    const QRectF screen = QRectF(viewRect).adjusted(M, M, -M, -M);
     const double fr = (double)h0 / w0;
     const double sr = screen.height() / screen.width();
     QRectF disp;
@@ -669,15 +697,15 @@ void PancropWidget::applyPan(double sx, double sy) {
     m_panY->setValue((int)std::lround(std::clamp(ty / H * 100.0, -100.0, 100.0)));
     commitSlider(P_PanX, tx);
     commitSlider(P_PanY, ty);
-    update();
+    m_view->update();
 }
 
-void PancropWidget::paintEvent(QPaintEvent*) {
-    QPainter p(this);
-    p.fillRect(rect(), QColor(30, 30, 34));
+void PancropWidget::paintViewfinder(QWidget* view) {
+    QPainter p(view);
+    p.fillRect(view->rect(), QColor(30, 30, 34));
     if (m_frame.isNull()) {
         p.setPen(QColor(140, 140, 150));
-        p.drawText(rect(), Qt::AlignCenter,
+        p.drawText(view->rect(), Qt::AlignCenter,
                    tr("Selecione um clipe de vídeo para editar o pancrop."));
         return;
     }
@@ -686,7 +714,7 @@ void PancropWidget::paintEvent(QPaintEvent*) {
     if (w0 <= 0 || h0 <= 0) return;
 
     const int M = 12;
-    const QRectF screen = QRectF(rect()).adjusted(M, M, -M, -M);
+    const QRectF screen = QRectF(view->rect()).adjusted(M, M, -M, -M);
     const double fr = (double)h0 / w0;
     const double sr = screen.height() / screen.width();
     QRectF disp;
@@ -761,13 +789,13 @@ void PancropWidget::paintEvent(QPaintEvent*) {
     p.restore();
 }
 
-void PancropWidget::mousePressEvent(QMouseEvent* e) {
+void PancropWidget::viewportPress(QWidget* view, QMouseEvent* e) {
     if (e->button() != Qt::LeftButton || m_frame.isNull()) {
-        QWidget::mousePressEvent(e);
+        e->ignore();
         return;
     }
     double sx, sy;
-    screenToSource(e->pos(), &sx, &sy);
+    screenToSource(view->rect(), e->pos(), &sx, &sy);
     const int w0 = m_frame.width();
     const int h0 = m_frame.height();
     const double W = m_project ? m_project->width : 1920.0;
@@ -779,7 +807,7 @@ void PancropWidget::mousePressEvent(QMouseEvent* e) {
     computeView(s, tx, ty, w0, h0, &cropS, &outS);
 
     const int M = 12;
-    const QRectF screen = QRectF(rect()).adjusted(M, M, -M, -M);
+    const QRectF screen = QRectF(view->rect()).adjusted(M, M, -M, -M);
     const double fr = (double)h0 / w0;
     const double sr = screen.height() / screen.width();
     QRectF disp;
@@ -834,10 +862,10 @@ void PancropWidget::mousePressEvent(QMouseEvent* e) {
 
     if (m_dragMode != DragNone) {
         switch (m_dragMode) {
-            case DragCropTL: case DragCropBR: setCursor(Qt::SizeFDiagCursor); break;
-            case DragCropTR: case DragCropBL: setCursor(Qt::SizeBDiagCursor); break;
-            case DragCropL:  case DragCropR:  setCursor(Qt::SizeHorCursor); break;
-            case DragCropT:  case DragCropB:  setCursor(Qt::SizeVerCursor); break;
+            case DragCropTL: case DragCropBR: view->setCursor(Qt::SizeFDiagCursor); break;
+            case DragCropTR: case DragCropBL: view->setCursor(Qt::SizeBDiagCursor); break;
+            case DragCropL:  case DragCropR:  view->setCursor(Qt::SizeHorCursor); break;
+            case DragCropT:  case DragCropB:  view->setCursor(Qt::SizeVerCursor); break;
             default: break;
         }
         return;
@@ -850,23 +878,23 @@ void PancropWidget::mousePressEvent(QMouseEvent* e) {
         // Mantém a "pegada": guarda o offset entre o cursor e o centro da
         // janela para o movimento acompanhar o mouse 1:1 (sem pular ao centro).
         m_grabOffset = QPointF(outS.center().x() - sx, outS.center().y() - sy);
-        setCursor(Qt::ClosedHandCursor);
+        view->setCursor(Qt::ClosedHandCursor);
         m_undoPushed = true;
         emit editStart();
         applyPan(sx + m_grabOffset.x(), sy + m_grabOffset.y());
     } else {
-        QWidget::mousePressEvent(e);
+        e->ignore();
     }
 }
 
-void PancropWidget::mouseMoveEvent(QMouseEvent* e) {
+void PancropWidget::viewportMove(QWidget* view, QMouseEvent* e) {
     if (m_dragMode == DragNone) {
-        QWidget::mouseMoveEvent(e);
+        e->ignore();
         return;
     }
     m_lastDrag = e->pos();
     double sx, sy;
-    screenToSource(e->pos(), &sx, &sy);
+    screenToSource(view->rect(), e->pos(), &sx, &sy);
     const int w0 = m_frame.width();
     const int h0 = m_frame.height();
     if (w0 <= 0 || h0 <= 0) return;
@@ -890,18 +918,18 @@ void PancropWidget::mouseMoveEvent(QMouseEvent* e) {
     }
 }
 
-void PancropWidget::mouseReleaseEvent(QMouseEvent* e) {
+void PancropWidget::viewportRelease(QWidget* view, QMouseEvent* e) {
     if (m_dragMode != DragNone) {
         m_dragMode = DragNone;
-        setCursor(Qt::ArrowCursor);
+        view->setCursor(Qt::ArrowCursor);
         m_undoPushed = false;
     }
-    QWidget::mouseReleaseEvent(e);
+    e->accept();
 }
 
-void PancropWidget::wheelEvent(QWheelEvent* e) {
+void PancropWidget::viewportWheel(QWidget* view, QWheelEvent* e) {
     if (m_frame.isNull() || !activeClip()) {
-        QWidget::wheelEvent(e);
+        e->ignore();
         return;
     }
     const double factor = e->angleDelta().y() > 0 ? 1.1 : 1.0 / 1.1;
@@ -939,5 +967,5 @@ void PancropWidget::wheelEvent(QWheelEvent* e) {
     commitSlider(P_PanX, ntx);
     commitSlider(P_PanY, nty);
     updateValueLabels();
-    update();
+    m_view->update();
 }

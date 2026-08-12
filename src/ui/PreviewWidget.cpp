@@ -3,7 +3,6 @@
 #include "ui/SettingsDialog.h"
 
 #include <QPainter>
-#include <QLinearGradient>
 #include <QTimer>
 #include <QThread>
 #include <QElapsedTimer>
@@ -76,43 +75,30 @@ private:
 
 namespace {
 
-QString fmtPreview(double t) {
-    int ms = (int)std::llround(t * 1000.0);
-    const int h = ms / 3600000; ms %= 3600000;
-    const int m = ms / 60000;   ms %= 60000;
-    const int s = ms / 1000;    ms %= 1000;
-    return QString("%1:%2:%3.%4")
+// Timecode estilo Vegas/DaVinci: HH:MM:SS:FF (frames, no fps do projeto).
+QString fmtTimecode(double t, double fps) {
+    const int fr = qMax(1, (int)std::llround(fps));
+    int ff = (int)std::llround(t * fr);
+    const int h = ff / (3600 * fr); ff %= 3600 * fr;
+    const int m = ff / (60 * fr);   ff %= 60 * fr;
+    const int s = ff / fr;          ff %= fr;
+    return QString("%1:%2:%3:%4")
         .arg(h, 2, 10, QLatin1Char('0'))
         .arg(m, 2, 10, QLatin1Char('0'))
         .arg(s, 2, 10, QLatin1Char('0'))
-        .arg(ms / 100, 2, 10, QLatin1Char('0'));
+        .arg(ff, 2, 10, QLatin1Char('0'));
 }
 
-// Passo "redondo" para as réguas (1/2/5×10^n).
-double niceStep(double raw) {
-    if (raw <= 0) return 1.0;
-    const double mag = std::pow(10.0, std::floor(std::log10(raw)));
-    const double norm = raw / mag;
-    double nice;
-    if (norm < 1.5)      nice = 1.0;
-    else if (norm < 3.0) nice = 2.0;
-    else if (norm < 7.0) nice = 5.0;
-    else                 nice = 10.0;
-    return nice * mag;
-}
-
-QString fmtRuler(double v) {
-    if (std::fabs(v - std::round(v)) < 1e-6)
-        return QString::number((int)std::llround(v));
-    return QString::number(v, 'f', 1);
+double projFps(const Project* p) {
+    return (p && p->fps > 0.0) ? p->fps : 30.0;
 }
 }
 
 PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     m_playBtn = new QPushButton(tr("Reproduzir"), this);
-    m_timeLabel = new QLabel(tr("00:00:00.00"), this);
+    m_timeLabel = new QLabel(tr("00:00:00:00"), this);
     m_timeLabel->setAlignment(Qt::AlignCenter);
-    m_timeLabel->setMinimumWidth(110);
+    m_timeLabel->setMinimumWidth(120);
 
     m_topBar = new QWidget(this);
     auto* bar = new QHBoxLayout(m_topBar);
@@ -201,176 +187,88 @@ void PreviewWidget::resizeEvent(QResizeEvent*) {
 void PreviewWidget::paintEvent(QPaintEvent*) {
     QPainter p(this);
 
-    const int rulerW = 22;
-    const int rulerH = 22;
-
-    // Fundo do "console" (área ao redor do monitor).
+    // Fundo do console (área ao redor do monitor).
     p.fillRect(m_videoRect, QColor(13, 13, 16));
 
-    // Área útil dentro da qual o monitor fica, respeitando as réguas.
-    const QRect work = m_videoRect.adjusted(rulerW + 10, rulerH + 10, -14, -14);
-    QRect canvas;
-    if (m_project && m_project->width > 0 && m_project->height > 0) {
-        const double scale = m_zoom > 0.0
-            ? m_zoom
-            : qMin(work.width() / (double)m_project->width,
-                   work.height() / (double)m_project->height);
-        canvas.setSize(QSize((int)(m_project->width * scale),
-                             (int)(m_project->height * scale)));
-        canvas.moveCenter(work.center());
-        // Não deixa o quadro ultrapassar muito a área: centraliza e recorta.
-        if (canvas.left() < work.left()) canvas.moveLeft(work.left());
-        if (canvas.top() < work.top()) canvas.moveTop(work.top());
-    } else {
-        canvas = work;
+    if (!m_project || m_project->width <= 0 || m_project->height <= 0) {
+        drawEmptyMonitor(p, m_videoRect);
+        return;
     }
-    m_canvasRect = canvas;
 
-    drawRulers(p, rulerW, rulerH, canvas);
+    const double pw = m_project->width;
+    const double ph = m_project->height;
 
-    // Moldura do monitor (bezel) ao redor do quadro.
-    const QRect bezel = canvas.adjusted(-9, -9, 9, 9).intersected(m_videoRect);
-    QLinearGradient bezelGrad(bezel.topLeft(), bezel.bottomLeft());
-    bezelGrad.setColorAt(0.0, QColor(62, 62, 70));
-    bezelGrad.setColorAt(0.5, QColor(44, 44, 50));
-    bezelGrad.setColorAt(1.0, QColor(34, 34, 40));
-    p.setPen(QPen(QColor(12, 12, 15), 1));
-    p.setBrush(bezelGrad);
-    p.drawRoundedRect(bezel, 8, 8);
+    // Área útil do monitor.
+    const QRect work = m_videoRect.adjusted(12, 12, -12, -12);
 
-    // "Vidro" da tela, atrás do quadro.
-    p.setPen(QPen(QColor(6, 6, 8), 1));
-    p.setBrush(QColor(15, 15, 19));
+    // Escala: zoom fixo ou "Ajustar" (o quadro inteiro cabe na área).
+    double k = m_zoom > 0.0 ? m_zoom
+                            : qMin(work.width() / pw, work.height() / ph);
+    QRect canvas(QPoint(0, 0), QSize(qMax(1, (int)(pw * k)), qMax(1, (int)(ph * k))));
+    canvas.moveCenter(work.center());
+    canvas = canvas.intersected(work); // centraliza e recorta quando zoom > 1
+
+    // Monitor: fundo preto com borda fina (como os viewers de DaVinci/Vegas).
+    p.setPen(QPen(QColor(70, 70, 78), 1));
+    p.setBrush(QColor(0, 0, 0));
     p.drawRect(canvas.adjusted(-1, -1, 0, 0));
-    p.fillRect(canvas, QColor(0, 0, 0, 45));
+    p.fillRect(canvas, QColor(8, 8, 10));
 
-    // Rótulo do monitor com a resolução do projeto (estilo fonte de programa).
-    if (m_project && m_project->width > 0 && m_project->height > 0) {
-        QFont f = p.font();
-        f.setPointSizeF(7.5);
-        f.setBold(true);
-        p.setFont(f);
-        p.setPen(QColor(160, 160, 170));
-        p.drawText(QRect(bezel.left() + 8, bezel.top() + 5,
-                         bezel.width() - 16, 14),
-                   Qt::AlignHCenter | Qt::AlignVCenter,
-                   QString("%1 × %2 · %3 fps")
+    // Rótulo de resolução/fps, discreto, no canto do monitor.
+    QFont f = p.font();
+    f.setPointSizeF(7.5);
+    p.setFont(f);
+    p.setPen(QColor(175, 175, 185));
+    p.drawText(canvas.adjusted(6, 4, -6, -4), Qt::AlignLeft | Qt::AlignTop,
+                   QStringLiteral("%1 × %2 · %3 fps")
                        .arg(m_project->width)
                        .arg(m_project->height)
                        .arg(m_project->fps));
-        f.setBold(false);
-        p.setFont(f);
-    }
 
     if (m_frame.isNull()) {
         drawEmptyMonitor(p, canvas);
         return;
     }
+
+    // Render unificado em "espaço de projeto": o canvas É o quadro do projeto
+    // (k = pixels de tela por pixel do projeto). O vídeo é desenhado do mesmo
+    // jeito com ou sem transform — sem transform, ele cabe inteiro no quadro;
+    // com transform, pan/rot/zoom giram em torno do centro do quadro. Assim,
+    // adicionar um keyframe de transform nunca muda o tamanho do vídeo.
     const Clip* clip = clipAt(m_playhead);
-    const bool hasT = clip && clip->hasTransform();
-    if (!hasT) {
-        const double scale = qMin(canvas.width() / (double)m_frame.width(),
-                                  canvas.height() / (double)m_frame.height());
-        const int w = (int)(m_frame.width() * scale);
-        const int h = (int)(m_frame.height() * scale);
-        const QRect dr(canvas.x() + (canvas.width() - w) / 2,
-                       canvas.y() + (canvas.height() - h) / 2, w, h);
-        p.drawImage(dr, m_frame);
-        return;
-    }
-    const double S = kfValue(clip->kfScale, clip->scale, m_playhead - clip->pos);
-    const double rot = kfValue(clip->kfRotation, clip->rotation, m_playhead - clip->pos);
-    const double tx = kfValue(clip->kfTx, clip->tx, m_playhead - clip->pos);
-    const double ty = kfValue(clip->kfTy, clip->ty, m_playhead - clip->pos);
-    const double fit = qMin(canvas.width() / (double)m_frame.width(),
-                            canvas.height() / (double)m_frame.height());
-    const double ds = m_project ? (double)canvas.width() / m_project->width : fit;
+    const double S = clip ? kfValue(clip->kfScale, clip->scale, m_playhead - clip->pos) : 1.0;
+    const double rot = clip ? kfValue(clip->kfRotation, clip->rotation, m_playhead - clip->pos) : 0.0;
+    const double tx = clip ? kfValue(clip->kfTx, clip->tx, m_playhead - clip->pos) : 0.0;
+    const double ty = clip ? kfValue(clip->kfTy, clip->ty, m_playhead - clip->pos) : 0.0;
+
+    // "Fit": o vídeo inteiro (já com crop aplicado) cabe no quadro do projeto.
+    const double fit = qMin(pw / m_frame.width(), ph / m_frame.height());
+
     p.save();
-    p.translate(canvas.center().x() + tx * ds, canvas.center().y() + ty * ds);
+    p.setClipRect(canvas);
+    p.translate(canvas.center().x() + tx * k, canvas.center().y() + ty * k);
     p.rotate(rot);
-    p.scale(fit * S, fit * S);
+    p.scale(k * fit * S, k * fit * S);
     p.translate(-m_frame.width() / 2.0, -m_frame.height() / 2.0);
     p.drawImage(0, 0, m_frame);
     p.restore();
 }
 
-// Tela vazia: placeholder com ícone e dica (como os monitores do DaVinci/Vegas).
+// Tela vazia: monitor escuro com mensagem discreta (como no DaVinci/Vegas).
 void PreviewWidget::drawEmptyMonitor(QPainter& p, const QRect& canvas) {
-    const QRect r = canvas.adjusted(4, 4, -4, -4);
-    p.setPen(QPen(QColor(72, 72, 82), 1, Qt::DashLine));
-    p.setBrush(Qt::NoBrush);
-    p.drawRoundedRect(r, 6, 6);
-
-    // Ícone de clipe de filme.
-    const QRect ic(canvas.center().x() - 22, canvas.center().y() - 46, 44, 30);
-    QPen pen(QColor(100, 100, 115), 1.6);
-    p.setPen(pen);
-    p.setBrush(QColor(38, 38, 46));
-    p.drawRoundedRect(ic, 3, 3);
-    p.setPen(QPen(QColor(100, 100, 115), 1.2));
-    const int holeW = 6;
-    const int holeH = 4;
-    for (int i = 0; i < 4; ++i) {
-        const int hx = ic.left() + 3 + i * (holeW + 2);
-        p.drawRect(QRect(hx, ic.top() + 3, holeW, holeH));
-        p.drawRect(QRect(hx, ic.bottom() - 3 - holeH, holeW, holeH));
-    }
-    p.drawRect(QRect(ic.left() + 12, ic.top() + 10, 20, 10));
-
+    if (canvas.isEmpty()) return;
     QFont f = p.font();
-    f.setBold(true);
     f.setPointSizeF(9.0);
     p.setFont(f);
-    p.setPen(QColor(150, 150, 162));
-    p.drawText(canvas.adjusted(0, 40, 0, -20), Qt::AlignHCenter | Qt::AlignVCenter,
-               tr("Nenhum clipe de vídeo aqui"));
-    f.setBold(false);
-    f.setPointSizeF(7.5);
-    p.setFont(f);
-    p.setPen(QColor(95, 95, 108));
-    p.drawText(canvas.adjusted(0, 64, 0, -20), Qt::AlignHCenter | Qt::AlignVCenter,
-               tr("Importe mídia e arraste para a timeline"));
-}
-
-void PreviewWidget::drawRulers(QPainter& p, int rulerW, int rulerH, const QRect& canvas) {
-    const QRect vr = m_videoRect;
-    p.fillRect(QRect(vr.x(), vr.y(), vr.width(), rulerH), QColor(31, 31, 35));
-    p.fillRect(QRect(vr.x(), vr.y(), rulerW, vr.height()), QColor(31, 31, 35));
-    p.setPen(QColor(70, 70, 78));
-    p.drawLine(vr.x(), vr.y() + rulerH, vr.x() + vr.width(), vr.y() + rulerH);
-    p.drawLine(vr.x() + rulerW, vr.y(), vr.x() + rulerW, vr.y() + vr.height());
-
-    if (!m_project || m_project->width <= 0 || m_project->height <= 0) return;
-
-    QFont f = p.font();
-    f.setPointSizeF(7.5);
-    p.setFont(f);
-    p.setPen(QColor(140, 140, 150));
-
-    // régua horizontal: coordenada x em pixels do projeto
-    const double stepX = niceStep(50.0 * canvas.width() / m_project->width);
-    for (double v = 0; v <= m_project->width + 1e-9; v += stepX) {
-        const int sx = canvas.x() + (int)(v / m_project->width * canvas.width());
-        p.drawLine(sx, vr.y() + rulerH - 5, sx, vr.y() + rulerH);
-        p.drawText(QRect(sx - 40, vr.y() + 1, 80, rulerH - 5),
-                   Qt::AlignHCenter | Qt::AlignTop, fmtRuler(v));
-    }
-
-    // régua vertical: coordenada y em pixels do projeto
-    const double stepY = niceStep(50.0 * canvas.height() / m_project->height);
-    for (double v = 0; v <= m_project->height + 1e-9; v += stepY) {
-        const int sy = canvas.y() + (int)(v / m_project->height * canvas.height());
-        p.drawLine(vr.x() + rulerW - 5, sy, vr.x() + rulerW, sy);
-        p.save();
-        p.translate(vr.x() + rulerW - 6, sy);
-        p.rotate(-90);
-        p.drawText(QRect(-24, -8, 48, 16), Qt::AlignCenter, fmtRuler(v));
-        p.restore();
-    }
+    p.setPen(QColor(120, 120, 132));
+    p.drawText(canvas.adjusted(8, 8, -8, -8), Qt::AlignCenter,
+               tr("Sem clipe de vídeo aqui"));
 }
 
 void PreviewWidget::seek(double t) {
-    m_playhead = std::max(0.0, t);
+    // Snap ao frame do projeto (playhead sempre em frame cheio).
+    const double fps = projFps(m_project);
+    m_playhead = (fps > 0.0) ? std::round(t * fps) / fps : std::max(0.0, t);
     updateFrame();
     update();
     emit playheadMoved(m_playhead);
@@ -425,8 +323,11 @@ void PreviewWidget::stopPlayback() {
 
 void PreviewWidget::tick() {
     if (!m_project) { stopPlayback(); return; }
-    const double t = m_playStart + m_clock.elapsed() / 1000.0;
+    const double fps = projFps(m_project);
     const double dur = m_project->duration();
+    // Avança por frames inteiros do projeto (playback determinístico, sem drift).
+    double t = m_playStart + m_clock.elapsed() / 1000.0;
+    t = std::floor(t * fps + 1e-6) / fps;
     if (m_loopOut > m_loopIn && t >= m_loopOut - 1e-9) {
         m_playStart = m_loopIn;
         m_clock.restart();
@@ -540,7 +441,7 @@ void PreviewWidget::stopAudio() {
 }
 
 void PreviewWidget::updateFrame() {
-    m_timeLabel->setText(fmtPreview(m_playhead));
+    m_timeLabel->setText(fmtTimecode(m_playhead, projFps(m_project)));
     if (!m_project) { m_frame = QImage(); update(); return; }
 
     const Clip* clip = clipAt(m_playhead);

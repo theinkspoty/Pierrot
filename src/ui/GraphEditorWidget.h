@@ -9,6 +9,7 @@
 
 class QComboBox;
 class QPushButton;
+class QLabel;
 
 // Propriedades animáveis exibidas no editor de curvas.
 enum GraphProp {
@@ -28,7 +29,7 @@ class GraphCanvas : public QWidget {
     Q_OBJECT
 public:
     explicit GraphCanvas(QWidget* parent = nullptr);
-    void setData(Clip* clip, GraphProp prop, double playhead);
+    void setData(Clip* clip, GraphProp prop, double playhead, double fps);
     QVector<Keyframe>* keys() const;
     double baseValue() const;
     void valueRange(double* lo, double* hi) const;
@@ -49,16 +50,23 @@ private:
     int tToX(double t) const;
     double yToV(int y) const;
     int vToY(double v) const;
+    double snapTime(double t) const;
     int keyframeHit(const QPoint& p) const;
     int handleHit(const QPoint& p) const;
     void sortKeys();
     QRect plotRect() const;
+    QString fmtTime(double t) const;
+    QString fmtValue(double v) const;
+    void updateHover(const QPoint& p);
+    void emitKeyInfo(int idx);
 
     Clip* m_clip = nullptr;
     GraphProp m_prop = GPropOpacity;
     double m_playhead = 0.0;
+    double m_fps = 30.0;
     int m_dragKey = -1;
     int m_dragHandle = -1;
+    int m_hoverKey = -1;
     QPoint m_lastPos;
     bool m_undoPushed = false;
     double m_lo = 0.0, m_hi = 1.0;
@@ -87,5 +95,6 @@ private:
     double m_playhead = 0.0;
     QComboBox* m_propCombo = nullptr;
     GraphCanvas* m_canvas = nullptr;
+    QLabel* m_status = nullptr;
     QVector<GraphProp> m_props;
 };

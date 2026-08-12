@@ -68,15 +68,18 @@ QString interpName(int interp) {
 GraphCanvas::GraphCanvas(QWidget* parent) : QWidget(parent) {
     setMinimumHeight(140);
     setFocusPolicy(Qt::ClickFocus);
+    setMouseTracking(true);
 }
 
-void GraphCanvas::setData(Clip* clip, GraphProp prop, double playhead) {
+void GraphCanvas::setData(Clip* clip, GraphProp prop, double playhead, double fps) {
     m_clip = clip;
     m_prop = prop;
     m_playhead = playhead;
+    m_fps = (fps > 1.0) ? fps : 30.0;
     valueRange(&m_lo, &m_hi);
     m_dragKey = -1;
     m_dragHandle = -1;
+    m_hoverKey = -1;
     m_undoPushed = false;
     update();
 }
@@ -148,6 +151,22 @@ int GraphCanvas::tToX(double t) const {
     return r.left() + (int)std::lround(t / dur * r.width());
 }
 
+// Arredonda o tempo para a grade de frames (1/fps); a precisão livre fica
+// disponível segurando Ctrl durante o arrasto.
+double GraphCanvas::snapTime(double t) const {
+    const double fr = 1.0 / std::max(1.0, m_fps);
+    return std::round(t / fr) * fr;
+}
+
+QString GraphCanvas::fmtTime(double t) const {
+    return QStringLiteral("%1s").arg(t, 0, 'f', 3);
+}
+
+QString GraphCanvas::fmtValue(double v) const {
+    const int prec = (std::fabs(m_hi - m_lo) < 2.0) ? 4 : 5;
+    return QString::number(v, 'g', prec);
+}
+
 double GraphCanvas::yToV(int y) const {
     const QRect r = plotRect();
     const double f = std::clamp((r.bottom() - y) / (double)r.height(), 0.0, 1.0);
@@ -200,6 +219,31 @@ void GraphCanvas::commitChange() {
     update();
 }
 
+void GraphCanvas::updateHover(const QPoint& p) {
+    const int hk = (m_clip && keys()) ? keyframeHit(p) : -1;
+    if (hk == m_hoverKey) return;
+    m_hoverKey = hk;
+    if (m_hoverKey >= 0)
+        emitKeyInfo(m_hoverKey);
+    else
+        emit statusMessage(QString());
+    setCursor(m_hoverKey >= 0 ? Qt::PointingHandCursor : Qt::ArrowCursor);
+    update();
+}
+
+void GraphCanvas::emitKeyInfo(int idx) {
+    const QVector<Keyframe>* ks = keys();
+    if (!ks || idx < 0 || idx >= ks->size()) return;
+    const Keyframe& k = (*ks)[idx];
+    const int frame = (int)std::lround(k.time * m_fps);
+    emit statusMessage(tr("Keyframe %1/%2  ·  t = %3 (frame %4)  ·  v = %5")
+                           .arg(idx + 1)
+                           .arg(ks->size())
+                           .arg(fmtTime(k.time))
+                           .arg(frame)
+                           .arg(fmtValue(k.value)));
+}
+
 void GraphCanvas::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.fillRect(rect(), QColor(28, 28, 32));
@@ -214,7 +258,7 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
         p.drawLine(r.left(), y, r.right(), y);
         p.setPen(QColor(150, 150, 160));
         p.drawText(QRect(0, y - 8, kMarginL - 6, 16),
-                   Qt::AlignRight | Qt::AlignVCenter, QString::number(v, 'g', 4));
+                   Qt::AlignRight | Qt::AlignVCenter, fmtValue(v));
         p.setPen(QColor(50, 50, 58));
     }
     // Grade de tempo.
@@ -224,8 +268,11 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
         const int x = tToX(t);
         p.drawLine(x, r.top(), x, r.bottom());
         p.setPen(QColor(150, 150, 160));
+        const QString tlab = (tStep < 1.0)
+            ? fmtTime(t)
+            : QStringLiteral("%1s").arg(QString::number(t, 'g', 3));
         p.drawText(QRect(x - 24, r.bottom() + 4, 48, 16),
-                   Qt::AlignHCenter | Qt::AlignVCenter, QString::number(t, 'g', 3) + "s");
+                   Qt::AlignHCenter | Qt::AlignVCenter, tlab);
         p.setPen(QColor(50, 50, 58));
     }
 
@@ -296,12 +343,29 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
                                           << QPointF(kp.x(), kp.y() + 6)
                                           << QPointF(kp.x() - 6, kp.y());
         p.drawPolygon(dia);
-        if (i == m_dragKey) {
-            p.setPen(QColor(255, 255, 255));
-            p.drawText(QRect(kp.x() + 10, kp.y() - 20, 120, 18),
-                       interpName(k.interp) + "  " +
-                       QString::number(k.value, 'g', 4));
-        }
+    }
+
+    // Leitura exata do keyframe sob o mouse ou sendo arrastado (tempo, frame
+    // e valor), para saber com precisão onde cada keyframe está.
+    const int infoKey = (m_dragKey >= 0) ? m_dragKey : m_hoverKey;
+    if (infoKey >= 0 && infoKey < ks->size()) {
+        const Keyframe& k = (*ks)[infoKey];
+        const QPointF kp(tToX(k.time), vToY(k.value));
+        const QString txt = tr("t = %1  ·  frame %2\nv = %3  ·  %4")
+                                .arg(fmtTime(k.time))
+                                .arg((int)std::lround(k.time * m_fps))
+                                .arg(fmtValue(k.value))
+                                .arg(interpName(k.interp));
+        QRect box(kp.x() + 12, kp.y() - 34, 168, 36);
+        if (box.right() > width() - 4)
+            box.moveLeft(kp.x() - 12 - box.width());
+        if (box.top() < 4)
+            box.moveTop(kp.y() + 14);
+        p.setPen(QPen(QColor(255, 200, 90), 1));
+        p.setBrush(QColor(40, 40, 46, 232));
+        p.drawRect(box);
+        p.setPen(QColor(255, 235, 200));
+        p.drawText(box, Qt::AlignCenter, txt);
     }
 
     // Linha do playhead.
@@ -319,6 +383,7 @@ void GraphCanvas::mousePressEvent(QMouseEvent* e) {
         return;
     }
     m_lastPos = e->pos();
+    updateHover(e->pos());
     const int kh = keyframeHit(e->pos());
     if (kh >= 0) {
         m_dragKey = kh;
@@ -352,7 +417,12 @@ void GraphCanvas::mousePressEvent(QMouseEvent* e) {
 }
 
 void GraphCanvas::mouseMoveEvent(QMouseEvent* e) {
-    if (m_dragKey < 0 || !m_clip) { QWidget::mouseMoveEvent(e); return; }
+    m_lastPos = e->pos();
+    if (m_dragKey < 0 || !m_clip) {
+        updateHover(e->pos());
+        QWidget::mouseMoveEvent(e);
+        return;
+    }
     const QVector<Keyframe>* ks = keys();
     if (!ks || m_dragKey >= ks->size()) return;
     QVector<Keyframe>& K = *keys();
@@ -367,6 +437,7 @@ void GraphCanvas::mouseMoveEvent(QMouseEvent* e) {
                                         m_lo - k.value, m_hi - k.value);
         K[m_dragKey].hx = newDx;
         K[m_dragKey].hy = newDy;
+        emitKeyInfo(m_dragKey);
         commitChange();
         return;
     }
@@ -375,8 +446,13 @@ void GraphCanvas::mouseMoveEvent(QMouseEvent* e) {
     const double tMin = (m_dragKey > 0) ? K[m_dragKey - 1].time + 0.001 : 0.0;
     const double tMax = (m_dragKey + 1 < K.size())
         ? K[m_dragKey + 1].time - 0.001 : dur;
-    k.time = std::clamp(xToT(e->pos().x()), tMin, tMax);
+    double t = std::clamp(xToT(e->pos().x()), tMin, tMax);
+    // Snap à grade de frames; segure Ctrl para mover com precisão livre.
+    if (!(e->modifiers() & Qt::ControlModifier))
+        t = std::clamp(snapTime(t), tMin, tMax);
+    k.time = t;
     k.value = std::clamp(yToV(e->pos().y()), m_lo, m_hi);
+    emitKeyInfo(m_dragKey);
     commitChange();
 }
 
@@ -384,8 +460,8 @@ void GraphCanvas::mouseReleaseEvent(QMouseEvent* e) {
     if (m_dragKey >= 0) {
         m_dragKey = -1;
         m_dragHandle = -1;
-        setCursor(Qt::ArrowCursor);
         m_undoPushed = false;
+        updateHover(e->pos());
         update();
     }
     QWidget::mouseReleaseEvent(e);
@@ -395,7 +471,7 @@ void GraphCanvas::mouseDoubleClickEvent(QMouseEvent* e) {
     if (!m_clip) { QWidget::mouseDoubleClickEvent(e); return; }
     if (keyframeHit(e->pos()) >= 0) { QWidget::mouseDoubleClickEvent(e); return; }
     QVector<Keyframe>& K = *keys();
-    const double t = xToT(e->pos().x());
+    const double t = snapTime(xToT(e->pos().x()));
     const double v = kfValue(K, baseValue(), t);
     Keyframe nk;
     nk.time = t;
@@ -442,7 +518,8 @@ GraphEditorWidget::GraphEditorWidget(QWidget* parent) : QWidget(parent) {
     auto* lbl = new QLabel(tr("Propriedade:"), this);
     m_propCombo = new QComboBox(this);
     connect(m_propCombo, &QComboBox::currentIndexChanged, this, [this](int) {
-        m_canvas->setData(activeClip(), currentProp(), m_playhead);
+        m_canvas->setData(activeClip(), currentProp(), m_playhead,
+                          m_project ? m_project->fps : 30.0);
     });
 
     auto* addBtn = new QPushButton(tr("+ no playhead"), this);
@@ -450,7 +527,9 @@ GraphEditorWidget::GraphEditorWidget(QWidget* parent) : QWidget(parent) {
     connect(addBtn, &QPushButton::clicked, this, [this]() {
         Clip* c = activeClip();
         if (!c) return;
-        const double rel = std::clamp(m_playhead - c->pos, 0.0, c->dur);
+        const double rel0 = std::clamp(m_playhead - c->pos, 0.0, c->dur);
+        const double fr = 1.0 / std::max(1.0, m_project ? m_project->fps : 30.0);
+        const double rel = std::round(rel0 / fr) * fr;
         QVector<Keyframe>& K = *m_canvas->keys();
         const double v = kfValue(K, m_canvas->baseValue(), rel);
         for (const Keyframe& k : K)
@@ -494,24 +573,32 @@ GraphEditorWidget::GraphEditorWidget(QWidget* parent) : QWidget(parent) {
     connect(m_canvas, &GraphCanvas::editStart, this, &GraphEditorWidget::editStart);
     connect(m_canvas, &GraphCanvas::modified, this, &GraphEditorWidget::modified);
 
+    m_status = new QLabel(this);
+    m_status->setTextFormat(Qt::PlainText);
+    m_status->setStyleSheet(QStringLiteral("color:#9aa; font-size:11px; padding:2px 6px;"));
+    connect(m_canvas, &GraphCanvas::statusMessage, m_status, &QLabel::setText);
+
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);
     lay->setSpacing(0);
     lay->addLayout(top);
     lay->addWidget(m_canvas, 1);
+    lay->addWidget(m_status);
 }
 
 void GraphEditorWidget::setProject(Project* p) {
     m_project = p;
     rebuildProperties();
-    m_canvas->setData(activeClip(), currentProp(), m_playhead);
+    m_canvas->setData(activeClip(), currentProp(), m_playhead,
+                      m_project ? m_project->fps : 30.0);
 }
 
 void GraphEditorWidget::setClipId(const QString& id) {
     if (m_clipId == id) return;
     m_clipId = id;
     rebuildProperties();
-    m_canvas->setData(activeClip(), currentProp(), m_playhead);
+    m_canvas->setData(activeClip(), currentProp(), m_playhead,
+                      m_project ? m_project->fps : 30.0);
 }
 
 void GraphEditorWidget::setPlayhead(double t) {
@@ -521,7 +608,8 @@ void GraphEditorWidget::setPlayhead(double t) {
 
 void GraphEditorWidget::refresh() {
     rebuildProperties();
-    m_canvas->setData(activeClip(), currentProp(), m_playhead);
+    m_canvas->setData(activeClip(), currentProp(), m_playhead,
+                      m_project ? m_project->fps : 30.0);
 }
 
 Clip* GraphEditorWidget::activeClip() const {
