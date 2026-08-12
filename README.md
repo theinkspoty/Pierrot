@@ -29,6 +29,10 @@ Editor de vídeo simples — feito de um editor para outro editor — estilo
 - **Exportação**: MP4 (H.264), MKV e WebM (VP9), com resolução/fps configuráveis,
   compondo múltiplas faixas de vídeo (overlay + blend), efeitos, chroma key, fades,
   textos (drawtext), velocidade (setpts/atempo), opacidade e mix de áudio com volume.
+- **Janela e painéis lembrados**: posição/tamanho da janela e o arranjo de docks
+  são salvos ao fechar e restaurados ao abrir. Geometria inválida ou vinda de um
+  monitor que não está mais conectado (ex.: TV 4K) é descartada — a janela nunca
+  abre fora da tela nem maior que a área disponível.
 
 ## Especificações
 
@@ -160,7 +164,7 @@ src/
   ui/PreviewWidget           Preview + reprodução
   ui/ExportDialog            Diálogo de exportação com progresso
   ui/ProjectSettingsDialog   Resolução e fps do projeto
-  MainWindow                 Janela principal + undo/redo + salvar/abrir
+  MainWindow                 Janela principal + undo/redo + salvar/abrir + persistência de geometria/layout
 ```
 
 ## Roadmap
