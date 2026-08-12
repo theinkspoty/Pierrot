@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Pierrot
+GenericName=Editor de vídeo
+Comment=Editor de vídeo estilo Vegas Pro para Linux
+Exec=pierrot
+Icon=pierrot
+Categories=AudioVideo;AudioVideoEditing;Video;
+Keywords=video;editor;timeline;vegas;ffmpeg;
+Terminal=false
+StartupWMClass=pierrot
