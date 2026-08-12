@@ -12,6 +12,8 @@
 #include <QHBoxLayout>
 #include <QFileInfo>
 #include <QFile>
+#include <QMessageBox>
+#include <QShortcut>
 #include <QSettings>
 #include <QSize>
 #include <QCoreApplication>
@@ -90,12 +92,25 @@ void WelcomeWindow::buildLayout() {
     connect(m_recent, &QListWidget::itemDoubleClicked, this,
             &WelcomeWindow::openSelected);
 
+    auto* delShort = new QShortcut(QKeySequence::Delete, m_recent);
+    delShort->setContext(Qt::WidgetShortcut);
+    connect(delShort, &QShortcut::activated, this, &WelcomeWindow::removeSelected);
+
     auto* openBtn = new QPushButton(tr("Abrir"), recentBox);
     connect(openBtn, &QPushButton::clicked, this, &WelcomeWindow::openSelected);
 
+    auto* delBtn = new QPushButton(tr("Excluir"), recentBox);
+    delBtn->setToolTip(tr("Remover o projeto selecionado dos recentes"));
+    connect(delBtn, &QPushButton::clicked, this, &WelcomeWindow::removeSelected);
+
+    auto* recentBtnRow = new QHBoxLayout;
+    recentBtnRow->addStretch(1);
+    recentBtnRow->addWidget(openBtn);
+    recentBtnRow->addWidget(delBtn);
+
     auto* recentLay = new QVBoxLayout(recentBox);
     recentLay->addWidget(m_recent);
-    recentLay->addWidget(openBtn, 0, Qt::AlignRight);
+    recentLay->addLayout(recentBtnRow);
 
     // Novo projeto
     auto* newBox = new QGroupBox(tr("Novo projeto"), this);
@@ -244,6 +259,39 @@ void WelcomeWindow::openSelected() {
     saveAutoSettings();
     m_projectPath = path;
     accept();
+}
+
+void WelcomeWindow::removeSelected() {
+    QListWidgetItem* it = m_recent->currentItem();
+    if (!it) return;
+    const QString path = it->data(Qt::UserRole).toString();
+    if (path.isEmpty()) return;
+
+    QMessageBox box(QMessageBox::Question,
+                    tr("Excluir projeto"),
+                    tr("O que deseja fazer com \"%1\"?")
+                        .arg(QFileInfo(path).fileName()),
+                    QMessageBox::Cancel, this);
+    QPushButton* onlyList = box.addButton(tr("Só remover da lista"),
+                                          QMessageBox::DestructiveRole);
+    QPushButton* alsoFile = box.addButton(tr("Remover e excluir o arquivo"),
+                                          QMessageBox::DestructiveRole);
+    box.setDefaultButton(onlyList);
+    box.exec();
+    const QAbstractButton* clicked = box.clickedButton();
+
+    if (clicked == alsoFile) {
+        QFile::remove(path);
+    } else if (clicked != onlyList) {
+        return; // cancelado
+    }
+
+    QStringList recents = loadRecentList();
+    recents.removeAll(path);
+    QSettings().setValue("recentProjects", recents);
+    delete m_recent->takeItem(m_recent->row(it));
+    if (m_recent->count() == 0)
+        loadRecentProjects();
 }
 
 void WelcomeWindow::requestNewProject() {

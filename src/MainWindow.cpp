@@ -9,6 +9,7 @@
 #include "ui/ProjectSettingsDialog.h"
 #include "ui/SettingsDialog.h"
 
+#include <QApplication>
 #include <QDockWidget>
 #include <QMenuBar>
 #include <QToolBar>
@@ -34,8 +35,57 @@
 #include <QTimer>
 #include <QTime>
 #include <QProgressBar>
+#include <QGuiApplication>
+#include <QScreen>
+#include <QDataStream>
 
 #include "ffmpeg/MediaCache.h"
+
+namespace {
+// Versão do arranjo de painéis (docks/toolbar). Aumente para descartar
+// estados salvos antigos que estejam com o layout deslocado.
+constexpr int kLayoutVersion = 2;
+
+// QWidget::saveGeometry grava o array em big-endian na estrutura:
+//   int version (== 1) | quint32 screen | QRect geometry | QRect frameGeometry
+//   | QRect normalGeometry | int screenWidth | int screenHeight
+// Arrays gravados por versões antigas ou com bytes corrompidos (ex.: TV 4K
+// desligada a meio de um save) não seguem esse formato e quebravam o layout
+// na primeira exibição. Só aceita dados que decodifiquem como geometria real.
+bool saneGeometryArray(const QByteArray& geom) {
+    QDataStream in(geom);
+    in.setVersion(QDataStream::Qt_4_0);
+    if (in.atEnd())
+        return false;
+    int version;
+    in >> version;
+    if (version != 1)
+        return false;
+    if (in.atEnd())
+        return false;
+    quint32 screen;
+    in >> screen;
+    QRect rect;
+    in >> rect;
+    if (in.status() != QDataStream::Ok)
+        return false;
+    const int w = rect.width();
+    const int h = rect.height();
+    if (w < 320 || w > 20000 || h < 240 || h > 20000)
+        return false;
+    return true;
+}
+
+// QMainWindow::saveState sempre começa pelo magic 0xff; qualquer outra coisa
+// é estado corrompido ou gravado por outra versão do app.
+bool saneLayoutArray(const QByteArray& state) {
+    QDataStream in(state);
+    in.setVersion(QDataStream::Qt_4_0);
+    quint32 magic;
+    in >> magic;
+    return in.status() == QDataStream::Ok && magic == 0xff;
+}
+}
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle(tr("Pierrot — Editor de Vídeo"));
@@ -178,17 +228,48 @@ void MainWindow::saveSettings() {
     QSettings settings;
     settings.setValue("geometry", saveGeometry());
     settings.setValue("layout", saveState());
+    settings.setValue("layoutVersion", kLayoutVersion);
     settings.setValue("layoutLocked", m_lockAction->isChecked());
 }
 
 void MainWindow::restoreSettings() {
     QSettings settings;
+
+    // Só restaura a geometria se o array for do formato gravado pelo
+    // saveGeometry() atual; dados corrompidos/legados quebravam o show().
     const QByteArray geom = settings.value("geometry").toByteArray();
-    if (!geom.isEmpty())
+    if (!geom.isEmpty() && saneGeometryArray(geom))
         restoreGeometry(geom);
-    const QByteArray state = settings.value("layout").toByteArray();
-    if (!state.isEmpty())
-        restoreState(state);
+
+    // A geometria restaurada pode vir de um monitor que não está mais
+    // conectado (ex.: TV 4K). Garante que a janela nunca fique maior que a
+    // tela disponível nem fora dela; se tocar em tela nenhuma, usa o padrão.
+    QScreen* screen = QGuiApplication::screenAt(frameGeometry().center());
+    if (!screen)
+        screen = QGuiApplication::primaryScreen();
+    if (screen) {
+        const QRect avail = screen->availableGeometry();
+        if (!avail.intersects(frameGeometry())) {
+            resize(qMin(1280, avail.width()), qMin(800, avail.height()));
+            move(avail.center().x() - width() / 2,
+                 avail.center().y() - height() / 2);
+        } else if (width() > avail.width() || height() > avail.height()) {
+            resize(qMin(width(), avail.width()), qMin(height(), avail.height()));
+        }
+    }
+
+    // Só restaura o arranjo dos painéis se for da versão atual do layout e
+    // estiver num formato válido; estados antigos podem ter a toolbar
+    // deslocada por um dock no topo.
+    if (settings.value("layoutVersion").toInt() == kLayoutVersion) {
+        const QByteArray state = settings.value("layout").toByteArray();
+        if (!state.isEmpty() && saneLayoutArray(state))
+            restoreState(state);
+    }
+    // Garante que a barra de ferramentas principal fique sempre no topo,
+    // à esquerda, mesmo que um layout antigo salvo a tenha deslocado.
+    if (m_mainToolBar)
+        addToolBar(Qt::TopToolBarArea, m_mainToolBar);
     if (settings.contains("layoutLocked"))
         m_lockAction->setChecked(settings.value("layoutLocked").toBool());
     setDockLocked(m_lockAction->isChecked());
@@ -197,6 +278,7 @@ void MainWindow::restoreSettings() {
 void MainWindow::closeEvent(QCloseEvent* event) {
     saveSettings();
     QMainWindow::closeEvent(event);
+    QApplication::quit();
 }
 
 void MainWindow::createDocks() {
@@ -206,7 +288,7 @@ void MainWindow::createDocks() {
     addDockWidget(Qt::LeftDockWidgetArea, m_poolDock);
 
     m_timelineDock = new QDockWidget(tr("Timeline"), this);
-    m_timelineDock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::TopDockWidgetArea);
+    m_timelineDock->setAllowedAreas(Qt::BottomDockWidgetArea);
     addDockWidget(Qt::BottomDockWidgetArea, m_timelineDock);
     // O widget do dock (ferramentas + timeline) é montado em createActions().
 
@@ -218,7 +300,7 @@ void MainWindow::createDocks() {
 
     m_graphDock = new QDockWidget(tr("Editor de Curvas"), this);
     m_graphDock->setWidget(m_graph);
-    m_graphDock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::TopDockWidgetArea);
+    m_graphDock->setAllowedAreas(Qt::BottomDockWidgetArea);
     addDockWidget(Qt::BottomDockWidgetArea, m_graphDock);
     splitDockWidget(m_timelineDock, m_graphDock, Qt::Horizontal);
     m_graphDock->setMinimumWidth(260);
@@ -380,8 +462,10 @@ void MainWindow::createActions() {
     QMenu* cfgMenu = menuBar()->addMenu(tr("&Configurações"));
     cfgMenu->addAction(appSettingsAction);
 
-    QToolBar* tb = addToolBar(tr("Principal"));
+    m_mainToolBar = addToolBar(tr("Principal"));
+    QToolBar* tb = m_mainToolBar;
     tb->setMovable(false);
+    tb->setAllowedAreas(Qt::TopToolBarArea);
     tb->setToolButtonStyle(Qt::ToolButtonTextOnly);
     // Arquivo
     tb->addAction(newAction);
@@ -756,7 +840,7 @@ void MainWindow::newProject() {
 void MainWindow::openProject() {
     const QString path = QFileDialog::getOpenFileName(
         this, tr("Abrir projeto"), QString(),
-        tr("Pierrot (*.ovp);;Todos os arquivos (*)"));
+        tr("Pierrot (*.Blanc *.ovp);;Todos os arquivos (*)"));
     if (path.isEmpty()) return;
     openProjectFile(path);
 }
@@ -810,13 +894,15 @@ bool MainWindow::saveProject() {
 
 bool MainWindow::saveProjectAs() {
     const QString suggested = m_project.name.trimmed().isEmpty()
-        ? QStringLiteral("Sem título.ovp")
-        : m_project.name.trimmed() + ".ovp";
+        ? QStringLiteral("Sem título.Blanc")
+        : m_project.name.trimmed() + ".Blanc";
     QString path = QFileDialog::getSaveFileName(
         this, tr("Salvar projeto"), suggested,
-        tr("Pierrot (*.ovp);;Todos os arquivos (*)"));
+        tr("Pierrot (*.Blanc);;Todos os arquivos (*)"));
     if (path.isEmpty()) return false;
-    if (!path.endsWith(".ovp")) path += ".ovp";
+    if (!path.endsWith(".Blanc", Qt::CaseInsensitive)
+        && !path.endsWith(".ovp", Qt::CaseInsensitive))
+        path += ".Blanc";
     if (!writeProjectFile(path)) return false;
     m_currentFile = path;
     updateTitle();

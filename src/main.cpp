@@ -13,6 +13,9 @@ int main(int argc, char** argv) {
     app.setOrganizationName("Pierrot");
     app.setApplicationName("Pierrot");
     app.setApplicationDisplayName("Pierrot");
+    // Fechar a janela de boas-vindas (única janela no início) não pode
+    // encerrar o app; o editor deve assumir em seguida.
+    app.setQuitOnLastWindowClosed(false);
 
     app.setStyle(QStyleFactory::create("Fusion"));
 
@@ -35,6 +38,9 @@ int main(int argc, char** argv) {
     pal.setColor(QPalette::Disabled, QPalette::WindowText, QColor(100, 100, 105));
     app.setPalette(pal);
 
+    // O editor é criado somente após a janela de boas-vindas, como no fluxo
+    // original. Fechar a boas-vindas (X) encerra o exec() com Rejected e abre
+    // o editor vazio; criar/abrir projeto carrega o projeto nele.
     WelcomeWindow welcome;
     if (welcome.exec() == QDialog::Accepted) {
         MainWindow w;

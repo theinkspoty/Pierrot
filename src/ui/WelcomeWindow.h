@@ -23,6 +23,7 @@ public:
 
 private slots:
     void openSelected();
+    void removeSelected();
     void requestNewProject();
     void onResolutionChanged(int idx);
     void onAutoIntervalChanged(int idx);

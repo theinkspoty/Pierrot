@@ -14,6 +14,7 @@ class PreviewWidget;
 class PancropWidget;
 class GraphEditorWidget;
 class QAction;
+class QToolBar;
 class QColor;
 class QPainter;
 class QTimer;
@@ -87,6 +88,7 @@ private:
     QAction* m_saveAsAction = nullptr;
     QAction* m_snapAction = nullptr;
     QVector<QAction*> m_toolActions;
+    QToolBar* m_mainToolBar = nullptr;
     QTimer* m_autoSaveTimer = nullptr;
     QProgressBar* m_busyBar = nullptr;
 };

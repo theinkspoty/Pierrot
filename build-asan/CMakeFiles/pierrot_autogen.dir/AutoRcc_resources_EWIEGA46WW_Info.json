@@ -1,0 +1,25 @@
+{
+	"BUILD_DIR" : "/run/media/ntsc/RZX PRO 480/TUDO/Vagens 110/Pierrot/build-asan/pierrot_autogen",
+	"CMAKE_BINARY_DIR" : "/run/media/ntsc/RZX PRO 480/TUDO/Vagens 110/Pierrot/build-asan",
+	"CMAKE_CURRENT_BINARY_DIR" : "/run/media/ntsc/RZX PRO 480/TUDO/Vagens 110/Pierrot/build-asan",
+	"CMAKE_CURRENT_SOURCE_DIR" : "/run/media/ntsc/RZX PRO 480/TUDO/Vagens 110/Pierrot",
+	"CMAKE_SOURCE_DIR" : "/run/media/ntsc/RZX PRO 480/TUDO/Vagens 110/Pierrot",
+	"CROSS_CONFIG" : false,
+	"GENERATOR" : "Unix Makefiles",
+	"INCLUDE_DIR" : "/run/media/ntsc/RZX PRO 480/TUDO/Vagens 110/Pierrot/build-asan/pierrot_autogen/include",
+	"INPUTS" : 
+	[
+		"/run/media/ntsc/RZX PRO 480/TUDO/Vagens 110/Pierrot/imagens/pierrot.jpg"
+	],
+	"LOCK_FILE" : "/run/media/ntsc/RZX PRO 480/TUDO/Vagens 110/Pierrot/build-asan/CMakeFiles/pierrot_autogen.dir/AutoRcc_resources_EWIEGA46WW_Lock.lock",
+	"MULTI_CONFIG" : false,
+	"OPTIONS" : [ "-name", "resources" ],
+	"OUTPUT_CHECKSUM" : "EWIEGA46WW",
+	"OUTPUT_NAME" : "qrc_resources.cpp",
+	"RCC_EXECUTABLE" : "/usr/lib/qt6/rcc",
+	"RCC_LIST_OPTIONS" : [ "--list" ],
+	"SETTINGS_FILE" : "/run/media/ntsc/RZX PRO 480/TUDO/Vagens 110/Pierrot/build-asan/CMakeFiles/pierrot_autogen.dir/AutoRcc_resources_EWIEGA46WW_Used.txt",
+	"SOURCE" : "/run/media/ntsc/RZX PRO 480/TUDO/Vagens 110/Pierrot/resources.qrc",
+	"USE_BETTER_GRAPH" : true,
+	"VERBOSITY" : 0
+}
