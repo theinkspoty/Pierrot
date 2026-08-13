@@ -157,6 +157,7 @@ public:
         return capacity;
     }
     qint64 writeData(const char*, qint64) override { return -1; }
+    qint64 bytesAvailable() const override { return 4096; }
 
 private:
     static constexpr int kChannels = 2;
@@ -518,7 +519,14 @@ void PreviewWidget::startAudio(double t) {
         if (audioDbg()) qDebug() << "[audio] startAudio: nenhuma fonte com áudio em t=" << t;
         return; // nada com áudio neste instante
     }
-    if (audioDbg()) qDebug() << "[audio] startAudio em t=" << t << "- fontes:" << sources.size();
+    if (audioDbg()) {
+        qDebug() << "[audio] startAudio em t=" << t << "- fontes:" << sources.size();
+        const auto outs = QMediaDevices::audioOutputs();
+        for (const auto& d : outs)
+            qDebug() << "[audio]   saida:" << d.description() << "default?" << d.isDefault();
+        const QAudioDevice def = QMediaDevices::defaultAudioOutput();
+        qDebug() << "[audio]   defaultAudioOutput() válido?" << def.isNull() << "-" << def.description();
+    }
 
     QAudioFormat fmt;
 #if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
@@ -538,8 +546,10 @@ void PreviewWidget::startAudio(double t) {
 #if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
     m_audioSink = new QAudioSink(QMediaDevices::defaultAudioOutput(), fmt, this);
     if (audioDbg()) {
-        connect(m_audioSink, &QAudioSink::stateChanged, this, [](QAudio::State s) {
+        connect(m_audioSink, &QAudioSink::stateChanged, this, [this](QAudio::State s) {
             qDebug() << "[audio] sink state =" << s;
+            if (s == QAudio::StoppedState && m_audioSink)
+                qDebug() << "[audio] sink error =" << m_audioSink->error();
         });
     }
     m_audioSink->start(m_audioFeed);
@@ -581,6 +591,7 @@ void PreviewWidget::stopAudio() {
 void PreviewWidget::updateMixAudio(double t, bool reseek) {
     if (!m_audioFeed) return;
     m_audioFeed->updateSources(buildMixSources(m_project, t), reseek);
+    emit m_audioFeed->readyRead();
 }
 
 void PreviewWidget::updateFrame() {
