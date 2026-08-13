@@ -13,6 +13,13 @@ extern "C" {
 #include <cmath>
 #include <cfloat>
 #include <cstring>
+#include <QDebug>
+
+// Diagnóstico do caminho de áudio do preview: ligue com PIERROT_AUDIO_DEBUG=1.
+static bool audioDbg() {
+    static const bool on = qEnvironmentVariableIsSet("PIERROT_AUDIO_DEBUG");
+    return on;
+}
 
 // Avisos inofensivos do decoder H.264 ao decodificar a partir do meio de um
 // GOP (seeking/scrubbing) — só poluem o stderr; erros reais continuam sendo
@@ -325,9 +332,14 @@ FFmpegAudioPeaks FFmpegDecoder::audioPeaks(const QString& filePath, int bucketsP
 }
 
 bool FFmpegDecoder::open(const QString& filePath) {
-    QMutexLocker locker(&m_mutex);
+    // Segura os DOIS mutexes: o vídeo (frameAt) e o áudio (decodeAudio/
+    // seekAudio) rodam em threads diferentes e podem estar em andamento
+    // quando abrimos outro arquivo. Liberar contextos sem o lock do áudio
+    // causava use-after-free na troca de clipe durante a reprodução.
+    QMutexLocker vlock(&m_mutex);
+    QMutexLocker alock(&m_audioMutex);
     if (m_ctx && m_source == filePath) return true;
-    close();
+    freeAllLocked();
 
     AVFormatContext* fmt = nullptr;
     if (avformat_open_input(&fmt, filePath.toUtf8().constData(), nullptr, nullptr) != 0)
@@ -336,43 +348,33 @@ bool FFmpegDecoder::open(const QString& filePath) {
         avformat_close_input(&fmt);
         return false;
     }
-    const int idx = av_find_best_stream(fmt, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
-    if (idx < 0) {
-        avformat_close_input(&fmt);
-        return false;
-    }
-
-    const AVCodec* codec = avcodec_find_decoder(fmt->streams[idx]->codecpar->codec_id);
-    if (!codec) {
-        avformat_close_input(&fmt);
-        return false;
-    }
-
-    AVCodecContext* cc = avcodec_alloc_context3(codec);
-    if (!cc) {
-        avformat_close_input(&fmt);
-        return false;
-    }
-    avcodec_parameters_to_context(cc, fmt->streams[idx]->codecpar);
-    if (avcodec_open2(cc, codec, nullptr) < 0) {
-        avcodec_free_context(&cc);
-        avformat_close_input(&fmt);
-        return false;
-    }
-
     m_ctx = fmt;
-    m_codec = cc;
-    m_stream = idx;
     m_source = filePath;
     m_lastPtsSec = -1.0;
 
-    double fps = 30.0;
-    const AVStream* st = fmt->streams[idx];
-    if (st->avg_frame_rate.num > 0 && st->avg_frame_rate.den > 0) {
-        const double r = av_q2d(st->avg_frame_rate);
-        if (r > 0.0 && r < 240.0) fps = r;
+    // Vídeo é opcional: arquivos só-áudio (mp3/wav) ainda abrem para o
+    // preview tocar. frameAt() devolve imagem vazia quando m_stream < 0.
+    const int idx = av_find_best_stream(fmt, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+    if (idx >= 0) {
+        const AVCodec* codec = avcodec_find_decoder(fmt->streams[idx]->codecpar->codec_id);
+        if (codec) {
+            AVCodecContext* cc = avcodec_alloc_context3(codec);
+            if (cc) {
+                avcodec_parameters_to_context(cc, fmt->streams[idx]->codecpar);
+                if (avcodec_open2(cc, codec, nullptr) == 0) {
+                    m_codec = cc;
+                    m_stream = idx;
+                    const AVStream* st = fmt->streams[idx];
+                    if (st->avg_frame_rate.num > 0 && st->avg_frame_rate.den > 0) {
+                        const double r = av_q2d(st->avg_frame_rate);
+                        if (r > 0.0 && r < 240.0) m_fps = r;
+                    }
+                } else {
+                    avcodec_free_context(&cc);
+                }
+            }
+        }
     }
-    m_fps = fps;
 
     // Stream de áudio em contexto próprio, com resampler para S16/48k/estéreo.
     const int aidx = av_find_best_stream(fmt, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
@@ -416,11 +418,22 @@ bool FFmpegDecoder::open(const QString& filePath) {
             if (afmt) avformat_close_input(&afmt);
         }
     }
+    if (audioDbg())
+        qDebug() << "[audio] open" << filePath
+                 << "videoStream=" << m_stream
+                 << "audioStream=" << m_audioStream
+                 << "audioCtx=" << (m_aCtx != nullptr);
     return true;
 }
 
 void FFmpegDecoder::close() {
-    QMutexLocker audioLocker(&m_audioMutex);
+    QMutexLocker vlock(&m_mutex);
+    QMutexLocker alock(&m_audioMutex);
+    freeAllLocked();
+}
+
+// Chama com m_mutex E m_audioMutex segurados (nunca sozinha).
+void FFmpegDecoder::freeAllLocked() {
     if (m_sws) {
         sws_freeContext(reinterpret_cast<SwsContext*>(m_sws));
         m_sws = nullptr;
@@ -450,15 +463,27 @@ void FFmpegDecoder::close() {
         avformat_close_input(reinterpret_cast<AVFormatContext**>(&m_aCtx));
         m_aCtx = nullptr;
     }
-    m_audioStream = -1;
     m_stream = -1;
+    m_audioStream = -1;
     m_source.clear();
     m_lastPtsSec = -1.0;
+    m_swsSrcW = m_swsSrcH = 0;
+    m_swsDstW = m_swsDstH = 0;
+    m_swsSrcFmt = -1;
 }
 
-bool FFmpegDecoder::isOpen() const { return m_ctx != nullptr; }
-QString FFmpegDecoder::source() const { return m_source; }
-double FFmpegDecoder::fps() const { return m_fps; }
+bool FFmpegDecoder::isOpen() const {
+    QMutexLocker vlock(&m_mutex);
+    return m_ctx != nullptr;
+}
+QString FFmpegDecoder::source() const {
+    QMutexLocker vlock(&m_mutex);
+    return m_source;
+}
+double FFmpegDecoder::fps() const {
+    QMutexLocker vlock(&m_mutex);
+    return m_fps;
+}
 
 QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
     QMutexLocker locker(&m_mutex);
@@ -511,6 +536,7 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
                         AVFrame* lastFrame = reinterpret_cast<AVFrame*>(m_lastFrame);
                         if (!lastFrame) lastFrame = av_frame_alloc();
                         if (lastFrame) {
+                            av_frame_unref(lastFrame);
                             av_frame_ref(lastFrame, frame);
                             m_lastFrame = lastFrame;
                         }
@@ -566,12 +592,26 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
     return result;
 }
 
+void FFmpegDecoder::releaseBuffers() {
+    QMutexLocker locker(&m_mutex);
+    if (m_codec)
+        avcodec_flush_buffers(reinterpret_cast<AVCodecContext*>(m_codec));
+    if (m_lastFrame) {
+        av_frame_unref(reinterpret_cast<AVFrame*>(m_lastFrame));
+        av_frame_free(reinterpret_cast<AVFrame**>(&m_lastFrame));
+        m_lastFrame = nullptr;
+    }
+    m_lastPtsSec = -1.0;
+}
+
 bool FFmpegDecoder::hasAudio() const {
+    QMutexLocker locker(&m_audioMutex);
     return m_aCtx != nullptr && m_audioStream >= 0;
 }
 
 void FFmpegDecoder::seekAudio(double seconds) {
     QMutexLocker locker(&m_audioMutex);
+    if (audioDbg()) qDebug() << "[audio] seek" << seconds << "stream=" << m_audioStream;
     if (!m_aCtx || m_audioStream < 0) return;
     AVFormatContext* afmt = static_cast<AVFormatContext*>(m_aCtx);
     AVCodecContext* acc = static_cast<AVCodecContext*>(m_aCodec);
@@ -648,5 +688,7 @@ int FFmpegDecoder::decodeAudio(void* outBuf, int maxBytes) {
 
     av_frame_free(&frame);
     av_packet_free(&pkt);
+    if (audioDbg() && produced == 0)
+        qDebug() << "[audio] decodeAudio -> 0 bytes (SILÊNCIO)";
     return produced;
 }

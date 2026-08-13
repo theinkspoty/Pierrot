@@ -3,6 +3,8 @@
 #include <QMainWindow>
 #include <QVector>
 #include <QHash>
+#include <QByteArray>
+#include <QJsonDocument>
 #include <QIcon>
 #include <QDockWidget>
 #include <functional>
@@ -14,7 +16,6 @@ class PreviewWidget;
 class PancropWidget;
 class GraphEditorWidget;
 class QAction;
-class QToolBar;
 class QColor;
 class QPainter;
 class QTimer;
@@ -28,6 +29,7 @@ public:
     void createProject(int width, int height, int fps, const QString& name);
 protected:
     void closeEvent(QCloseEvent* event) override;
+    void showEvent(QShowEvent* event) override;
 private slots:
     void pushUndo();
     void setModified();
@@ -59,13 +61,17 @@ private:
     void undo();
     void redo();
     void applyUndoState();
+    QByteArray snapshotState() const;
+    void restoreSnapshot(const QByteArray& snap);
     void updateTitle();
     void updateUndoActions();
     void addRecentProject(const QString& path);
     bool writeProjectFile(const QString& path);
 
     Project m_project;
-    QVector<Project> m_undoStack;
+    // Snapshots de undo em JSON comprimido: guardar 60 cópias em memória do
+    // Project inteiro faria a RAM explodir em projetos com muitos cortes.
+    QVector<QByteArray> m_undoStack;
     int m_undoIndex = 0;
     QString m_currentFile;
     bool m_modified = false;
@@ -88,7 +94,6 @@ private:
     QAction* m_saveAsAction = nullptr;
     QAction* m_snapAction = nullptr;
     QVector<QAction*> m_toolActions;
-    QToolBar* m_mainToolBar = nullptr;
     QTimer* m_autoSaveTimer = nullptr;
     QProgressBar* m_busyBar = nullptr;
 };

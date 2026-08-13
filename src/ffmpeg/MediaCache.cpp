@@ -7,9 +7,9 @@
 
 namespace {
 constexpr int kPeaksPerSecond = 50;
-constexpr int kThumbMaxWidth = 320;
-constexpr int kMaxPeakCache = 24;
-constexpr int kMaxThumbCache = 512;
+constexpr int kThumbMaxWidth = 256;
+constexpr int kMaxPeakCache = 16;
+constexpr int kMaxThumbCache = 256;
 constexpr int kMaxThumbPending = 96;
 constexpr int kMaxPeakPending = 16;
 
@@ -29,8 +29,12 @@ void CacheWorker::generateThumb(const QString& filePath, double seconds) {
     QImage img;
     if (!m_decoder.isOpen() || m_decoder.source() != filePath)
         m_decoder.open(filePath);
-    if (m_decoder.isOpen())
+    if (m_decoder.isOpen()) {
         img = m_decoder.frameAt(seconds, kThumbMaxWidth);
+        // Libera a resolução cheia do codec: thumbnails são decodificações
+        // pontuais e não precisam manter o DPB entre um pedido e outro.
+        m_decoder.releaseBuffers();
+    }
     emit thumbReady(filePath, seconds, img);
 }
 
@@ -96,7 +100,7 @@ void MediaCache::requestPeaks(const QString& filePath) {
     if (m_peaksPending.size() >= kMaxPeakPending) return;
     if (m_peaks.contains(filePath) || m_peaksPending.contains(filePath)) return;
     const bool wasBusy = busy();
-    m_peaksPending.insert(filePath);
+    m_peaksPending.insert(filePath, m_epoch);
     QMetaObject::invokeMethod(m_peaksWorker, "generatePeaks", Qt::QueuedConnection,
                               Q_ARG(QString, filePath), Q_ARG(int, kPeaksPerSecond));
     if (!wasBusy) emit busyChanged(true);
@@ -107,17 +111,37 @@ void MediaCache::requestThumb(const QString& filePath, double seconds) {
     if (m_thumbsPending.size() >= kMaxThumbPending) return;
     const double k = thumbKey(seconds);
     const auto key = qMakePair(filePath, k);
-    if (m_thumbs.contains(key) || m_thumbsPending.contains(key)) return;
+    if (m_thumbs.contains(key) || m_thumbsPending.contains(key)
+        || m_thumbsFailed.contains(key)) return;
     const bool wasBusy = busy();
-    m_thumbsPending.insert(key);
+    m_thumbsPending.insert(key, m_epoch);
     QMetaObject::invokeMethod(m_thumbsWorker, "generateThumb", Qt::QueuedConnection,
                               Q_ARG(QString, filePath), Q_ARG(double, k));
     if (!wasBusy) emit busyChanged(true);
 }
 
+void MediaCache::clear() {
+    const bool wasBusy = busy();
+    ++m_epoch;
+    m_peaks.clear();
+    m_peaksOrder.clear();
+    m_thumbs.clear();
+    m_thumbsFailed.clear();
+    m_thumbsOrder.clear();
+    m_peaksPending.clear();
+    m_thumbsPending.clear();
+    if (wasBusy) emit busyChanged(false);
+}
+
 void MediaCache::onPeaksReady(const QString& filePath, const FFmpegAudioPeaks& peaks) {
+    const auto it = m_peaksPending.constFind(filePath);
+    if (it == m_peaksPending.constEnd()) return;            // já limpo/descartado
+    if (it.value() != m_epoch) {                            // projeto antigo
+        m_peaksPending.remove(filePath);
+        return;
+    }
+    m_peaksPending.erase(it);
     m_peaks[filePath] = peaks;
-    m_peaksPending.remove(filePath);
     m_peaksOrder.removeOne(filePath);
     m_peaksOrder.append(filePath);
     evictPeaks();
@@ -127,8 +151,21 @@ void MediaCache::onPeaksReady(const QString& filePath, const FFmpegAudioPeaks& p
 
 void MediaCache::onThumbReady(const QString& filePath, double seconds, const QImage& image) {
     const auto key = qMakePair(filePath, thumbKey(seconds));
+    const auto it = m_thumbsPending.constFind(key);
+    if (it == m_thumbsPending.constEnd()) return;           // já limpo/descartado
+    if (it.value() != m_epoch) {                            // projeto antigo
+        m_thumbsPending.remove(key);
+        return;
+    }
+    m_thumbsPending.erase(it);
+    // Falha de decodificação: não guardamos a imagem nula no cache — ela
+    // bloquearia novas tentativas para sempre, deixando o clipe escuro.
+    if (image.isNull()) {
+        m_thumbsFailed.insert(key);
+        if (!busy()) emit busyChanged(false);
+        return;
+    }
     m_thumbs[key] = image;
-    m_thumbsPending.remove(key);
     m_thumbsOrder.removeOne(key);
     m_thumbsOrder.append(key);
     evictThumbs();

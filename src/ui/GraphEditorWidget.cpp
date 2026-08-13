@@ -10,10 +10,17 @@
 #include <QSignalBlocker>
 #include <QMouseEvent>
 #include <QContextMenuEvent>
+#include <QWheelEvent>
+#include <QKeyEvent>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
+#include <QFormLayout>
+#include <QDialogButtonBox>
+#include <QDialog>
+#include <QDoubleSpinBox>
 #include <algorithm>
 #include <cmath>
+#include <functional>
 
 namespace {
 
@@ -76,11 +83,17 @@ void GraphCanvas::setData(Clip* clip, GraphProp prop, double playhead, double fp
     m_prop = prop;
     m_playhead = playhead;
     m_fps = (fps > 1.0) ? fps : 30.0;
-    valueRange(&m_lo, &m_hi);
+    valueRange(&m_loProp, &m_hiProp);
+    fitValueRange();
     m_dragKey = -1;
     m_dragHandle = -1;
     m_hoverKey = -1;
     m_undoPushed = false;
+    m_selKeys.clear();
+    m_selOrig.clear();
+    m_marqueeActive = false;
+    m_t0 = 0.0;
+    m_t1 = -1.0;
     update();
 }
 
@@ -141,14 +154,29 @@ QRect GraphCanvas::plotRect() const {
 
 double GraphCanvas::xToT(int x) const {
     const QRect r = plotRect();
-    const double dur = m_clip ? std::max(0.05, m_clip->dur) : 1.0;
-    return std::clamp((x - r.left()) / (double)r.width(), 0.0, 1.0) * dur;
+    const double t0 = timeStart();
+    const double range = timeRange();
+    if (range <= 0) return t0;
+    return t0 + std::clamp((x - r.left()) / (double)r.width(), 0.0, 1.0) * range;
 }
 
 int GraphCanvas::tToX(double t) const {
     const QRect r = plotRect();
+    const double t0 = timeStart();
+    const double range = timeRange();
+    if (range <= 0) return r.left();
+    const double f = (t - t0) / range;
+    return r.left() + (int)std::lround(std::clamp(f, 0.0, 1.0) * r.width());
+}
+
+double GraphCanvas::timeStart() const {
+    return (m_t1 > m_t0) ? m_t0 : 0.0;
+}
+
+double GraphCanvas::timeRange() const {
     const double dur = m_clip ? std::max(0.05, m_clip->dur) : 1.0;
-    return r.left() + (int)std::lround(t / dur * r.width());
+    if (m_t1 > m_t0) return std::clamp(m_t1 - m_t0, 0.001, dur);
+    return dur;
 }
 
 // Arredonda o tempo para a grade de frames (1/fps); a precisão livre fica
@@ -213,10 +241,141 @@ void GraphCanvas::sortKeys() {
               [](const Keyframe& a, const Keyframe& b) { return a.time < b.time; });
 }
 
-void GraphCanvas::commitChange() {
+int GraphCanvas::addKeyframe(double time, double value) {
+    if (!m_clip) return -1;
+    QVector<Keyframe>& K = *keys();
+    for (const Keyframe& k : K)
+        if (std::fabs(k.time - time) < 1e-9) return -1;
+    Keyframe nk;
+    nk.time = time;
+    nk.value = value;
+    nk.interp = KfSmooth;
+    K.append(nk);
     sortKeys();
+    fitValueRange();
+    // Seleciona o keyframe recém-criado (índice = último com o tempo/valor).
+    m_selKeys.clear();
+    m_selOrig.clear();
+    int found = -1;
+    for (int i = 0; i < K.size(); ++i)
+        if (std::fabs(K[i].time - time) < 1e-6
+            && std::fabs(K[i].value - value) < 1e-6)
+            found = i;
+    if (found < 0)
+        for (int i = 0; i < K.size(); ++i)
+            if (std::fabs(K[i].time - time) < 1e-6) found = i;
+    if (found < 0) found = K.size() - 1;
+    m_selKeys.append(found);
+    m_dragKey = found;
+    m_dragHandle = -1;
+    for (int i : m_selKeys) m_selOrig.append(K[i]);
+    update();
+    return found;
+}
+
+void GraphCanvas::commitChange() {
+    // Ordena só se estiver fora de ordem (durante o arrasto a ordem é mantida
+    // pelos clamps e reordenar invalidaria os índices da seleção múltipla).
+    QVector<Keyframe>* ks = keys();
+    if (ks) {
+        for (int i = 1; i < ks->size(); ++i) {
+            if ((*ks)[i].time < (*ks)[i - 1].time - 1e-9) { sortKeys(); break; }
+        }
+    }
     emit modified();
     update();
+}
+
+// Ajusta a faixa vertical visível aos valores atuais (com folga), mantendo-se
+// dentro da faixa natural da propriedade. O fit é refeito quando os dados
+// mudam; durante o arrasto a escala fica fixa para não desorientar.
+void GraphCanvas::fitValueRange() {
+    const QVector<Keyframe>* ks = keys();
+    if (!ks || ks->isEmpty()) {
+        const double b = baseValue();
+        const double lo = std::min(b, m_loProp);
+        const double hi = std::max(b, m_hiProp);
+        const double pad = (hi - lo) * 0.5;
+        m_lo = lo - pad;
+        m_hi = hi + pad;
+        return;
+    }
+    double mn = 1e18, mx = -1e18;
+    for (int i = 0; i < ks->size(); ++i) {
+        const Keyframe& k = (*ks)[i];
+        mn = std::min(mn, k.value);
+        mx = std::max(mx, k.value);
+        // Inclui os extremos dos handles para a curva não estourar a janela.
+        mn = std::min(mn, k.value + k.hy);
+        mx = std::max(mx, k.value + k.hy);
+        if (i + 1 < ks->size()) {
+            mn = std::min(mn, (*ks)[i + 1].value - (*ks)[i + 1].hy);
+            mx = std::max(mx, (*ks)[i + 1].value - (*ks)[i + 1].hy);
+        }
+    }
+    const double pSpan = m_hiProp - m_loProp;
+    if (pSpan > 0.0) {
+        mn = std::clamp(mn, m_loProp, m_hiProp);
+        mx = std::clamp(mx, m_loProp, m_hiProp);
+    }
+    double span = mx - mn;
+    if (span < 1e-6) span = std::max(1e-6, 0.1 * pSpan);
+    const double pad = span * 0.15;
+    m_lo = mn - pad;
+    m_hi = mx + pad;
+    if (pSpan > 0.0) {
+        m_lo = std::max(m_lo, m_loProp);
+        m_hi = std::min(m_hi, m_hiProp);
+    }
+    if (m_hi <= m_lo) { m_lo = mn - span * 0.5; m_hi = mx + span * 0.5; }
+}
+
+void GraphCanvas::marqueeSelect(const QRect& r, bool add) {
+    const QVector<Keyframe>* ks = keys();
+    if (!ks) return;
+    if (!add) m_selKeys.clear();
+    for (int i = 0; i < ks->size(); ++i) {
+        const QPointF kp(tToX((*ks)[i].time), vToY((*ks)[i].value));
+        if (r.contains(kp.toPoint()) && !m_selKeys.contains(i))
+            m_selKeys.append(i);
+    }
+    m_selOrig.clear();
+    for (int i : m_selKeys) m_selOrig.append((*ks)[i]);
+    update();
+}
+
+// Move todos os keyframes selecionados pelo mesmo delta, sem deixar que um
+// cruze um vizinho fora da seleção (nem saia do clipe).
+void GraphCanvas::moveSelected(double dT, double dV, bool snap) {
+    if (!m_clip) return;
+    QVector<Keyframe>& K = *keys();
+    if (K.isEmpty() || m_selKeys.isEmpty() || m_selOrig.size() != m_selKeys.size()) return;
+    const double dur = std::max(0.05, m_clip->dur);
+
+    double minT = 1e18, maxT = -1e18;
+    for (const Keyframe& o : m_selOrig) {
+        minT = std::min(minT, o.time);
+        maxT = std::max(maxT, o.time);
+    }
+    // Vizinhos imediatos fora da seleção (fixos durante o arrasto).
+    double leftB = 0.0, rightB = dur;
+    for (const Keyframe& k : K) {
+        if (k.time < minT - 1e-9 && k.time > leftB) leftB = k.time;
+        if (k.time > maxT + 1e-9 && k.time < rightB) rightB = k.time;
+    }
+    double d = dT;
+    if (minT + d < leftB + 0.001) d = leftB + 0.001 - minT;
+    if (maxT + d > rightB - 0.001) d = rightB - 0.001 - maxT;
+
+    for (int j = 0; j < m_selKeys.size(); ++j) {
+        Keyframe& k = K[m_selKeys[j]];
+        const Keyframe& o = m_selOrig[j];
+        double nt = o.time + d;
+        if (snap) nt = snapTime(nt);
+        nt = std::clamp(nt, leftB + 0.001, rightB - 0.001);
+        k.time = nt;
+        k.value = std::clamp(o.value + dV, m_loProp, m_hiProp);
+    }
 }
 
 void GraphCanvas::updateHover(const QPoint& p) {
@@ -261,10 +420,17 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
                    Qt::AlignRight | Qt::AlignVCenter, fmtValue(v));
         p.setPen(QColor(50, 50, 58));
     }
-    // Grade de tempo.
+    // Linha do zero mais visível.
+    if (m_lo < 0.0 && m_hi > 0.0) {
+        p.setPen(QColor(72, 72, 84));
+        p.drawLine(r.left(), vToY(0.0), r.right(), vToY(0.0));
+    }
+    // Grade de tempo (respeita a janela visível).
     const double dur = m_clip ? std::max(0.05, m_clip->dur) : 1.0;
-    const double tStep = niceStep(dur / 6.0);
-    for (double t = 0.0; t <= dur + 1e-9; t += tStep) {
+    const double t0 = timeStart();
+    const double range = timeRange();
+    const double tStep = niceStep(range / 6.0);
+    for (double t = std::ceil(t0 / tStep) * tStep; t <= t0 + range + 1e-9; t += tStep) {
         const int x = tToX(t);
         p.drawLine(x, r.top(), x, r.bottom());
         p.setPen(QColor(150, 150, 160));
@@ -300,20 +466,22 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
         p.setRenderHint(QPainter::Antialiasing, false);
     }
 
-    // Handles ("tracinhos") do keyframe selecionado.
-    if (m_dragKey >= 0 && m_dragKey < ks->size()) {
-        const Keyframe& k = (*ks)[m_dragKey];
+    // Handles ("tracinhos") quando há exatamente um keyframe selecionado.
+    const bool singleSel = (m_selKeys.size() == 1);
+    const int handleKey = singleSel ? m_selKeys.first() : -1;
+    if (handleKey >= 0 && handleKey < ks->size()) {
+        const Keyframe& k = (*ks)[handleKey];
         if (k.interp == KfSmooth || k.interp == KfBezier) {
-            if (m_dragKey + 1 < ks->size()) {
-                const double span = (*ks)[m_dragKey + 1].time - k.time;
+            if (handleKey + 1 < ks->size()) {
+                const double span = (*ks)[handleKey + 1].time - k.time;
                 if (span > 1e-9) {
                     double cx = k.hx;
                     double cy = k.hy;
                     if (k.interp == KfSmooth) {
                         // Tangente Catmull-Rom (decorativa).
                         const Keyframe& a = k;
-                        const Keyframe& b = (*ks)[m_dragKey + 1];
-                        const Keyframe& p0 = (m_dragKey > 0) ? (*ks)[m_dragKey - 1] : a;
+                        const Keyframe& b = (*ks)[handleKey + 1];
+                        const Keyframe& p0 = (handleKey > 0) ? (*ks)[handleKey - 1] : a;
                         const double m0 = (b.value - p0.value) / (b.time - p0.time);
                         cx = span * 0.35;
                         cy = m0 * span * 0.35;
@@ -330,18 +498,19 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
         }
     }
 
-    // Keyframes (losangos).
+    // Keyframes (losangos; selecionados em verde).
     for (int i = 0; i < ks->size(); ++i) {
         const Keyframe& k = (*ks)[i];
         const QPointF kp(tToX(k.time), vToY(k.value));
-        const QColor fill = (i == m_dragKey)
-            ? QColor(90, 200, 120) : QColor(210, 210, 220);
+        const bool sel = m_selKeys.contains(i);
+        const QColor fill = sel ? QColor(90, 200, 120) : QColor(210, 210, 220);
+        const int size = (sel && i == m_dragKey) ? 7 : 6;
         p.setBrush(fill);
         p.setPen(QPen(QColor(255, 255, 255), 1.2));
-        const QPolygonF dia = QPolygonF() << QPointF(kp.x(), kp.y() - 6)
-                                          << QPointF(kp.x() + 6, kp.y())
-                                          << QPointF(kp.x(), kp.y() + 6)
-                                          << QPointF(kp.x() - 6, kp.y());
+        const QPolygonF dia = QPolygonF() << QPointF(kp.x(), kp.y() - size)
+                                          << QPointF(kp.x() + size, kp.y())
+                                          << QPointF(kp.x(), kp.y() + size)
+                                          << QPointF(kp.x() - size, kp.y());
         p.drawPolygon(dia);
     }
 
@@ -368,12 +537,24 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
         p.drawText(box, Qt::AlignCenter, txt);
     }
 
-    // Linha do playhead.
+    // Caixa de seleção (marquee).
+    if (m_marqueeActive) {
+        const QRect mr = m_marqueeRect.normalized();
+        if (!mr.isEmpty()) {
+            p.fillRect(mr, QColor(120, 180, 255, 40));
+            p.setPen(QPen(QColor(150, 200, 255, 230), 1, Qt::DashLine));
+            p.drawRect(mr);
+        }
+    }
+
+    // Linha do playhead (só se estiver na janela visível).
     if (m_clip) {
         const double rel = std::clamp(m_playhead - m_clip->pos, 0.0, m_clip->dur);
-        const int x = tToX(rel);
-        p.setPen(QPen(QColor(0, 160, 255), 1));
-        p.drawLine(x, r.top(), x, r.bottom());
+        if (rel >= timeStart() - 1e-9 && rel <= timeStart() + timeRange() + 1e-9) {
+            const int x = tToX(rel);
+            p.setPen(QPen(QColor(0, 160, 255), 1));
+            p.drawLine(x, r.top(), x, r.bottom());
+        }
     }
 }
 
@@ -386,8 +567,26 @@ void GraphCanvas::mousePressEvent(QMouseEvent* e) {
     updateHover(e->pos());
     const int kh = keyframeHit(e->pos());
     if (kh >= 0) {
+        // Seleção múltipla: Shift adiciona/alterna; clique simples seleciona só este.
+        const bool shift = e->modifiers() & Qt::ShiftModifier;
+        if (m_selKeys.contains(kh)) {
+            if (shift) {
+                m_selKeys.removeAll(kh);
+                m_selOrig.clear();
+                for (int i : m_selKeys) m_selOrig.append((*keys())[i]);
+                update();
+                return;
+            }
+        } else {
+            if (!shift) m_selKeys.clear();
+            m_selKeys.append(kh);
+        }
         m_dragKey = kh;
         m_dragHandle = -1;
+        m_grabT = xToT(e->pos().x());
+        m_grabV = yToV(e->pos().y());
+        m_selOrig.clear();
+        for (int i : m_selKeys) m_selOrig.append((*keys())[i]);
         emit editStart();
         m_undoPushed = true;
         setCursor(Qt::ClosedHandCursor);
@@ -396,6 +595,8 @@ void GraphCanvas::mousePressEvent(QMouseEvent* e) {
     }
     const int hh = handleHit(e->pos());
     if (hh >= 0) {
+        // Handle só com um keyframe selecionado.
+        if (!m_selKeys.contains(hh)) { m_selKeys.clear(); m_selKeys.append(hh); }
         m_dragKey = hh;
         m_dragHandle = hh;
         QVector<Keyframe>& K = *keys();
@@ -410,15 +611,28 @@ void GraphCanvas::mousePressEvent(QMouseEvent* e) {
         update();
         return;
     }
+    // Clique em espaço vazio: inicia a caixa de seleção (Shift soma).
     m_dragKey = -1;
     m_dragHandle = -1;
+    if (!(e->modifiers() & Qt::ShiftModifier)) {
+        m_selKeys.clear();
+        m_selOrig.clear();
+    }
+    m_marqueeActive = true;
+    m_marqueeStart = e->pos();
+    m_marqueeRect = QRect(e->pos(), QSize(0, 0));
     update();
     QWidget::mousePressEvent(e);
 }
 
 void GraphCanvas::mouseMoveEvent(QMouseEvent* e) {
     m_lastPos = e->pos();
-    if (m_dragKey < 0 || !m_clip) {
+    if (m_marqueeActive && (e->buttons() & Qt::LeftButton)) {
+        m_marqueeRect = QRect(m_marqueeStart, e->pos()).normalized();
+        update();
+        return;
+    }
+    if (m_dragKey < 0 || !m_clip || !(e->buttons() & Qt::LeftButton)) {
         updateHover(e->pos());
         QWidget::mouseMoveEvent(e);
         return;
@@ -426,15 +640,15 @@ void GraphCanvas::mouseMoveEvent(QMouseEvent* e) {
     const QVector<Keyframe>* ks = keys();
     if (!ks || m_dragKey >= ks->size()) return;
     QVector<Keyframe>& K = *keys();
-    const double dur = std::max(0.05, m_clip->dur);
 
-    if (m_dragHandle >= 0 && K[m_dragKey].interp == KfBezier) {
+    if (m_dragHandle >= 0 && K[m_dragKey].interp == KfBezier
+        && m_selKeys.size() == 1) {
         const Keyframe& k = K[m_dragKey];
         const double maxDx = (m_dragKey + 1 < K.size())
-            ? (K[m_dragKey + 1].time - k.time) * 0.5 : dur * 0.5;
+            ? (K[m_dragKey + 1].time - k.time) * 0.5 : timeRange() * 0.5;
         const double newDx = std::clamp(xToT(e->pos().x()) - k.time, 0.0, maxDx);
         const double newDy = std::clamp(yToV(e->pos().y()) - k.value,
-                                        m_lo - k.value, m_hi - k.value);
+                                        m_loProp - k.value, m_hiProp - k.value);
         K[m_dragKey].hx = newDx;
         K[m_dragKey].hy = newDy;
         emitKeyInfo(m_dragKey);
@@ -442,25 +656,28 @@ void GraphCanvas::mouseMoveEvent(QMouseEvent* e) {
         return;
     }
 
-    Keyframe& k = K[m_dragKey];
-    const double tMin = (m_dragKey > 0) ? K[m_dragKey - 1].time + 0.001 : 0.0;
-    const double tMax = (m_dragKey + 1 < K.size())
-        ? K[m_dragKey + 1].time - 0.001 : dur;
-    double t = std::clamp(xToT(e->pos().x()), tMin, tMax);
-    // Snap à grade de frames; segure Ctrl para mover com precisão livre.
-    if (!(e->modifiers() & Qt::ControlModifier))
-        t = std::clamp(snapTime(t), tMin, tMax);
-    k.time = t;
-    k.value = std::clamp(yToV(e->pos().y()), m_lo, m_hi);
+    // Arrasta o grupo selecionado (todos juntos, mantendo os deltas).
+    const double dT = xToT(e->pos().x()) - m_grabT;
+    const double dV = yToV(e->pos().y()) - m_grabV;
+    const bool snap = m_snap && !(e->modifiers() & Qt::ControlModifier);
+    moveSelected(dT, dV, snap);
     emitKeyInfo(m_dragKey);
     commitChange();
 }
 
 void GraphCanvas::mouseReleaseEvent(QMouseEvent* e) {
+    if (m_marqueeActive) {
+        m_marqueeActive = false;
+        marqueeSelect(m_marqueeRect, e->modifiers() & Qt::ShiftModifier);
+        m_marqueeRect = QRect();
+        QWidget::mouseReleaseEvent(e);
+        return;
+    }
     if (m_dragKey >= 0) {
         m_dragKey = -1;
         m_dragHandle = -1;
         m_undoPushed = false;
+        m_selOrig.clear();
         updateHover(e->pos());
         update();
     }
@@ -469,25 +686,224 @@ void GraphCanvas::mouseReleaseEvent(QMouseEvent* e) {
 
 void GraphCanvas::mouseDoubleClickEvent(QMouseEvent* e) {
     if (!m_clip) { QWidget::mouseDoubleClickEvent(e); return; }
-    if (keyframeHit(e->pos()) >= 0) { QWidget::mouseDoubleClickEvent(e); return; }
     QVector<Keyframe>& K = *keys();
-    const double t = snapTime(xToT(e->pos().x()));
+
+    // Duplo clique em cima de um keyframe: edita tempo/valor exatos.
+    const int hit = keyframeHit(e->pos());
+    if (hit >= 0) {
+        const Keyframe k = K[hit];
+        QDialog dlg(this);
+        dlg.setWindowTitle(tr("Editar keyframe"));
+        auto* tSpin = new QDoubleSpinBox(&dlg);
+        tSpin->setRange(0.0, m_clip->dur);
+        tSpin->setDecimals(3);
+        tSpin->setSingleStep(1.0 / m_fps);
+        tSpin->setSuffix(tr(" s"));
+        tSpin->setValue(k.time);
+        auto* vSpin = new QDoubleSpinBox(&dlg);
+        vSpin->setRange(m_loProp, m_hiProp);
+        vSpin->setDecimals(4);
+        vSpin->setValue(k.value);
+        auto* form = new QFormLayout;
+        form->addRow(tr("Tempo:"), tSpin);
+        form->addRow(tr("Valor:"), vSpin);
+        auto* btns = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+        connect(btns, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        connect(btns, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        auto* lay = new QVBoxLayout(&dlg);
+        lay->addLayout(form);
+        lay->addWidget(btns);
+        if (dlg.exec() != QDialog::Accepted) return;
+
+        const double nt = snapTime(tSpin->value());
+        const double nv = vSpin->value();
+        bool dup = false;
+        for (int i = 0; i < K.size(); ++i)
+            if (i != hit && std::fabs(K[i].time - nt) < 1e-9) { dup = true; break; }
+        if (dup) { emit statusMessage(tr("Já existe um keyframe nesse tempo.")); return; }
+
+        emit editStart();
+        m_undoPushed = true;
+        K[hit].time = nt;
+        K[hit].value = nv;
+        sortKeys();
+        commitChange();
+        return;
+    }
+
+    const double t = m_snap ? snapTime(xToT(e->pos().x())) : xToT(e->pos().x());
     const double v = kfValue(K, baseValue(), t);
-    Keyframe nk;
-    nk.time = t;
-    nk.value = v;
-    nk.interp = KfSmooth;
-    K.append(nk);
+    if (addKeyframe(t, v) < 0) {
+        emit statusMessage(tr("Já existe um keyframe nesse tempo."));
+        return;
+    }
     emit editStart();
     commitChange();
     m_undoPushed = true;
+}
+
+void GraphCanvas::wheelEvent(QWheelEvent* e) {
+    if (!m_clip || !(e->modifiers() & Qt::ControlModifier)) {
+        QWidget::wheelEvent(e);
+        return;
+    }
+    // Ctrl+roda: zoom horizontal (tempo) em torno do cursor.
+    const double dur = std::max(0.05, m_clip->dur);
+    const double factor = (e->angleDelta().y() > 0) ? 0.75 : 1.0 / 0.75;
+    const double range = timeRange();
+    const double tc = xToT(e->position().x());
+    const double minR = std::min(0.02, 2.0 / m_fps);
+    const double nr = std::clamp(range * factor, minR, dur);
+    double t0 = tc - (tc - timeStart()) * (nr / range);
+    t0 = std::clamp(t0, 0.0, dur - nr);
+    m_t0 = t0;
+    m_t1 = t0 + nr;
+    update();
+    e->accept();
+}
+
+void GraphCanvas::keyPressEvent(QKeyEvent* e) {
+    QVector<Keyframe>* ks = keys();
+    const bool ctrl = e->modifiers() & Qt::ControlModifier;
+
+    if (e->key() == Qt::Key_F) { resetZoom(); e->accept(); return; }
+    if (e->key() == Qt::Key_S && !ctrl && ks) {
+        m_snap = !m_snap;
+        emit snapChanged(m_snap);
+        emit statusMessage(m_snap ? tr("Snap ligado (Ctrl = livre)")
+                                  : tr("Snap desligado (Ctrl = livre)"));
+        e->accept();
+        return;
+    }
+    if (ctrl && e->key() == Qt::Key_A && ks) {
+        m_selKeys.clear();
+        for (int i = 0; i < ks->size(); ++i) m_selKeys.append(i);
+        m_selOrig.clear();
+        for (int i : m_selKeys) m_selOrig.append((*ks)[i]);
+        e->accept();
+        return;
+    }
+    if (e->key() == Qt::Key_Escape) {
+        m_selKeys.clear();
+        m_selOrig.clear();
+        m_dragKey = -1;
+        m_dragHandle = -1;
+        e->accept();
+        return;
+    }
+    if (!ks || m_selKeys.isEmpty()) { QWidget::keyPressEvent(e); return; }
+
+    if (e->key() == Qt::Key_Delete || e->key() == Qt::Key_Backspace) {
+        emit editStart();
+        QVector<int> sel = m_selKeys;
+        std::sort(sel.begin(), sel.end(), std::greater<int>());
+        for (int i : sel) ks->removeAt(i);
+        m_selKeys.clear();
+        m_selOrig.clear();
+        m_dragKey = -1;
+        fitValueRange();
+        commitChange();
+        e->accept();
+        return;
+    }
+
+    if (e->key() == Qt::Key_Left || e->key() == Qt::Key_Right
+        || e->key() == Qt::Key_Up || e->key() == Qt::Key_Down) {
+        // Nudge: 1 passo por tecla (Shift = 10). ←/→ tempo; ↑/↓ valor.
+        const double frames = (e->modifiers() & Qt::ShiftModifier) ? 10.0 : 1.0;
+        const double vStep = std::max(0.001, (m_hiProp - m_loProp) * 0.005);
+        double dT = 0.0, dV = 0.0;
+        switch (e->key()) {
+        case Qt::Key_Left:  dT = -frames / m_fps; break;
+        case Qt::Key_Right: dT =  frames / m_fps; break;
+        case Qt::Key_Up:    dV =  frames * vStep; break;
+        case Qt::Key_Down:  dV = -frames * vStep; break;
+        }
+        emit editStart();
+        m_selOrig.clear();
+        for (int i : m_selKeys) m_selOrig.append((*ks)[i]);
+        moveSelected(dT, dV, false);
+        if (m_dragKey >= 0) emitKeyInfo(m_dragKey);
+        commitChange();
+        e->accept();
+        return;
+    }
+
+    // 1/2/3/4 definem a interpolação dos keyframes selecionados.
+    if (e->key() >= Qt::Key_1 && e->key() <= Qt::Key_4 && !ctrl) {
+        const int modes[4] = {KfLinear, KfSmooth, KfStep, KfBezier};
+        const int mode = modes[e->key() - Qt::Key_1];
+        emit editStart();
+        for (int i : m_selKeys) {
+            (*ks)[i].interp = mode;
+            if (mode == KfSmooth) (*ks)[i].hx = (*ks)[i].hy = 0.0;
+        }
+        commitChange();
+        e->accept();
+        return;
+    }
+
+    QWidget::keyPressEvent(e);
+}
+
+void GraphCanvas::resetZoom() {
+    m_t0 = 0.0;
+    m_t1 = -1.0;
+    update();
+}
+
+void GraphCanvas::setSnap(bool on) {
+    if (m_snap == on) return;
+    m_snap = on;
+    emit snapChanged(m_snap);
+    update();
+}
+
+bool GraphCanvas::snapEnabled() const {
+    return m_snap;
 }
 
 void GraphCanvas::contextMenuEvent(QContextMenuEvent* e) {
     if (!m_clip) { QWidget::contextMenuEvent(e); return; }
     QVector<Keyframe>& K = *keys();
     const int hit = keyframeHit(e->pos());
-    if (hit < 0) { QWidget::contextMenuEvent(e); return; }
+    if (hit < 0) {
+        QMenu menu(this);
+        QAction* addHere = menu.addAction(tr("Adicionar keyframe aqui"));
+        QAction* selDel = nullptr;
+        if (!m_selKeys.isEmpty()) {
+            menu.addSeparator();
+            selDel = menu.addAction(tr("Excluir keyframes selecionados"));
+        }
+        QAction* act = menu.exec(e->globalPos());
+        if (!act) return;
+        if (act == addHere) {
+            const double t = m_snap ? snapTime(xToT(e->pos().x())) : xToT(e->pos().x());
+            const double v = kfValue(K, baseValue(), t);
+            if (addKeyframe(t, v) < 0) {
+                emit statusMessage(tr("Já existe um keyframe nesse tempo."));
+                return;
+            }
+            emit editStart();
+            m_undoPushed = true;
+            commitChange();
+        } else if (act == selDel) {
+            emit editStart();
+            m_undoPushed = true;
+            QVector<int> sel = m_selKeys;
+            std::sort(sel.begin(), sel.end(), std::greater<int>());
+            for (int i : sel) K.removeAt(i);
+            m_selKeys.clear();
+            m_dragKey = -1;
+            fitValueRange();
+            commitChange();
+        }
+        return;
+    }
+    if (!m_selKeys.contains(hit)) {
+        m_selKeys.clear();
+        m_selKeys.append(hit);
+    }
     m_dragKey = hit;
     update();
 
@@ -497,16 +913,27 @@ void GraphCanvas::contextMenuEvent(QContextMenuEvent* e) {
     QAction* ste = menu.addAction(tr("Segurar"));
     QAction* bez = menu.addAction(tr("Bezier"));
     menu.addSeparator();
-    QAction* del = menu.addAction(tr("Excluir keyframe"));
+    QAction* del = menu.addAction(m_selKeys.size() > 1
+                                      ? tr("Excluir %1 keyframes").arg(m_selKeys.size())
+                                      : tr("Excluir keyframe"));
     QAction* act = menu.exec(e->globalPos());
     if (!act) return;
     emit editStart();
     m_undoPushed = true;
-    if (act == lin) K[hit].interp = KfLinear;
-    else if (act == smo) { K[hit].interp = KfSmooth; K[hit].hx = K[hit].hy = 0.0; }
-    else if (act == ste) K[hit].interp = KfStep;
-    else if (act == bez) K[hit].interp = KfBezier;
-    else if (act == del) K.removeAt(hit);
+    if (act == lin || act == smo || act == ste || act == bez) {
+        for (int i : m_selKeys) {
+            K[i].interp = (act == lin) ? KfLinear
+                          : (act == smo) ? KfSmooth
+                          : (act == ste) ? KfStep : KfBezier;
+            if (act == smo) { K[i].hx = K[i].hy = 0.0; }
+        }
+    } else if (act == del) {
+        QVector<int> sel = m_selKeys;
+        std::sort(sel.begin(), sel.end(), std::greater<int>());
+        for (int i : sel) K.removeAt(i);
+        m_selKeys.clear();
+        m_dragKey = -1;
+    }
     commitChange();
 }
 
@@ -532,13 +959,7 @@ GraphEditorWidget::GraphEditorWidget(QWidget* parent) : QWidget(parent) {
         const double rel = std::round(rel0 / fr) * fr;
         QVector<Keyframe>& K = *m_canvas->keys();
         const double v = kfValue(K, m_canvas->baseValue(), rel);
-        for (const Keyframe& k : K)
-            if (std::fabs(k.time - rel) < 1e-6) return;
-        Keyframe nk;
-        nk.time = rel;
-        nk.value = v;
-        nk.interp = KfSmooth;
-        K.append(nk);
+        if (m_canvas->addKeyframe(rel, v) < 0) return;
         emit editStart();
         m_canvas->commitChange();
     });
@@ -559,8 +980,41 @@ GraphEditorWidget::GraphEditorWidget(QWidget* parent) : QWidget(parent) {
         }
         emit editStart();
         K.removeAt(best);
+        m_canvas->fitValueRange();
         m_canvas->commitChange();
     });
+
+    auto* prevBtn = new QPushButton(tr("◀"), this);
+    prevBtn->setToolTip(tr("Ir para o keyframe anterior desta propriedade"));
+    auto* nextBtn = new QPushButton(tr("▶"), this);
+    nextBtn->setToolTip(tr("Ir para o próximo keyframe desta propriedade"));
+    auto* fitBtn = new QPushButton(tr("Ajustar"), this);
+    fitBtn->setToolTip(tr("Mostrar o clipe inteiro (F; Ctrl+roda dá zoom)"));
+    auto* snapBtn = new QPushButton(tr("Snap"), this);
+    snapBtn->setCheckable(true);
+    snapBtn->setChecked(true);
+    snapBtn->setToolTip(tr("Encaixar nos frames (S; Ctrl durante o arrasto = livre)"));
+
+    const auto jump = [this](int dir) {
+        Clip* c = activeClip();
+        QVector<Keyframe>* kp = m_canvas->keys();
+        if (!c || !kp || kp->isEmpty()) return;
+        QVector<Keyframe>& K = *kp;
+        const double rel = std::clamp(m_playhead - c->pos, 0.0, c->dur);
+        int best = -1;
+        if (dir < 0) {
+            for (int i = 0; i < K.size(); ++i)
+                if (K[i].time < rel - 1e-9) best = i;
+            if (best < 0) best = K.size() - 1;
+        } else {
+            for (int i = K.size() - 1; i >= 0; --i)
+                if (K[i].time > rel + 1e-9) best = i;
+            if (best < 0) best = 0;
+        }
+        emit keyframeJump(c->pos + K[best].time);
+    };
+    connect(prevBtn, &QPushButton::clicked, this, [this, jump]() { jump(-1); });
+    connect(nextBtn, &QPushButton::clicked, this, [this, jump]() { jump(1); });
 
     auto* top = new QHBoxLayout;
     top->setContentsMargins(6, 4, 6, 2);
@@ -568,10 +1022,18 @@ GraphEditorWidget::GraphEditorWidget(QWidget* parent) : QWidget(parent) {
     top->addWidget(m_propCombo, 1);
     top->addWidget(addBtn);
     top->addWidget(delBtn);
+    top->addSpacing(8);
+    top->addWidget(prevBtn);
+    top->addWidget(nextBtn);
+    top->addWidget(fitBtn);
+    top->addWidget(snapBtn);
 
     m_canvas = new GraphCanvas(this);
     connect(m_canvas, &GraphCanvas::editStart, this, &GraphEditorWidget::editStart);
     connect(m_canvas, &GraphCanvas::modified, this, &GraphEditorWidget::modified);
+    connect(fitBtn, &QPushButton::clicked, m_canvas, &GraphCanvas::resetZoom);
+    connect(snapBtn, &QPushButton::toggled, m_canvas, &GraphCanvas::setSnap);
+    connect(m_canvas, &GraphCanvas::snapChanged, snapBtn, &QPushButton::setChecked);
 
     m_status = new QLabel(this);
     m_status->setTextFormat(Qt::PlainText);
@@ -584,6 +1046,12 @@ GraphEditorWidget::GraphEditorWidget(QWidget* parent) : QWidget(parent) {
     lay->addLayout(top);
     lay->addWidget(m_canvas, 1);
     lay->addWidget(m_status);
+}
+
+// Tamanho padrão do painel: evita que o dock abra com metade da tela na
+// primeira execução (sem layout salvo ainda).
+QSize GraphEditorWidget::sizeHint() const {
+    return QSize(360, 220);
 }
 
 void GraphEditorWidget::setProject(Project* p) {

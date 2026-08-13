@@ -190,6 +190,11 @@ static QJsonObject trackToJson(const Track& t) {
     o["name"] = t.name;
     o["audio"] = t.audio;
     o["blendMode"] = t.blendMode;
+    o["volume"] = t.volume;
+    o["muted"] = t.muted;
+    o["solo"] = t.solo;
+    o["locked"] = t.locked;
+    o["height"] = t.height;
     QJsonArray clips;
     for (const Clip& c : t.clips) clips.append(clipToJson(c));
     o["clips"] = clips;
@@ -202,6 +207,11 @@ static Track trackFromJson(const QJsonObject& o, bool audio) {
                                       : QStringLiteral("Faixa de Vídeo"));
     t.audio = audio;
     t.blendMode = o["blendMode"].toString(QStringLiteral("normal"));
+    t.volume = o["volume"].toDouble(1.0);
+    t.muted = o["muted"].toBool();
+    t.solo = o["solo"].toBool();
+    t.locked = o["locked"].toBool();
+    t.height = o["height"].toInt(0);
     const QJsonArray clips = o["clips"].toArray();
     for (const QJsonValue& v : clips)
         t.clips.append(clipFromJson(v.toObject()));

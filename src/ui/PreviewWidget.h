@@ -13,7 +13,7 @@ class QLabel;
 class QComboBox;
 class QThread;
 
-class AudioFeed; // QIODevice que puxa PCM do decoder
+class AudioMixer; // QIODevice que mistura o PCM de todos os clipes ativos
 class FrameWorker; // decodifica quadros de vídeo fora da thread da UI
 class QAudioSink;
 class QAudioOutput;
@@ -50,15 +50,14 @@ private:
     void stopPlayback();
     void startAudio(double t);
     void stopAudio();
+    void updateMixAudio(double t, bool reseek);
     const Clip* clipAt(double t) const;
-    const Clip* audioClipAt(double t) const;
     Project* m_project = nullptr;
     double m_playhead = 0.0;
     double m_loopIn = -1.0;
     double m_loopOut = -1.0;
     QImage m_frame;
     QImage m_frameFull;
-    FFmpegDecoder m_decoder;
     QTimer* m_timer = nullptr;
     QElapsedTimer m_clock;
     double m_playStart = 0.0;
@@ -74,11 +73,10 @@ private:
     QString m_lastFile;
     int m_lastCropL = -1, m_lastCropR = -1, m_lastCropT = -1, m_lastCropB = -1;
 
-    // Áudio do preview.
-    AudioFeed* m_audioFeed = nullptr;
+    // Áudio do preview (mixer com um decoder por clipe ativo).
+    AudioMixer* m_audioFeed = nullptr;
     QAudioSink* m_audioSink = nullptr;
     QAudioOutput* m_audioOut = nullptr;
-    QString m_audioSource; // arquivo que está tocando
 
     // Decodificação de vídeo em thread própria (não trava a UI na reprodução).
     QThread* m_frameThread = nullptr;

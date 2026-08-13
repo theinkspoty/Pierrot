@@ -4,12 +4,29 @@
 #include <QGroupBox>
 #include <QLabel>
 #include <QSpinBox>
+#include <QComboBox>
 #include <QDialogButtonBox>
 #include <QVBoxLayout>
 #include <QFormLayout>
 #include <QMessageBox>
 #include <QSettings>
 #include <QFileInfo>
+
+// Presets de qualidade do preview: rótulo amigável + largura máxima de
+// decodificação. Menor = menos RAM/CPU no preview.
+namespace {
+constexpr int kPreviewPresets[4] = { 480, 720, 1080, 1920 };
+
+int nearestPresetIndex(int w) {
+    int best = 0;
+    for (int i = 1; i < 4; ++i)
+        if (qAbs(kPreviewPresets[i] - w) < qAbs(kPreviewPresets[best] - w)) best = i;
+    return best;
+}
+int presetWidth(int index) {
+    return kPreviewPresets[qBound(0, index, 3)];
+}
+}
 
 bool SettingsDialog::mkvWarningEnabled() {
     return QSettings().value("mkvWarning", true).toBool();
@@ -36,11 +53,13 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
     m_autoInterval->setSuffix(tr(" min"));
     m_autoInterval->setValue(s.value("autosaveMinutes", 10).toInt());
 
-    m_decodeWidth = new QSpinBox(this);
-    m_decodeWidth->setRange(320, 3840);
-    m_decodeWidth->setSingleStep(160);
-    m_decodeWidth->setSuffix(tr(" px"));
-    m_decodeWidth->setValue(s.value("maxDecodeWidth", 1920).toInt());
+    m_decodeWidth = new QComboBox(this);
+    m_decodeWidth->addItem(tr("Baixa (480p)"));
+    m_decodeWidth->addItem(tr("Média (720p)"));
+    m_decodeWidth->addItem(tr("Alta (1080p)"));
+    m_decodeWidth->addItem(tr("Máxima (1920p)"));
+    m_decodeWidth->setCurrentIndex(
+        nearestPresetIndex(s.value("maxDecodeWidth", 1920).toInt()));
 
     auto* mkvBox = new QGroupBox(tr("Avisos"), this);
     auto* mkvLay = new QVBoxLayout(mkvBox);
@@ -56,11 +75,14 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
     autoLay->addRow(m_autoSave);
     autoLay->addRow(tr("Intervalo:"), m_autoInterval);
 
-    auto* perfBox = new QGroupBox(tr("Desempenho"), this);
+    auto* perfBox = new QGroupBox(tr("Qualidade do preview"), this);
     auto* perfLay = new QFormLayout(perfBox);
-    perfLay->addRow(tr("Largura máxima de decodificação do preview:"), m_decodeWidth);
-    auto* perfHint = new QLabel(tr("Menor = menos RAM/CPU no preview. Padrão 1920."), perfBox);
+    perfLay->addRow(tr("Qualidade:"), m_decodeWidth);
+    auto* perfHint = new QLabel(tr("Qualidades mais baixas usam menos RAM/CPU no "
+                                   "preview e no scrub. Recomendado em projetos "
+                                   "grandes com muitos cortes."), perfBox);
     perfHint->setStyleSheet("color: #9a9a9a;");
+    perfHint->setWordWrap(true);
     perfLay->addRow(perfHint);
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
@@ -77,14 +99,14 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
 bool SettingsDialog::autoSaveEnabled() const { return m_autoSave->isChecked(); }
 int SettingsDialog::autoSaveMinutes() const { return m_autoInterval->value(); }
 bool SettingsDialog::mkvWarning() const { return m_mkvWarn->isChecked(); }
-int SettingsDialog::decodeWidth() const { return m_decodeWidth->value(); }
+int SettingsDialog::decodeWidth() const { return presetWidth(m_decodeWidth->currentIndex()); }
 
 void SettingsDialog::accept() {
     QSettings s;
     s.setValue("mkvWarning", m_mkvWarn->isChecked());
     s.setValue("autosaveEnabled", m_autoSave->isChecked());
     s.setValue("autosaveMinutes", m_autoInterval->value());
-    s.setValue("maxDecodeWidth", m_decodeWidth->value());
+    s.setValue("maxDecodeWidth", presetWidth(m_decodeWidth->currentIndex()));
     QDialog::accept();
 }
 

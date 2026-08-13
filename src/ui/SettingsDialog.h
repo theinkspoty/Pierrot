@@ -5,6 +5,7 @@
 
 class QCheckBox;
 class QSpinBox;
+class QComboBox;
 
 class SettingsDialog : public QDialog {
     Q_OBJECT
@@ -29,5 +30,5 @@ private:
     QCheckBox* m_mkvWarn = nullptr;
     QCheckBox* m_autoSave = nullptr;
     QSpinBox*  m_autoInterval = nullptr;
-    QSpinBox*  m_decodeWidth = nullptr;
+    QComboBox* m_decodeWidth = nullptr;
 };

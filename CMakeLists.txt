@@ -41,6 +41,7 @@ set(SOURCES
     src/ui/AudioEffectsDialog.cpp
     src/ui/WelcomeWindow.cpp
     src/ui/GraphEditorWidget.cpp
+    src/ui/ClickLogger.cpp
     resources.qrc
 )
 
@@ -61,6 +62,7 @@ set(HEADERS
     src/ui/AudioEffectsDialog.h
     src/ui/WelcomeWindow.h
     src/ui/GraphEditorWidget.h
+    src/ui/ClickLogger.h
 )
 
 if(WIN32)

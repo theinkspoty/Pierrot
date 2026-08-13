@@ -12,7 +12,7 @@ class QLabel;
 class QPushButton;
 
 // Painel docável de pan/crop estilo DaVinci/Vegas: viewfinder com a caixa de
-// recorte/zoom arrastável, sliders de crop/escala/pan e presets Ken Burns.
+// recorte/zoom arrastável e sliders de crop/escala/pan.
 // O viewfinder fica ao lado (à esquerda) dos controles de transformação, para
 // a tela não ficar atrás/embaixo dos sliders. Os keyframes seguem o padrão do
 // DaVinci Resolve: um losango por parâmetro alterna keyframe no playhead,
@@ -49,7 +49,6 @@ private:
 
     Clip* activeClip();
     void syncFromClip();
-    void applyPreset(int idx);
     void loadFrame();
     void emitChange();
     void commitSlider(int prop, double baseValue);

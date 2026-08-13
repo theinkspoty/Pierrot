@@ -1,9 +1,11 @@
 #include <QApplication>
+#include <QIcon>
 #include <QPalette>
 #include <QStyleFactory>
 #include <QDialog>
 #include "MainWindow.h"
 #include "ui/WelcomeWindow.h"
+#include "ui/ClickLogger.h"
 
 int main(int argc, char** argv) {
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
@@ -13,9 +15,12 @@ int main(int argc, char** argv) {
     app.setOrganizationName("Pierrot");
     app.setApplicationName("Pierrot");
     app.setApplicationDisplayName("Pierrot");
+    app.setWindowIcon(QIcon(QStringLiteral(":/pierrot.ico")));
     // Fechar a janela de boas-vindas (única janela no início) não pode
     // encerrar o app; o editor deve assumir em seguida.
     app.setQuitOnLastWindowClosed(false);
+
+    ClickLogger::install();
 
     app.setStyle(QStyleFactory::create("Fusion"));
 

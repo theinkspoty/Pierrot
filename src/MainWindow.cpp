@@ -8,6 +8,7 @@
 #include "ui/ExportDialog.h"
 #include "ui/ProjectSettingsDialog.h"
 #include "ui/SettingsDialog.h"
+#include "ffmpeg/MediaCache.h"
 
 #include <QApplication>
 #include <QDockWidget>
@@ -29,6 +30,7 @@
 #include <QPixmap>
 #include <QSettings>
 #include <QCloseEvent>
+#include <QShowEvent>
 #include <QStyle>
 #include <QPainterPath>
 #include <QPolygonF>
@@ -117,7 +119,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     createDocks();
     createActions();
 
-    m_undoStack.append(m_project);
+    m_undoStack.append(snapshotState());
     m_undoIndex = 0;
     updateUndoActions();
 
@@ -144,6 +146,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         m_timeline->update();
         m_preview->refreshView();
     });
+    connect(m_pool, &MediaPoolWidget::mediaToTimeline, m_timeline,
+            &TimelineWidget::addMediaAtPlayhead);
     connect(m_timeline, &TimelineWidget::editStart, this, &MainWindow::pushUndo);
     connect(m_timeline, &TimelineWidget::loopChanged, m_preview, &PreviewWidget::setLoopRange);
     connect(m_pool, &MediaPoolWidget::editStart, this, &MainWindow::pushUndo);
@@ -179,6 +183,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         m_pancropDock->raise();
     });
     connect(m_pancrop, &PancropWidget::keyframeJump, this, [this](double t) {
+        m_timeline->setPlayhead(t);
+        m_preview->seek(t);
+        m_pancrop->setPlayhead(t);
+        m_graph->setPlayhead(t);
+    });
+    connect(m_graph, &GraphEditorWidget::keyframeJump, this, [this](double t) {
         m_timeline->setPlayhead(t);
         m_preview->seek(t);
         m_pancrop->setPlayhead(t);
@@ -266,10 +276,6 @@ void MainWindow::restoreSettings() {
         if (!state.isEmpty() && saneLayoutArray(state))
             restoreState(state);
     }
-    // Garante que a barra de ferramentas principal fique sempre no topo,
-    // à esquerda, mesmo que um layout antigo salvo a tenha deslocado.
-    if (m_mainToolBar)
-        addToolBar(Qt::TopToolBarArea, m_mainToolBar);
     if (settings.contains("layoutLocked"))
         m_lockAction->setChecked(settings.value("layoutLocked").toBool());
     setDockLocked(m_lockAction->isChecked());
@@ -279,6 +285,14 @@ void MainWindow::closeEvent(QCloseEvent* event) {
     saveSettings();
     QMainWindow::closeEvent(event);
     QApplication::quit();
+}
+
+void MainWindow::showEvent(QShowEvent* event) {
+    QMainWindow::showEvent(event);
+    // Features de dock aplicadas antes do show() podem ser redefinidas quando
+    // o Qt monta o layout dos painéis na primeira exibição. Reaplica o
+    // travamento agora para o cadeado valer de verdade no início.
+    setDockLocked(m_lockAction->isChecked());
 }
 
 void MainWindow::createDocks() {
@@ -395,6 +409,8 @@ void MainWindow::createActions() {
     fileMenu->addAction(m_saveAction);
     fileMenu->addAction(m_saveAsAction);
     fileMenu->addSeparator();
+    fileMenu->addAction(addMedia);
+    fileMenu->addSeparator();
     fileMenu->addAction(exportAct);
     fileMenu->addSeparator();
     fileMenu->addAction(quit);
@@ -442,7 +458,10 @@ void MainWindow::createActions() {
         setDockLocked(locked);
         m_lockAction->setText(locked ? tr("Travar layout") : tr("Destravar layout"));
         m_lockAction->setIcon(padlockIcon(locked));
-        statusBar()->showMessage(locked ? tr("Layout travado.")
+        // Persiste o arranjo dos painéis na hora: o usuário espera que
+        // "Travar" fixe o layout atual, não só no fechamento do app.
+        saveSettings();
+        statusBar()->showMessage(locked ? tr("Layout travado e salvo.")
                                         : tr("Layout destravado — arraste os painéis para reorganizar."));
     });
 
@@ -461,32 +480,6 @@ void MainWindow::createActions() {
 
     QMenu* cfgMenu = menuBar()->addMenu(tr("&Configurações"));
     cfgMenu->addAction(appSettingsAction);
-
-    m_mainToolBar = addToolBar(tr("Principal"));
-    QToolBar* tb = m_mainToolBar;
-    tb->setMovable(false);
-    tb->setAllowedAreas(Qt::TopToolBarArea);
-    tb->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    // Arquivo
-    tb->addAction(newAction);
-    tb->addAction(openAction);
-    tb->addAction(m_saveAction);
-    tb->addAction(addMedia);
-    tb->addSeparator();
-    // Editar
-    tb->addAction(m_undoAction);
-    tb->addAction(m_redoAction);
-    tb->addSeparator();
-    tb->addAction(cutAction);
-    tb->addAction(deleteAction);
-    tb->addSeparator();
-    // Transporte
-    tb->addAction(m_playAction);
-    tb->addSeparator();
-    // Exportar / layout
-    tb->addAction(exportAct);
-    tb->addSeparator();
-    tb->addAction(m_lockAction);
 
     // As ferramentas da timeline ficam ancoradas acima da própria timeline,
     // dentro do dock, em vez de na barra superior da janela.
@@ -561,7 +554,9 @@ void MainWindow::setDockLocked(bool locked) {
 }
 
 QIcon MainWindow::padlockIcon(bool locked) const {
-    QPixmap pm(24, 24);
+    const qreal dpr = devicePixelRatioF();
+    QPixmap pm(qRound(24 * dpr), qRound(24 * dpr));
+    pm.setDevicePixelRatio(dpr);
     pm.fill(Qt::transparent);
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing, true);
@@ -593,6 +588,7 @@ QIcon MainWindow::padlockIcon(bool locked) const {
     else
         p.drawArc(shackleRect, 200 * 16, -140 * 16);
 
+    p.end();
     return QIcon(pm);
 }
 
@@ -769,13 +765,25 @@ QIcon MainWindow::iconExport() const {
 void MainWindow::pushUndo() {
     if (m_undoIndex < m_undoStack.size() - 1)
         m_undoStack.resize(m_undoIndex + 1);
-    m_undoStack.append(m_project);
+    m_undoStack.append(snapshotState());
     m_undoIndex = m_undoStack.size() - 1;
     while (m_undoStack.size() > 60) {
         m_undoStack.removeAt(0);
         --m_undoIndex;
     }
     setModified();
+}
+
+// Serializa o projeto (JSON compacto + compressão). A pilha de undo guarda
+// isso em vez de cópias em memória do Project: muito menos RAM em projetos
+// grandes, ao custo de alguns ms por edição.
+QByteArray MainWindow::snapshotState() const {
+    return qCompress(QJsonDocument(m_project.toJson()).toJson(QJsonDocument::Compact), 6);
+}
+
+void MainWindow::restoreSnapshot(const QByteArray& snap) {
+    const QJsonDocument doc = QJsonDocument::fromJson(qUncompress(snap));
+    m_project.fromJson(doc.isObject() ? doc.object() : QJsonObject());
 }
 
 void MainWindow::undo() {
@@ -793,7 +801,7 @@ void MainWindow::redo() {
 }
 
 void MainWindow::applyUndoState() {
-    m_project = m_undoStack[m_undoIndex];
+    restoreSnapshot(m_undoStack[m_undoIndex]);
     m_timeline->setProject(&m_project);
     m_pool->refreshFromProject();
     m_pancrop->setProject(&m_project);
@@ -822,13 +830,14 @@ void MainWindow::updateTitle() {
 }
 
 void MainWindow::newProject() {
+    MediaCache::instance().clear();
     m_project = Project();
     for (int i = 0; i < 3; ++i) m_project.addTrack(false);
     for (int i = 0; i < 3; ++i) m_project.addTrack(true);
     m_pancrop->setProject(&m_project);
     m_pancropDock->hide();
     m_undoStack.clear();
-    m_undoStack.append(m_project);
+    m_undoStack.append(snapshotState());
     m_undoIndex = 0;
     m_currentFile.clear();
     m_modified = false;
@@ -846,6 +855,7 @@ void MainWindow::openProject() {
 }
 
 void MainWindow::openProjectFile(const QString& path) {
+    MediaCache::instance().clear();
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
         QMessageBox::warning(this, tr("Abrir projeto"),
@@ -864,7 +874,7 @@ void MainWindow::openProjectFile(const QString& path) {
     if (m_project.audioTracks.isEmpty()) m_project.addTrack(true);
 
     m_undoStack.clear();
-    m_undoStack.append(m_project);
+    m_undoStack.append(snapshotState());
     m_undoIndex = 0;
     m_currentFile = path;
     m_modified = false;

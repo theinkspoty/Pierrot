@@ -24,8 +24,18 @@
 #include <algorithm>
 #include <cmath>
 #include <climits>
+#include <cstring>
+#include <QHash>
+#include <QMutex>
+#include <QDebug>
 
 static int s_maxDecodeWidth = -1;
+
+// Diagnóstico do caminho de áudio do preview: ligue com PIERROT_AUDIO_DEBUG=1.
+static bool audioDbg() {
+    static const bool on = qEnvironmentVariableIsSet("PIERROT_AUDIO_DEBUG");
+    return on;
+}
 
 int PreviewWidget::maxDecodeWidth() {
     if (s_maxDecodeWidth < 0)
@@ -58,20 +68,116 @@ private:
     FFmpegDecoder m_decoder;
 };
 
-// Puxa PCM contínuo do FFmpegDecoder quando o QAudioSink precisa de dados.
-class AudioFeed : public QIODevice {
+// Mixer de áudio: soma o PCM de todos os clipes ativos em `t` (clipe de vídeo
+// + faixas de áudio), cada um com volume próprio (clipe, envelope e faixa).
+// Todos os FFmpegDecoder resampleiam para S16/48 kHz/estéreo, então misturar
+// é alinhar amostra a amostra. A thread do QAudioSink chama readData(); a UI
+// chama updateSources() conforme o playhead avança.
+class AudioMixer : public QIODevice {
 public:
-    explicit AudioFeed(FFmpegDecoder* decoder) : m_decoder(decoder) {
+    struct SourceInfo {
+        QString key;      // id do clipe (estável durante a reprodução)
+        QString path;     // arquivo de mídia
+        double mediaPos;  // posição no arquivo de mídia (em segundos)
+        double vol = 1.0;
+    };
+
+    explicit AudioMixer(QObject* parent = nullptr) : QIODevice(parent) {
         setOpenMode(ReadOnly | Unbuffered);
     }
+    ~AudioMixer() override {
+        QMutexLocker l(&m_mutex);
+        for (Source* s : m_sources) { s->dec.close(); delete s; }
+        m_sources.clear();
+    }
+
+    // atualiza o conjunto de fontes ativas para o playhead atual.
+    // reseek=true: reposiciona as fontes existentes (loop, salto de playhead).
+    void updateSources(const QVector<SourceInfo>& want, bool reseek) {
+        QMutexLocker l(&m_mutex);
+        for (const SourceInfo& w : want) {
+            Source* s = findLocked(w.key);
+            if (!s) {
+                s = new Source;
+                if (!s->dec.open(w.path)) {
+                    if (audioDbg()) qDebug() << "[audio] updateSources: FALHOU ao abrir" << w.path;
+                    delete s; continue;
+                }
+                s->key = w.key;
+                s->dec.seekAudio(w.mediaPos);
+                m_sources.append(s);
+                if (audioDbg()) qDebug() << "[audio] updateSources: +fonte" << w.path << "mediaPos=" << w.mediaPos;
+            }
+            s->vol = w.vol;
+            s->active = true;
+            if (reseek) s->dec.seekAudio(w.mediaPos);
+        }
+        // Desativa (e libera) fontes que saíram do intervalo do clipe.
+        for (int i = 0; i < m_sources.size(); ++i) {
+            Source* s = m_sources[i];
+            if (s->active && !usedLocked(s->key, want)) {
+                if (audioDbg()) qDebug() << "[audio] updateSources: -fonte" << s->key;
+                s->dec.close();
+                s->active = false;
+            }
+        }
+        m_sources.erase(std::remove_if(m_sources.begin(), m_sources.end(),
+                                       [](Source* s) { return !s->active; }),
+                        m_sources.end());
+    }
+
     qint64 readData(char* data, qint64 maxlen) override {
-        if (!m_decoder) return -1;
-        return m_decoder->decodeAudio(data, (int)qMin<qint64>(maxlen, INT_MAX));
+        QMutexLocker l(&m_mutex);
+        const int ch = kChannels;
+        const int bytesPerSample = 2 * ch; // S16 interleaved
+        const int maxBytes = (int)qMin<qint64>(maxlen, INT_MAX);
+        const int capacity = (maxBytes / bytesPerSample) * bytesPerSample;
+        memset(data, 0, capacity);
+
+        if (m_sources.isEmpty() || capacity <= 0) {
+            if (audioDbg()) qDebug() << "[audio] readData: sem fontes (silêncio)";
+            return capacity;
+        }
+
+        QVector<int16_t> tmp;
+        tmp.resize(capacity / 2); // um sample por amostra (ch compensado abaixo)
+        int16_t* out = reinterpret_cast<int16_t*>(data);
+        for (Source* s : m_sources) {
+            const int got = s->dec.decodeAudio(tmp.data(), capacity);
+            if (audioDbg() && got == 0)
+                qDebug() << "[audio] readData: decodeAudio retornou 0 (silêncio)";
+            const int n = got / bytesPerSample;
+            const int16_t* src = tmp.constData();
+            for (int i = 0; i < n * ch; ++i) {
+                const float sum = out[i] / 32768.0f + src[i] / 32768.0f * (float)s->vol;
+                const float cl = qBound(-1.0f, sum, 1.0f);
+                out[i] = (int16_t)std::lround(cl * 32768.0f);
+            }
+        }
+        return capacity;
     }
     qint64 writeData(const char*, qint64) override { return -1; }
+
 private:
-    FFmpegDecoder* m_decoder = nullptr;
+    static constexpr int kChannels = 2;
+    struct Source {
+        FFmpegDecoder dec;
+        QString key;
+        double vol = 1.0;
+        bool active = false;
+    };
+    Source* findLocked(const QString& key) const {
+        for (Source* s : m_sources) if (s->key == key) return s;
+        return nullptr;
+    }
+    static bool usedLocked(const QString& key, const QVector<SourceInfo>& want) {
+        for (const SourceInfo& w : want) if (w.key == key) return true;
+        return false;
+    }
+    QVector<Source*> m_sources;
+    QMutex m_mutex;
 };
+
 
 namespace {
 
@@ -156,7 +262,6 @@ void PreviewWidget::setProject(Project* p) {
     m_project = p;
     m_playhead = 0.0;
     stopPlayback();
-    m_audioSource.clear();
     m_frame = QImage();
     m_frameFull = QImage();
     m_lastSrcT = -1.0;
@@ -332,8 +437,7 @@ void PreviewWidget::tick() {
         m_playStart = m_loopIn;
         m_clock.restart();
         seek(m_loopIn);
-        stopAudio();
-        startAudio(m_loopIn);
+        updateMixAudio(m_loopIn, true);
         return;
     }
     if (t >= dur) {
@@ -342,15 +446,9 @@ void PreviewWidget::tick() {
         return;
     }
     seek(t);
-
-    // Troca de clipe com áudio (ou saída para um intervalo vazio).
-    const Clip* ac = audioClipAt(t);
-    const MediaItem* m = ac ? m_project->findMedia(ac->mediaId) : nullptr;
-    const QString src = (m && m->hasAudio) ? m->filePath : QString();
-    if (src != m_audioSource) {
-        stopAudio();
-        if (!src.isEmpty()) startAudio(ac->in + (t - ac->pos));
-    }
+    // Mixer acompanha o playhead: volumes/fades e troca de clipes acontecem
+    // aqui, sem reiniciar o sink a cada transição.
+    updateMixAudio(t, false);
 }
 
 const Clip* PreviewWidget::clipAt(double t) const {
@@ -362,39 +460,66 @@ const Clip* PreviewWidget::clipAt(double t) const {
 }
 
 // Clip de áudio "ativo": o mais acima (vídeo ou áudio) em `t` cujo media tem áudio.
-const Clip* PreviewWidget::audioClipAt(double t) const {
-    if (!m_project) return nullptr;
-    const Clip* found = nullptr;
-    for (const Track& tr : m_project->videoTracks)
-        for (const Clip& c : tr.clips)
-            if (t >= c.pos && t < c.pos + c.dur) {
-                const MediaItem* m = m_project->findMedia(c.mediaId);
-                if (m && m->hasAudio) found = &c;
+// Clipes de áudio ativos em `t`, prontos para o mixer. Dedupe de vídeo+áudio
+// vinculados (mesmo groupId): a faixa de áudio vence, senão o som sobraria
+// duas vezes. Respeita mute/solo das faixas, volume de faixa, volume/envelope
+// do clipe e fades.
+QVector<AudioMixer::SourceInfo> buildMixSources(const Project* p, double t) {
+    QVector<AudioMixer::SourceInfo> out;
+    if (!p) return out;
+    bool anySolo = false;
+    for (const Track& tr : p->videoTracks)
+        if (tr.solo) { anySolo = true; break; }
+    if (!anySolo)
+        for (const Track& tr : p->audioTracks)
+            if (tr.solo) { anySolo = true; break; }
+
+    struct Rep { const Clip* clip; double vol; };
+    QHash<QString, Rep> reps;
+    auto collect = [&](const QVector<Track>& tracks) {
+        for (const Track& tr : tracks) {
+            for (const Clip& c : tr.clips) {
+                if (!(t >= c.pos && t < c.pos + c.dur)) continue;
+                if (tr.muted || (anySolo && !tr.solo)) continue;
+                const MediaItem* m = p->findMedia(c.mediaId);
+                if (!m || !m->hasAudio) continue;
+                const double rel = t - c.pos;
+                double vol = c.volume * kfValue(c.kfVolume, 1.0, rel) * tr.volume;
+                if (c.fadeIn > 1e-6) vol *= std::min(1.0, rel / c.fadeIn);
+                if (c.fadeOut > 1e-6) vol *= std::min(1.0, (c.dur - rel) / c.fadeOut);
+                vol = std::clamp(vol, 0.0, 2.0);
+                const QString key = c.groupId.isEmpty() ? c.id : c.groupId;
+                reps.insert(key, {&c, vol});
             }
-    for (const Track& tr : m_project->audioTracks)
-        for (const Clip& c : tr.clips)
-            if (t >= c.pos && t < c.pos + c.dur) {
-                const MediaItem* m = m_project->findMedia(c.mediaId);
-                if (m && m->hasAudio) found = &c;
-            }
-    return found;
+        }
+    };
+    collect(p->videoTracks);
+    collect(p->audioTracks);
+
+    for (auto it = reps.cbegin(); it != reps.cend(); ++it) {
+        const Clip* c = it.value().clip;
+        const MediaItem* m = p->findMedia(c->mediaId);
+        if (!m || !m->hasAudio) continue;
+        AudioMixer::SourceInfo si;
+        si.key = c->id;
+        si.path = m->filePath;
+        si.mediaPos = c->in + (t - c->pos);
+        si.vol = it.value().vol;
+        out.append(si);
+    }
+    return out;
 }
 
 void PreviewWidget::startAudio(double t) {
     if (!m_project) return;
-    const Clip* ac = audioClipAt(t);
-    const MediaItem* m = ac ? m_project->findMedia(ac->mediaId) : nullptr;
-    if (!m || !m->hasAudio) return;
-
-    if (!m_decoder.isOpen() || m_decoder.source() != m->filePath)
-        if (!m_decoder.open(m->filePath)) return;
-
-    m_decoder.seekAudio(ac->in + (t - ac->pos));
-
     stopAudio();
+    const QVector<AudioMixer::SourceInfo> sources = buildMixSources(m_project, t);
+    if (sources.isEmpty()) {
+        if (audioDbg()) qDebug() << "[audio] startAudio: nenhuma fonte com áudio em t=" << t;
+        return; // nada com áudio neste instante
+    }
+    if (audioDbg()) qDebug() << "[audio] startAudio em t=" << t << "- fontes:" << sources.size();
 
-    const int rate = m_decoder.audioSampleRate();
-    const int ch = m_decoder.audioChannels();
     QAudioFormat fmt;
 #if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
     fmt.setSampleFormat(QAudioFormat::Int16);
@@ -404,19 +529,32 @@ void PreviewWidget::startAudio(double t) {
     fmt.setSampleType(QAudioFormat::SignedInt);
     fmt.setByteOrder(QAudioFormat::LittleEndian);
 #endif
-    fmt.setSampleRate(rate);
-    fmt.setChannelCount(ch);
+    fmt.setSampleRate(48000);
+    fmt.setChannelCount(2);
 
-    m_audioFeed = new AudioFeed(&m_decoder);
+    m_audioFeed = new AudioMixer(this);
     m_audioFeed->open(QIODevice::ReadOnly | QIODevice::Unbuffered);
+    m_audioFeed->updateSources(sources, true);
 #if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
     m_audioSink = new QAudioSink(QMediaDevices::defaultAudioOutput(), fmt, this);
+    if (audioDbg()) {
+        connect(m_audioSink, &QAudioSink::stateChanged, this, [](QAudio::State s) {
+            qDebug() << "[audio] sink state =" << s;
+        });
+    }
     m_audioSink->start(m_audioFeed);
 #else
     m_audioOut = new QAudioOutput(QAudioDeviceInfo::defaultOutputDevice(), fmt, this);
+    if (audioDbg()) {
+        connect(m_audioOut, &QAudioOutput::stateChanged, this, [](QAudioOutput::State s) {
+            qDebug() << "[audio] sink state =" << s;
+        });
+        connect(m_audioOut, &QAudioOutput::errorChanged, this, [](QAudioOutput::Error e) {
+            qDebug() << "[audio] sink ERROR =" << e;
+        });
+    }
     m_audioOut->start(m_audioFeed);
 #endif
-    m_audioSource = m->filePath;
 }
 
 void PreviewWidget::stopAudio() {
@@ -437,7 +575,12 @@ void PreviewWidget::stopAudio() {
         m_audioFeed->deleteLater();
         m_audioFeed = nullptr;
     }
-    m_audioSource.clear();
+}
+
+// Recalcula as fontes de áudio ativas no instante `t` e empurra ao mixer.
+void PreviewWidget::updateMixAudio(double t, bool reseek) {
+    if (!m_audioFeed) return;
+    m_audioFeed->updateSources(buildMixSources(m_project, t), reseek);
 }
 
 void PreviewWidget::updateFrame() {

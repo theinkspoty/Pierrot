@@ -146,28 +146,6 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     connectSlider(m_panX, P_PanX);
     connectSlider(m_panY, P_PanY);
 
-    auto presetBtn = [this](const QString& label, const QString& tip, int idx) {
-        auto* b = new QPushButton(label, this);
-        b->setMinimumHeight(22);
-        b->setToolTip(tip);
-        connect(b, &QPushButton::clicked, this, [this, idx]() {
-            applyPreset(idx);
-            m_view->update();
-        });
-        return b;
-    };
-    auto* presets = new QGridLayout;
-    presets->setSpacing(4);
-    presets->setContentsMargins(0, 0, 0, 0);
-    presets->addWidget(presetBtn(tr("Zoom-in"), tr("Zoom-in suave"), 1), 0, 0);
-    presets->addWidget(presetBtn(tr("Zoom-out"), tr("Zoom-out suave"), 2), 0, 1);
-    presets->addWidget(presetBtn(tr("Pan →"), tr("Pan da esquerda para a direita"), 3), 0, 2);
-    presets->addWidget(presetBtn(tr("Pan ←"), tr("Pan da direita para a esquerda"), 4), 0, 3);
-    presets->addWidget(presetBtn(tr("Pan ↓"), tr("Pan de cima para baixo"), 5), 1, 0);
-    presets->addWidget(presetBtn(tr("Pan ↑"), tr("Pan de baixo para cima"), 6), 1, 1);
-    presets->addWidget(presetBtn(tr("Diag ↘"), tr("Diagonal para a direita/baixo"), 7), 1, 2);
-    presets->addWidget(presetBtn(tr("Diag ↙"), tr("Diagonal para a esquerda/baixo"), 8), 1, 3);
-    presets->addWidget(presetBtn(tr("Limpar"), tr("Sem animação (transformação fixa)"), 0), 2, 0, 1, 2);
     auto* resetBtn = new QPushButton(tr("Redefinir"), this);
     resetBtn->setMinimumHeight(22);
     resetBtn->setToolTip(tr("Zera recorte, zoom e posição do clipe"));
@@ -192,7 +170,6 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
         m_view->update();
         if (c) emitChange();
     });
-    presets->addWidget(resetBtn, 2, 2, 1, 2);
 
     auto* hint = new QLabel(tr("Dica: arraste dentro da caixa branca para mover "
                                "(pan), arraste as bordas/alças para recortar e use "
@@ -232,7 +209,7 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     ctlLay->addLayout(kfBar);
     ctlLay->addWidget(cropBox);
     ctlLay->addWidget(moveBox);
-    ctlLay->addLayout(presets);
+    ctlLay->addWidget(resetBtn);
     ctlLay->addWidget(hint);
     ctlLay->addStretch(1);
 
@@ -298,6 +275,7 @@ void PancropWidget::loadFrame() {
     if (!m_decoder.isOpen()) { m_frame = QImage(); m_framePath.clear(); return; }
     const double t = std::max(0.0, c->in + 0.05);
     m_frame = m_decoder.frameAt(t, 720);
+    m_decoder.releaseBuffers();
     m_framePath = mi->filePath;
 }
 
@@ -527,90 +505,6 @@ void PancropWidget::emitChange() {
     emit modified();
 }
 
-void PancropWidget::applyPreset(int idx) {
-    Clip* c = activeClip();
-    if (!c) return;
-    if (!m_undoPushed) { emit editStart(); m_undoPushed = true; }
-    const double T0 = 0.0;
-    const double T1 = std::max(0.05, c->dur);
-    const double rel = std::clamp(m_playhead - c->pos, 0.0, T1);
-    const double s0 = kfValue(c->kfScale, c->scale, rel);
-    const double W = m_project ? m_project->width : 1920.0;
-    const double H = m_project ? m_project->height : 1080.0;
-
-    auto kf = [](QVector<Keyframe>& v, double t, double val) {
-        Keyframe k;
-        k.time = t;
-        k.value = val;
-        v.append(k);
-    };
-
-    QVector<Keyframe> ks, kx, ky;
-    switch (idx) {
-        case 0:
-            c->kfScale.clear();
-            c->kfTx.clear();
-            c->kfTy.clear();
-            break;
-        case 1: // Zoom-in
-            kf(ks, T0, s0);
-            kf(ks, T1, s0 * 1.5);
-            break;
-        case 2: // Zoom-out
-            kf(ks, T0, std::max(1.0, s0) * 1.4);
-            kf(ks, T1, std::max(1.0, s0));
-            break;
-        case 3: // Pan L->R
-            kf(ks, T0, std::max(1.2, s0));
-            kf(ks, T1, std::max(1.2, s0));
-            kf(kx, T0, -W * 0.10);
-            kf(kx, T1, W * 0.10);
-            break;
-        case 4: // Pan R->L
-            kf(ks, T0, std::max(1.2, s0));
-            kf(ks, T1, std::max(1.2, s0));
-            kf(kx, T0, W * 0.10);
-            kf(kx, T1, -W * 0.10);
-            break;
-        case 5: // Pan T->B
-            kf(ks, T0, std::max(1.2, s0));
-            kf(ks, T1, std::max(1.2, s0));
-            kf(ky, T0, -H * 0.10);
-            kf(ky, T1, H * 0.10);
-            break;
-        case 6: // Pan B->T
-            kf(ks, T0, std::max(1.2, s0));
-            kf(ks, T1, std::max(1.2, s0));
-            kf(ky, T0, H * 0.10);
-            kf(ky, T1, -H * 0.10);
-            break;
-        case 7: // Diagonal ↘
-            kf(ks, T0, 1.25);
-            kf(ks, T1, 1.25);
-            kf(kx, T0, -W * 0.12);
-            kf(kx, T1, W * 0.12);
-            kf(ky, T0, -H * 0.12);
-            kf(ky, T1, H * 0.12);
-            break;
-        case 8: // Diagonal ↙
-            kf(ks, T0, 1.25);
-            kf(ks, T1, 1.25);
-            kf(kx, T0, W * 0.12);
-            kf(kx, T1, -W * 0.12);
-            kf(ky, T0, -H * 0.12);
-            kf(ky, T1, H * 0.12);
-            break;
-    }
-    if (idx != 0) {
-        c->kfScale = ks;
-        c->kfTx = kx;
-        c->kfTy = ky;
-    }
-    m_undoPushed = false;
-    syncFromClip();
-    emit modified();
-}
-
 void PancropWidget::computeView(double s, double tx, double ty, int w0, int h0,
                                 QRectF* cropS, QRectF* outS) const {
     if (w0 <= 0 || h0 <= 0) return;
@@ -626,13 +520,18 @@ void PancropWidget::computeView(double s, double tx, double ty, int w0, int h0,
     const double H = m_project ? m_project->height : 1080.0;
     const double k = std::max(W / kw, H / kh);
     const double ks = std::max(k * s, 1e-6);
-    const double cx = kx + kw / 2.0;
-    const double cy = ky + kh / 2.0;
     const double w = W / ks;
     const double h = H / ks;
     *cropS = QRectF(kx, ky, kw, kh);
-    *outS = QRectF(cx + kw / 2.0 - w / 2.0 - tx / ks,
-                   cy + kh / 2.0 - h / 2.0 - ty / ks,
+    // Janela de saída: a região do source que o export mostra. k é a escala
+    // "cover" do recorte no quadro do projeto (W×H); o centro sem pan é a
+    // origem do cover, kx + W/(2k) (igual ao centro do recorte quando as
+    // proporções coincidem). O zoom s encolhe a janela; o pan desloca o
+    // centro por -tx/ks, -ty/ks.
+    const double ox = kx + W / (2.0 * k);
+    const double oy = ky + H / (2.0 * k);
+    *outS = QRectF(ox - w / 2.0 - tx / ks,
+                   oy - h / 2.0 - ty / ks,
                    w, h);
 }
 
@@ -682,15 +581,17 @@ void PancropWidget::applyPan(double sx, double sy) {
     const double w = W / ks;
     const double h = H / ks;
 
+    const double ox = kx + W / (2.0 * k);
+    const double oy = ky + H / (2.0 * k);
     double cx = sx;
     double cy = sy;
-    if (w >= kw) cx = kx + kw / 2.0;
+    if (w >= kw) cx = ox;
     else cx = std::clamp(cx, kx + w / 2.0, kx + kw - w / 2.0);
-    if (h >= kh) cy = ky + kh / 2.0;
+    if (h >= kh) cy = oy;
     else cy = std::clamp(cy, ky + h / 2.0, ky + kh - h / 2.0);
 
-    const double tx = (kx + kw - cx) * ks;
-    const double ty = (ky + kh - cy) * ks;
+    const double tx = (ox - cx) * ks;
+    const double ty = (oy - cy) * ks;
 
     QSignalBlocker b6(m_panX), b7(m_panY);
     m_panX->setValue((int)std::lround(std::clamp(tx / W * 100.0, -100.0, 100.0)));
@@ -956,8 +857,8 @@ void PancropWidget::viewportWheel(QWidget* view, QWheelEvent* e) {
     const double kh = std::max(1.0, h0 * (1.0 - T - B));
     const double k = std::max(W / kw, H / kh);
     const double ks = k * sNew;
-    const double ntx = (kx + kw - center.x()) * ks;
-    const double nty = (ky + kh - center.y()) * ks;
+    const double ntx = (kx + W / (2.0 * k) - center.x()) * ks;
+    const double nty = (ky + H / (2.0 * k) - center.y()) * ks;
 
     QSignalBlocker b5(m_scale), b6(m_panX), b7(m_panY);
     m_scale->setValue((int)std::lround(sNew * 100.0));

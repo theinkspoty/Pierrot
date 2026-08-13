@@ -172,6 +172,11 @@ struct Track {
     QString name;
     bool audio = false;
     QString blendMode = QStringLiteral("normal");
+    double volume = 1.0;
+    bool muted = false;
+    bool solo = false;
+    bool locked = false;
+    int height = 0; // altura da faixa em pixels na timeline; 0 = padrão
     QVector<Clip> clips;
 };
 

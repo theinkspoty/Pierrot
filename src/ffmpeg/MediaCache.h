@@ -2,8 +2,8 @@
 
 #include <QObject>
 #include <QHash>
-#include <QSet>
 #include <QList>
+#include <QSet>
 #include <QImage>
 #include "ffmpeg/FFmpegDecoder.h"
 
@@ -36,6 +36,10 @@ public:
 
     void requestPeaks(const QString& filePath);
     void requestThumb(const QString& filePath, double seconds);
+
+    // Descarta todas as entradas e invalida os pedidos em andamento
+    // (chamado ao trocar de projeto para não reter mídia do anterior).
+    void clear();
 signals:
     void waveformReady(const QString& filePath);
     void thumbnailReady(const QString& filePath, double seconds);
@@ -51,11 +55,15 @@ private:
     CacheWorker* m_thumbsWorker = nullptr;
     QHash<QString, FFmpegAudioPeaks> m_peaks;
     QHash<QPair<QString, double>, QImage> m_thumbs;
+    // Chaves cuja decodificação falhou (imagem nula). Não re-pedimos por um
+    // tempo: tentar de novo a cada paint apenas enfileira trabalho inútil.
+    QSet<QPair<QString, double>> m_thumbsFailed;
     mutable QList<QString> m_peaksOrder;
     mutable QList<QPair<QString, double>> m_thumbsOrder;
     mutable FFmpegAudioPeaks m_emptyPeaks;
-    QSet<QString> m_peaksPending;
-    QSet<QPair<QString, double>> m_thumbsPending;
+    QHash<QString, quint64> m_peaksPending;
+    QHash<QPair<QString, double>, quint64> m_thumbsPending;
+    quint64 m_epoch = 0; // troca de projeto: descarta resultados enfileirados
 
     void touchPeaks(const QString& filePath) const;
     void touchThumb(const QPair<QString, double>& key) const;

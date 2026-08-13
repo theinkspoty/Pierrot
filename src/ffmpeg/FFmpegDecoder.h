@@ -35,6 +35,12 @@ public:
 
     QImage frameAt(double seconds, int maxWidth = 0);
 
+    // Libera os buffers de quadros decodificados (DPB do codec e o último
+    // quadro em memória) sem fechar o arquivo. Depois de uma decodificação
+    // pontual (thumbnail, pan/crop) isso devolve a RAM da resolução cheia;
+    // o decoder volta a funcionar normalmente (cada frameAt re-seek/flush).
+    void releaseBuffers();
+
     // Áudio: PCM contínuo, interleaved S16, 48 kHz estéreo.
     bool hasAudio() const;
     int audioSampleRate() const { return m_audioOutRate; }
@@ -43,12 +49,14 @@ public:
     int decodeAudio(void* outBuf, int maxBytes);
 
 private:
+    void freeAllLocked(); // chama com m_mutex E m_audioMutex segurados
+
     void* m_ctx = nullptr;
     void* m_codec = nullptr;
     int m_stream = -1;
     double m_fps = 0.0;
     QString m_source;
-    QMutex m_mutex;
+    mutable QMutex m_mutex;
 
     // Cache de conversão de cor/escala (reutilizado entre frames).
     void* m_sws = nullptr;
@@ -68,5 +76,5 @@ private:
     int m_audioStream = -1;
     int m_audioOutRate = 48000;
     int m_audioOutCh = 2;
-    QMutex m_audioMutex;
+    mutable QMutex m_audioMutex;
 };

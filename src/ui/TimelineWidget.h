@@ -15,6 +15,25 @@ class QPainter;
 class QMouseEvent;
 class QKeyEvent;
 class QContextMenuEvent;
+class QVariantAnimation;
+
+// Chave do cache de conteúdo visual dos clipes (onda/thumb + envelope + fades).
+// O epoch é bumpado em mudanças estruturais; rolagem/zoom mantêm o epoch e só
+// o tamanho muda, permitindo reaproveitar o blit entre repaints.
+struct ClipVisKey {
+    QString id;
+    int w = 0;
+    int h = 0;
+    quint64 epoch = 0;
+    bool operator==(const ClipVisKey& o) const {
+        return id == o.id && w == o.w && h == o.h && epoch == o.epoch;
+    }
+};
+
+inline uint qHash(const ClipVisKey& k, uint seed = 0) {
+    return qHash(k.id, seed) ^ (k.w * 0x9E3779B1u) ^ (k.h * 0x85EBCA77u)
+        ^ (uint(k.epoch) * 0xC2B2AE3Du);
+}
 
 class TimelineWidget : public QWidget {
     Q_OBJECT
@@ -44,6 +63,7 @@ public slots:
     void setLoopInAtPlayhead();
     void setLoopOutAtPlayhead();
     void clearLoop();
+    void addMediaAtPlayhead(const QString& mediaId);
 signals:
     void playheadChanged(double t);
     void modified();
@@ -66,15 +86,19 @@ protected:
     void contextMenuEvent(QContextMenuEvent*) override;
     void dragEnterEvent(QDragEnterEvent*) override;
     void dragMoveEvent(QDragMoveEvent*) override;
+    void dragLeaveEvent(QDragLeaveEvent*) override;
     void dropEvent(QDropEvent*) override;
 private:
-    enum DragMode { None, MoveClip, TrimLeft, TrimRight, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag };
+    enum DragMode { None, MoveClip, TrimLeft, TrimRight, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, ResizeTrack };
     struct ClipOrig { double pos = 0.0, in = 0.0, dur = 0.0; };
+    struct ClipboardEntry { Clip clip; int track = 0; bool audio = false; };
 
     double timeToX(double t) const;
     double xToTime(int x) const;
+    int trackH(int idx, bool audio) const;
     int rowY(int videoIdx, int audioIdx) const;
     bool rowFromY(int y, int& row, bool& audio) const;
+    int resizeHandleAt(const QPoint& pos, int& row, bool& audio) const;
     Clip* clipAt(int row, bool audio, double t);
     Clip* findClipById(const QString& id);
     Track* trackOf(Clip* c);
@@ -83,12 +107,18 @@ private:
     double snapTime(double t) const;
     double snapToEdges(double t, const QString& excludeId = QString()) const;
     double clampPosToTrack(Clip* c, double newPos, const QSet<QString>& moving) const;
+    bool clipTrackIndex(const QString& id, int& row, bool& audio) const;
+    bool moveClipToTrack(const QString& id, int row, bool audio);
     double fitDurationInTrack(const Track& tr, double t, double dur,
                               const QString& excludeId) const;
     bool isSelected(const QString& id) const;
     void setSelection(const QString& id);
     void toggleSelection(const QString& id);
     void invalidateScene();
+    // Redesenha sem descartar os caches de conteúdo dos clipes (rolagem,
+    // zoom e follow do playhead). Só mudanças estruturais bumpam o epoch.
+    void refreshView();
+    void animateZoomTo(double targetPps, double anchorT);
     void renderScene(QPainter& p);
     void renderOverlays(QPainter& p);
     void ensurePlayheadVisible();
@@ -109,6 +139,15 @@ private:
     void showEffectsDialog(Clip* c);
     void showTransformDialog(Clip* c);
     void showAudioEffectsDialog(Clip* c);
+    void drawTrackHeader(QPainter& p, int y, int rowH, const Track& tr);
+    int headerBtnAt(const QPoint& pos, int& row, bool& audio) const;
+    bool trackLocked(const Clip* c) const;
+    void copySelected();
+    void cutSelected();
+    void pasteClips();
+    void duplicateSelected();
+    void nudgeSelected(int dir);
+    void selectAllClips();
 
     Project* m_project = nullptr;
     double m_playhead = 0.0;
@@ -137,4 +176,26 @@ private:
     QPixmap m_staticCache;
     bool m_staticDirty = true;
     QHash<QString, ClipOrig> m_dragOrig;
+    QVector<ClipboardEntry> m_clipboard;
+    int m_resizeRow = -1;
+    bool m_resizeAudio = false;
+    int m_resizeOrigH = 0;
+    int m_dragHoverRow = -1;
+    bool m_dragHoverAudio = false;
+
+    QHash<ClipVisKey, QPixmap> m_clipPix;
+    qint64 m_clipBytes = 0;
+    quint64 m_clipEpoch = 0;
+
+    // Zoom com easing linear: mantém o pixel-âncora fixo durante a transição.
+    // No modo "retângulo" (ferramenta de zoom) anima pps e viewStart juntos
+    // para que o trecho selecionado termine preenchendo a view.
+    QVariantAnimation* m_zoomAnim = nullptr;
+    double m_zoomAnchorT = 0.0;
+    double m_zoomAnchorPixel = 0.0;
+    bool m_zoomRectMode = false;
+    double m_zoomStartPps = 0.0;
+    double m_zoomEndPps = 0.0;
+    double m_zoomStartView = 0.0;
+    double m_zoomEndView = 0.0;
 };

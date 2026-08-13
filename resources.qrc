@@ -1,5 +1,6 @@
 <RCC>
     <qresource prefix="/">
         <file alias="pierrot.jpg">imagens/pierrot.jpg</file>
+        <file alias="pierrot.ico">imagens/Pierrot.ico</file>
     </qresource>
 </RCC>

@@ -169,9 +169,53 @@ src/
 
 ## Roadmap
 
+Marcado com ✅ o que já foi implementado.
+
+### Edição
+- ✅ Keyframes/curvas de volume, opacidade, transform, crop e efeitos ao longo
+  do tempo (editor de curvas com interpolação linear, suave, segurar e bezier,
+  com snap ao frame).
+- ✅ Texto/título sobreposto por clipe.
+- Transições entre clipes (dissolve, wipe) com duração ajustável.
+- Imagens estáticas como clipes na timeline (PNG/JPEG, com trim e pan/crop).
+- Seleção múltipla de clipes (editar, mover, duplicar, excluir em lote).
+- **Snap** de clipes a bordas de outros clipes, ao playhead e a marcadores.
+- **Ripple/roll/tipos de trim** mais elaborados (empurrar clipes adjacentes).
+- **Ripple delete** por padrão e "fechar espaço" com atalho dedicado.
+- Clipes de texto/áudio **renderizados como placeholder na timeline** (mostrar o
+  texto e o nome dos áudios no clipe).
+
+### Preview / reprodução
+- ✅ Reprodução em frames do projeto com timecode `HH:MM:SS:FF`.
+- **Sincronização áudio/vídeo** pelo relógio do decoder (hoje o playhead usa
+  relógio de parede; em reproduções longas pode dessincronizar alguns ms).
+- **Decodificação por hardware** (VAAPI/NVDEC) para preview suave de 4K.
+- **Preview "alta qualidade"** (full res / 100% verdadeiro ao alternar pausa).
+- **VU meters** de áudio no monitor.
+- Marcadores/safe areas (action/title safe) no monitor.
+
+### Exportação
+- ✅ Exportar MP4 (H.264), MKV e WebM (VP9) com blend de faixas, efeitos,
+  chroma key, fades, velocidade e mix de áudio.
+- **Exportar apenas a região de loop** ou o clipe selecionado.
+- **Cancelamento** do export a qualquer momento (hoje o processo roda até o fim).
+- **Encode em segundo plano** (continua editando enquanto exporta).
+- Perfis de exportação lembrados por projeto.
+- Exportar **quadro único** (imagem PNG) no playhead.
+
+### Engine / estabilidade
+- **Sync de clips por grupo** (editar vídeo+áudio acoplados como uma unidade).
+- **Re-vinculação de mídia ausente** ao abrir projeto (procurar arquivo movido).
+- **Transcode/Proxy** automático para mídia pesada (4K/HEVC) e troca
+  transparente na timeline.
+- **Undo mais granular** (passo a passo das operações, em vez de snapshots).
+- **Importar pasta inteira** para o media pool, com subpastas.
+- Suporte a **projetos 60/120 fps** (hoje o preview e os keyframes já respeitam
+  o fps do projeto; validar exportação e timestamps).
 - Suporte a plugins **OFX (OpenFX)** para efeitos de terceiros.
-- Transições entre clipes.
-- Curvas/keyframes de volume, opacidade e efeitos ao longo do tempo.
-- Imagens estáticas e texto como clipes na timeline.
-- Seleção múltipla de clipes (editar/duplicar em lote).
-- Exportação por segmentos para timelines longas.
+
+### Qualidade de vida
+- **Auto-save** com versões/backup dos projetos.
+- **Templates de projeto** (4K, Full HD, vertical 9:16, etc.) na janela inicial.
+- **Atalhos configuráveis**.
+- **Tema escuro/claro** e escolha de idioma.
