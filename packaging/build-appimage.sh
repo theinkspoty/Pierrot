@@ -2,9 +2,10 @@
 #
 # Gera um AppImage do Pierrot usando linuxdeploy.
 #
-# Os plugins do Qt (platforms/xcb+wayland, imageformats, iconengines) são
-# copiados manualmente para o AppDir (a partir do qmake do sistema) e suas
-# dependências são empacotadas com --deploy-deps-only. Isso evita depender do
+# Os plugins do Qt (platforms/xcb+wayland, imageformats, iconengines e o
+# multimídia — obrigatório para o áudio do preview) são copiados manualmente
+# para o AppDir (a partir do qmake do sistema) e suas dependências são
+# empacotadas com --deploy-deps-only. Isso evita depender do
 # linuxdeploy-plugin-qt, que pode falhar silenciosamente com Qt6 recentes.
 #
 # Uso:
@@ -84,7 +85,11 @@ cmake --install "$BUILD_DIR" --prefix "$APPDIR/usr"
 
 echo "==> Copiando plugins do Qt para o AppDir..."
 mkdir -p "$APPDIR/usr/plugins"
-for d in platforms imageformats iconengines; do
+# Além de platforms/imageformats/iconengines, copiamos também o multimídia
+# (Qt6: ffmpegmediaplugin + backends de áudio em multimedia/audio; Qt5:
+# audio/mediaservice). Sem ele o QAudioSink/QAudioOutput do preview não
+# encontra backend de saída e o áudio fica mudo dentro do AppImage.
+for d in platforms imageformats iconengines multimedia audio mediaservice; do
     if [ -d "$QT_PLUGIN_DIR/$d" ]; then
         cp -a "$QT_PLUGIN_DIR/$d" "$APPDIR/usr/plugins/"
     fi
@@ -95,11 +100,17 @@ Plugins = ../plugins
 EOF
 
 LD_ARGS=(--verbosity=0 --appdir "$APPDIR" --output appimage)
-for d in platforms imageformats iconengines; do
+for d in platforms imageformats iconengines multimedia audio mediaservice; do
     if [ -d "$APPDIR/usr/plugins/$d" ]; then
         LD_ARGS+=(--deploy-deps-only "$APPDIR/usr/plugins/$d")
     fi
 done
+# Qt6: os backends de áudio (libqt_pulse/pipewire/alsa_audio_plugin.so) ficam
+# em multimedia/audio e precisam de libpulse/pipewire/asound — empacotar as
+# dependências deles garante que o sink de fato produza som.
+if [ -d "$APPDIR/usr/plugins/multimedia/audio" ]; then
+    LD_ARGS+=(--deploy-deps-only "$APPDIR/usr/plugins/multimedia/audio")
+fi
 
 if [ "$BUNDLE_FFMPEG" = "1" ]; then
     FFMPEG_BIN="$(command -v ffmpeg || true)"
