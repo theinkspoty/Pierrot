@@ -169,13 +169,13 @@ src/
 
 ## Roadmap
 
-Marcado com ✅ o que já foi implementado.
+Marcado com 💀 o que já foi implementado.
 
 ### Edição
-- ✅ Keyframes/curvas de volume, opacidade, transform, crop e efeitos ao longo
+- 💀 Keyframes/curvas de volume, opacidade, transform, crop e efeitos ao longo
   do tempo (editor de curvas com interpolação linear, suave, segurar e bezier,
   com snap ao frame).
-- ✅ Texto/título sobreposto por clipe.
+- 💀 Texto/título sobreposto por clipe.
 - Transições entre clipes (dissolve, wipe) com duração ajustável.
 - Imagens estáticas como clipes na timeline (PNG/JPEG, com trim e pan/crop).
 - Seleção múltipla de clipes (editar, mover, duplicar, excluir em lote).
@@ -186,7 +186,7 @@ Marcado com ✅ o que já foi implementado.
   texto e o nome dos áudios no clipe).
 
 ### Preview / reprodução
-- ✅ Reprodução em frames do projeto com timecode `HH:MM:SS:FF`.
+- 💀 Reprodução em frames do projeto com timecode `HH:MM:SS:FF`.
 - **Sincronização áudio/vídeo** pelo relógio do decoder (hoje o playhead usa
   relógio de parede; em reproduções longas pode dessincronizar alguns ms).
 - **Decodificação por hardware** (VAAPI/NVDEC) para preview suave de 4K.
@@ -195,7 +195,7 @@ Marcado com ✅ o que já foi implementado.
 - Marcadores/safe areas (action/title safe) no monitor.
 
 ### Exportação
-- ✅ Exportar MP4 (H.264), MKV e WebM (VP9) com blend de faixas, efeitos,
+- 💀 Exportar MP4 (H.264), MKV e WebM (VP9) com blend de faixas, efeitos,
   chroma key, fades, velocidade e mix de áudio.
 - **Exportar apenas a região de loop** ou o clipe selecionado.
 - **Cancelamento** do export a qualquer momento (hoje o processo roda até o fim).
