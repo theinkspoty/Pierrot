@@ -29,10 +29,10 @@
 
 namespace {
 
-constexpr int kMarginL = 56;
-constexpr int kMarginR = 16;
-constexpr int kMarginT = 18;
-constexpr int kMarginB = 22;
+constexpr int kMarginL = 10;
+constexpr int kMarginR = 8;
+constexpr int kMarginT = 5;
+constexpr int kMarginB = 14;
 
 double niceStep(double raw) {
     if (raw <= 0) return 1.0;
@@ -78,7 +78,7 @@ QString interpName(int interp) {
 // --------------------------------------------------------------------------
 
 GraphCanvas::GraphCanvas(QWidget* parent) : QWidget(parent) {
-    setMinimumHeight(140);
+    setMinimumHeight(52);
     setFocusPolicy(Qt::ClickFocus);
     setMouseTracking(true);
 }
@@ -254,7 +254,7 @@ int GraphCanvas::addKeyframe(double time, double value) {
     Keyframe nk;
     nk.time = time;
     nk.value = value;
-    nk.interp = KfSmooth;
+    nk.interp = KfLinear;
     K.append(nk);
     sortKeys();
     fitValueRange();
@@ -410,108 +410,69 @@ void GraphCanvas::emitKeyInfo(int idx) {
 
 void GraphCanvas::paintEvent(QPaintEvent*) {
     QPainter p(this);
-    p.fillRect(rect(), QColor(28, 28, 32));
+    p.fillRect(rect(), QColor(26, 26, 29));
     const QRect r = plotRect();
     if (r.width() <= 0 || r.height() <= 0) return;
 
-    // Grade de valores.
-    p.setPen(QColor(50, 50, 58));
-    const double vStep = niceStep((m_hi - m_lo) / 4.0);
-    for (double v = std::ceil(m_lo / vStep) * vStep; v <= m_hi + 1e-9; v += vStep) {
-        const int y = vToY(v);
-        p.drawLine(r.left(), y, r.right(), y);
-        p.setPen(QColor(150, 150, 160));
-        p.drawText(QRect(0, y - 8, kMarginL - 6, 16),
-                   Qt::AlignRight | Qt::AlignVCenter, fmtValue(v));
-        p.setPen(QColor(50, 50, 58));
-    }
-    // Linha do zero mais visível.
-    if (m_lo < 0.0 && m_hi > 0.0) {
-        p.setPen(QColor(72, 72, 84));
-        p.drawLine(r.left(), vToY(0.0), r.right(), vToY(0.0));
-    }
-    // Grade de tempo (respeita a janela visível).
     const double dur = m_clip ? std::max(0.05, m_clip->dur) : 1.0;
     const double t0 = timeStart();
     const double range = timeRange();
-    const double tStep = niceStep(range / 6.0);
-    for (double t = std::ceil(t0 / tStep) * tStep; t <= t0 + range + 1e-9; t += tStep) {
-        const int x = tToX(t);
-        p.drawLine(x, r.top(), x, r.bottom());
-        p.setPen(QColor(150, 150, 160));
-        const QString tlab = (tStep < 1.0)
-            ? fmtTime(t)
-            : QStringLiteral("%1s").arg(QString::number(t, 'g', 3));
-        p.drawText(QRect(x - 24, r.bottom() + 4, 48, 16),
-                   Qt::AlignHCenter | Qt::AlignVCenter, tlab);
-        p.setPen(QColor(50, 50, 58));
-    }
+
+    // Fundo sutil indicando o clipe selecionado (mini-timeline).
+    p.fillRect(r, QColor(38, 42, 50));
+
+    // Linha central que representa o clipe selecionado (estilo mini-timeline).
+    p.setPen(QPen(QColor(70, 70, 80), 1));
+    p.drawLine(r.left(), r.center().y(), r.right(), r.center().y());
+
+    // Grade de tempo bem leve.
+    p.setPen(QColor(42, 42, 48));
+    const double tStep = niceStep(range / 8.0);
+    for (double t = std::ceil(t0 / tStep) * tStep; t <= t0 + range + 1e-9; t += tStep)
+        p.drawLine(tToX(t), r.top(), tToX(t), r.bottom());
 
     const QVector<Keyframe>* ks = keys();
     if (!ks) return;
 
-    // Curva (sem keyframes: linha base pontilhada).
+    // Curva da propriedade, com preenchimento suave abaixo dela.
     QPainterPath path;
-    bool havePath = false;
+    QPainterPath fillPath;
     const int steps = std::max(2, r.width() / 2);
     for (int i = 0; i <= steps; ++i) {
         const double t = dur * i / steps;
         const double v = kfValue(*ks, baseValue(), t);
         const QPointF pt(tToX(t), vToY(v));
-        if (!havePath) { path.moveTo(pt); havePath = true; }
-        else path.lineTo(pt);
+        if (i == 0) { path.moveTo(pt); fillPath.moveTo(pt); }
+        else { path.lineTo(pt); fillPath.lineTo(pt); }
     }
+    p.setRenderHint(QPainter::Antialiasing, true);
     if (ks->isEmpty()) {
         p.setPen(QPen(QColor(110, 110, 120), 1, Qt::DashLine));
         p.drawLine(r.left(), vToY(baseValue()), r.right(), vToY(baseValue()));
     } else {
-        p.setPen(QPen(QColor(90, 180, 255), 2));
-        p.setRenderHint(QPainter::Antialiasing, true);
+        fillPath.lineTo(r.right(), r.center().y());
+        fillPath.lineTo(r.left(), r.center().y());
+        fillPath.closeSubpath();
+        p.fillPath(fillPath, QColor(90, 180, 255, 28));
+        p.setPen(QPen(QColor(110, 200, 255), 1.6));
         p.drawPath(path);
-        p.setRenderHint(QPainter::Antialiasing, false);
     }
+    p.setRenderHint(QPainter::Antialiasing, false);
 
-    // Handles ("tracinhos") quando há exatamente um keyframe selecionado.
-    const bool singleSel = (m_selKeys.size() == 1);
-    const int handleKey = singleSel ? m_selKeys.first() : -1;
-    if (handleKey >= 0 && handleKey < ks->size()) {
-        const Keyframe& k = (*ks)[handleKey];
-        if (k.interp == KfSmooth || k.interp == KfBezier) {
-            if (handleKey + 1 < ks->size()) {
-                const double span = (*ks)[handleKey + 1].time - k.time;
-                if (span > 1e-9) {
-                    double cx = k.hx;
-                    double cy = k.hy;
-                    if (k.interp == KfSmooth) {
-                        // Tangente Catmull-Rom (decorativa).
-                        const Keyframe& a = k;
-                        const Keyframe& b = (*ks)[handleKey + 1];
-                        const Keyframe& p0 = (handleKey > 0) ? (*ks)[handleKey - 1] : a;
-                        const double m0 = (b.value - p0.value) / (b.time - p0.time);
-                        cx = span * 0.35;
-                        cy = m0 * span * 0.35;
-                    }
-                    const QPointF base(tToX(k.time), vToY(k.value));
-                    const QPointF hp(tToX(k.time + cx), vToY(k.value + cy));
-                    p.setPen(QPen(QColor(255, 200, 90), 1.5, Qt::DashLine));
-                    p.drawLine(base, hp);
-                    p.setBrush(QColor(255, 200, 90));
-                    p.setPen(Qt::NoPen);
-                    p.drawEllipse(hp, 4, 4);
-                }
-            }
-        }
-    }
-
-    // Keyframes (losangos; selecionados em verde).
+    // Keyframes: "caule" até a linha central + losango no valor. O keyframe
+    // que coincide com o playhead fica laranja (estilo do pancrop).
+    const double relPh = m_clip ? std::clamp(m_playhead - m_clip->pos, 0.0, m_clip->dur) : -1.0;
     for (int i = 0; i < ks->size(); ++i) {
         const Keyframe& k = (*ks)[i];
         const QPointF kp(tToX(k.time), vToY(k.value));
         const bool sel = m_selKeys.contains(i);
-        const QColor fill = sel ? QColor(90, 200, 120) : QColor(210, 210, 220);
-        const int size = (sel && i == m_dragKey) ? 7 : 6;
+        const bool active = relPh >= 0.0 && std::fabs(k.time - relPh) < 1e-6;
+        const QColor fill = sel ? QColor(120, 230, 150)
+                                : active ? QColor(255, 179, 64)
+                                         : QColor(200, 205, 215);
+        p.setPen(QPen(QColor(255, 255, 255), 1));
         p.setBrush(fill);
-        p.setPen(QPen(QColor(255, 255, 255), 1.2));
+        const int size = (sel && i == m_dragKey) ? 6 : 5;
         const QPolygonF dia = QPolygonF() << QPointF(kp.x(), kp.y() - size)
                                           << QPointF(kp.x() + size, kp.y())
                                           << QPointF(kp.x(), kp.y() + size)
@@ -519,8 +480,18 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
         p.drawPolygon(dia);
     }
 
-    // Leitura exata do keyframe sob o mouse ou sendo arrastado (tempo, frame
-    // e valor), para saber com precisão onde cada keyframe está.
+    // Marcador do valor atual da propriedade no playhead (ponto na curva).
+    if (m_clip && relPh >= 0.0 && relPh >= t0 - 1e-9 && relPh <= t0 + range + 1e-9) {
+        const double vCur = kfValue(*ks, baseValue(), relPh);
+        const QPointF cph(tToX(relPh), vToY(vCur));
+        p.setPen(QPen(QColor(255, 80, 80), 1.5));
+        p.setBrush(QColor(255, 80, 80));
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.drawEllipse(cph, 3, 3);
+        p.setRenderHint(QPainter::Antialiasing, false);
+    }
+
+    // Leitura exata do keyframe sob o mouse ou sendo arrastado.
     const int infoKey = (m_dragKey >= 0) ? m_dragKey : m_hoverKey;
     if (infoKey >= 0 && infoKey < ks->size()) {
         const Keyframe& k = (*ks)[infoKey];
@@ -530,11 +501,11 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
                                 .arg((int)std::lround(k.time * m_fps))
                                 .arg(fmtValue(k.value))
                                 .arg(interpName(k.interp));
-        QRect box(kp.x() + 12, kp.y() - 34, 168, 36);
+        QRect box(kp.x() + 12, kp.y() - 30, 168, 34);
         if (box.right() > width() - 4)
             box.moveLeft(kp.x() - 12 - box.width());
         if (box.top() < 4)
-            box.moveTop(kp.y() + 14);
+            box.moveTop(kp.y() + 12);
         p.setPen(QPen(QColor(255, 200, 90), 1));
         p.setBrush(QColor(40, 40, 46, 232));
         p.drawRect(box);
@@ -557,7 +528,7 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
         const double rel = std::clamp(m_playhead - m_clip->pos, 0.0, m_clip->dur);
         if (rel >= timeStart() - 1e-9 && rel <= timeStart() + timeRange() + 1e-9) {
             const int x = tToX(rel);
-            p.setPen(QPen(QColor(0, 160, 255), 1));
+            p.setPen(QPen(QColor(255, 80, 80), 1));
             p.drawLine(x, r.top(), x, r.bottom());
         }
     }
@@ -742,7 +713,7 @@ void GraphCanvas::mouseDoubleClickEvent(QMouseEvent* e) {
     }
 
     const double t = m_snap ? snapTime(xToT(e->pos().x())) : xToT(e->pos().x());
-    const double v = kfValue(K, baseValue(), t);
+    const double v = yToV(e->pos().y());
     if (addKeyframe(t, v) < 0) {
         emit statusMessage(tr("Já existe um keyframe nesse tempo."));
         return;
@@ -889,7 +860,7 @@ void GraphCanvas::contextMenuEvent(QContextMenuEvent* e) {
         if (!act) return;
         if (act == addHere) {
             const double t = m_snap ? snapTime(xToT(e->pos().x())) : xToT(e->pos().x());
-            const double v = kfValue(K, baseValue(), t);
+            const double v = yToV(e->pos().y());
             if (addKeyframe(t, v) < 0) {
                 emit statusMessage(tr("Já existe um keyframe nesse tempo."));
                 return;
@@ -1061,7 +1032,7 @@ GraphEditorWidget::GraphEditorWidget(QWidget* parent) : QWidget(parent) {
 // Tamanho padrão do painel: evita que o dock abra com metade da tela na
 // primeira execução (sem layout salvo ainda).
 QSize GraphEditorWidget::sizeHint() const {
-    return QSize(360, 220);
+    return QSize(300, 104);
 }
 
 void GraphEditorWidget::setProject(Project* p) {

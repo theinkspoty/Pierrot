@@ -11,6 +11,7 @@
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>
+#include <QList>
 #include <QPushButton>
 #include <QProgressBar>
 #include <QLineEdit>
@@ -369,12 +370,6 @@ MediaPoolWidget::MediaPoolWidget(QWidget* parent) : QWidget(parent) {
         if (it) emit mediaToTimeline(it->data(Qt::UserRole).toString());
     });
 
-    auto* header = new QLabel(tr("Central de Mídias"), this);
-    QFont hf = header->font();
-    hf.setBold(true);
-    hf.setPointSize(hf.pointSize() + 1);
-    header->setFont(hf);
-
     m_search = new QLineEdit(this);
     m_search->setPlaceholderText(tr("Filtrar mídias…"));
     m_search->setClearButtonEnabled(true);
@@ -402,7 +397,6 @@ MediaPoolWidget::MediaPoolWidget(QWidget* parent) : QWidget(parent) {
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(6, 6, 6, 6);
     lay->setSpacing(4);
-    lay->addWidget(header);
     lay->addLayout(bar);
     lay->addWidget(m_search);
     lay->addWidget(m_importBar);
@@ -423,6 +417,9 @@ void MediaPoolWidget::refresh() {
     if (!m_project) return;
     if (m_audioIcon.isNull()) m_audioIcon = makeAudioIconPixmap().toImage();
     if (m_videoPlaceholder.isNull()) m_videoPlaceholder = makePlaceholderPixmap().toImage();
+    // Agrupa os pedidos de thumb por arquivo: um único lote por caminho em vez
+    // de uma decodificação isolada por item (bem mais rápido ao importar N vídeos).
+    QHash<QString, QList<double>> wantByFile;
     for (const MediaItem& m : m_project->media) {
         auto* item = new QListWidgetItem();
         QString tags;
@@ -438,23 +435,22 @@ void MediaPoolWidget::refresh() {
                 item->setIcon(QIcon(QPixmap::fromImage(m_thumbs.value(m.id))));
             } else {
                 item->setIcon(QIcon(QPixmap::fromImage(m_videoPlaceholder)));
-                requestPoolThumb(m.filePath, poolThumbTime(m.duration), m.id);
+                const double t = poolThumbTime(m.duration);
+                MediaCache& cache = MediaCache::instance();
+                const QImage img = cache.thumb(m.filePath, t);
+                if (!img.isNull()) {
+                    setThumb(m.id, img);
+                } else {
+                    wantByFile[m.filePath].append(t);
+                }
             }
         } else {
             item->setIcon(QIcon(QPixmap::fromImage(m_audioIcon)));
         }
         m_list->addItem(item);
     }
-}
-
-void MediaPoolWidget::requestPoolThumb(const QString& path, double seconds, const QString& mediaId) {
-    MediaCache& cache = MediaCache::instance();
-    const QImage img = cache.thumb(path, seconds);
-    if (!img.isNull()) {
-        setThumb(mediaId, img);
-        return;
-    }
-    cache.requestThumb(path, seconds);
+    for (auto it = wantByFile.constBegin(); it != wantByFile.constEnd(); ++it)
+        MediaCache::instance().requestThumbs(it.key(), it.value());
 }
 
 void MediaPoolWidget::onThumbReady(const QString& filePath, double seconds) {
@@ -512,6 +508,7 @@ void MediaPoolWidget::addFiles() {
             m.height = info.height;
             m.hasVideo = info.hasVideo;
             m.hasAudio = info.hasAudio;
+            m.audioStreams = info.audioStreams;
             m_project->media.append(m);
             imported.append(r.path);
             ++added;

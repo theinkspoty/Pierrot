@@ -16,6 +16,7 @@ struct FFmpegMediaInfo {
     int height = 0;
     bool hasVideo = false;
     bool hasAudio = false;
+    int audioStreams = 0;
 };
 
 struct FFmpegAudioPeaks {

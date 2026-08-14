@@ -73,6 +73,10 @@ private:
     void addRecentProject(const QString& path);
     bool writeProjectFile(const QString& path);
 
+    // Evita que restoreSettings() dispare saveSettings() via setChecked() do
+    // cadeado antes da janela ser montada, sobrescrevendo o layout salvo.
+    bool m_restoringSettings = false;
+
     Project m_project;
     // Snapshots de undo em JSON comprimido: guardar 60 cópias em memória do
     // Project inteiro faria a RAM explodir em projetos com muitos cortes.

@@ -73,6 +73,7 @@ FFmpegMediaInfo FFmpegDecoder::probe(const QString& filePath) {
                 info.duration = st->duration * av_q2d(st->time_base);
         } else if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
             info.hasAudio = true;
+            ++info.audioStreams;
         }
     }
     avformat_close_input(&fmt);

@@ -19,6 +19,11 @@ struct VideoClipRef {
     QString blend;
 };
 
+struct AudioClipRef {
+    const Clip* c;
+    double trackVol = 1.0;
+};
+
 QString hexColor(const QColor& col) {
     return QStringLiteral("0x%1%2%3")
         .arg(col.red(), 2, 16, QLatin1Char('0'))
@@ -223,14 +228,23 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     std::stable_sort(vclips.begin(), vclips.end(),
                      [](const VideoClipRef& a, const VideoClipRef& b) { return a.c->pos < b.c->pos; });
 
-    QVector<const Clip*> aclips;
-    for (const Track& t : project.audioTracks)
+    bool anySolo = false;
+    for (const Track& t : project.videoTracks)
+        if (t.solo) { anySolo = true; break; }
+    if (!anySolo)
+        for (const Track& t : project.audioTracks)
+            if (t.solo) { anySolo = true; break; }
+
+    QVector<AudioClipRef> aclips;
+    for (const Track& t : project.audioTracks) {
+        if (t.muted || (anySolo && !t.solo)) continue;
         for (const Clip& c : t.clips) {
             const MediaItem* m = project.findMedia(c.mediaId);
-            if (m && m->hasAudio) aclips.push_back(&c);
+            if (m && m->hasAudio) aclips.push_back({&c, t.volume});
         }
+    }
     std::sort(aclips.begin(), aclips.end(),
-              [](const Clip* a, const Clip* b) { return a->pos < b->pos; });
+              [](const AudioClipRef& a, const AudioClipRef& b) { return a.c->pos < b.c->pos; });
 
     args << "-y" << "-hide_banner" << "-loglevel" << "info";
 
@@ -241,7 +255,8 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     for (const VideoClipRef& v : vclips)
         args << "-ss" << num(v.c->in) << "-t" << num(v.c->dur * v.c->speed) << "-i" << v.m->filePath;
 
-    for (const Clip* c : aclips) {
+    for (const AudioClipRef& ar : aclips) {
+        const Clip* c = ar.c;
         const MediaItem* m = project.findMedia(c->mediaId);
         args << "-ss" << num(c->in) << "-t" << num(c->dur * c->speed) << "-i" << m->filePath;
     }
@@ -395,18 +410,38 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     if (!aclips.isEmpty()) {
         QStringList albl;
         int n = 0;
-        for (const Clip* c : aclips) {
+        for (const AudioClipRef& ar : aclips) {
             ++n;
+            const Clip* c = ar.c;
             const int inIdx = 1 + (int)vclips.size() + (n - 1);
+            const MediaItem* m = project.findMedia(c->mediaId);
             const QString lbl = QStringLiteral("a%1").arg(n);
             const double dur = c->dur;
             const double speed = std::max(0.1, c->speed);
             const double fadeIn = std::min(std::max(c->fadeIn, 0.0), dur);
             const double fadeOut = std::min(std::max(c->fadeOut, 0.0), dur - fadeIn);
             const qint64 delayMs = (qint64)llround(c->pos * 1000.0);
-            fc << QStringLiteral(
-                "[%1:a]atrim=start=%2:duration=%3,asetpts=PTS-STARTPTS")
-                       .arg(inIdx).arg(num(c->in)).arg(num(dur * speed));
+
+            QString src = QStringLiteral("[%1:a]").arg(inIdx);
+            if (m && m->audioStreams > 1) {
+                // Mixa todas as faixas de áudio do arquivo (mkv/mp4/mov multifaixa).
+                QStringList mixIn;
+                const QString mixLbl = QStringLiteral("amix%1").arg(n);
+                for (int k = 0; k < m->audioStreams; ++k) {
+                    const QString s = QStringLiteral("s%1_%2").arg(n).arg(k);
+                    fc << QStringLiteral("[%1:a:%2]aformat=sample_fmts=fltp:"
+                                        "channel_layouts=stereo,aresample=%3[%4]")
+                           .arg(inIdx).arg(k).arg((qint64)project.audioRate).arg(s);
+                    mixIn << QStringLiteral("[%1]").arg(s);
+                }
+                fc << mixIn.join(QString())
+                    + QStringLiteral("amix=inputs=%1:duration=first:dropout_transition=0[%2]")
+                          .arg(mixIn.size()).arg(mixLbl);
+                src = QStringLiteral("[%1]").arg(mixLbl);
+            }
+
+            fc << src + QStringLiteral("atrim=start=%1:duration=%2,asetpts=PTS-STARTPTS")
+                             .arg(num(c->in)).arg(num(dur * speed));
             if (std::fabs(speed - 1.0) > 1e-4)
                 fc.last().append(QLatin1Char(',') + atempoChain(speed));
             if (fadeIn > 0)
@@ -415,13 +450,17 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                 fc.last().append(QStringLiteral(",afade=t=out:st=%1:d=%2")
                                      .arg(num(dur - fadeOut)).arg(num(fadeOut)));
             fc.last().append(QStringLiteral(",adelay=%1:all=1").arg(delayMs));
-            if (c->kfVolume.isEmpty()) {
-                if (std::fabs(c->volume - 1.0) > 1e-4)
-                    fc.last().append(QStringLiteral(",volume=%1")
-                                         .arg(num(std::clamp(c->volume, 0.0, 3.0))));
-            } else {
-                fc.last().append(QStringLiteral(",volume='%1'")
-                                     .arg(kfExpr(c->kfVolume, c->volume, c->pos)));
+            // Lógica Vegas: volume efetivo = envelope do clipe (relativo, base 1.0)
+            // × volume do clipe × volume da faixa, limitado a 200% como no preview.
+            // O preview aplica o mesmo produto (PreviewWidget::buildMixSources).
+            const double staticGain =
+                std::clamp(c->volume * ar.trackVol, 0.0, 2.0);
+            if (!c->kfVolume.isEmpty()) {
+                fc.last().append(QStringLiteral(",volume='clip(%1*%2,0,2)'")
+                                     .arg(kfExpr(c->kfVolume, 1.0, c->pos))
+                                     .arg(num(staticGain)));
+            } else if (std::fabs(staticGain - 1.0) > 1e-4) {
+                fc.last().append(QStringLiteral(",volume=%1").arg(num(staticGain)));
             }
             if (c->denoise)
                 fc.last().append(QStringLiteral(",afftdn=nr=%1")

@@ -13,6 +13,7 @@
 
 #include <QPainter>
 #include <QPainterPath>
+#include <QList>
 #include <QApplication>
 #include <QMouseEvent>
 #include <QTimer>
@@ -358,7 +359,7 @@ bool TimelineWidget::rowFromY(int y, int& row, bool& audio) const {
     return false;
 }
 
-Clip* TimelineWidget::clipAt(int row, bool audio, double t) {
+Clip* TimelineWidget::clipAt(int row, bool audio, double t) const {
     if (!m_project) return nullptr;
     if (audio) {
         if (row < 0 || row >= (int)m_project->audioTracks.size()) return nullptr;
@@ -619,9 +620,25 @@ void TimelineWidget::renderScene(QPainter& p) {
             const Track& tr = m_project->audioTracks[i];
             const int ly = volLineY(i, true, tr);
             const bool active = m_dragMode == TrackVol && m_volRow == i;
-            p.setPen(QPen(active ? QColor(255, 220, 90) : QColor(140, 200, 160),
+            p.setPen(QPen(active ? QColor(255, 220, 90) : QColor(255, 255, 255),
                           active ? 2 : 1, Qt::SolidLine));
             p.drawLine(H, ly, width(), ly);
+        }
+        // Linha de volume individual de cada clipe de áudio (arrastar ajusta
+        // só aquele clipe, sem mexer no resto da faixa).
+        for (int i = 0; i < (int)m_project->audioTracks.size(); ++i) {
+            const Track& tr = m_project->audioTracks[i];
+            const int y = rowY(-1, i);
+            for (const Clip& c : tr.clips) {
+                const int cx = (int)(H + (c.pos - m_viewStart) * m_pps);
+                const int cw = std::max(2, (int)(c.dur * m_pps));
+                if (cx + cw < H || cx > width()) continue;
+                const int ly = clipVolLineY(i, c);
+                const bool active = m_dragMode == ClipVol && m_volClip == c.id;
+                p.setPen(QPen(active ? QColor(255, 220, 90) : QColor(255, 255, 255, 170),
+                              active ? 2 : 1, Qt::SolidLine));
+                p.drawLine(cx + 1, ly, cx + cw - 1, ly);
+            }
         }
         p.restore();
     }
@@ -856,26 +873,29 @@ void TimelineWidget::drawVideoThumbs(QPainter& p, const QRect& r, const Clip& c,
             QRect(r.right() - sw + 1, r.top(), sw, r.height()),
         };
         const double ts[2] = { c.in, std::max(c.in, c.in + c.dur - 0.01) };
+        QList<double> want;
         for (int i = 0; i < 2; ++i) {
             if (i == 1 && r.width() < sw * 2 + 2) break; // clipe estreito
             const double k = std::round(ts[i] * 10.0) / 10.0;
             QImage img = cache.thumb(path, k);
             if (img.isNull()) {
-                cache.requestThumb(path, k);
+                want.append(k);
                 p.fillRect(slices[i].adjusted(1, 1, -1, -1), QColor(0, 0, 0, 70));
                 continue;
             }
             drawCover(slices[i], img);
         }
+        if (!want.isEmpty()) cache.requestThumbs(path, want);
         p.restore();
         return;
     }
 
     // Modo padrão: fatias contínuas preenchendo o corpo do clipe.
     const int sliceW = 96;
-    const int maxSlices = 32;
+    const int maxSlices = 20;
     const int n = std::clamp(std::max(1, r.width() / sliceW), 1, maxSlices);
 
+    QList<double> want;
     for (int i = 0; i < n; ++i) {
         const int sliceLeft = r.left() + i * r.width() / n;
         const int sliceRight = r.left() + (i + 1) * r.width() / n;
@@ -886,13 +906,14 @@ void TimelineWidget::drawVideoThumbs(QPainter& p, const QRect& r, const Clip& c,
         const double k = std::round(t * 10.0) / 10.0;
         QImage img = cache.thumb(path, k);
         if (img.isNull()) {
-            cache.requestThumb(path, k);
+            want.append(k);
             p.fillRect(sliceRect.adjusted(1, 1, -1, -1), QColor(0, 0, 0, 70));
             continue;
         }
 
         drawCover(sliceRect, img);
     }
+    if (!want.isEmpty()) cache.requestThumbs(path, want);
     p.restore();
 }
 
@@ -1125,17 +1146,42 @@ int TimelineWidget::volLineY(int row, bool audio, const Track& tr) const {
     return y + rowH - pad - (int)std::lround(frac * (rowH - pad * 2.0));
 }
 
-// Se o ponto está sobre a régua de volume de uma faixa de áudio, retorna o
-// índice da faixa (dentro de uma tolerância vertical). -1 se fora.
+// Linha de volume individual de um clipe de áudio (mesma escala da faixa).
+int TimelineWidget::clipVolLineY(int row, const Clip& c) const {
+    const int rowH = trackH(row, true);
+    const int y = rowY(-1, row);
+    const int pad = 6;
+    const double frac = std::clamp(c.volume, 0.0, 2.0) / 2.0;
+    return y + rowH - pad - (int)std::lround(frac * (rowH - pad * 2.0));
+}
+
+// Se o ponto está sobre a linha de volume de um clipe de áudio, retorna o
+// clipe (dentro de uma tolerância vertical e do intervalo horizontal dele).
+Clip* TimelineWidget::clipVolAt(const QPoint& pos, int& row) const {
+    if (!m_project || pos.x() < kHeaderW || pos.y() < kRulerH) return nullptr;
+    int r = -1;
+    bool audio = false;
+    if (!rowFromY(pos.y(), r, audio) || !audio) return nullptr;
+    const double t = xToTime(pos.x());
+    Clip* c = clipAt(r, true, t);
+    if (!c) return nullptr;
+    const int ly = clipVolLineY(r, *c);
+    if (std::abs(pos.y() - ly) <= 4) { row = r; return c; }
+    return nullptr;
+}
+
+// Se o ponto está sobre uma faixa de áudio (na área de conteúdo, fora de um
+// clipe), retorna o índice da faixa para o ajuste de volume. Toda a altura da
+// faixa é aceita: segurar sobre a faixa e arrastar para cima/baixo ajusta o
+// volume (estilo Vegas), sem precisar acertar a linha. -1 se fora.
 int TimelineWidget::volRowAt(const QPoint& pos, int& row) const {
     if (!m_project || pos.x() < kHeaderW || pos.y() < kRulerH) return -1;
     int r = -1;
     bool audio = false;
     if (!rowFromY(pos.y(), r, audio) || !audio) return -1;
-    const Track& tr = m_project->audioTracks[r];
-    const int ly = volLineY(r, true, tr);
-    if (std::abs(pos.y() - ly) <= 4) { row = r; return 0; }
-    return -1;
+    if (pos.y() < rowY(-1, r) || pos.y() >= rowY(-1, r) + trackH(r, true)) return -1;
+    row = r;
+    return 0;
 }
 
 // 0=M, 1=S, 2=L, -1=nenhum.
@@ -1311,6 +1357,8 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
 
     if (e->button() != Qt::LeftButton) return;
 
+    m_volPending = false;
+
     if (y < kRulerH) {
         const int zx0 = 6;
         if (x >= zx0 && x < zx0 + kZoomW) {
@@ -1359,18 +1407,37 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
         }
     }
 
+    // Linha de volume individual do clipe de áudio: arrastar ajusta só ele.
+    if (m_showVolLines) {
+        int cvrow;
+        Clip* vclip = clipVolAt(e->pos(), cvrow);
+        if (vclip) {
+            emit editStart();
+            m_dragMode = ClipVol;
+            m_volClip = vclip->id;
+            m_volClipOrig = vclip->volume;
+            m_volRowOrig = cvrow;
+            m_dragStart = e->pos();
+            setCursor(Qt::SizeVerCursor);
+            update();
+            return;
+        }
+    }
+
     // Régua de volume das faixas de áudio: arrastar a linha ajusta o volume.
     // Só quando não há clipe sob o cursor (o clique no clipe continua
     // selecionando/arrastando normalmente, mesmo sobre a linha).
     if (m_showVolLines) {
         int vrow;
+        const bool onLine = volRowAt(e->pos(), vrow) >= 0
+            && std::abs(e->pos().y() - volLineY(vrow, true, m_project->audioTracks[vrow])) <= 6;
         if (volRowAt(e->pos(), vrow) >= 0) {
             int r2;
             bool a2;
             bool overClip = false;
             if (rowFromY(y, r2, a2) && clipAt(r2, a2, xToTime(x)) != nullptr)
                 overClip = true;
-            if (!overClip) {
+            if (!overClip && onLine) {
                 emit editStart();
                 m_dragMode = TrackVol;
                 m_volRow = vrow;
@@ -1379,6 +1446,15 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
                 setCursor(Qt::SizeVerCursor);
                 update();
                 return;
+            }
+            if (!overClip && !onLine && (m_tool == ToolSelect || m_tool == ToolMove)) {
+                // Segurou na faixa (fora da linha e sem clipe): marca como
+                // "pode virar volume". Se o arraste for predominantemente
+                // vertical vira ajuste de volume; senão segue o fluxo normal
+                // (playhead/marquee).
+                m_volPending = true;
+                m_volRow = vrow;
+                m_volOrig = m_project->audioTracks[vrow].volume;
             }
         }
     }
@@ -1509,6 +1585,24 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
             }
             return;
         }
+        if (m_dragMode == ClipVol) {
+            Clip* clip = findClipById(m_volClip);
+            if (clip && m_volRowOrig >= 0 && m_volRowOrig < (int)m_project->audioTracks.size()) {
+                const int rowH = trackH(m_volRowOrig, true);
+                const int y = rowY(-1, m_volRowOrig);
+                const int pad = 6;
+                const double frac = 1.0 - std::clamp(
+                    (double)(e->pos().y() - (y + pad)) / (rowH - pad * 2.0), 0.0, 1.0);
+                const double v = frac * 2.0;
+                if (std::fabs(clip->volume - v) > 1e-4) {
+                    clip->volume = v;
+                    refreshView();
+                    update();
+                    emit modified();
+                }
+            }
+            return;
+        }
         if (m_dragMode == TrackVol) {
             if (m_volRow < 0 || m_volRow >= (int)m_project->audioTracks.size()) return;
             Track& t = m_project->audioTracks[m_volRow];
@@ -1558,6 +1652,35 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
             return;
         }
         if (m_dragMode == Marquee) {
+            // Press na faixa de áudio vazia: vira ajuste de volume se o
+            // arraste for predominantemente vertical (para cima/baixo).
+            if (m_volPending) {
+                const int dy = e->pos().y() - m_dragStart.y();
+                const int dx = e->pos().x() - m_dragStart.x();
+                if (std::abs(dy) > std::abs(dx) + 4 && std::abs(dy) >= 5) {
+                    if (m_volRow >= 0 && m_volRow < (int)m_project->audioTracks.size()) {
+                        emit editStart();
+                        m_dragMode = TrackVol;
+                        m_volPending = false;
+                        m_volOrig = m_project->audioTracks[m_volRow].volume;
+                        setCursor(Qt::SizeVerCursor);
+                        // aplica o volume já neste movimento
+                        if (m_dragMode == TrackVol) {
+                            Track& t = m_project->audioTracks[m_volRow];
+                            const int rowH = trackH(m_volRow, true);
+                            const int y = rowY(-1, m_volRow);
+                            const int pad = 6;
+                            const double frac = 1.0 - std::clamp(
+                                (double)(e->pos().y() - (y + pad)) / (rowH - pad * 2.0), 0.0, 1.0);
+                            t.volume = frac * 2.0;
+                            refreshView();
+                        }
+                        update();
+                        emit modified();
+                        return;
+                    }
+                }
+            }
             m_marqueeRect = QRect(m_dragStart, e->pos()).normalized();
             update();
             return;
@@ -1579,7 +1702,12 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
     int row;
     bool audio;
     int vrow;
-    if (volRowAt(e->pos(), vrow) >= 0) {
+    int cvrow;
+    if (m_showVolLines && clipVolAt(e->pos(), cvrow) != nullptr) {
+        setCursor(Qt::SizeVerCursor);
+        return;
+    }
+    if (m_showVolLines && volRowAt(e->pos(), vrow) >= 0) {
         int r2;
         bool a2;
         bool overClip = false;
@@ -1721,6 +1849,8 @@ void TimelineWidget::mouseReleaseEvent(QMouseEvent* e) {
     m_dragUndoPushed = false;
     m_dragOrig.clear();
     m_volRow = -1;
+    m_volClip.clear();
+    m_volPending = false;
     stopAutoScroll();
     setCursor(Qt::ArrowCursor);
     update();
@@ -2070,6 +2200,7 @@ void TimelineWidget::dropEvent(QDropEvent* e) {
             m.height = info.height;
             m.hasVideo = info.hasVideo;
             m.hasAudio = info.hasAudio;
+            m.audioStreams = info.audioStreams;
             m_project->media.append(m);
             mediaIds.append(m.id);
             imported.append(path);

@@ -412,7 +412,7 @@ void PancropWidget::toggleKeyframe(int prop) {
     Keyframe k;
     k.time = rel;
     k.value = propValue(prop);
-    k.interp = KfSmooth;
+    k.interp = KfLinear;
     kf->append(k);
     std::sort(kf->begin(), kf->end(),
               [](const Keyframe& a, const Keyframe& b) { return a.time < b.time; });
@@ -435,7 +435,7 @@ void PancropWidget::writeKeyframe(int prop, double value) {
     Keyframe k;
     k.time = rel;
     k.value = value;
-    k.interp = KfSmooth;
+    k.interp = KfLinear;
     kf->append(k);
     std::sort(kf->begin(), kf->end(),
               [](const Keyframe& a, const Keyframe& b) { return a.time < b.time; });

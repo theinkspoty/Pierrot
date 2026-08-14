@@ -9,10 +9,11 @@
 #include <QMetaType>
 #include <QMetaObject>
 #include <cmath>
+#include <algorithm>
 
 namespace {
 constexpr int kPeaksPerSecond = 50;
-constexpr int kThumbMaxWidth = 256;
+constexpr int kThumbMaxWidth = 160;
 constexpr int kMaxPeakCache = 16;
 constexpr int kMaxThumbCache = 256;
 constexpr int kMaxThumbPending = 96;
@@ -43,6 +44,22 @@ void CacheWorker::generateThumb(const QString& filePath, double seconds) {
     emit thumbReady(filePath, seconds, img);
 }
 
+// Vários instantes do mesmo arquivo: ordena para decodificar em sequência e
+// reaproveitar o decoder aberto (sem re-abrir o arquivo a cada pedido).
+void CacheWorker::generateThumbs(const QString& filePath, const QList<double>& seconds) {
+    if (!m_decoder.isOpen() || m_decoder.source() != filePath)
+        m_decoder.open(filePath);
+    QList<double> sorted = seconds;
+    std::sort(sorted.begin(), sorted.end());
+    for (double s : sorted) {
+        QImage img;
+        if (m_decoder.isOpen())
+            img = m_decoder.frameAt(s, kThumbMaxWidth);
+        emit thumbReady(filePath, s, img);
+    }
+    m_decoder.releaseBuffers();
+}
+
 MediaCache& MediaCache::instance() {
     static MediaCache cache;
     return cache;
@@ -50,6 +67,7 @@ MediaCache& MediaCache::instance() {
 
 MediaCache::MediaCache() {
     qRegisterMetaType<FFmpegAudioPeaks>("FFmpegAudioPeaks");
+    qRegisterMetaType<QList<double>>("QList<double>");
 
     // Dois workers em threads separadas: gerar os picos de um áudio longo
     // não deve travar a geração de thumbnails (e vice-versa).
@@ -119,10 +137,76 @@ void MediaCache::requestThumb(const QString& filePath, double seconds) {
     if (m_thumbs.contains(key) || m_thumbsPending.contains(key)
         || m_thumbsFailed.contains(key)) return;
     const bool wasBusy = busy();
+    if (m_playbackActive) {
+        // Reproduzindo: o thumb é estático, pode esperar. Evita que a
+        // decodificação em background dispute CPU com o preview e cause
+        // stutter. Os pedidos são liberados ao pausar (setPlaybackActive).
+        if (m_thumbsDeferred.size() >= kMaxThumbPending) return;
+        m_thumbsDeferred.insert(key);
+        return;
+    }
     m_thumbsPending.insert(key, m_epoch);
     QMetaObject::invokeMethod(m_thumbsWorker, "generateThumb", Qt::QueuedConnection,
                               Q_ARG(QString, filePath), Q_ARG(double, k));
     if (!wasBusy) emit busyChanged(true);
+}
+
+void MediaCache::requestThumbs(const QString& filePath, const QList<double>& seconds) {
+    if (!m_thumbsWorker) return;
+    // Filtra apenas os instantes ainda não disponíveis/pendentes e envia um
+    // único pedido: o worker decodifica todos de uma vez na mesma passada.
+    QList<double> missing;
+    for (double s : seconds) {
+        if (missing.size() >= kMaxThumbPending) break;
+        const double k = thumbKey(s);
+        const auto key = qMakePair(filePath, k);
+        if (m_thumbs.contains(key) || m_thumbsPending.contains(key)
+            || m_thumbsFailed.contains(key)) continue;
+        if (m_playbackActive) {
+            if (m_thumbsDeferred.size() >= kMaxThumbPending) break;
+            m_thumbsDeferred.insert(key);
+            continue;
+        }
+        m_thumbsPending.insert(key, m_epoch);
+        missing.append(k);
+    }
+    if (missing.isEmpty()) return;
+    const bool wasBusy = busy();
+    QMetaObject::invokeMethod(m_thumbsWorker, "generateThumbs", Qt::QueuedConnection,
+                              Q_ARG(QString, filePath), Q_ARG(QList<double>, missing));
+    if (!wasBusy) emit busyChanged(true);
+}
+
+void MediaCache::setPlaybackActive(bool active) {
+    m_playbackActive = active;
+    if (active) return;
+    // Pausou: libera os pedidos adiados, agrupando por arquivo para aproveitar
+    // uma única passada de decodificação por caminho.
+    QHash<QString, QList<double>> wantByFile;
+    for (auto it = m_thumbsDeferred.constBegin(); it != m_thumbsDeferred.constEnd(); ++it) {
+        const auto key = *it;
+        if (m_thumbs.contains(key) || m_thumbsFailed.contains(key)) continue;
+        if (m_thumbsPending.contains(key)) continue;
+        wantByFile[key.first].append(key.second);
+    }
+    m_thumbsDeferred.clear();
+    const bool wasBusy = busy();
+    for (auto it = wantByFile.constBegin(); it != wantByFile.constEnd(); ++it) {
+        if (m_thumbsPending.size() >= kMaxThumbPending) break;
+        QList<double> missing;
+        for (double s : it.value()) {
+            if (m_thumbsPending.size() >= kMaxThumbPending) break;
+            const auto key = qMakePair(it.key(), thumbKey(s));
+            if (m_thumbs.contains(key) || m_thumbsFailed.contains(key)
+                || m_thumbsPending.contains(key)) continue;
+            m_thumbsPending.insert(key, m_epoch);
+            missing.append(thumbKey(s));
+        }
+        if (missing.isEmpty()) continue;
+        QMetaObject::invokeMethod(m_thumbsWorker, "generateThumbs", Qt::QueuedConnection,
+                                  Q_ARG(QString, it.key()), Q_ARG(QList<double>, missing));
+    }
+    if (!wasBusy && busy()) emit busyChanged(true);
 }
 
 void MediaCache::clear() {
@@ -135,6 +219,7 @@ void MediaCache::clear() {
     m_thumbsOrder.clear();
     m_peaksPending.clear();
     m_thumbsPending.clear();
+    m_thumbsDeferred.clear();
     if (wasBusy) emit busyChanged(false);
 }
 

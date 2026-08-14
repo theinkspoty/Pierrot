@@ -14,6 +14,9 @@
 
 class QThread;
 
+// Lote de instantes de um mesmo arquivo para uma única passada de decodificação.
+Q_DECLARE_METATYPE(QList<double>)
+
 class CacheWorker : public QObject {
     Q_OBJECT
 public:
@@ -21,6 +24,7 @@ public:
 public slots:
     void generatePeaks(const QString& filePath, int bucketsPerSecond);
     void generateThumb(const QString& filePath, double seconds);
+    void generateThumbs(const QString& filePath, const QList<double>& seconds);
 signals:
     void peaksReady(const QString& filePath, const FFmpegAudioPeaks& peaks);
     void thumbReady(const QString& filePath, double seconds, const QImage& image);
@@ -41,6 +45,15 @@ public:
 
     void requestPeaks(const QString& filePath);
     void requestThumb(const QString& filePath, double seconds);
+    // Decodifica vários instantes do mesmo arquivo numa única passada
+    // (reaproveita a abertura/seek entre pedidos do mesmo arquivo).
+    void requestThumbs(const QString& filePath, const QList<double>& seconds);
+
+    // Durante a reprodução o preview precisa de toda a CPU: os thumbs são
+    // conteúdo estático e ficam adiados até a reprodução parar. O TimelineWidget
+    // continua pedindo normalmente (sem custo de UI); apenas a decodificação
+    // em segundo plano é pausada.
+    void setPlaybackActive(bool active);
 
     // Descarta todas as entradas e invalida os pedidos em andamento
     // (chamado ao trocar de projeto para não reter mídia do anterior).
@@ -68,6 +81,9 @@ private:
     mutable FFmpegAudioPeaks m_emptyPeaks;
     QHash<QString, quint64> m_peaksPending;
     QHash<QPair<QString, double>, quint64> m_thumbsPending;
+    // Pedidos de thumb adiados durante a reprodução (sem custo na UI).
+    QSet<QPair<QString, double>> m_thumbsDeferred;
+    bool m_playbackActive = false;
     quint64 m_epoch = 0; // troca de projeto: descarta resultados enfileirados
 
     void touchPeaks(const QString& filePath) const;

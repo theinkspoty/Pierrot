@@ -51,7 +51,7 @@
 namespace {
 // Versão do arranjo de painéis (docks/toolbar). Aumente para descartar
 // estados salvos antigos que estejam com o layout deslocado.
-constexpr int kLayoutVersion = 2;
+constexpr int kLayoutVersion = 3;
 
 // QWidget::saveGeometry grava o array em big-endian na estrutura:
 //   int version (== 1) | quint32 screen | QRect geometry | QRect frameGeometry
@@ -119,7 +119,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     m_graph = new GraphEditorWidget(this);
     m_graph->setProject(&m_project);
-    m_graph->setMinimumHeight(180);
+    m_graph->setMinimumHeight(90);
 
     createDocks();
     createActions();
@@ -135,6 +135,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         m_playAction->setText(playing ? tr("Pausar") : tr("Reproduzir"));
         m_playAction->setIcon(style()->standardIcon(
             playing ? QStyle::SP_MediaPause : QStyle::SP_MediaPlay));
+        // Durante a reprodução os thumbs ficam adiados (ver MediaCache).
+        MediaCache::instance().setPlaybackActive(playing);
     });
     connect(m_timeline, &TimelineWidget::modified, this, [this]() {
         m_preview->refreshView();
@@ -258,6 +260,7 @@ void MainWindow::saveSettings() {
 }
 
 void MainWindow::restoreSettings() {
+    m_restoringSettings = true;
     QSettings settings;
 
     // Só restaura a geometria se o array for do formato gravado pelo
@@ -294,6 +297,7 @@ void MainWindow::restoreSettings() {
     if (settings.contains("layoutLocked"))
         m_lockAction->setChecked(settings.value("layoutLocked").toBool());
     setDockLocked(m_lockAction->isChecked());
+    m_restoringSettings = false;
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
@@ -343,9 +347,8 @@ void MainWindow::createDocks() {
                              | QDockWidget::DockWidgetFloatable
                              | QDockWidget::DockWidgetClosable);
     addDockWidget(Qt::BottomDockWidgetArea, m_graphDock);
-    splitDockWidget(m_timelineDock, m_graphDock, Qt::Horizontal);
-    m_graphDock->setMinimumWidth(260);
-    m_graphDock->resize(320, m_graphDock->height());
+    splitDockWidget(m_timelineDock, m_graphDock, Qt::Vertical);
+    m_graphDock->setMinimumHeight(64);
 }
 
 void MainWindow::createActions() {
@@ -476,15 +479,16 @@ void MainWindow::createActions() {
     connect(clearLoopAction, &QAction::triggered, m_timeline, &TimelineWidget::clearLoop);
     playMenu->addAction(clearLoopAction);
 
-    m_lockAction = new QAction(padlockIcon(true), tr("Travar layout"), this);
+    m_lockAction = new QAction(padlockIcon(false), tr("Destravar layout"), this);
     m_lockAction->setCheckable(true);
-    m_lockAction->setChecked(true);
+    m_lockAction->setChecked(false);
     m_lockAction->setShortcut(QKeySequence("Ctrl+L"));
     m_lockAction->setToolTip(tr("Travar/destravar o layout dos painéis (Ctrl+L)"));
     connect(m_lockAction, &QAction::toggled, this, [this](bool locked) {
         setDockLocked(locked);
         m_lockAction->setText(locked ? tr("Travar layout") : tr("Destravar layout"));
         m_lockAction->setIcon(padlockIcon(locked));
+        if (m_restoringSettings) return;
         // Persiste o arranjo dos painéis na hora: o usuário espera que
         // "Travar" fixe o layout atual, não só no fechamento do app.
         saveSettings();

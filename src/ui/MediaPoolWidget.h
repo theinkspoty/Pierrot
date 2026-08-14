@@ -84,7 +84,6 @@ signals:
     void mediaDropped(const QStringList& mediaIds, const QPoint& globalPos);
 private:
     void refresh();
-    void requestPoolThumb(const QString& path, double seconds, const QString& mediaId);
     void setThumb(const QString& mediaId, const QImage& img);
     Project* m_project = nullptr;
     PoolList* m_list = nullptr;

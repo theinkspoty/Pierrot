@@ -103,7 +103,7 @@ protected:
     void dragLeaveEvent(QDragLeaveEvent*) override;
     void dropEvent(QDropEvent*) override;
 private:
-    enum DragMode { None, MoveClip, TrimLeft, TrimRight, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, ResizeTrack, TrackVol };
+    enum DragMode { None, MoveClip, TrimLeft, TrimRight, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, ResizeTrack, TrackVol, ClipVol };
     struct ClipOrig { double pos = 0.0, in = 0.0, dur = 0.0; };
     struct ClipboardEntry { Clip clip; int track = 0; bool audio = false; };
 
@@ -113,7 +113,7 @@ private:
     int rowY(int videoIdx, int audioIdx) const;
     bool rowFromY(int y, int& row, bool& audio) const;
     int resizeHandleAt(const QPoint& pos, int& row, bool& audio) const;
-    Clip* clipAt(int row, bool audio, double t);
+    Clip* clipAt(int row, bool audio, double t) const;
     Clip* findClipById(const QString& id);
     Track* trackOf(Clip* c);
     QVector<Clip*> groupMembers(const QString& gid);
@@ -162,6 +162,8 @@ private:
     bool trackLocked(const Clip* c) const;
     int volLineY(int row, bool audio, const Track& tr) const;
     int volRowAt(const QPoint& pos, int& row) const;
+    int clipVolLineY(int row, const Clip& c) const;
+    Clip* clipVolAt(const QPoint& pos, int& row) const;
     void copySelected();
     void cutSelected();
     void pasteClips();
@@ -205,6 +207,10 @@ private:
     bool m_dragHoverAudio = false;
     int m_volRow = -1;
     double m_volOrig = 1.0;
+    QString m_volClip;      // clipe cujo volume está sendo ajustado
+    double m_volClipOrig = 1.0;
+    int m_volRowOrig = -1;   // faixa de origem ao iniciar ClipVol
+    bool m_volPending = false; // press em faixa de áudio; vira volume se drag vertical
 
     QHash<ClipVisKey, QPixmap> m_clipPix;
     qint64 m_clipBytes = 0;
