@@ -17,11 +17,16 @@ class QProgressBar;
 class QLineEdit;
 class QMouseEvent;
 class QEvent;
+class QRubberBand;
+class QLabel;
+class QPixmap;
 
 // Lista de mídia com arrasto manual (não usa o DnD do compositor, que pode
 // falhar em alguns ambientes/Wayland). O arrasto inteiro acontece dentro do
 // próprio aplicativo: um filtro global de eventos acompanha o cursor e emite a
 // posição para o feedback na timeline, soltando direto no alvo no release.
+// Clique+arraste num item arrasta a mídia para a timeline (com uma miniatura
+// seguindo o cursor); clique+arraste no vazio seleciona em caixa (rubber band).
 class PoolList : public QListWidget {
     Q_OBJECT
 public:
@@ -38,9 +43,21 @@ protected:
 private:
     QStringList selectedIds() const;
     void cancelDrag();
+    void updateBand(const QPoint& globalPos);
+    void finalizeBand();
+    void cancelBand();
+    void showDragIcon(const QPoint& globalPos);
+    void moveDragIcon(const QPoint& globalPos);
+    void hideDragIcon();
+    QPixmap makeDragPixmap() const;
     QPoint m_pressPos;
     QListWidgetItem* m_pressItem = nullptr;
+    bool m_pressWasSelected = false;
     bool m_dragging = false;
+    QRubberBand* m_band = nullptr;
+    bool m_bandActive = false;
+    bool m_bandAdd = false;
+    QLabel* m_dragIcon = nullptr;
 };
 
 class MediaPoolWidget : public QWidget {

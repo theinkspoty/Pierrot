@@ -27,6 +27,10 @@
 #include <QListView>
 #include <QApplication>
 #include <QMouseEvent>
+#include <QRubberBand>
+#include <QScrollBar>
+#include <QItemSelection>
+#include <QLabel>
 #include <cmath>
 #include <algorithm>
 
@@ -108,32 +112,70 @@ PoolList::PoolList(QWidget* parent) : QListWidget(parent) {
 }
 
 void PoolList::mousePressEvent(QMouseEvent* e) {
-    QListWidget::mousePressEvent(e);
+    m_pressPos = e->position().toPoint();
+    m_pressItem = itemAt(m_pressPos);
+    m_pressWasSelected = m_pressItem
+        ? selectionModel()->isSelected(indexFromItem(m_pressItem))
+        : false;
+    m_dragging = false;
+    m_bandActive = false;
+    m_bandAdd = (e->modifiers() & Qt::ControlModifier) != 0;
+
+    // Nunca deixa o rubber band nativo da base começar: ele apareceria junto
+    // com o nosso e o estado ficaria preso em DragSelectingState.
+    setState(QAbstractItemView::NoState);
+
     if (e->button() == Qt::LeftButton) {
-        m_pressPos = e->position().toPoint();
-        m_pressItem = itemAt(m_pressPos);
-        m_dragging = false;
+        e->accept();
+        if (m_pressItem) {
+            // A base cuida da seleção no clique e do índice atual. Um item já
+            // selecionado NÃO muda de seleção no press (command NoUpdate), então
+            // arrastar um item de uma seleção múltipla mantém todos selecionados.
+            QListWidget::mousePressEvent(e);
+        } else {
+            // Clique no vazio: seleção em caixa feita à mão (não chama a base,
+            // senão o rubber band nativo apareceria junto).
+            if (!m_band)
+                m_band = new QRubberBand(QRubberBand::Rectangle, viewport());
+            m_band->setGeometry(QRect(m_pressPos, QSize(1, 1)));
+            m_band->hide();
+        }
+        return;
     }
+    QListWidget::mousePressEvent(e);
 }
 
 void PoolList::mouseMoveEvent(QMouseEvent* e) {
+    const QPoint p = e->position().toPoint();
     // Cruza o limiar de arrasto: passa a acompanhar o cursor globalmente via
     // filtro de eventos (funciona mesmo no Wayland, onde o grabMouse/cliente
     // é limitado). Nada do DnD do compositor é usado.
-    if (m_pressItem && (e->buttons() & Qt::LeftButton) && !m_dragging
-        && (e->position().toPoint() - m_pressPos).manhattanLength()
-               >= QApplication::startDragDistance()) {
-        m_dragging = true;
-        qApp->installEventFilter(this);
-        emit dragHover(e->globalPosition().toPoint());
+    if ((e->buttons() & Qt::LeftButton) && !m_dragging && !m_bandActive
+        && (p - m_pressPos).manhattanLength() >= QApplication::startDragDistance()) {
+        if (m_pressItem) {
+            m_dragging = true;
+            qApp->installEventFilter(this);
+            showDragIcon(e->globalPosition().toPoint());
+            emit dragHover(e->globalPosition().toPoint());
+        } else {
+            m_bandActive = true;
+            qApp->installEventFilter(this);
+            updateBand(e->globalPosition().toPoint());
+        }
     }
-    QListWidget::mouseMoveEvent(e);
+    // Com o botão esquerdo pressionado nós cuidamos de tudo (arrasto de mídia
+    // ou caixa de seleção); repassar à base deixaria o rubber band nativo
+    // aparecer junto e/ou mudaria a seleção durante o arrasto.
+    if (!(e->buttons() & Qt::LeftButton))
+        QListWidget::mouseMoveEvent(e);
 }
 
 bool PoolList::eventFilter(QObject* obj, QEvent* ev) {
     if (m_dragging) {
         if (ev->type() == QEvent::MouseMove) {
-            emit dragHover(static_cast<QMouseEvent*>(ev)->globalPosition().toPoint());
+            const QPoint g = static_cast<QMouseEvent*>(ev)->globalPosition().toPoint();
+            moveDragIcon(g);
+            emit dragHover(g);
             return false;
         }
         if (ev->type() == QEvent::MouseButtonRelease) {
@@ -142,23 +184,57 @@ bool PoolList::eventFilter(QObject* obj, QEvent* ev) {
                 const QPoint g = me->globalPosition().toPoint();
                 cancelDrag();
                 emit mediaDropped(selectedIds(), g);
-                return false;
+                return true; // não deixa a base "finalizar" e limpar a seleção
             }
         }
         if (ev->type() == QEvent::MouseButtonPress || ev->type() == QEvent::WindowDeactivate) {
             // Novo clique (ou perda de foco) durante o arrasto: cancela sem soltar.
             cancelDrag();
-            return false;
+            return true;
+        }
+    } else if (m_bandActive) {
+        if (ev->type() == QEvent::MouseMove) {
+            updateBand(static_cast<QMouseEvent*>(ev)->globalPosition().toPoint());
+            return true;
+        }
+        if (ev->type() == QEvent::MouseButtonRelease) {
+            const auto* me = static_cast<QMouseEvent*>(ev);
+            if (me->button() == Qt::LeftButton) {
+                finalizeBand();
+                return true;
+            }
+        }
+        if (ev->type() == QEvent::MouseButtonPress || ev->type() == QEvent::WindowDeactivate) {
+            cancelBand();
+            return true;
         }
     }
     return QListWidget::eventFilter(obj, ev);
 }
 
 void PoolList::mouseReleaseEvent(QMouseEvent* e) {
-    if (m_dragging) {
+    hideDragIcon();
+    if (m_dragging || m_bandActive) {
         // O filtro global cuida do release (o cursor pode estar sobre a
-        // timeline); aqui só evita o comportamento padrão durante o arrasto.
+        // timeline ou fora da lista); aqui só evita o comportamento padrão.
         e->accept();
+        return;
+    }
+    if (e->button() == Qt::LeftButton) {
+        const bool mod = (e->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier)) != 0;
+        if (!m_pressItem) {
+            // Clique simples no vazio (sem arrastar): limpa a seleção (Ctrl mantém).
+            if (!(e->modifiers() & Qt::ControlModifier))
+                clearSelection();
+        } else if (!mod && !m_pressWasSelected) {
+            // Clique num item que não estava selecionado: seleciona só ele.
+            // Se já estava selecionado (veio de uma seleção múltipla), mantém
+            // todos selecionados para poder arrastá-los juntos depois.
+            selectionModel()->select(indexFromItem(m_pressItem),
+                                     QItemSelectionModel::ClearAndSelect);
+        }
+        e->accept();
+        m_pressItem = nullptr;
         return;
     }
     QListWidget::mouseReleaseEvent(e);
@@ -166,9 +242,102 @@ void PoolList::mouseReleaseEvent(QMouseEvent* e) {
 
 void PoolList::cancelDrag() {
     if (qApp) qApp->removeEventFilter(this);
+    hideDragIcon();
     m_dragging = false;
     m_pressItem = nullptr;
     emit dragHoverCleared();
+}
+
+void PoolList::updateBand(const QPoint& globalPos) {
+    if (!m_band) return;
+    const QPoint vp = viewport()->mapFromGlobal(globalPos);
+    const QRect rect = QRect(m_pressPos, vp).normalized();
+    m_band->setGeometry(rect);
+    m_band->show();
+
+    // Auto-scroll perto das bordas para selecionar listas longas.
+    const int edge = 24;
+    QScrollBar* sb = verticalScrollBar();
+    if (vp.y() < edge)
+        sb->setValue(sb->value() - 8);
+    else if (vp.y() > viewport()->height() - edge)
+        sb->setValue(sb->value() + 8);
+
+    QItemSelection sel;
+    for (int i = 0; i < count(); ++i) {
+        QListWidgetItem* it = item(i);
+        if (visualItemRect(it).intersects(rect)) {
+            const QModelIndex idx = indexFromItem(it);
+            sel.select(idx, idx);
+        }
+    }
+    const auto flags = m_bandAdd ? QItemSelectionModel::Select
+                                 : QItemSelectionModel::ClearAndSelect;
+    selectionModel()->select(sel, flags);
+}
+
+void PoolList::finalizeBand() {
+    if (qApp) qApp->removeEventFilter(this);
+    if (m_band) m_band->hide();
+    const QRect r = m_band ? m_band->geometry() : QRect(m_pressPos, QSize(0, 0));
+    if (r.width() < 4 && r.height() < 4 && !m_bandAdd)
+        clearSelection(); // clique simples no vazio: desfaz a seleção (Ctrl mantém)
+    m_bandActive = false;
+    m_pressItem = nullptr;
+}
+
+void PoolList::cancelBand() {
+    if (qApp) qApp->removeEventFilter(this);
+    if (m_band) m_band->hide();
+    m_bandActive = false;
+    m_pressItem = nullptr;
+}
+
+void PoolList::showDragIcon(const QPoint& globalPos) {
+    if (!m_dragIcon) {
+        // Miniatura que segue o cursor durante o arrasto. Filha da janela
+        // principal (fica por cima da timeline) e transparente para o mouse
+        // (não intercepta o clique/arrasto que está em andamento).
+        m_dragIcon = new QLabel(window());
+        m_dragIcon->setAttribute(Qt::WA_TransparentForMouseEvents);
+        m_dragIcon->setAttribute(Qt::WA_ShowWithoutActivating);
+        m_dragIcon->setMargin(2);
+    }
+    const QPixmap pm = makeDragPixmap();
+    if (pm.isNull()) return;
+    m_dragIcon->setPixmap(pm);
+    m_dragIcon->adjustSize();
+    m_dragIcon->move(window()->mapFromGlobal(globalPos + QPoint(8, 8)));
+    m_dragIcon->show();
+    m_dragIcon->raise();
+}
+
+void PoolList::moveDragIcon(const QPoint& globalPos) {
+    if (m_dragIcon && m_dragIcon->isVisible())
+        m_dragIcon->move(window()->mapFromGlobal(globalPos + QPoint(8, 8)));
+}
+
+void PoolList::hideDragIcon() {
+    if (m_dragIcon) m_dragIcon->hide();
+}
+
+QPixmap PoolList::makeDragPixmap() const {
+    const QList<QListWidgetItem*> items = selectedItems();
+    if (items.isEmpty()) return QPixmap();
+    QPixmap pm = items.first()->icon().pixmap(96, 54);
+    if (pm.isNull()) return QPixmap();
+    if (items.size() > 1) {
+        // Vários itens: selo com a contagem no canto da miniatura.
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0, 0, 0, 190));
+        p.drawEllipse(QRectF(pm.width() - 20, pm.height() - 20, 20, 20));
+        p.setPen(Qt::white);
+        p.drawText(QRect(pm.width() - 20, pm.height() - 20, 20, 20),
+                   Qt::AlignCenter, QString::number(items.size()));
+    }
+    return pm;
 }
 
 QStringList PoolList::selectedIds() const {
