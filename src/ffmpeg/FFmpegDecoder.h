@@ -10,6 +10,12 @@
 #include <QMutex>
 #include <QVector>
 
+// Ponteiros p/ tipos do FFmpeg (definidos em libavcodec/avcodec.h, incluído
+// pelos .cpp). Só há membros por ponteiro, então forward declaration basta e
+// evita vazar os headers C do FFmpeg para quem inclui este arquivo.
+struct AVPacket;
+struct AVFrame;
+
 struct FFmpegMediaInfo {
     double duration = 0.0;
     int width = 0;

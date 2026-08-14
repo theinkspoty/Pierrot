@@ -424,7 +424,7 @@ void MainWindow::createActions() {
     QAction* deleteAction = new QAction(tr("Excluir clipe"), this);
     deleteAction->setShortcut(QKeySequence(Qt::Key_Delete));
     deleteAction->setIcon(stdIcon(QStyle::SP_TrashIcon));
-    deleteAction->setToolTip(tr("Excluir clipe selecionado e fechar o espaço (Delete; Shift+Delete deixa espaço)"));
+    deleteAction->setToolTip(tr("Excluir faixas selecionadas ou, se não houver, os clipes selecionados (Delete)"));
     connect(deleteAction, &QAction::triggered, m_timeline, &TimelineWidget::deleteSelection);
 
     m_undoAction = new QAction(tr("Desfazer"), this);

@@ -1618,9 +1618,9 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
             return;
         }
 
-        // Seleção de faixas também clicando no corpo vazio da faixa (sem
-        // clipe sob o cursor): clique seleciona, Ctrl alterna uma a uma.
-        // (Shift já foi tratado acima.) O playhead continua movendo e o
+        // Seleção de faixas também clicando no corpo da faixa: clique sem
+        // clipe seleciona/alterna a faixa; Ctrl sobre um clipe também alterna
+        // a faixa (tratado no bloco do clipe). O playhead continua movendo e o
         // marquee continua funcionando no arraste.
         if (!clip && (m_tool == ToolSelect || m_tool == ToolMove)) {
             if (e->modifiers() & Qt::ControlModifier)
@@ -1631,9 +1631,15 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
         }
 
         if (clip) {
-            if (e->modifiers() & Qt::ControlModifier)
-                toggleSelection(clip->id);
-            else if (!isSelected(clip->id))
+            // Ctrl+clique sobre um clipe alterna a seleção da FAIXA (não do
+            // clipe), para que "Ctrl" signifique sempre "selecionar faixas",
+            // consistente com o cabeçalho e com o corpo vazio da faixa.
+            if (e->modifiers() & Qt::ControlModifier) {
+                toggleTrackSel(row, audio);
+                refreshView();
+                return;
+            }
+            if (!isSelected(clip->id))
                 setSelection(clip->id);
             m_dragMode = None;
             if (m_tool == ToolMove) {
@@ -2968,6 +2974,10 @@ void TimelineWidget::deleteSelected() {
 }
 
 void TimelineWidget::deleteSelectedLeaveGap() {
+    if (!m_selTracks.isEmpty()) {
+        deleteSelectedTracks();
+        return;
+    }
     if (!m_project || m_selected.isEmpty()) return;
     emit editStart();
     QStringList sel;
@@ -2983,10 +2993,11 @@ void TimelineWidget::deleteSelectedLeaveGap() {
     emit modified();
 }
 
-// Delete: prioriza clipes selecionados; se não houver, apaga as faixas
-// selecionadas. Usado pela tecla Delete e pelo atalho da barra de ferramentas.
+// Delete: prioriza as faixas selecionadas (apaga todas de uma vez) e, se não
+// houver, apaga os clipes selecionados. Assim, cliques em clipes feitos depois
+// de selecionar faixas não "escondem" mais a seleção de faixas do Delete.
 void TimelineWidget::deleteSelection() {
-    if (m_selected.isEmpty() && !m_selTracks.isEmpty()) {
+    if (!m_selTracks.isEmpty()) {
         deleteSelectedTracks();
         return;
     }
