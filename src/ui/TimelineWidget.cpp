@@ -682,9 +682,12 @@ void TimelineWidget::renderOverlays(QPainter& p) {
         const int zx1 = (int)timeToX(m_zoomT0);
         const int zx2 = (int)timeToX(m_zoomT1);
         const QRect zr(QPoint(std::min(zx1, zx2), R), QPoint(std::max(zx1, zx2), height()));
-        p.fillRect(zr, QColor(120, 180, 255, 42));
-        p.setPen(QColor(120, 180, 255, 210));
-        p.drawRect(zr);
+        QStyleOptionRubberBand opt;
+        opt.initFrom(this);
+        opt.rect = zr;
+        opt.shape = QRubberBand::Rectangle;
+        opt.opaque = false;
+        style()->drawControl(QStyle::CE_RubberBand, &opt, &p, this);
     } else if (m_dragMode == Marquee) {
         const QRect mr = m_marqueeRect.normalized();
         if (!mr.isEmpty()) {
