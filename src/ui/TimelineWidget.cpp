@@ -2123,6 +2123,11 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         }
         QAction* trackVol = nullptr;
         if (track) trackVol = menu.addAction(tr("Volume da faixa: %1%").arg((int)llround(track->volume * 100.0)));
+        QAction* delTrack = nullptr;
+        if (track) {
+            menu.addSeparator();
+            delTrack = menu.addAction(tr("Excluir faixa"));
+        }
         act = menu.exec(e->globalPos());
         if (act == addV) addTrack(false);
         else if (act == addA) addTrack(true);
@@ -2138,6 +2143,14 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
                 emit modified();
                 update();
             }
+        }
+        else if (act == delTrack) {
+            emit editStart();
+            m_project->removeTrack(audio, vrow);
+            m_selected.clear();
+            invalidateScene();
+            updateScrollRanges();
+            emit modified();
         }
         else if (track && act && blendMenu && act->parent() == blendMenu) {
             emit editStart();

@@ -218,6 +218,14 @@ public:
         (audio ? audioTracks : videoTracks).append(t);
     }
 
+    void removeTrack(bool audio, int index) {
+        if (audio) {
+            if (index >= 0 && index < audioTracks.size()) audioTracks.remove(index);
+        } else {
+            if (index >= 0 && index < videoTracks.size()) videoTracks.remove(index);
+        }
+    }
+
     const MediaItem* findMedia(const QString& id) const {
         for (const auto& m : media)
             if (m.id == id) return &m;
