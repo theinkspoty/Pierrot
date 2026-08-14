@@ -143,6 +143,21 @@ windeployqt --release build\Release\pierrot.exe
 
 
 
+## Licença
+
+Pierrot é um software livre: você pode redistribuí-lo e/ou modificá-lo sob os
+termos da **GNU General Public License versão 3** ou (a seu critério) qualquer
+versão posterior, conforme publicado pela Free Software Foundation.
+
+Este programa é distribuído na esperança de que seja útil, mas **SEM QUALQUER
+GARANTIA**; sem sequer a garantia implícita de comercialização ou adequação a
+um propósito específico. Veja a GNU GPL para mais detalhes.
+
+- Texto completo da licença: [LICENSE](LICENSE) (GPL-3.0).
+- Copyright (C) 2026 **theinkspoty**.
+- Você deve ter recebido uma cópia da GNU General Public License junto com
+  este programa; caso contrário, veja <https://www.gnu.org/licenses/>.
+
 ## Como usar
 
 1. Clique em **Adicionar** no painel Mídia e escolha seus arquivos.

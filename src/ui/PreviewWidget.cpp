@@ -1,3 +1,8 @@
+// Pierrot — editor de vídeo
+// Copyright (C) 2026 theinkspoty
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
+
 #include "PreviewWidget.h"
 
 #include "ui/SettingsDialog.h"
@@ -73,6 +78,119 @@ private:
 // Todos os FFmpegDecoder resampleiam para S16/48 kHz/estéreo, então misturar
 // é alinhar amostra a amostra. A thread do QAudioSink chama readData(); a UI
 // chama updateSources() conforme o playhead avança.
+
+// DSP dos efeitos de áudio do preview — réplica em tempo real do que a
+// exportação aplica via ffmpeg:
+//   equalizer f=120/1000/6000 Q=1  -> biquad peaking por banda
+//   aeval (inverter fase)          -> multiplica por -1
+//   afftdn (denoise)               -> aproximação: noise gate suave
+//   loudnorm (normalizar -14 LUFS) -> aproximação: AGC lento + soft clip
+class AudioFx {
+public:
+    struct Biquad {
+        double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
+        double x1 = 0.0, x2 = 0.0, y1 = 0.0, y2 = 0.0;
+        void peaking(double freq, double q, double gainDb, double fs) {
+            const double A = std::pow(10.0, gainDb / 40.0);
+            const double w0 = 2.0 * M_PI * freq / fs;
+            const double alpha = std::sin(w0) / (2.0 * q);
+            const double a0 = 1.0 + alpha / A;
+            b0 = (1.0 + alpha * A) / a0;
+            b1 = (-2.0 * std::cos(w0)) / a0;
+            b2 = (1.0 - alpha * A) / a0;
+            a1 = (-2.0 * std::cos(w0)) / a0;
+            a2 = (1.0 - alpha / A) / a0;
+        }
+        inline double tick(double x) {
+            const double y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+            x2 = x1; x1 = x;
+            y2 = y1; y1 = y;
+            return y;
+        }
+        void reset() { x1 = x2 = y1 = y2 = 0.0; }
+    };
+
+    void configure(double eqLow, double eqMid, double eqHigh, bool denoise,
+                   double denoiseAmt, bool invertPhase, bool normalize) {
+        const double fs = 48000.0;
+        const int key = (int)std::llround(eqLow * 10) * 1000000
+                      + (int)std::llround(eqMid * 10) * 1000
+                      + (int)std::llround(eqHigh * 10)
+                      + (denoise ? 100 : 0)
+                      + (invertPhase ? 200 : 0)
+                      + (normalize ? 400 : 0)
+                      + (int)std::llround(denoiseAmt) * 10000;
+        if (key == m_key) return; // parâmetros inalterados: mantém o estado
+        m_key = key;
+        for (int ch = 0; ch < 2; ++ch) {
+            low[ch].peaking(120.0, 1.0, std::clamp(eqLow, -12.0, 12.0), fs);
+            mid[ch].peaking(1000.0, 1.0, std::clamp(eqMid, -12.0, 12.0), fs);
+            high[ch].peaking(6000.0, 1.0, std::clamp(eqHigh, -12.0, 12.0), fs);
+        }
+        invert = invertPhase;
+        gateEnabled = denoise;
+        gateAmount = std::clamp(denoiseAmt, 1.0, 50.0);
+        agcEnabled = normalize;
+        resetState();
+    }
+
+    void resetState() {
+        for (int ch = 0; ch < 2; ++ch) {
+            low[ch].reset(); mid[ch].reset(); high[ch].reset();
+        }
+        gateEnv = 0.0;
+        agcLevel = 0.0;
+        agcGain = 1.0;
+    }
+
+    // Processa `frames` amostras estéreo interleaved S16 no próprio buffer.
+    void process(int16_t* buf, int frames) {
+        for (int f = 0; f < frames; ++f) {
+            double l = buf[2 * f] / 32768.0;
+            double r = buf[2 * f + 1] / 32768.0;
+            l = high[0].tick(mid[0].tick(low[0].tick(l)));
+            r = high[1].tick(mid[1].tick(low[1].tick(r)));
+            if (invert) { l = -l; r = -r; }
+            if (gateEnabled) {
+                const double peak = qMax(std::fabs(l), std::fabs(r));
+                gateEnv = peak > gateEnv ? peak : gateEnv * 0.999;
+                const double db = 20.0 * std::log10(gateEnv + 1e-9);
+                const double floorDb = -50.0;
+                double g = 1.0;
+                if (db < floorDb) {
+                    const double depth = 1.0 - (db - floorDb) / (0.0 - floorDb);
+                    g = std::pow(10.0, -(gateAmount * depth) / 20.0);
+                }
+                l *= g; r *= g;
+            }
+            if (agcEnabled) {
+                const double lvl = 0.5 * (l * l + r * r);
+                agcLevel = agcLevel * 0.999 + lvl * 0.001;
+                const double db = 20.0 * std::log10(std::sqrt(agcLevel) + 1e-9);
+                const double want = -14.0 - db; // ganho (dB) rumo a -14
+                const double g = std::pow(10.0, std::clamp(want, -12.0, 12.0) / 20.0);
+                agcGain = agcGain * 0.95 + g * 0.05;
+                l *= agcGain; r *= agcGain;
+                const double pk = qMax(std::fabs(l), std::fabs(r));
+                if (pk > 0.95) { const double s = 0.95 / pk; l *= s; r *= s; }
+            }
+            buf[2 * f] = (int16_t)std::lround(std::clamp(l, -1.0, 1.0) * 32768.0);
+            buf[2 * f + 1] = (int16_t)std::lround(std::clamp(r, -1.0, 1.0) * 32768.0);
+        }
+    }
+
+private:
+    int m_key = -1;
+    Biquad low[2], mid[2], high[2];
+    bool invert = false;
+    bool gateEnabled = false;
+    double gateAmount = 12.0;
+    double gateEnv = 0.0;
+    bool agcEnabled = false;
+    double agcLevel = 0.0;
+    double agcGain = 1.0;
+};
+
 class AudioMixer : public QIODevice {
 public:
     struct SourceInfo {
@@ -80,6 +198,13 @@ public:
         QString path;     // arquivo de mídia
         double mediaPos;  // posição no arquivo de mídia (em segundos)
         double vol = 1.0;
+        double eqLow = 0.0;
+        double eqMid = 0.0;
+        double eqHigh = 0.0;
+        bool denoise = false;
+        double denoiseAmount = 12.0;
+        bool normalize = false;
+        bool invertPhase = false;
     };
 
     explicit AudioMixer(QObject* parent = nullptr) : QIODevice(parent) {
@@ -109,8 +234,13 @@ public:
                 if (audioDbg()) qDebug() << "[audio] updateSources: +fonte" << w.path << "mediaPos=" << w.mediaPos;
             }
             s->vol = w.vol;
+            s->fx.configure(w.eqLow, w.eqMid, w.eqHigh, w.denoise,
+                            w.denoiseAmount, w.invertPhase, w.normalize);
             s->active = true;
-            if (reseek) s->dec.seekAudio(w.mediaPos);
+            if (reseek) {
+                s->dec.seekAudio(w.mediaPos);
+                s->fx.resetState();
+            }
         }
         // Desativa (e libera) fontes que saíram do intervalo do clipe.
         for (int i = 0; i < m_sources.size(); ++i) {
@@ -147,11 +277,14 @@ public:
             if (audioDbg() && got == 0)
                 qDebug() << "[audio] readData: decodeAudio retornou 0 (silêncio)";
             const int n = got / bytesPerSample;
-            const int16_t* src = tmp.constData();
-            for (int i = 0; i < n * ch; ++i) {
-                const float sum = out[i] / 32768.0f + src[i] / 32768.0f * (float)s->vol;
-                const float cl = qBound(-1.0f, sum, 1.0f);
-                out[i] = (int16_t)std::lround(cl * 32768.0f);
+            if (n > 0) {
+                s->fx.process(tmp.data(), n);
+                const int16_t* src = tmp.constData();
+                for (int i = 0; i < n * ch; ++i) {
+                    const float sum = out[i] / 32768.0f + src[i] / 32768.0f * (float)s->vol;
+                    const float cl = qBound(-1.0f, sum, 1.0f);
+                    out[i] = (int16_t)std::lround(cl * 32768.0f);
+                }
             }
         }
         return capacity;
@@ -166,6 +299,7 @@ private:
         QString key;
         double vol = 1.0;
         bool active = false;
+        AudioFx fx;
     };
     Source* findLocked(const QString& key) const {
         for (Source* s : m_sources) if (s->key == key) return s;
@@ -234,6 +368,7 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     lay->addStretch(1);
 
     m_timer = new QTimer(this);
+    m_timer->setTimerType(Qt::PreciseTimer);
     m_timer->setInterval(33);
     connect(m_timer, &QTimer::timeout, this, &PreviewWidget::tick);
     connect(m_playBtn, &QPushButton::clicked, this, &PreviewWidget::togglePlay);
@@ -394,6 +529,10 @@ void PreviewWidget::togglePlay() {
     m_playStart = m_playhead;
     m_clock.start();
     m_playing = true;
+    // Sincroniza o tick com o fps do projeto (evita stutter em 50/60fps);
+    // com limite de ~83 Hz para não sobrecarregar a UI com decodificações extras.
+    const double fps = projFps(m_project);
+    m_timer->setInterval(fps > 0.0 ? qBound(12, (int)std::lround(1000.0 / fps), 40) : 33);
     m_timer->start();
     m_playBtn->setText(tr("Pausar"));
     startAudio(m_playhead);
@@ -506,6 +645,13 @@ QVector<AudioMixer::SourceInfo> buildMixSources(const Project* p, double t) {
         si.path = m->filePath;
         si.mediaPos = c->in + (t - c->pos);
         si.vol = it.value().vol;
+        si.eqLow = c->eqLow;
+        si.eqMid = c->eqMid;
+        si.eqHigh = c->eqHigh;
+        si.denoise = c->denoise;
+        si.denoiseAmount = c->denoiseAmount;
+        si.normalize = c->normalize;
+        si.invertPhase = c->invertPhase;
         out.append(si);
     }
     return out;

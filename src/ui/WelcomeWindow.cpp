@@ -1,3 +1,8 @@
+// Pierrot — editor de vídeo
+// Copyright (C) 2026 theinkspoty
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
+
 #include "WelcomeWindow.h"
 
 #include <QComboBox>
@@ -84,6 +89,10 @@ void WelcomeWindow::buildLayout() {
 
     auto* subtitle = new QLabel(tr("Editor de vídeo"), this);
     subtitle->setStyleSheet("color: #9a9a9a;");
+
+    auto* credits = new QLabel(tr("by InkSpoty"), this);
+    credits->setStyleSheet("color: #777777; font-size: 11px;");
+    credits->setAlignment(Qt::AlignHCenter);
 
     // Projetos recentes
     auto* recentBox = new QGroupBox(tr("Projetos recentes"), this);
@@ -209,6 +218,15 @@ void WelcomeWindow::buildLayout() {
     auto* hint = new QLabel(tr("Feche esta janela para abrir o editor vazio."), this);
     hint->setStyleSheet("color: #777777;");
 
+    // Aviso de versão de desenvolvimento: exibido apenas em builds de debug.
+    m_devWarn = new QLabel(tr("Você está usando uma versão de desenvolvimento do Pierrot. "
+                              "Recursos podem estar incompletos ou instáveis."), this);
+    m_devWarn->setWordWrap(true);
+    m_devWarn->setStyleSheet(
+        "background-color: #5a3b00; color: #ffd97a; padding: 6px 10px;"
+        "border-radius: 4px; font-weight: bold;");
+    m_devWarn->setVisible(false);
+
     // Montagem geral
     auto* leftCol = new QVBoxLayout;
     leftCol->addWidget(m_imageLabel);
@@ -217,6 +235,7 @@ void WelcomeWindow::buildLayout() {
     auto* centerCol = new QVBoxLayout;
     centerCol->addWidget(title);
     centerCol->addWidget(subtitle);
+    centerCol->addWidget(credits);
     centerCol->addSpacing(14);
     centerCol->addWidget(recentBox);
     centerCol->addWidget(newBox);
@@ -234,7 +253,14 @@ void WelcomeWindow::buildLayout() {
     auto* root = new QVBoxLayout(this);
     root->addLayout(topRow, 1);
     root->addWidget(hint, 0, Qt::AlignHCenter);
+    root->addWidget(m_devWarn);
     root->addSpacing(8);
+
+#if defined(QT_NO_DEBUG)
+    m_devWarn->setVisible(false);
+#else
+    m_devWarn->setVisible(true);
+#endif
 }
 
 void WelcomeWindow::loadRecentProjects() {

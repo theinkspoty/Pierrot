@@ -1,3 +1,8 @@
+// Pierrot — editor de vídeo
+// Copyright (C) 2026 theinkspoty
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
+
 #pragma once
 
 #include <QWidget>
@@ -8,6 +13,8 @@
 #include "models/Project.h"
 
 class QPushButton;
+class QProgressBar;
+class QLineEdit;
 class QMouseEvent;
 class QEvent;
 
@@ -66,6 +73,8 @@ private:
     PoolList* m_list = nullptr;
     QPushButton* m_addBtn = nullptr;
     QPushButton* m_removeBtn = nullptr;
+    QLineEdit* m_search = nullptr;
+    QProgressBar* m_importBar = nullptr;
     QHash<QString, QImage> m_thumbs; // mediaId -> thumb (independente do item)
     QImage m_audioIcon;
     QImage m_videoPlaceholder;

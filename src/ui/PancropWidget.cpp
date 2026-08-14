@@ -1,3 +1,8 @@
+// Pierrot — editor de vídeo
+// Copyright (C) 2026 theinkspoty
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
+
 #include "PancropWidget.h"
 
 #include <QPainter>
@@ -37,6 +42,23 @@ protected:
     void mouseMoveEvent(QMouseEvent* e) override { m_owner->viewportMove(this, e); }
     void mouseReleaseEvent(QMouseEvent* e) override { m_owner->viewportRelease(this, e); }
     void wheelEvent(QWheelEvent* e) override { m_owner->viewportWheel(this, e); }
+private:
+    PancropWidget* m_owner;
+};
+
+// Faixa de tempo dos keyframes do clipe: mostra a posição dos keyframes
+// (relativa ao início do clipe) e permite arrastá-los para a esquerda/direita.
+class PancropWidget::KeyframeStrip : public QWidget {
+public:
+    explicit KeyframeStrip(PancropWidget* owner) : QWidget(owner), m_owner(owner) {
+        setMinimumHeight(30);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    }
+protected:
+    void paintEvent(QPaintEvent*) override { m_owner->paintKeyframeStrip(this); }
+    void mousePressEvent(QMouseEvent* e) override { m_owner->stripPress(this, e); }
+    void mouseMoveEvent(QMouseEvent* e) override { m_owner->stripMove(this, e); }
+    void mouseReleaseEvent(QMouseEvent* e) override { m_owner->stripRelease(this, e); }
 private:
     PancropWidget* m_owner;
 };
@@ -202,11 +224,15 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     // Viewfinder de um lado, controles de transformação do outro (lado a lado)
     // — assim a tela não fica atrás/embaixo dos sliders.
     m_view = new Viewport(this);
+    m_strip = new KeyframeStrip(this);
+    m_strip->setToolTip(tr("Arraste um keyframe para a esquerda/direita para "
+                           "mover sua posição no tempo"));
     auto* controls = new QWidget(this);
     auto* ctlLay = new QVBoxLayout(controls);
     ctlLay->setContentsMargins(0, 0, 0, 0);
     ctlLay->setSpacing(5);
     ctlLay->addLayout(kfBar);
+    ctlLay->addWidget(m_strip);
     ctlLay->addWidget(cropBox);
     ctlLay->addWidget(moveBox);
     ctlLay->addWidget(resetBtn);
@@ -220,6 +246,8 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     lay->addWidget(controls);
 
     refreshDiamonds();
+    m_strip->update();
+    m_view->update();
 }
 
 void PancropWidget::setProject(Project* p) {
@@ -238,12 +266,14 @@ void PancropWidget::setClipId(const QString& id) {
     loadFrame();
     syncFromClip();
     m_view->update();
+    m_strip->update();
 }
 
 void PancropWidget::setPlayhead(double t) {
     m_playhead = t;
     syncFromClip();
     m_view->update();
+    m_strip->update();
 }
 
 void PancropWidget::refresh() {
@@ -455,6 +485,7 @@ void PancropWidget::refreshDiamonds() {
         }
         it.value()->setStyleSheet(active ? on : off);
     }
+    if (m_strip) m_strip->update();
 }
 
 void PancropWidget::commitSlider(int prop, double baseValue) {
@@ -869,4 +900,144 @@ void PancropWidget::viewportWheel(QWidget* view, QWheelEvent* e) {
     commitSlider(P_PanY, nty);
     updateValueLabels();
     m_view->update();
+}
+
+// --- Faixa de tempo dos keyframes (arraste esquerda/direita) ---
+
+// Converte posição relativa do playhead/keyframe (0..clip.dur) em pixel na strip.
+static int kfStripX(double rel, const QWidget* view, double dur) {
+    const int w = view->width();
+    if (dur <= 0.0) return 0;
+    const double frac = std::clamp(rel / dur, 0.0, 1.0);
+    return 4 + (int)std::lround(frac * (w - 8));
+}
+
+void PancropWidget::paintKeyframeStrip(QWidget* view) {
+    QPainter p(view);
+    p.fillRect(view->rect(), QColor(26, 26, 29));
+    Clip* c = activeClip();
+    if (!c) return;
+    const double dur = std::max(c->dur, 1e-3);
+    const int w = view->width();
+    const int h = view->height();
+
+    // Linha do tempo.
+    p.setPen(QColor(60, 60, 68));
+    p.drawLine(0, h / 2, w, h / 2);
+
+    // Agulha: posição relativa do playhead.
+    const double rel = relPlayhead();
+    if (rel >= 0.0) {
+        const int x = kfStripX(rel, view, dur);
+        p.setPen(QColor(255, 70, 70));
+        p.drawLine(x, 2, x, h - 2);
+    }
+
+    // Keyframes: coleta os tempos únicos de todas as propriedades.
+    const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
+                         P_Scale, P_PanX, P_PanY};
+    QVector<double> times;
+    for (int prop : props) {
+        QVector<Keyframe>* kf = keyframesFor(prop);
+        if (!kf) continue;
+        for (const Keyframe& k : *kf) {
+            if (!times.contains(k.time))
+                times.append(k.time);
+        }
+    }
+    std::sort(times.begin(), times.end());
+    for (double t : times) {
+        const int x = kfStripX(t, view, dur);
+        const bool active = std::fabs(t - rel) < 1e-6;
+        QPolygon dia = QPolygon()
+            << QPoint(x, h / 2 - 6) << QPoint(x + 5, h / 2)
+            << QPoint(x, h / 2 + 6) << QPoint(x - 5, h / 2);
+        p.setPen(QPen(QColor(20, 20, 24), 1));
+        p.setBrush(active ? QColor(255, 179, 64) : QColor(120, 170, 255));
+        p.drawPolygon(dia);
+    }
+}
+
+void PancropWidget::stripPress(QWidget* view, QMouseEvent* e) {
+    m_stripDragging = false;
+    Clip* c = activeClip();
+    if (e->button() != Qt::LeftButton || !c) return;
+    const double dur = std::max(c->dur, 1e-3);
+
+    // Encontra o keyframe mais próximo do clique (tol ~7 px).
+    const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
+                         P_Scale, P_PanX, P_PanY};
+    QVector<double> times;
+    for (int prop : props) {
+        QVector<Keyframe>* kf = keyframesFor(prop);
+        if (!kf) continue;
+        for (const Keyframe& k : *kf)
+            if (!times.contains(k.time)) times.append(k.time);
+    }
+    int bestIdx = -1;
+    double bestDist = 1e9;
+    for (int i = 0; i < times.size(); ++i) {
+        const int x = kfStripX(times[i], view, dur);
+        const int dist = std::abs(e->pos().x() - x);
+        if (dist <= 7 && dist < bestDist) { bestDist = dist; bestIdx = i; }
+    }
+    if (bestIdx < 0) {
+        // Clique em ponto vazio: move a agulha para esse instante.
+        const double frac = std::clamp((double)(e->pos().x() - 4) / (view->width() - 8),
+                                       0.0, 1.0);
+        emit keyframeJump(c->pos + frac * dur);
+        m_strip->update();
+        return;
+    }
+    m_stripDragging = true;
+    m_stripDragFrom = times[bestIdx];
+    m_stripDragTo = times[bestIdx];
+    setCursor(Qt::ClosedHandCursor);
+    emit editStart();
+    m_undoPushed = true;
+    m_strip->update();
+}
+
+void PancropWidget::stripMove(QWidget* view, QMouseEvent* e) {
+    if (!m_stripDragging || m_stripDragFrom < 0.0) return;
+    Clip* c = activeClip();
+    if (!c) return;
+    const double dur = std::max(c->dur, 1e-3);
+    const double frac = std::clamp((double)(e->pos().x() - 4) / (view->width() - 8),
+                                   0.0, 1.0);
+    const double newRel = frac * dur;
+    if (std::fabs(newRel - m_stripDragTo) < 1e-6) return;
+    const double from = m_stripDragFrom;
+    m_stripDragTo = newRel;
+
+    // Move o tempo de TODAS as propriedades que tinham keyframe na posição
+    // original (preserva o agrupamento visual no playhead).
+    const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
+                         P_Scale, P_PanX, P_PanY};
+    for (int prop : props) {
+        QVector<Keyframe>* kf = keyframesFor(prop);
+        if (!kf) continue;
+        for (int i = 0; i < kf->size(); ++i) {
+            if (std::fabs((*kf)[i].time - from) < 1e-6) {
+                (*kf)[i].time = newRel;
+                break;
+            }
+        }
+        std::sort(kf->begin(), kf->end(),
+                  [](const Keyframe& a, const Keyframe& b) { return a.time < b.time; });
+    }
+    refreshDiamonds();
+    m_view->update();
+    m_strip->update();
+    emit modified();
+}
+
+void PancropWidget::stripRelease(QWidget* view, QMouseEvent*) {
+    if (m_stripDragging) {
+        m_stripDragging = false;
+        m_stripDragFrom = -1.0;
+        m_stripDragTo = -1.0;
+        setCursor(Qt::ArrowCursor);
+        m_strip->update();
+    }
 }

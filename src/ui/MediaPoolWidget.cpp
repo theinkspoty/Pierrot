@@ -1,3 +1,8 @@
+// Pierrot — editor de vídeo
+// Copyright (C) 2026 theinkspoty
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
+
 #include "MediaPoolWidget.h"
 #include "ffmpeg/FFmpegDecoder.h"
 #include "ffmpeg/MediaCache.h"
@@ -7,6 +12,9 @@
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QPushButton>
+#include <QProgressBar>
+#include <QLineEdit>
+#include <QLabel>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QMessageBox>
@@ -180,6 +188,8 @@ MediaPoolWidget::MediaPoolWidget(QWidget* parent) : QWidget(parent) {
 
     m_addBtn = new QPushButton(tr("Adicionar"), this);
     m_removeBtn = new QPushButton(tr("Remover"), this);
+    m_addBtn->setToolTip(tr("Importar mídia (Ctrl+I)"));
+    m_removeBtn->setToolTip(tr("Remover a mídia selecionada do projeto"));
     connect(m_addBtn, &QPushButton::clicked, this, &MediaPoolWidget::addFiles);
     connect(m_removeBtn, &QPushButton::clicked, this, &MediaPoolWidget::removeSelected);
     connect(&MediaCache::instance(), &MediaCache::thumbnailReady,
@@ -190,16 +200,43 @@ MediaPoolWidget::MediaPoolWidget(QWidget* parent) : QWidget(parent) {
         if (it) emit mediaToTimeline(it->data(Qt::UserRole).toString());
     });
 
+    auto* header = new QLabel(tr("Central de Mídias"), this);
+    QFont hf = header->font();
+    hf.setBold(true);
+    hf.setPointSize(hf.pointSize() + 1);
+    header->setFont(hf);
+
+    m_search = new QLineEdit(this);
+    m_search->setPlaceholderText(tr("Filtrar mídias…"));
+    m_search->setClearButtonEnabled(true);
+    connect(m_search, &QLineEdit::textChanged, this, [this](const QString& text) {
+        for (int i = 0; i < m_list->count(); ++i) {
+            QListWidgetItem* it = m_list->item(i);
+            if (it) it->setHidden(!it->text().contains(text, Qt::CaseInsensitive));
+        }
+    });
+
     auto* bar = new QHBoxLayout;
     bar->setContentsMargins(0, 0, 0, 0);
     bar->addWidget(m_addBtn);
     bar->addWidget(m_removeBtn);
     bar->addStretch();
 
+    m_importBar = new QProgressBar(this);
+    m_importBar->setRange(0, 100);
+    m_importBar->setValue(0);
+    m_importBar->setTextVisible(false);
+    m_importBar->setFixedHeight(10);
+    m_importBar->setFormat(QString());
+    m_importBar->hide();
+
     auto* lay = new QVBoxLayout(this);
-    lay->setContentsMargins(4, 4, 4, 4);
+    lay->setContentsMargins(6, 6, 6, 6);
     lay->setSpacing(4);
+    lay->addWidget(header);
     lay->addLayout(bar);
+    lay->addWidget(m_search);
+    lay->addWidget(m_importBar);
     lay->addWidget(m_list, 1);
 }
 
@@ -276,7 +313,10 @@ void MediaPoolWidget::addFiles() {
     const QStringList files = QFileDialog::getOpenFileNames(
         this, tr("Importar mídia"), QString(),
         tr("Vídeo e áudio (*.mp4 *.mov *.mkv *.avi *.webm *.m4v *.ts *.flv *.wmv "
-           "*.mp3 *.wav *.aac *.flac *.ogg *.m4a *.opus *.wma);;Todos os arquivos (*)"));
+           "*.3gp *.mpg *.mpeg *.ogv *.mts *.m2ts *.vob "
+           "*.mp3 *.wav *.aac *.flac *.ogg *.m4a *.opus *.wma *.aiff *.aif *.au "
+           "*.ac3 *.amr *.ape *.caf *.dts *.mka *.mid *.midi *.mp2 *.oga *.spx "
+           "*.w64 *.wv *.alac *.mp1 *.mpa *.ra *.wpl *.tta *.tak *.shn);;Todos os arquivos (*)"));
     if (files.isEmpty()) return;
     emit editStart();
 
@@ -312,13 +352,20 @@ void MediaPoolWidget::addFiles() {
             refresh();
             emit mediaAdded(QString());
         }
+        m_importBar->hide();
         emit importFinished(added, invalid);
         watcher->deleteLater();
     });
     connect(watcher, &QFutureWatcher<ProbeResult>::progressValueChanged, this,
-            [this](int v) { emit importProgress(v); });
+            [this, files](int v) {
+                m_importBar->setValue(v);
+                emit importProgress(v);
+            });
 
     emit importStarted();
+    m_importBar->setRange(0, files.size());
+    m_importBar->setValue(0);
+    m_importBar->show();
     watcher->setFuture(QtConcurrent::mapped(files, probeFile));
 }
 

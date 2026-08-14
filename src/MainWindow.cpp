@@ -1,3 +1,8 @@
+// Pierrot — editor de vídeo
+// Copyright (C) 2026 theinkspoty
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
+
 #include "MainWindow.h"
 
 #include "ui/MediaPoolWidget.h"
@@ -306,25 +311,37 @@ void MainWindow::showEvent(QShowEvent* event) {
 }
 
 void MainWindow::createDocks() {
-    m_poolDock = new QDockWidget(tr("Mídia"), this);
+    m_poolDock = new QDockWidget(tr("Central de Mídias"), this);
     m_poolDock->setWidget(m_pool);
-    m_poolDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    m_poolDock->setAllowedAreas(Qt::AllDockWidgetAreas);
+    m_poolDock->setFeatures(QDockWidget::DockWidgetMovable
+                            | QDockWidget::DockWidgetFloatable
+                            | QDockWidget::DockWidgetClosable);
     addDockWidget(Qt::LeftDockWidgetArea, m_poolDock);
 
     m_timelineDock = new QDockWidget(tr("Timeline"), this);
-    m_timelineDock->setAllowedAreas(Qt::BottomDockWidgetArea);
+    m_timelineDock->setAllowedAreas(Qt::AllDockWidgetAreas);
+    m_timelineDock->setFeatures(QDockWidget::DockWidgetMovable
+                                | QDockWidget::DockWidgetFloatable
+                                | QDockWidget::DockWidgetClosable);
     addDockWidget(Qt::BottomDockWidgetArea, m_timelineDock);
     // O widget do dock (ferramentas + timeline) é montado em createActions().
 
     m_pancropDock = new QDockWidget(tr("Pancrop"), this);
     m_pancropDock->setWidget(m_pancrop);
-    m_pancropDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    m_pancropDock->setAllowedAreas(Qt::AllDockWidgetAreas);
+    m_pancropDock->setFeatures(QDockWidget::DockWidgetMovable
+                               | QDockWidget::DockWidgetFloatable
+                               | QDockWidget::DockWidgetClosable);
     addDockWidget(Qt::RightDockWidgetArea, m_pancropDock);
     m_pancropDock->hide();
 
     m_graphDock = new QDockWidget(tr("Editor de Curvas"), this);
     m_graphDock->setWidget(m_graph);
-    m_graphDock->setAllowedAreas(Qt::BottomDockWidgetArea);
+    m_graphDock->setAllowedAreas(Qt::AllDockWidgetAreas);
+    m_graphDock->setFeatures(QDockWidget::DockWidgetMovable
+                             | QDockWidget::DockWidgetFloatable
+                             | QDockWidget::DockWidgetClosable);
     addDockWidget(Qt::BottomDockWidgetArea, m_graphDock);
     splitDockWidget(m_timelineDock, m_graphDock, Qt::Horizontal);
     m_graphDock->setMinimumWidth(260);

@@ -1,3 +1,8 @@
+// Pierrot — editor de vídeo
+// Copyright (C) 2026 theinkspoty
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
+
 #include "TimelineWidget.h"
 
 #include "ffmpeg/MediaCache.h"
@@ -10,6 +15,7 @@
 #include <QPainterPath>
 #include <QApplication>
 #include <QMouseEvent>
+#include <QTimer>
 #include <QWheelEvent>
 #include <QContextMenuEvent>
 #include <QDragEnterEvent>
@@ -160,6 +166,13 @@ TimelineWidget::TimelineWidget(QWidget* parent) : QWidget(parent) {
         m_viewStart = m_hbar->value() / pps;
         refreshView();
     });
+
+    // Autoscroll: enquanto o mouse segura a agulha/clipe encostado na borda da
+    // view, a timeline rola sozinha para acompanhar o arrasto.
+    m_autoScroll = new QTimer(this);
+    m_autoScroll->setInterval(16);
+    m_autoScroll->setTimerType(Qt::PreciseTimer);
+    connect(m_autoScroll, &QTimer::timeout, this, &TimelineWidget::autoScrollTick);
 }
 
 void TimelineWidget::invalidateScene() {
@@ -205,12 +218,22 @@ void TimelineWidget::addMediaAtPlayhead(const QString& mediaId) {
     const double t = snapTime(std::max(0.0, m_playhead));
     const double dur = m->duration > 0 ? m->duration : 1.0;
 
-    int vRow = -1;
-    for (int i = 0; i < (int)m_project->videoTracks.size(); ++i)
-        if (!m_project->videoTracks[i].locked) { vRow = i; break; }
-    int aRow = -1;
-    for (int i = 0; i < (int)m_project->audioTracks.size(); ++i)
-        if (!m_project->audioTracks[i].locked) { aRow = i; break; }
+    // Usa uma faixa livre (sem sobreposição em `t`) ou cria uma nova vazia.
+    auto findFreeTrack = [this](bool audio, int prefer) {
+        auto overlap = [t, dur](const QVector<Clip>& clips) {
+            for (const Clip& o : clips)
+                if (o.pos < t + dur - 1e-9 && o.pos + o.dur > t + 1e-9) return true;
+            return false;
+        };
+        auto& list = audio ? m_project->audioTracks : m_project->videoTracks;
+        if (prefer >= 0 && prefer < (int)list.size()
+            && !list[prefer].locked && !overlap(list[prefer].clips))
+            return prefer;
+        for (int i = 0; i < (int)list.size(); ++i)
+            if (!list[i].locked && !overlap(list[i].clips)) return i;
+        m_project->addTrack(audio);
+        return (int)list.size() - 1;
+    };
 
     QString lastPlaced;
     const auto push = [&](QVector<Clip>& clips, const Clip& c) {
@@ -218,30 +241,32 @@ void TimelineWidget::addMediaAtPlayhead(const QString& mediaId) {
         while (it != clips.end() && it->pos <= c.pos) ++it;
         clips.insert(it, c);
     };
-    if (m->hasVideo && vRow >= 0) {
+    if (m->hasVideo) {
+        const int vRow = findFreeTrack(false, 0);
         Clip c;
         c.id = newId();
-        c.groupId = (m->hasAudio && aRow >= 0) ? newId() : QString();
+        c.groupId = m->hasAudio ? newId() : QString();
         c.mediaId = mediaId;
         c.pos = t;
         c.in = 0.0;
-        c.dur = std::max(kMinDur, fitDurationInTrack(m_project->videoTracks[vRow], t, dur, QString()));
+        c.dur = dur;
         c.name = m->name;
         push(m_project->videoTracks[vRow].clips, c);
         lastPlaced = c.id;
-        if (m->hasAudio && aRow >= 0) {
+        if (m->hasAudio) {
+            const int aRow = findFreeTrack(true, 0);
             Clip ac = c;
             ac.id = newId();
-            ac.dur = std::max(kMinDur, fitDurationInTrack(m_project->audioTracks[aRow], t, dur, QString()));
             push(m_project->audioTracks[aRow].clips, ac);
         }
-    } else if (m->hasAudio && aRow >= 0) {
+    } else if (m->hasAudio) {
+        const int aRow = findFreeTrack(true, 0);
         Clip c;
         c.id = newId();
         c.mediaId = mediaId;
         c.pos = t;
         c.in = 0.0;
-        c.dur = std::max(kMinDur, fitDurationInTrack(m_project->audioTracks[aRow], t, dur, QString()));
+        c.dur = dur;
         c.name = m->name;
         push(m_project->audioTracks[aRow].clips, c);
         lastPlaced = c.id;
@@ -392,6 +417,62 @@ void TimelineWidget::ensurePlayheadVisible() {
     m_viewStart = m_hbar->value() / m_pps;
 }
 
+// Liga o autoscroll quando o mouse (durante PlayheadDrag, RulerLoop ou o
+// arraste de um clipe) está perto da borda esquerda/direita da view. A rolagem
+// contínua faz a agulha/clipe acompanhar o cursor sem que ele saia da janela.
+void TimelineWidget::startAutoScroll(QMouseEvent* e) {
+    if (!m_project) return;
+    m_autoScrollMouse = e->pos();
+    const int edge = 32;
+    const int vw = width() - m_vbar->sizeHint().width();
+    const int mx = m_autoScrollMouse.x();
+    int dir = 0;
+    if (mx >= kHeaderW && mx <= kHeaderW + edge)
+        dir = -1;
+    else if (mx >= vw - edge)
+        dir = +1;
+    if (dir != 0) {
+        m_autoScrollDir = dir;
+        if (!m_autoScroll->isActive()) m_autoScroll->start();
+    } else {
+        stopAutoScroll();
+    }
+}
+
+void TimelineWidget::stopAutoScroll() {
+    m_autoScroll->stop();
+    m_autoScrollDir = 0;
+}
+
+// Rola a timeline e, quando aplicável, reposiciona a agulha/loop/arrasto sob o
+// cursor para que a operação continue na nova área visível.
+void TimelineWidget::autoScrollTick() {
+    if (m_dragMode != PlayheadDrag && m_dragMode != RulerLoop
+        && m_dragMode != MoveClip && m_dragMode != TrimLeft
+        && m_dragMode != TrimRight) {
+        stopAutoScroll();
+        return;
+    }
+    const int viewW = width() - m_vbar->sizeHint().width();
+    const int step = qMax(8, viewW / 24) * m_autoScrollDir;
+    int v = m_hbar->value() + step;
+    if (v < m_hbar->minimum()) v = m_hbar->minimum();
+    if (v > m_hbar->maximum()) v = m_hbar->maximum();
+    m_hbar->setValue(v);
+
+    // Recalcula a operação na nova posição da view.
+    QMouseEvent ev(QEvent::MouseMove, m_autoScrollMouse, Qt::LeftButton,
+                   Qt::LeftButton, Qt::NoModifier);
+    if (m_dragMode == PlayheadDrag || m_dragMode == RulerLoop) {
+        const double t2 = std::max(0.0, snapTime(xToTime(m_autoScrollMouse.x())));
+        setPlayhead(t2);
+        emit playheadChanged(t2);
+        update();
+        return;
+    }
+    mouseMoveEvent(&ev);
+}
+
 void TimelineWidget::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.fillRect(rect(), QColor(24, 24, 26));
@@ -524,6 +605,20 @@ void TimelineWidget::renderScene(QPainter& p) {
         }
     }
     p.restore();
+
+    // Régua de volume das faixas de áudio (estilo Vegas): linha horizontal
+    // arrastável; arrastar para cima aumenta o volume da faixa (0–200%).
+    p.save();
+    p.setClipRect(QRect(H, kRulerH, width() - H, height() - kRulerH));
+    for (int i = 0; i < (int)m_project->audioTracks.size(); ++i) {
+        const Track& tr = m_project->audioTracks[i];
+        const int ly = volLineY(i, true, tr);
+        const bool active = m_dragMode == TrackVol && m_volRow == i;
+        p.setPen(QPen(active ? QColor(255, 220, 90) : QColor(140, 200, 160),
+                      active ? 2 : 1, Qt::SolidLine));
+        p.drawLine(H, ly, width(), ly);
+    }
+    p.restore();
 }
 
 // Camadas finas desenhadas por cima da cena estática em cada repaint.
@@ -543,13 +638,18 @@ void TimelineWidget::renderOverlays(QPainter& p) {
     }
 
     const double px = H + (m_playhead - m_viewStart) * m_pps;
-    p.setPen(QColor(255, 70, 70));
-    p.drawLine((int)px, R, (int)px, height());
-    QPolygon tri;
-    tri << QPoint((int)px - 6, 0) << QPoint((int)px + 6, 0) << QPoint((int)px, 9);
-    p.setPen(Qt::NoPen);
-    p.setBrush(QColor(255, 70, 70));
-    p.drawPolygon(tri);
+    // Só desenha a agulha sobre a área de conteúdo: quando o playhead está
+    // antes da área visível (px < cabeçalho) a linha não pode cruzar a coluna
+    // dos cabeçalhos das faixas.
+    if (px >= H && px <= width()) {
+        p.setPen(QColor(255, 70, 70));
+        p.drawLine((int)px, R, (int)px, height());
+        QPolygon tri;
+        tri << QPoint((int)px - 6, 0) << QPoint((int)px + 6, 0) << QPoint((int)px, 9);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(255, 70, 70));
+        p.drawPolygon(tri);
+    }
 
     if (m_dragMode == Razor) {
         const int rx = (int)timeToX(m_razorT);
@@ -938,14 +1038,30 @@ void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& 
     p.fillRect(0, y, H, rowH,
                tr.locked ? QColor(56, 44, 44)
                          : (tr.audio ? QColor(36, 36, 40) : QColor(38, 38, 42)));
+    // Faixa lateral colorida: azul para vídeo, verde para áudio.
+    p.fillRect(0, y, 3, rowH,
+               tr.locked ? QColor(200, 90, 90)
+                         : (tr.audio ? QColor(70, 160, 110) : QColor(70, 130, 200)));
     QFont base = p.font();
     QFont f = base;
     f.setBold(true);
     f.setPointSizeF(8.5);
     p.setFont(f);
     p.setPen(tr.audio ? QColor(190, 190, 198) : QColor(200, 200, 205));
-    p.drawText(QRect(6, y + 3, H - 12, 16), Qt::AlignLeft | Qt::AlignVCenter, tr.name);
+    p.drawText(QRect(8, y + 3, H - 14, 16), Qt::AlignLeft | Qt::AlignVCenter, tr.name);
     p.setFont(base);
+
+    if (tr.audio) {
+        // Indicador do volume da faixa no cabeçalho (0–200%), refletindo a régua.
+        const QString pct = QString("%1%").arg((int)llround(tr.volume * 100.0));
+        QFont vf = base;
+        vf.setPointSizeF(7.5);
+        vf.setBold(true);
+        p.setFont(vf);
+        p.setPen(QColor(120, 190, 150));
+        p.drawText(QRect(6, y + 19, H - 12, 14), Qt::AlignRight | Qt::AlignVCenter, pct);
+        p.setFont(base);
+    }
 
     // Botões M/S/L. "M" acende também quando outra faixa em solo silencia esta.
     const bool audible = !tr.muted && !(anySolo && !tr.solo);
@@ -988,6 +1104,29 @@ int TimelineWidget::resizeHandleAt(const QPoint& pos, int& row, bool& audio) con
     const int rowH = trackH(row, audio);
     if (pos.y() >= y + rowH - kResizeHandleH && pos.y() < y + rowH)
         return 0;
+    return -1;
+}
+
+// Posição vertical da régua de volume da faixa de áudio: volume 0% na base da
+// faixa, 200% no topo (estilo Vegas).
+int TimelineWidget::volLineY(int row, bool audio, const Track& tr) const {
+    const int rowH = trackH(row, audio);
+    const int y = rowY(-1, row);
+    const int pad = 6;
+    const double frac = std::clamp(tr.volume, 0.0, 2.0) / 2.0;
+    return y + rowH - pad - (int)std::lround(frac * (rowH - pad * 2.0));
+}
+
+// Se o ponto está sobre a régua de volume de uma faixa de áudio, retorna o
+// índice da faixa (dentro de uma tolerância vertical). -1 se fora.
+int TimelineWidget::volRowAt(const QPoint& pos, int& row) const {
+    if (!m_project || pos.x() < kHeaderW || pos.y() < kRulerH) return -1;
+    int r = -1;
+    bool audio = false;
+    if (!rowFromY(pos.y(), r, audio) || !audio) return -1;
+    const Track& tr = m_project->audioTracks[r];
+    const int ly = volLineY(r, true, tr);
+    if (std::abs(pos.y() - ly) <= 4) { row = r; return 0; }
     return -1;
 }
 
@@ -1212,6 +1351,30 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
         }
     }
 
+    // Régua de volume das faixas de áudio: arrastar a linha ajusta o volume.
+    // Só quando não há clipe sob o cursor (o clique no clipe continua
+    // selecionando/arrastando normalmente, mesmo sobre a linha).
+    {
+        int vrow;
+        if (volRowAt(e->pos(), vrow) >= 0) {
+            int r2;
+            bool a2;
+            bool overClip = false;
+            if (rowFromY(y, r2, a2) && clipAt(r2, a2, xToTime(x)) != nullptr)
+                overClip = true;
+            if (!overClip) {
+                emit editStart();
+                m_dragMode = TrackVol;
+                m_volRow = vrow;
+                m_volOrig = m_project->audioTracks[vrow].volume;
+                m_dragStart = e->pos();
+                setCursor(Qt::SizeVerCursor);
+                update();
+                return;
+            }
+        }
+    }
+
     // Botões de cabeçalho (M/S/L) das faixas.
     {
         int brow;
@@ -1338,10 +1501,28 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
             }
             return;
         }
+        if (m_dragMode == TrackVol) {
+            if (m_volRow < 0 || m_volRow >= (int)m_project->audioTracks.size()) return;
+            Track& t = m_project->audioTracks[m_volRow];
+            const int rowH = trackH(m_volRow, true);
+            const int y = rowY(-1, m_volRow);
+            const int pad = 6;
+            const double frac = 1.0 - std::clamp(
+                (double)(e->pos().y() - (y + pad)) / (rowH - pad * 2.0), 0.0, 1.0);
+            const double v = frac * 2.0;
+            if (std::fabs(t.volume - v) > 1e-4) {
+                t.volume = v;
+                refreshView();
+                update();
+                emit modified();
+            }
+            return;
+        }
         if (m_dragMode == PlayheadDrag) {
             const double t2 = std::max(0.0, snapTime(xToTime(e->pos().x())));
             setPlayhead(t2);
             emit playheadChanged(t2);
+            startAutoScroll(e);
             update();
             return;
         }
@@ -1354,6 +1535,7 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                 m_loopOut = b;
                 emit loopChanged(m_loopIn, m_loopOut);
             }
+            startAutoScroll(e);
             update();
             return;
         }
@@ -1386,9 +1568,21 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                     // de vídeo, áudio só em faixas de áudio). O membro do
                     // grupo vinculado NÃO acompanha na vertical: ele mantém a
                     // faixa em que está (só a posição no tempo anda junto).
-                    int row;
-                    bool audio;
-                    if (rowFromY(e->pos().y(), row, audio)) {
+    int row;
+    bool audio;
+    int vrow;
+    if (volRowAt(e->pos(), vrow) >= 0) {
+        int r2;
+        bool a2;
+        bool overClip = false;
+        if (rowFromY(e->pos().y(), r2, a2) && clipAt(r2, a2, xToTime(e->pos().x())) != nullptr)
+            overClip = true;
+        if (!overClip) {
+            setCursor(Qt::SizeVerCursor);
+            return;
+        }
+    }
+    if (rowFromY(e->pos().y(), row, audio)) {
                         for (auto it = m_dragOrig.begin(); it != m_dragOrig.end(); ++it) {
                             Clip* sc = findClipById(it.key());
                             if (!sc) continue;
@@ -1442,6 +1636,7 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                 emit modified();
             }
         }
+        startAutoScroll(e);
         return;
     }
 
@@ -1517,6 +1712,8 @@ void TimelineWidget::mouseReleaseEvent(QMouseEvent* e) {
     m_dragClip.clear();
     m_dragUndoPushed = false;
     m_dragOrig.clear();
+    m_volRow = -1;
+    stopAutoScroll();
     setCursor(Qt::ArrowCursor);
     update();
 }
@@ -1914,71 +2111,86 @@ void TimelineWidget::finishDrop(const QStringList& mediaIds, const QPoint& dropP
             if (m && m->hasVideo) { anyVideo = true; break; }
         }
         audio = !anyVideo;
-        const QVector<Track>& list = audio ? m_project->audioTracks : m_project->videoTracks;
-        for (int i = 0; i < (int)list.size(); ++i) {
-            if (!list[i].locked) { row = i; break; }
-        }
-        if (row < 0) return;
+        row = 0;
     }
     m_dragHoverRow = -1;
 
     emit editStart();
     double t = snapTime(std::max(0.0, xToTime(dropPos.x())));
     QString lastPlaced;
+
+    // Acha a faixa (do tipo `audio`) que esteja livre para receber um clipe de
+    // duração `dur` em `t`. Prefere `preferRow` (a faixa sob o mouse); se
+    // ocupada, procura a primeira faixa desbloqueada que não sobreponha; se
+    // nenhuma existir, cria uma nova faixa vazia.
+    auto findFreeTrack = [this](bool audio, double t, double dur, int preferRow) {
+        auto overlap = [t, dur](const QVector<Clip>& clips) {
+            for (const Clip& o : clips)
+                if (o.pos < t + dur - 1e-9 && o.pos + o.dur > t + 1e-9) return true;
+            return false;
+        };
+        auto& list = audio ? m_project->audioTracks : m_project->videoTracks;
+        if (preferRow >= 0 && preferRow < (int)list.size()
+            && !list[preferRow].locked && !overlap(list[preferRow].clips))
+            return preferRow;
+        for (int i = 0; i < (int)list.size(); ++i)
+            if (!list[i].locked && !overlap(list[i].clips)) return i;
+        m_project->addTrack(audio);
+        return (int)list.size() - 1;
+    };
+
     for (const QString& mid : mediaIds) {
         const MediaItem* m = m_project->findMedia(mid);
         if (!m) continue;
-        const bool fits = audio ? m->hasAudio : m->hasVideo;
-        if (!fits) continue;
-
         const bool both = m->hasVideo && m->hasAudio;
+        const double dur = m->duration > 0 ? m->duration : 1.0;
+
+        // Vídeo primeiro: decide a faixa de vídeo e a posição.
+        int vRow = -1;
+        double vDur = 0.0;
+        if (m->hasVideo) {
+            vRow = findFreeTrack(false, t, dur, audio ? -1 : row);
+            vDur = dur;
+        }
+        int aRow = -1;
+        double aDur = 0.0;
+        if (m->hasAudio) {
+            aRow = findFreeTrack(true, t, dur, audio ? row : -1);
+            aDur = dur;
+        }
+
+        if (vRow < 0 && aRow < 0) continue;
+
         const QString gid = both ? newId() : QString();
-
-        Clip c;
-        c.id = newId();
-        c.groupId = gid;
-        c.mediaId = mid;
-        c.pos = t;
-        c.in = 0.0;
-        c.dur = m->duration > 0 ? m->duration : 1.0;
-        c.name = m->name;
-
-        // Apara a duração para o clipe caber sem sobrepor os existentes na faixa.
-        double dur = c.dur;
-        if (audio) {
-            dur = fitDurationInTrack(m_project->audioTracks[row], t, dur, QString());
-            if (m->hasVideo && !m_project->videoTracks.isEmpty())
-                dur = std::min(dur, fitDurationInTrack(m_project->videoTracks[0], t, dur, QString()));
-        } else {
-            dur = fitDurationInTrack(m_project->videoTracks[row], t, dur, QString());
-            if (m->hasAudio) {
-                if (m_project->audioTracks.isEmpty())
-                    m_project->addTrack(true);
-                dur = std::min(dur, fitDurationInTrack(m_project->audioTracks[0], t, dur, QString()));
-            }
-        }
-        if (dur < kMinDur) { // não cabe: pula para depois deste item
-            t += c.dur;
-            continue;
-        }
-        c.dur = dur;
-
-        if (audio) {
-            if (m->hasVideo && !m_project->videoTracks.isEmpty()) {
-                Clip vc = c;
-                vc.id = newId();
-                m_project->videoTracks[0].clips.push_back(vc);
-            }
-            m_project->audioTracks[row].clips.push_back(c);
+        if (vRow >= 0) {
+            Clip c;
+            c.id = newId();
+            c.groupId = gid;
+            c.mediaId = mid;
+            c.pos = t;
+            c.in = 0.0;
+            c.dur = vDur;
+            c.name = m->name;
+            auto& clips = m_project->videoTracks[vRow].clips;
+            auto it = clips.begin();
+            while (it != clips.end() && it->pos <= c.pos) ++it;
+            clips.insert(it, c);
             lastPlaced = c.id;
-        } else {
-            if (m->hasAudio) {
-                Clip ac = c;
-                ac.id = newId();
-                m_project->audioTracks[0].clips.push_back(ac);
-            }
-            m_project->videoTracks[row].clips.push_back(c);
-            lastPlaced = c.id;
+        }
+        if (aRow >= 0) {
+            Clip c;
+            c.id = newId();
+            c.groupId = gid;
+            c.mediaId = mid;
+            c.pos = t;
+            c.in = 0.0;
+            c.dur = aDur;
+            c.name = m->name;
+            auto& clips = m_project->audioTracks[aRow].clips;
+            auto it = clips.begin();
+            while (it != clips.end() && it->pos <= c.pos) ++it;
+            clips.insert(it, c);
+            if (lastPlaced.isEmpty()) lastPlaced = c.id;
         }
         t += dur;
     }
@@ -2497,22 +2709,6 @@ double TimelineWidget::clampPosToTrack(Clip* c, double newPos,
         }
     }
     return std::max(0.0, newPos);
-}
-
-double TimelineWidget::fitDurationInTrack(const Track& tr, double t, double dur,
-                                          const QString& excludeId) const {
-    double maxDur = dur;
-    for (const Clip& o : tr.clips) {
-        if (o.id == excludeId) continue;
-        if (o.pos >= t) {
-            if (o.pos < t + maxDur)
-                maxDur = o.pos - t;
-        } else if (t < o.pos + o.dur) {
-            maxDur = std::min(maxDur, o.pos + o.dur - t);
-        }
-        if (maxDur <= 0.0) break;
-    }
-    return std::max(0.0, maxDur);
 }
 
 bool TimelineWidget::clipTrackIndex(const QString& id, int& row, bool& audio) const {

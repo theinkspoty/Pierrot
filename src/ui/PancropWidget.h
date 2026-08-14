@@ -1,3 +1,8 @@
+// Pierrot — editor de vídeo
+// Copyright (C) 2026 theinkspoty
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
+
 #pragma once
 
 #include <QWidget>
@@ -39,13 +44,20 @@ protected:
     // e os eventos de mouse/roda do viewfinder.
 private:
     class Viewport;
+    class KeyframeStrip;
     Viewport* m_view = nullptr;
+    KeyframeStrip* m_strip = nullptr;
 
     void paintViewfinder(QWidget* view);
     void viewportPress(QWidget* view, QMouseEvent* e);
     void viewportMove(QWidget* view, QMouseEvent* e);
     void viewportRelease(QWidget* view, QMouseEvent* e);
     void viewportWheel(QWidget* view, QWheelEvent* e);
+
+    void paintKeyframeStrip(QWidget* view);
+    void stripPress(QWidget* view, QMouseEvent* e);
+    void stripMove(QWidget* view, QMouseEvent* e);
+    void stripRelease(QWidget* view, QMouseEvent* e);
 
     Clip* activeClip();
     void syncFromClip();
@@ -105,4 +117,8 @@ private:
     DragMode m_dragMode = DragNone;
     QPointF m_grabOffset{0.0, 0.0};
     QPoint m_lastDrag;
+    // Arraste de keyframes na faixa de tempo.
+    bool m_stripDragging = false;
+    double m_stripDragFrom = -1.0;
+    double m_stripDragTo = -1.0;
 };

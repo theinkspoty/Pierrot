@@ -1,3 +1,8 @@
+// Pierrot — editor de vídeo
+// Copyright (C) 2026 theinkspoty
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
+
 #include "ExportDialog.h"
 
 #include <QLineEdit>
@@ -13,6 +18,9 @@
 #include <QHBoxLayout>
 #include <QRegularExpression>
 #include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QDateTime>
 #include <QMessageBox>
 
 ExportDialog::ExportDialog(Project* project, QWidget* parent)
@@ -64,7 +72,7 @@ ExportDialog::ExportDialog(Project* project, QWidget* parent)
 
     m_startBtn = new QPushButton(tr("Exportar"), this);
     auto* cancelBtn = new QPushButton(tr("Fechar"), this);
-    connect(cancelBtn, &QPushButton::clicked, this, &ExportDialog::reject);
+    connect(cancelBtn, &QPushButton::clicked, this, &ExportDialog::requestCancel);
     connect(m_startBtn, &QPushButton::clicked, this, &ExportDialog::startExport);
 
     auto* btnRow = new QHBoxLayout;
@@ -80,8 +88,30 @@ ExportDialog::ExportDialog(Project* project, QWidget* parent)
 }
 
 ExportDialog::~ExportDialog() {
-    if (m_process && m_process->state() != QProcess::NotRunning)
+    if (m_process && m_process->state() != QProcess::NotRunning) {
         m_process->kill();
+        log(tr("Exportação cancelada pelo encerramento da janela."));
+    }
+}
+
+void ExportDialog::requestCancel() {
+    if (!m_process || m_process->state() == QProcess::NotRunning) {
+        reject();
+        return;
+    }
+    const QMessageBox::StandardButton ans = QMessageBox::question(
+        this, tr("Cancelar render?"),
+        tr("A renderização está em andamento. Deseja cancelar?"),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (ans == QMessageBox::Yes) {
+        m_process->kill();
+        m_process->deleteLater();
+        m_process = nullptr;
+        m_startBtn->setEnabled(true);
+        m_progress->setValue(0);
+        log(tr("Renderização cancelada pelo usuário."));
+        reject();
+    }
 }
 
 void ExportDialog::browseOutput() {
@@ -129,6 +159,10 @@ void ExportDialog::startExport() {
     m_total = m_project->duration();
     m_progress->setValue(0);
     m_logEdit->clear();
+    m_logFile = QFileInfo(s.outputPath).dir().filePath(
+        QStringLiteral("pierrot-render-%1.log")
+            .arg(QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss")));
+    log(tr("Log da renderização: %1").arg(m_logFile));
 
     m_process = new QProcess(this);
     m_process->setProcessChannelMode(QProcess::MergedChannels);
@@ -182,4 +216,11 @@ void ExportDialog::onFinished(int exitCode) {
 
 void ExportDialog::log(const QString& line) {
     m_logEdit->appendPlainText(line);
+    if (!m_logFile.isEmpty()) {
+        QFile f(m_logFile);
+        if (f.open(QIODevice::Append | QIODevice::Text)) {
+            f.write(line.toUtf8());
+            f.write("\n");
+        }
+    }
 }

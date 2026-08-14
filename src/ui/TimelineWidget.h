@@ -1,3 +1,8 @@
+// Pierrot — editor de vídeo
+// Copyright (C) 2026 theinkspoty
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
+
 #pragma once
 
 #include <QWidget>
@@ -16,6 +21,7 @@ class QMouseEvent;
 class QKeyEvent;
 class QContextMenuEvent;
 class QVariantAnimation;
+class QTimer;
 
 // Chave do cache de conteúdo visual dos clipes (onda/thumb + envelope + fades).
 // O epoch é bumpado em mudanças estruturais; rolagem/zoom mantêm o epoch e só
@@ -97,7 +103,7 @@ protected:
     void dragLeaveEvent(QDragLeaveEvent*) override;
     void dropEvent(QDropEvent*) override;
 private:
-    enum DragMode { None, MoveClip, TrimLeft, TrimRight, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, ResizeTrack };
+    enum DragMode { None, MoveClip, TrimLeft, TrimRight, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, ResizeTrack, TrackVol };
     struct ClipOrig { double pos = 0.0, in = 0.0, dur = 0.0; };
     struct ClipboardEntry { Clip clip; int track = 0; bool audio = false; };
 
@@ -117,8 +123,6 @@ private:
     double clampPosToTrack(Clip* c, double newPos, const QSet<QString>& moving) const;
     bool clipTrackIndex(const QString& id, int& row, bool& audio) const;
     bool moveClipToTrack(const QString& id, int row, bool audio);
-    double fitDurationInTrack(const Track& tr, double t, double dur,
-                              const QString& excludeId) const;
     bool isSelected(const QString& id) const;
     void setSelection(const QString& id);
     void toggleSelection(const QString& id);
@@ -130,6 +134,11 @@ private:
     void renderScene(QPainter& p);
     void renderOverlays(QPainter& p);
     void ensurePlayheadVisible();
+    // Autoscroll: rola a timeline continuamente enquanto o mouse segura a
+    // agulha (ou clipe) perto da borda da view. Retorna a direção (px por tick).
+    void startAutoScroll(QMouseEvent* e);
+    void stopAutoScroll();
+    void autoScrollTick();
     void drawClip(QPainter& p, const QRect& r, const Clip& c, const Track& tr, bool audio);
     void drawAudioWaveform(QPainter& p, const QRect& r, const Clip& c, const QString& path);
     void drawVideoThumbs(QPainter& p, const QRect& r, const Clip& c, const QString& path);
@@ -151,6 +160,8 @@ private:
     void drawTrackHeader(QPainter& p, int y, int rowH, const Track& tr);
     int headerBtnAt(const QPoint& pos, int& row, bool& audio) const;
     bool trackLocked(const Clip* c) const;
+    int volLineY(int row, bool audio, const Track& tr) const;
+    int volRowAt(const QPoint& pos, int& row) const;
     void copySelected();
     void cutSelected();
     void pasteClips();
@@ -191,6 +202,8 @@ private:
     int m_resizeOrigH = 0;
     int m_dragHoverRow = -1;
     bool m_dragHoverAudio = false;
+    int m_volRow = -1;
+    double m_volOrig = 1.0;
 
     QHash<ClipVisKey, QPixmap> m_clipPix;
     qint64 m_clipBytes = 0;
@@ -207,4 +220,7 @@ private:
     double m_zoomEndPps = 0.0;
     double m_zoomStartView = 0.0;
     double m_zoomEndView = 0.0;
+    QTimer* m_autoScroll = nullptr;
+    int m_autoScrollDir = 0; // -1 esquerda, +1 direita (px por tick)
+    QPoint m_autoScrollMouse;
 };

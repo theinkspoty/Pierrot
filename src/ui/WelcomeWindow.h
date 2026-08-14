@@ -1,3 +1,8 @@
+// Pierrot — editor de vídeo
+// Copyright (C) 2026 theinkspoty
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
+
 #pragma once
 
 #include <QDialog>
@@ -45,6 +50,7 @@ private:
     QCheckBox* m_autoSave = nullptr;
     QComboBox* m_autoInterval = nullptr;
     QSpinBox* m_autoCustom = nullptr;
+    QLabel* m_devWarn = nullptr;
 
     QString m_projectPath;
     QString m_projectName;

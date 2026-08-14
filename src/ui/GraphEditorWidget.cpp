@@ -1,3 +1,8 @@
+// Pierrot — editor de vídeo
+// Copyright (C) 2026 theinkspoty
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
+
 #include "GraphEditorWidget.h"
 
 #include <QPainter>
@@ -686,6 +691,11 @@ void GraphCanvas::mouseReleaseEvent(QMouseEvent* e) {
 
 void GraphCanvas::mouseDoubleClickEvent(QMouseEvent* e) {
     if (!m_clip) { QWidget::mouseDoubleClickEvent(e); return; }
+    // O press anterior iniciou uma marquee; sem isso, o release do segundo
+    // clique chamaria marqueeSelect com retângulo vazio e DESELECIONARIA o
+    // keyframe que o duplo clique acabou de criar.
+    m_marqueeActive = false;
+    m_marqueeRect = QRect();
     QVector<Keyframe>& K = *keys();
 
     // Duplo clique em cima de um keyframe: edita tempo/valor exatos.

@@ -1,6 +1,12 @@
+// Pierrot — editor de vídeo
+// Copyright (C) 2026 theinkspoty
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
+
 #pragma once
 
 #include <QDialog>
+#include <QString>
 #include "models/Project.h"
 #include "export/ProjectExporter.h"
 
@@ -19,6 +25,7 @@ public:
 private slots:
     void browseOutput();
     void startExport();
+    void requestCancel();
     void onReadyRead();
     void onFinished(int exitCode);
 private:
@@ -34,4 +41,5 @@ private:
     QPushButton* m_startBtn = nullptr;
     QProcess* m_process = nullptr;
     double m_total = 0.0;
+    QString m_logFile;
 };
