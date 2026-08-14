@@ -15,6 +15,9 @@ public:
     // Configurações compartilhadas (lidas de qualquer lugar do app).
     static bool mkvWarningEnabled();
     static int  maxDecodeWidth();
+    // Modo de exibição das miniaturas nos clipes da timeline:
+    // 0 = todas (fatias contínuas), 1 = início e fim, 2 = nenhuma.
+    static int  thumbMode();
 
     // Valores escolhidos no diálogo (aplicar depois do OK).
     bool autoSaveEnabled() const;
@@ -31,4 +34,5 @@ private:
     QCheckBox* m_autoSave = nullptr;
     QSpinBox*  m_autoInterval = nullptr;
     QComboBox* m_decodeWidth = nullptr;
+    QComboBox* m_thumbMode = nullptr;
 };

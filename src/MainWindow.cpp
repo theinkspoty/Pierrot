@@ -148,6 +148,16 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     connect(m_pool, &MediaPoolWidget::mediaToTimeline, m_timeline,
             &TimelineWidget::addMediaAtPlayhead);
+    // Arrasto manual da pool de mídia: feedback na timeline e soltura direta.
+    // Não depende do DnD do compositor (falha em alguns ambientes/Wayland).
+    connect(m_pool, &MediaPoolWidget::dragHover, m_timeline, &TimelineWidget::showDropHover);
+    connect(m_pool, &MediaPoolWidget::dragHoverCleared, m_timeline,
+            &TimelineWidget::hideDropHover);
+    connect(m_pool, &MediaPoolWidget::mediaDropped, this,
+            [this](const QStringList& ids, const QPoint& g) {
+        if (m_timeline->rect().contains(m_timeline->mapFromGlobal(g)))
+            m_timeline->dropMediaAt(ids, g);
+    });
     connect(m_timeline, &TimelineWidget::editStart, this, &MainWindow::pushUndo);
     connect(m_timeline, &TimelineWidget::loopChanged, m_preview, &PreviewWidget::setLoopRange);
     connect(m_pool, &MediaPoolWidget::editStart, this, &MainWindow::pushUndo);
@@ -962,6 +972,9 @@ void MainWindow::openSettings() {
     if (dlg.exec() != QDialog::Accepted) return;
 
     PreviewWidget::setMaxDecodeWidth(dlg.decodeWidth());
+
+    // Re-renderiza o conteúdo dos clipes se o modo de miniatura mudou.
+    m_timeline->refreshSettings();
 
     if (dlg.autoSaveEnabled()) {
         m_autoSaveTimer->setInterval(qMax(1, dlg.autoSaveMinutes()) * 60 * 1000);

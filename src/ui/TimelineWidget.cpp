@@ -719,18 +719,54 @@ void TimelineWidget::drawAudioWaveform(QPainter& p, const QRect& r, const Clip& 
 void TimelineWidget::drawVideoThumbs(QPainter& p, const QRect& r, const Clip& c,
                                      const QString& path) {
     if (path.isEmpty()) return;
+    const int mode = SettingsDialog::thumbMode();
+    if (mode == 2) return; // nenhuma miniatura: corpo fica só com a cor base
+
     MediaCache& cache = MediaCache::instance();
 
-    const int sliceW = 96;
-    const int maxSlices = 32;
-    const int n = std::clamp(std::max(1, r.width() / sliceW), 1, maxSlices);
+    // Aplica cobertura (aspect correto, cortando o excesso) numa fatia.
+    const auto drawCover = [&p](const QRect& slice, const QImage& img) {
+        const double scale = std::max(slice.width() / (double)img.width(),
+                                      slice.height() / (double)img.height());
+        const int tw = (int)std::ceil(img.width() * scale);
+        const int th = (int)std::ceil(img.height() * scale);
+        p.drawImage(QRect(slice.x() + (slice.width() - tw) / 2,
+                          slice.y() + (slice.height() - th) / 2, tw, th),
+                    img);
+    };
 
-    // Renderiza cada fatia independentemente: o que já está pronto é desenhado
-    // na hora; o que ainda não chegou recebe um placeholder e é re-pedido.
     QPainterPath clipPath;
     clipPath.addRoundedRect(r, 3, 3);
     p.save();
     p.setClipPath(clipPath);
+
+    if (mode == 1) {
+        // Miniatura no início e outra no fim do clipe.
+        const int sw = std::min(96, std::max(1, r.width() / 3));
+        const QRect slices[2] = {
+            QRect(r.left(), r.top(), sw, r.height()),
+            QRect(r.right() - sw + 1, r.top(), sw, r.height()),
+        };
+        const double ts[2] = { c.in, std::max(c.in, c.in + c.dur - 0.01) };
+        for (int i = 0; i < 2; ++i) {
+            if (i == 1 && r.width() < sw * 2 + 2) break; // clipe estreito
+            const double k = std::round(ts[i] * 10.0) / 10.0;
+            QImage img = cache.thumb(path, k);
+            if (img.isNull()) {
+                cache.requestThumb(path, k);
+                p.fillRect(slices[i].adjusted(1, 1, -1, -1), QColor(0, 0, 0, 70));
+                continue;
+            }
+            drawCover(slices[i], img);
+        }
+        p.restore();
+        return;
+    }
+
+    // Modo padrão: fatias contínuas preenchendo o corpo do clipe.
+    const int sliceW = 96;
+    const int maxSlices = 32;
+    const int n = std::clamp(std::max(1, r.width() / sliceW), 1, maxSlices);
 
     for (int i = 0; i < n; ++i) {
         const int sliceLeft = r.left() + i * r.width() / n;
@@ -747,12 +783,7 @@ void TimelineWidget::drawVideoThumbs(QPainter& p, const QRect& r, const Clip& c,
             continue;
         }
 
-        const double scale = std::max(sw / (double)img.width(),
-                                      r.height() / (double)img.height());
-        const int tw = (int)std::ceil(img.width() * scale);
-        const int th = (int)std::ceil(img.height() * scale);
-        p.drawImage(QRect(sliceLeft + (sw - tw) / 2, r.top() + (r.height() - th) / 2, tw, th),
-                    img);
+        drawCover(sliceRect, img);
     }
     p.restore();
 }
@@ -1806,7 +1837,8 @@ void TimelineWidget::dropEvent(QDropEvent* e) {
 
     QStringList mediaIds;
     if (md->hasFormat(QLatin1String(kMimeMedia))) {
-        // Arrasto vindo da lista de mídia do aplicativo.
+        // Arrasto vindo da lista de mídia do aplicativo (caminho clássico de
+        // DnD; a pool também chama finishDrop() direto no arrasto manual).
         const QByteArray data = md->data(QLatin1String(kMimeMedia));
         for (QByteArray line : data.split('\n')) {
             line = line.trimmed();
@@ -1844,7 +1876,33 @@ void TimelineWidget::dropEvent(QDropEvent* e) {
     }
     if (mediaIds.isEmpty()) return;
 
-    const QPoint dropPos = e->position().toPoint();
+    finishDrop(mediaIds, e->position().toPoint());
+}
+
+void TimelineWidget::showDropHover(const QPoint& globalPos) {
+    const QPoint pos = mapFromGlobal(globalPos);
+    int row = -1;
+    bool audio = false;
+    m_dragHoverRow = rowFromY(pos.y(), row, audio) ? row : -1;
+    m_dragHoverAudio = audio;
+    update();
+}
+
+void TimelineWidget::hideDropHover() {
+    m_dragHoverRow = -1;
+    update();
+}
+
+void TimelineWidget::dropMediaAt(const QStringList& mediaIds, const QPoint& globalPos) {
+    finishDrop(mediaIds, mapFromGlobal(globalPos));
+}
+
+void TimelineWidget::refreshSettings() {
+    invalidateScene();
+}
+
+void TimelineWidget::finishDrop(const QStringList& mediaIds, const QPoint& dropPos) {
+    if (!m_project || mediaIds.isEmpty()) return;
     int row = -1;
     bool audio = false;
     if (!rowFromY(dropPos.y(), row, audio)) {

@@ -36,6 +36,10 @@ int SettingsDialog::maxDecodeWidth() {
     return QSettings().value("maxDecodeWidth", 1920).toInt();
 }
 
+int SettingsDialog::thumbMode() {
+    return QSettings().value("timelineThumbMode", 0).toInt();
+}
+
 SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
     setWindowTitle(tr("Configurações"));
     setMinimumWidth(440);
@@ -61,6 +65,12 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
     m_decodeWidth->setCurrentIndex(
         nearestPresetIndex(s.value("maxDecodeWidth", 1920).toInt()));
 
+    m_thumbMode = new QComboBox(this);
+    m_thumbMode->addItem(tr("Todas (contínuas)"));
+    m_thumbMode->addItem(tr("Início e fim"));
+    m_thumbMode->addItem(tr("Nenhuma"));
+    m_thumbMode->setCurrentIndex(s.value("timelineThumbMode", 0).toInt());
+
     auto* mkvBox = new QGroupBox(tr("Avisos"), this);
     auto* mkvLay = new QVBoxLayout(mkvBox);
     mkvLay->addWidget(m_mkvWarn);
@@ -85,6 +95,17 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
     perfHint->setWordWrap(true);
     perfLay->addRow(perfHint);
 
+    auto* tlBox = new QGroupBox(tr("Timeline"), this);
+    auto* tlLay = new QFormLayout(tlBox);
+    tlLay->addRow(tr("Miniaturas nos clipes:"), m_thumbMode);
+    auto* tlHint = new QLabel(tr("Como os quadros são exibidos no corpo dos "
+                                 "clipes de vídeo. \"Todas\" mostra fatias "
+                                 "contínuas; \"Início e fim\" só nos extremos; "
+                                 "\"Nenhuma\" deixa os clipes sem miniatura."), tlBox);
+    tlHint->setStyleSheet("color: #9a9a9a;");
+    tlHint->setWordWrap(true);
+    tlLay->addRow(tlHint);
+
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
@@ -93,6 +114,7 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
     lay->addWidget(mkvBox);
     lay->addWidget(autoBox);
     lay->addWidget(perfBox);
+    lay->addWidget(tlBox);
     lay->addWidget(buttons);
 }
 
@@ -107,6 +129,7 @@ void SettingsDialog::accept() {
     s.setValue("autosaveEnabled", m_autoSave->isChecked());
     s.setValue("autosaveMinutes", m_autoInterval->value());
     s.setValue("maxDecodeWidth", presetWidth(m_decodeWidth->currentIndex()));
+    s.setValue("timelineThumbMode", m_thumbMode->currentIndex());
     QDialog::accept();
 }
 

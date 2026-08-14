@@ -64,6 +64,14 @@ public slots:
     void setLoopOutAtPlayhead();
     void clearLoop();
     void addMediaAtPlayhead(const QString& mediaId);
+    // Arrasto manual vindo da pool de mídia (não depende do DnD do
+    // compositor, que falha em alguns ambientes/Wayland).
+    void showDropHover(const QPoint& globalPos);
+    void hideDropHover();
+    void dropMediaAt(const QStringList& mediaIds, const QPoint& globalPos);
+    // Recria o conteúdo dos clipes (ex.: mudou o modo de exibição das
+    // miniaturas nas configurações).
+    void refreshSettings();
 signals:
     void playheadChanged(double t);
     void modified();
@@ -128,6 +136,7 @@ private:
     void drawFadeCorners(QPainter& p, const QRect& r, const Clip& c);
     void drawKeyframeDiamonds(QPainter& p, const QRect& r, const Clip& c, bool audio);
     void drawEnvelope(QPainter& p, const QRect& r, const Clip& c, bool audio);
+    void finishDrop(const QStringList& mediaIds, const QPoint& dropPos);
     void splitClipAt(Clip* c, double t);
     void duplicateClip(Clip* c);
     void selectInMarquee(bool add);
