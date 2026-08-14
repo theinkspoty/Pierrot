@@ -44,6 +44,9 @@
 #include <QActionGroup>
 #include <QPair>
 #include <QVariantAnimation>
+#include <QStyle>
+#include <QStyleOptionRubberBand>
+#include <QRubberBand>
 #include <algorithm>
 #include <cmath>
 #include <utility>
@@ -461,7 +464,8 @@ void TimelineWidget::autoScrollTick() {
     m_hbar->setValue(v);
 
     // Recalcula a operação na nova posição da view.
-    QMouseEvent ev(QEvent::MouseMove, m_autoScrollMouse, Qt::LeftButton,
+    QMouseEvent ev(QEvent::MouseMove, m_autoScrollMouse,
+                   mapToGlobal(m_autoScrollMouse), Qt::LeftButton,
                    Qt::LeftButton, Qt::NoModifier);
     if (m_dragMode == PlayheadDrag || m_dragMode == RulerLoop) {
         const double t2 = std::max(0.0, snapTime(xToTime(m_autoScrollMouse.x())));
@@ -608,17 +612,19 @@ void TimelineWidget::renderScene(QPainter& p) {
 
     // Régua de volume das faixas de áudio (estilo Vegas): linha horizontal
     // arrastável; arrastar para cima aumenta o volume da faixa (0–200%).
-    p.save();
-    p.setClipRect(QRect(H, kRulerH, width() - H, height() - kRulerH));
-    for (int i = 0; i < (int)m_project->audioTracks.size(); ++i) {
-        const Track& tr = m_project->audioTracks[i];
-        const int ly = volLineY(i, true, tr);
-        const bool active = m_dragMode == TrackVol && m_volRow == i;
-        p.setPen(QPen(active ? QColor(255, 220, 90) : QColor(140, 200, 160),
-                      active ? 2 : 1, Qt::SolidLine));
-        p.drawLine(H, ly, width(), ly);
+    if (m_showVolLines) {
+        p.save();
+        p.setClipRect(QRect(H, kRulerH, width() - H, height() - kRulerH));
+        for (int i = 0; i < (int)m_project->audioTracks.size(); ++i) {
+            const Track& tr = m_project->audioTracks[i];
+            const int ly = volLineY(i, true, tr);
+            const bool active = m_dragMode == TrackVol && m_volRow == i;
+            p.setPen(QPen(active ? QColor(255, 220, 90) : QColor(140, 200, 160),
+                          active ? 2 : 1, Qt::SolidLine));
+            p.drawLine(H, ly, width(), ly);
+        }
+        p.restore();
     }
-    p.restore();
 }
 
 // Camadas finas desenhadas por cima da cena estática em cada repaint.
@@ -665,12 +671,14 @@ void TimelineWidget::renderOverlays(QPainter& p) {
     } else if (m_dragMode == Marquee) {
         const QRect mr = m_marqueeRect.normalized();
         if (!mr.isEmpty()) {
-            QLinearGradient g(mr.topLeft(), mr.bottomLeft());
-            g.setColorAt(0.0, QColor(80, 160, 255, 70));
-            g.setColorAt(1.0, QColor(80, 160, 255, 26));
-            p.fillRect(mr, g);
-            p.setPen(QPen(QColor(140, 200, 255, 200), 1, Qt::DashLine));
-            p.drawRect(mr);
+            // Mesma aparência do seletor de mídias (QRubberBand da pool): o
+            // próprio estilo desenha o retângulo azul semi-transparente.
+            QStyleOptionRubberBand opt;
+            opt.initFrom(this);
+            opt.rect = mr;
+            opt.shape = QRubberBand::Rectangle;
+            opt.opaque = false;
+            style()->drawControl(QStyle::CE_RubberBand, &opt, &p, this);
         }
     }
 
@@ -716,7 +724,7 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
         else
             drawVideoThumbs(cp, cr, c, path);
         drawFadeCorners(cp, cr, c);
-        if (m_tool == ToolEnvelope)
+        if (m_tool == ToolEnvelope && (m_showVolLines || !audio))
             drawEnvelope(cp, cr, c, audio);
         // Orçamento simples de memória: além de N entradas, estoura limpa.
         const qint64 bytes = (qint64)content.width() * content.height()
@@ -1354,7 +1362,7 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
     // Régua de volume das faixas de áudio: arrastar a linha ajusta o volume.
     // Só quando não há clipe sob o cursor (o clique no clipe continua
     // selecionando/arrastando normalmente, mesmo sobre a linha).
-    {
+    if (m_showVolLines) {
         int vrow;
         if (volRowAt(e->pos(), vrow) >= 0) {
             int r2;
@@ -1822,7 +1830,9 @@ void TimelineWidget::keyPressEvent(QKeyEvent* e) {
         break;
     case Qt::Key_V:
         if (ctrl) { pasteClips(); e->accept(); break; }
-        QWidget::keyPressEvent(e);
+        m_showVolLines = !m_showVolLines; // V: oculta/mostra as linhas de volume
+        invalidateScene();
+        e->accept();
         break;
     case Qt::Key_D:
         if (ctrl) { duplicateSelected(); e->accept(); break; }
