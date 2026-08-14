@@ -219,8 +219,3 @@ Marcado com 💀 o que já foi implementado.
 - **Templates de projeto** (4K, Full HD, vertical 9:16, etc.) na janela inicial.
 - **Atalhos configuráveis**.
 - **Tema escuro/claro** e escolha de idioma.
-
-## Licença
-
-Distribuído sob a **GNU General Public License v3.0** (ou versão posterior).
-Consulte o arquivo [`LICENSE`](LICENSE) para o texto completo.

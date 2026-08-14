@@ -1,20 +1,3 @@
-// Pierrot — editor de vídeo estilo Vegas Pro
-//
-// Copyright (C) 2026 Pierrot contributors
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
 #include "MediaPoolWidget.h"
 #include "ffmpeg/FFmpegDecoder.h"
 #include "ffmpeg/MediaCache.h"
@@ -26,7 +9,6 @@
 #include <QPushButton>
 #include <QFileDialog>
 #include <QFileInfo>
-#include <QMimeData>
 #include <QMessageBox>
 #include <QFutureWatcher>
 #include <QtConcurrent/QtConcurrent>
@@ -35,7 +17,8 @@
 #include <QPolygonF>
 #include <QIcon>
 #include <QListView>
-#include <QDrag>
+#include <QApplication>
+#include <QMouseEvent>
 #include <cmath>
 #include <algorithm>
 
@@ -100,8 +83,10 @@ ProbeResult probeFile(const QString& path) {
 }
 
 PoolList::PoolList(QWidget* parent) : QListWidget(parent) {
-    setDragEnabled(true);
-    setDragDropMode(QAbstractItemView::DragOnly);
+    // O arrasto é feito manualmente (ver mouse*Event abaixo) para funcionar
+    // mesmo em ambientes onde o DnD do compositor falha (ex.: Wayland).
+    setDragEnabled(false);
+    setDragDropMode(QAbstractItemView::NoDragDrop);
     setSelectionMode(QAbstractItemView::ExtendedSelection);
     setUniformItemSizes(true);
     setWordWrap(true);
@@ -114,49 +99,84 @@ PoolList::PoolList(QWidget* parent) : QListWidget(parent) {
     setTextElideMode(Qt::ElideRight);
 }
 
-QMimeData* PoolList::mimeData(const QList<QListWidgetItem*>& items) const {
-    if (items.isEmpty()) return nullptr;
-    auto* md = new QMimeData();
-    QByteArray data;
-    for (const QListWidgetItem* it : items)
-        data += it->data(Qt::UserRole).toString().toUtf8() + '\n';
-    md->setData(QLatin1String(TimelineWidget::kMimeMedia), data);
-    return md;
+void PoolList::mousePressEvent(QMouseEvent* e) {
+    QListWidget::mousePressEvent(e);
+    if (e->button() == Qt::LeftButton) {
+        m_pressPos = e->position().toPoint();
+        m_pressItem = itemAt(m_pressPos);
+        m_dragging = false;
+    }
 }
 
-void PoolList::startDrag(Qt::DropActions supportedActions) {
-    const QList<QListWidgetItem*> items = selectedItems();
-    if (items.isEmpty()) return;
-
-    auto* md = new QMimeData();
-    QByteArray data;
-    for (const QListWidgetItem* it : items)
-        data += it->data(Qt::UserRole).toString().toUtf8() + '\n';
-    md->setData(QLatin1String(TimelineWidget::kMimeMedia), data);
-
-    auto* drag = new QDrag(this);
-    drag->setMimeData(md);
-
-    QPixmap pm;
-    if (items.size() == 1) {
-        pm = items.first()->icon().pixmap(96, 54);
-    } else {
-        pm = QPixmap(80, 60);
-        pm.fill(QColor(0, 0, 0, 170));
-        QPainter p(&pm);
-        p.setPen(Qt::white);
-        p.drawText(pm.rect(), Qt::AlignCenter, QString::number(items.size()));
+void PoolList::mouseMoveEvent(QMouseEvent* e) {
+    // Cruza o limiar de arrasto: passa a acompanhar o cursor globalmente via
+    // filtro de eventos (funciona mesmo no Wayland, onde o grabMouse/cliente
+    // é limitado). Nada do DnD do compositor é usado.
+    if (m_pressItem && (e->buttons() & Qt::LeftButton) && !m_dragging
+        && (e->position().toPoint() - m_pressPos).manhattanLength()
+               >= QApplication::startDragDistance()) {
+        m_dragging = true;
+        qApp->installEventFilter(this);
+        emit dragHover(e->globalPosition().toPoint());
     }
-    if (!pm.isNull()) {
-        drag->setPixmap(pm);
-        drag->setHotSpot(QPoint(pm.width() / 2, pm.height() / 2));
-    }
+    QListWidget::mouseMoveEvent(e);
+}
 
-    drag->exec(supportedActions, Qt::CopyAction);
+bool PoolList::eventFilter(QObject* obj, QEvent* ev) {
+    if (m_dragging) {
+        if (ev->type() == QEvent::MouseMove) {
+            emit dragHover(static_cast<QMouseEvent*>(ev)->globalPosition().toPoint());
+            return false;
+        }
+        if (ev->type() == QEvent::MouseButtonRelease) {
+            const auto* me = static_cast<QMouseEvent*>(ev);
+            if (me->button() == Qt::LeftButton) {
+                const QPoint g = me->globalPosition().toPoint();
+                cancelDrag();
+                emit mediaDropped(selectedIds(), g);
+                return false;
+            }
+        }
+        if (ev->type() == QEvent::MouseButtonPress || ev->type() == QEvent::WindowDeactivate) {
+            // Novo clique (ou perda de foco) durante o arrasto: cancela sem soltar.
+            cancelDrag();
+            return false;
+        }
+    }
+    return QListWidget::eventFilter(obj, ev);
+}
+
+void PoolList::mouseReleaseEvent(QMouseEvent* e) {
+    if (m_dragging) {
+        // O filtro global cuida do release (o cursor pode estar sobre a
+        // timeline); aqui só evita o comportamento padrão durante o arrasto.
+        e->accept();
+        return;
+    }
+    QListWidget::mouseReleaseEvent(e);
+}
+
+void PoolList::cancelDrag() {
+    if (qApp) qApp->removeEventFilter(this);
+    m_dragging = false;
+    m_pressItem = nullptr;
+    emit dragHoverCleared();
+}
+
+QStringList PoolList::selectedIds() const {
+    QStringList ids;
+    for (const QListWidgetItem* it : selectedItems())
+        ids << it->data(Qt::UserRole).toString();
+    return ids;
 }
 
 MediaPoolWidget::MediaPoolWidget(QWidget* parent) : QWidget(parent) {
     m_list = new PoolList(this);
+    // Repassa o arrasto manual da lista para a janela principal, que liga ao
+    // feedback e à soltura na timeline.
+    connect(m_list, &PoolList::dragHover, this, &MediaPoolWidget::dragHover);
+    connect(m_list, &PoolList::dragHoverCleared, this, &MediaPoolWidget::dragHoverCleared);
+    connect(m_list, &PoolList::mediaDropped, this, &MediaPoolWidget::mediaDropped);
 
     m_addBtn = new QPushButton(tr("Adicionar"), this);
     m_removeBtn = new QPushButton(tr("Remover"), this);
