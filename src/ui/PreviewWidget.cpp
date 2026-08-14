@@ -77,7 +77,34 @@ public slots:
                 }
             }
         }
-        emit frameReady(path, t, maxW, m_mainDecoder->frameAt(t, maxW));
+
+        // Pipeline de 1 frame à frente: quando o próximo frame já foi
+        // decodificado na folga (m_ready*), devolve instantâneo e decodifica o
+        // seguinte. Esconde a latência do decode quando ele passa de 33ms
+        // (fontes pesadas, ex. 4K) — o preview mantém a cadência mesmo que um
+        // frame individual demore. Em seek/atraso cai para decode normal.
+        const double fd = (m_mainDecoder->fps() > 0.0) ? 1.0 / m_mainDecoder->fps() : 1.0 / 30.0;
+        QImage img;
+        if (m_readyValid && m_readyPath == path && m_readyMaxW == maxW
+            && std::fabs(m_readyT - t) <= fd * 1.5) {
+            img = m_readyImg;
+            m_readyValid = false;
+        } else {
+            img = m_mainDecoder->frameAt(t, maxW);
+        }
+        emit frameReady(path, t, maxW, img);
+
+        // Decodifica o próximo frame na folga para o próximo pedido (apenas se
+        // o decoder ainda estiver no mesmo arquivo).
+        if (!img.isNull() && m_mainDecoder->isOpen() && m_mainDecoder->source() == path) {
+            m_readyImg = m_mainDecoder->frameAt(t + fd, maxW);
+            m_readyT = t + fd;
+            m_readyPath = path;
+            m_readyMaxW = maxW;
+            m_readyValid = !m_readyImg.isNull();
+        } else {
+            m_readyValid = false;
+        }
     }
 
     void decodePrefetch(const QString& path, double t, int maxW) {
@@ -97,6 +124,13 @@ signals:
 private:
     std::unique_ptr<FFmpegDecoder> m_mainDecoder;
     std::unique_ptr<FFmpegDecoder> m_prefetchDecoder;
+
+    // Frame decodificado adiante (pipeline de 1 frame à frente).
+    QImage m_readyImg;
+    QString m_readyPath;
+    double m_readyT = -1.0;
+    int m_readyMaxW = 0;
+    bool m_readyValid = false;
 };
 
 // Mixer de áudio: soma o PCM de todos os clipes ativos em `t` (clipe de vídeo
@@ -563,8 +597,10 @@ void PreviewWidget::togglePlay() {
     m_playStart = m_playhead;
     m_clock.start();
     m_playing = true;
-    // Sincroniza o tick com o fps do projeto
-    m_timer->setInterval(fps > 0.0 ? qBound(10, (int)std::lround(1000.0 / fps), 40) : 33);
+    // Dispara em metade do período do frame: o tick calcula o frame alvo pelo
+    // clock de alta precisão e avança exatamente 1 frame por vez. Com timer
+    // grosseiro (1x/frame), o QTimer atrasado pela UI fazia o llround pular frames.
+    m_timer->setInterval(fps > 0.0 ? qBound(8, (int)std::lround(1000.0 / fps / 2.0), 40) : 33);
     m_timer->start();
     m_playBtn->setText(tr("Pausar"));
     startAudio(m_playhead);

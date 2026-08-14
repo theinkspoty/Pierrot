@@ -373,10 +373,13 @@ bool FFmpegDecoder::open(const QString& filePath) {
             AVCodecContext* cc = avcodec_alloc_context3(codec);
             if (cc) {
                 avcodec_parameters_to_context(cc, fmt->streams[idx]->codecpar);
+                // Frame threading: máximo throughput para H.264 (decodifica
+                // vários frames em paralelo). Evitamos LOW_DELAY — ele conflita
+                // com a reordenação de B-frames e faz o ffmpeg cair para slice
+                // threading, que tem menos paralelismo (causava perda de fps
+                // no preview de fontes pesadas, ex. 4K).
                 cc->thread_count = qMin(4, QThread::idealThreadCount());
-                cc->thread_type = FF_THREAD_SLICE | FF_THREAD_FRAME;
-                cc->flags |= AV_CODEC_FLAG_LOW_DELAY;
-                cc->flags2 |= AV_CODEC_FLAG2_FAST;
+                cc->thread_type = FF_THREAD_FRAME;
                 if (avcodec_open2(cc, codec, nullptr) == 0) {
                     m_codec = cc;
                     m_stream = idx;
