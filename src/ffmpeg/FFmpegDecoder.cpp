@@ -78,6 +78,8 @@ FFmpegMediaInfo FFmpegDecoder::probe(const QString& filePath) {
     for (unsigned i = 0; i < fmt->nb_streams; ++i) {
         AVStream* st = fmt->streams[i];
         if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && !info.hasVideo) {
+            if (st->disposition & AV_DISPOSITION_ATTACHED_PIC)
+                continue;
             info.hasVideo = true;
             info.width = st->codecpar->width;
             info.height = st->codecpar->height;
