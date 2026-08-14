@@ -238,8 +238,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             statusBar()->clearMessage();
     });
 
-    restoreSettings();
-
     // Salvamento automático configurado na janela de boas-vindas
     m_autoSaveTimer = new QTimer(this);
     connect(m_autoSaveTimer, &QTimer::timeout, this, &MainWindow::autoSave);
@@ -249,6 +247,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         m_autoSaveTimer->setInterval(autosaveMin * 60 * 1000);
         m_autoSaveTimer->start();
     }
+
+    // Salva o layout dos painéis um pouco depois de qualquer mudança (arrastar,
+    // flutuar, mostrar/ocultar), para não perder a área de trabalho se o app
+    // fechar de forma anormal antes do closeEvent().
+    m_layoutSaveTimer = new QTimer(this);
+    m_layoutSaveTimer->setSingleShot(true);
+    m_layoutSaveTimer->setInterval(500);
+    connect(m_layoutSaveTimer, &QTimer::timeout, this, &MainWindow::saveSettings);
 }
 
 void MainWindow::saveSettings() {
@@ -257,6 +263,19 @@ void MainWindow::saveSettings() {
     settings.setValue("layout", saveState());
     settings.setValue("layoutVersion", kLayoutVersion);
     settings.setValue("layoutLocked", m_lockAction->isChecked());
+}
+
+void MainWindow::scheduleLayoutSave() {
+    if (m_restoringSettings) return;
+    if (m_layoutSaveTimer) m_layoutSaveTimer->start();
+}
+
+bool MainWindow::event(QEvent* e) {
+    // Ao perder o foco (mudar de janela), agenda o salvamento: cobre o caso de
+    // o app ser encerrado logo depois sem passar pelo closeEvent().
+    if (e->type() == QEvent::WindowDeactivate && !m_restoringSettings)
+        scheduleLayoutSave();
+    return QMainWindow::event(e);
 }
 
 void MainWindow::restoreSettings() {
@@ -308,6 +327,14 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 
 void MainWindow::showEvent(QShowEvent* event) {
     QMainWindow::showEvent(event);
+    // Restaura geometria e arranjo dos painéis somente agora: o layout dos
+    // docks só é calculado na primeira exibição, então restaurar antes do
+    // show() não aplicava corretamente painéis fechados, movidos ou redimensio
+    // nados. Aplica uma única vez.
+    if (!m_layoutRestored) {
+        m_layoutRestored = true;
+        restoreSettings();
+    }
     // Features de dock aplicadas antes do show() podem ser redefinidas quando
     // o Qt monta o layout dos painéis na primeira exibição. Reaplica o
     // travamento agora para o cadeado valer de verdade no início.
@@ -316,6 +343,7 @@ void MainWindow::showEvent(QShowEvent* event) {
 
 void MainWindow::createDocks() {
     m_poolDock = new QDockWidget(tr("Central de Mídias"), this);
+    m_poolDock->setObjectName(QStringLiteral("poolDock"));
     m_poolDock->setWidget(m_pool);
     m_poolDock->setAllowedAreas(Qt::AllDockWidgetAreas);
     m_poolDock->setFeatures(QDockWidget::DockWidgetMovable
@@ -324,6 +352,7 @@ void MainWindow::createDocks() {
     addDockWidget(Qt::LeftDockWidgetArea, m_poolDock);
 
     m_timelineDock = new QDockWidget(tr("Timeline"), this);
+    m_timelineDock->setObjectName(QStringLiteral("timelineDock"));
     m_timelineDock->setAllowedAreas(Qt::AllDockWidgetAreas);
     m_timelineDock->setFeatures(QDockWidget::DockWidgetMovable
                                 | QDockWidget::DockWidgetFloatable
@@ -332,6 +361,7 @@ void MainWindow::createDocks() {
     // O widget do dock (ferramentas + timeline) é montado em createActions().
 
     m_pancropDock = new QDockWidget(tr("Pancrop"), this);
+    m_pancropDock->setObjectName(QStringLiteral("pancropDock"));
     m_pancropDock->setWidget(m_pancrop);
     m_pancropDock->setAllowedAreas(Qt::AllDockWidgetAreas);
     m_pancropDock->setFeatures(QDockWidget::DockWidgetMovable
@@ -341,6 +371,7 @@ void MainWindow::createDocks() {
     m_pancropDock->hide();
 
     m_graphDock = new QDockWidget(tr("Editor de Curvas"), this);
+    m_graphDock->setObjectName(QStringLiteral("graphDock"));
     m_graphDock->setWidget(m_graph);
     m_graphDock->setAllowedAreas(Qt::AllDockWidgetAreas);
     m_graphDock->setFeatures(QDockWidget::DockWidgetMovable
@@ -349,6 +380,12 @@ void MainWindow::createDocks() {
     addDockWidget(Qt::BottomDockWidgetArea, m_graphDock);
     splitDockWidget(m_timelineDock, m_graphDock, Qt::Vertical);
     m_graphDock->setMinimumHeight(64);
+
+    // Qualquer mudança de arranjo dos painéis agenda o salvamento do layout.
+    for (QDockWidget* dock : {m_poolDock, m_timelineDock, m_pancropDock, m_graphDock}) {
+        connect(dock, &QDockWidget::topLevelChanged, this, &MainWindow::scheduleLayoutSave);
+        connect(dock, &QDockWidget::visibilityChanged, this, &MainWindow::scheduleLayoutSave);
+    }
 }
 
 void MainWindow::createActions() {

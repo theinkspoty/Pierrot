@@ -35,6 +35,7 @@ public:
 protected:
     void closeEvent(QCloseEvent* event) override;
     void showEvent(QShowEvent* event) override;
+    bool event(QEvent* e) override;
 private slots:
     void pushUndo();
     void setModified();
@@ -44,6 +45,7 @@ private:
     void createActions();
     void saveSettings();
     void restoreSettings();
+    void scheduleLayoutSave();
     void setDockLocked(bool locked);
     QIcon makeIcon(const std::function<void(QPainter&, const QColor&)>& draw) const;
     QIcon padlockIcon(bool locked) const;
@@ -76,6 +78,7 @@ private:
     // Evita que restoreSettings() dispare saveSettings() via setChecked() do
     // cadeado antes da janela ser montada, sobrescrevendo o layout salvo.
     bool m_restoringSettings = false;
+    bool m_layoutRestored = false;
 
     Project m_project;
     // Snapshots de undo em JSON comprimido: guardar 60 cópias em memória do
@@ -104,5 +107,6 @@ private:
     QAction* m_snapAction = nullptr;
     QVector<QAction*> m_toolActions;
     QTimer* m_autoSaveTimer = nullptr;
+    QTimer* m_layoutSaveTimer = nullptr;
     QProgressBar* m_busyBar = nullptr;
 };
