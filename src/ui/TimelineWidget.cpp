@@ -1906,6 +1906,26 @@ void TimelineWidget::mouseDoubleClickEvent(QMouseEvent* e) {
     }
     int row;
     bool audio;
+    // Duplo clique no nome da faixa (topo do cabeçalho): renomeia a faixa.
+    if (e->pos().x() < kHeaderW && e->pos().y() >= kRulerH
+        && rowFromY(e->pos().y(), row, audio)) {
+        const int y = audio ? rowY(-1, row) : rowY(row, -1);
+        if (e->pos().y() >= y + 1 && e->pos().y() <= y + 20) {
+            Track* trk = audio ? &m_project->audioTracks[row]
+                               : &m_project->videoTracks[row];
+            bool ok = false;
+            const QString name = QInputDialog::getText(
+                this, tr("Renomear faixa"), tr("Nome da faixa:"),
+                QLineEdit::Normal, trk->name, &ok);
+            if (ok && !name.trimmed().isEmpty()) {
+                emit editStart();
+                trk->name = name.trimmed();
+                emit modified();
+                update();
+            }
+            return;
+        }
+    }
     if (rowFromY(e->pos().y(), row, audio)) {
         Clip* clip = clipAt(row, audio, xToTime(e->pos().x()));
         if (clip) {
