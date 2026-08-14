@@ -19,6 +19,7 @@ extern "C" {
 #include <cfloat>
 #include <cstring>
 #include <QDebug>
+#include <QThread>
 
 // Diagnóstico do caminho de áudio do preview: ligue com PIERROT_AUDIO_DEBUG=1.
 static bool audioDbg() {
@@ -26,24 +27,15 @@ static bool audioDbg() {
     return on;
 }
 
-// Avisos inofensivos do decoder H.264 ao decodificar a partir do meio de um
-// GOP (seeking/scrubbing) — só poluem o stderr; erros reais continuam sendo
-// impressos.
-static bool isDecoderNoise(const char* fmt) {
-    if (!fmt) return false;
-    return strstr(fmt, "mmco") != nullptr
-        || strstr(fmt, "unref short failure") != nullptr;
-}
-
-static void decoderLogCallback(void* avcl, int level, const char* fmt, va_list vl) {
-    if (isDecoderNoise(fmt)) return;
-    av_log_default_callback(avcl, level, fmt, vl);
+static void decoderLogCallback(void*, int, const char*, va_list) {
+    // Silencia completamente qualquer log/aviso interno do FFmpeg
 }
 
 static void installLogFilter() {
     static bool installed = false;
     if (!installed) {
         installed = true;
+        av_log_set_level(AV_LOG_QUIET);
         av_log_set_callback(decoderLogCallback);
     }
 }
@@ -381,6 +373,10 @@ bool FFmpegDecoder::open(const QString& filePath) {
             AVCodecContext* cc = avcodec_alloc_context3(codec);
             if (cc) {
                 avcodec_parameters_to_context(cc, fmt->streams[idx]->codecpar);
+                cc->thread_count = qMin(4, QThread::idealThreadCount());
+                cc->thread_type = FF_THREAD_SLICE | FF_THREAD_FRAME;
+                cc->flags |= AV_CODEC_FLAG_LOW_DELAY;
+                cc->flags2 |= AV_CODEC_FLAG2_FAST;
                 if (avcodec_open2(cc, codec, nullptr) == 0) {
                     m_codec = cc;
                     m_stream = idx;
@@ -396,53 +392,42 @@ bool FFmpegDecoder::open(const QString& filePath) {
         }
     }
 
-    // Stream de áudio em contexto próprio, com resampler para S16/48k/estéreo.
+    // Stream de áudio: reutiliza o mesmo AVFormatContext já aberto
     const int aidx = av_find_best_stream(fmt, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
     if (aidx >= 0) {
-        AVFormatContext* afmt = nullptr;
-        if (avformat_open_input(&afmt, filePath.toUtf8().constData(), nullptr, nullptr) == 0
-            && avformat_find_stream_info(afmt, nullptr) >= 0) {
-            const AVCodec* acodec = avcodec_find_decoder(afmt->streams[aidx]->codecpar->codec_id);
-            if (acodec) {
-                AVCodecContext* acc = avcodec_alloc_context3(acodec);
-                if (acc) {
-                    avcodec_parameters_to_context(acc, afmt->streams[aidx]->codecpar);
-                    if (avcodec_open2(acc, acodec, nullptr) == 0) {
-                        SwrContext* swr = swr_alloc();
-                        if (swr) {
-                            AVChannelLayout outLayout;
-                            av_channel_layout_default(&outLayout, 2);
-                            const AVSampleFormat outFmt = AV_SAMPLE_FMT_S16;
-                            const int outRate = m_audioOutRate;
-                            if (swr_alloc_set_opts2(&swr,
-                                    &outLayout, outFmt, outRate,
-                                    &acc->ch_layout, acc->sample_fmt,
-                                    acc->sample_rate, 0, nullptr) >= 0
-                                && swr_init(swr) >= 0) {
-                                m_aCtx = afmt;
-                                m_aCodec = acc;
-                                m_swr = swr;
-                                m_audioStream = aidx;
-                            } else {
-                                swr_free(&swr);
-                            }
+        const AVCodec* acodec = avcodec_find_decoder(fmt->streams[aidx]->codecpar->codec_id);
+        if (acodec) {
+            AVCodecContext* acc = avcodec_alloc_context3(acodec);
+            if (acc) {
+                avcodec_parameters_to_context(acc, fmt->streams[aidx]->codecpar);
+                acc->thread_count = 0;
+                if (avcodec_open2(acc, acodec, nullptr) == 0) {
+                    SwrContext* swr = swr_alloc();
+                    if (swr) {
+                        AVChannelLayout outLayout;
+                        av_channel_layout_default(&outLayout, 2);
+                        const AVSampleFormat outFmt = AV_SAMPLE_FMT_S16;
+                        const int outRate = m_audioOutRate;
+                        if (swr_alloc_set_opts2(&swr,
+                                &outLayout, outFmt, outRate,
+                                &acc->ch_layout, acc->sample_fmt,
+                                acc->sample_rate, 0, nullptr) >= 0
+                            && swr_init(swr) >= 0) {
+                            m_aCtx = fmt;
+                            m_aCodec = acc;
+                            m_swr = swr;
+                            m_audioStream = aidx;
+                        } else {
+                            swr_free(&swr);
                         }
-                        if (!m_aCodec) avcodec_free_context(&acc);
-                    } else {
-                        avcodec_free_context(&acc);
                     }
+                    if (!m_aCodec) avcodec_free_context(&acc);
+                } else {
+                    avcodec_free_context(&acc);
                 }
             }
-            if (!m_aCodec) avformat_close_input(&afmt);
-        } else {
-            if (afmt) avformat_close_input(&afmt);
         }
     }
-    if (audioDbg())
-        qDebug() << "[audio] open" << filePath
-                 << "videoStream=" << m_stream
-                 << "audioStream=" << m_audioStream
-                 << "audioCtx=" << (m_aCtx != nullptr);
     return true;
 }
 
@@ -463,14 +448,6 @@ void FFmpegDecoder::freeAllLocked() {
         av_frame_free(reinterpret_cast<AVFrame**>(&m_lastFrame));
         m_lastFrame = nullptr;
     }
-    if (m_codec) {
-        avcodec_free_context(reinterpret_cast<AVCodecContext**>(&m_codec));
-        m_codec = nullptr;
-    }
-    if (m_ctx) {
-        avformat_close_input(reinterpret_cast<AVFormatContext**>(&m_ctx));
-        m_ctx = nullptr;
-    }
     if (m_swr) {
         swr_free(reinterpret_cast<SwrContext**>(&m_swr));
         m_swr = nullptr;
@@ -479,9 +456,14 @@ void FFmpegDecoder::freeAllLocked() {
         avcodec_free_context(reinterpret_cast<AVCodecContext**>(&m_aCodec));
         m_aCodec = nullptr;
     }
-    if (m_aCtx) {
-        avformat_close_input(reinterpret_cast<AVFormatContext**>(&m_aCtx));
-        m_aCtx = nullptr;
+    m_aCtx = nullptr;
+    if (m_codec) {
+        avcodec_free_context(reinterpret_cast<AVCodecContext**>(&m_codec));
+        m_codec = nullptr;
+    }
+    if (m_ctx) {
+        avformat_close_input(reinterpret_cast<AVFormatContext**>(&m_ctx));
+        m_ctx = nullptr;
     }
     m_stream = -1;
     m_audioStream = -1;
@@ -518,18 +500,27 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
     AVCodecContext* cc = static_cast<AVCodecContext*>(m_codec);
     AVStream* st = fmt->streams[m_stream];
 
+    const double targetSec = std::max(0.0, seconds);
     const int64_t target = av_rescale_q(
-        (int64_t)(seconds * 1000000.0),
+        (int64_t)(targetSec * 1000000.0),
         AVRational{1, 1000000}, st->time_base);
-    const double targetSec = seconds;
 
-    // Playback contínuo: decodifica adiante sem re-seek.
-    const double forwardGap = 5.0;
-    if (m_lastPtsSec < 0.0 || targetSec < m_lastPtsSec - 0.2
-        || targetSec > m_lastPtsSec + forwardGap) {
+    // Determina se precisa de seek real:
+    // Apenas faz seek se:
+    // 1) Nunca foi inicializado (m_lastPtsSec < 0)
+    // 2) Houve um salto para trás significativo (> 0.5s)
+    // 3) Houve um salto para frente grande (> 2.0s)
+    const bool needSeek = (m_lastPtsSec < 0.0
+                           || targetSec < m_lastPtsSec - 0.5
+                           || targetSec > m_lastPtsSec + 2.0);
+
+    if (needSeek) {
         av_seek_frame(fmt, m_stream, target, AVSEEK_FLAG_BACKWARD);
         avcodec_flush_buffers(cc);
         m_lastPtsSec = -1.0;
+        if (m_lastFrame) {
+            av_frame_unref(reinterpret_cast<AVFrame*>(m_lastFrame));
+        }
     }
 
     if (!m_pkt || !m_frame) {
@@ -541,36 +532,61 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
 
     AVFrame* chosen = nullptr;
     bool atEof = false;
-    while (!chosen) {
-        const int r = av_read_frame(fmt, m_pkt);
-        if (r < 0) { atEof = true; break; }
-        if (m_pkt->stream_index == m_stream) {
-            if (avcodec_send_packet(cc, m_pkt) == 0) {
-                while (avcodec_receive_frame(cc, m_frame) == 0) {
-                    int64_t pts = m_frame->pts;
-                    if (pts == AV_NOPTS_VALUE)
-                        pts = m_frame->best_effort_timestamp;
-                    if (pts != AV_NOPTS_VALUE) {
-                        const double fsec = pts * av_q2d(st->time_base);
-                        if (fsec >= targetSec) {
-                            chosen = m_frame;
-                            break;
-                        }
-                        AVFrame* lastFrame = reinterpret_cast<AVFrame*>(m_lastFrame);
-                        if (!lastFrame) lastFrame = av_frame_alloc();
-                        if (lastFrame) {
-                            av_frame_unref(lastFrame);
-                            av_frame_ref(lastFrame, m_frame);
-                            m_lastFrame = lastFrame;
-                        }
-                        m_lastPtsSec = fsec;
-                    }
+
+    while (!chosen && !atEof) {
+        // 1. Drena frames já decodificados no codec
+        while (avcodec_receive_frame(cc, m_frame) == 0) {
+            int64_t pts = m_frame->pts;
+            if (pts == AV_NOPTS_VALUE)
+                pts = m_frame->best_effort_timestamp;
+            const double fsec = (pts != AV_NOPTS_VALUE) ? (pts * av_q2d(st->time_base)) : targetSec;
+
+            if (!needSeek) {
+                // Playback sequencial contínuo: entrega o próximo quadro na ordem linear de exibição
+                chosen = m_frame;
+                m_lastPtsSec = fsec;
+                break;
+            } else {
+                // Pós-seek: descarta quadros de GOP anteriores ao targetSec
+                const double tolerance = (m_fps > 0.0) ? (0.4 / m_fps) : 0.015;
+                if (fsec >= targetSec - tolerance) {
+                    chosen = m_frame;
+                    m_lastPtsSec = fsec;
+                    break;
                 }
+                AVFrame* lastFrame = reinterpret_cast<AVFrame*>(m_lastFrame);
+                if (!lastFrame) {
+                    lastFrame = av_frame_alloc();
+                    m_lastFrame = lastFrame;
+                }
+                if (lastFrame) {
+                    av_frame_unref(lastFrame);
+                    av_frame_ref(lastFrame, m_frame);
+                }
+                m_lastPtsSec = fsec;
             }
+            av_frame_unref(m_frame);
+        }
+
+        if (chosen) break;
+
+        // 2. Lê novos pacotes do demuxer se o codec precisar
+        const int r = av_read_frame(fmt, m_pkt);
+        if (r < 0) {
+            // EOF: esvazia o codec
+            avcodec_send_packet(cc, nullptr);
+            while (avcodec_receive_frame(cc, m_frame) == 0) {
+                chosen = m_frame;
+                break;
+            }
+            atEof = true;
+            break;
+        }
+        if (m_pkt->stream_index == m_stream) {
+            avcodec_send_packet(cc, m_pkt);
         }
         av_packet_unref(m_pkt);
     }
-    (void)atEof;
 
     // Final do arquivo: devolve o último frame decodificado.
     if (!chosen && m_lastFrame)
@@ -592,7 +608,7 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
                 || m_swsDstW != dw || m_swsDstH != dh) {
                 if (sws) sws_freeContext(sws);
                 sws = sws_getContext(sw, sh, srcFmt, dw, dh, AV_PIX_FMT_RGB24,
-                                     SWS_BILINEAR, nullptr, nullptr, nullptr);
+                                     SWS_FAST_BILINEAR, nullptr, nullptr, nullptr);
                 m_sws = sws;
                 m_swsSrcW = sw;
                 m_swsSrcH = sh;

@@ -52,6 +52,8 @@ private:
     void requestFrame(const QString& path, double t, int maxW);
     void kickFrameWorker();
     void onFrameReady(const QString& path, double t, int maxW, const QImage& img);
+    void onPrefetchReady(const QString& path, double t, int maxW, const QImage& img);
+    void updatePrefetch();
     void stopPlayback();
     void startAudio(double t);
     void stopAudio();
@@ -66,6 +68,7 @@ private:
     QTimer* m_timer = nullptr;
     QElapsedTimer m_clock;
     double m_playStart = 0.0;
+    qint64 m_currentFrameIndex = -1;
     bool m_playing = false;
     QPushButton* m_playBtn = nullptr;
     QLabel* m_timeLabel = nullptr;
@@ -87,8 +90,17 @@ private:
     QThread* m_frameThread = nullptr;
     FrameWorker* m_frameWorker = nullptr;
     struct FrameReq { QString path; double t = 0.0; int maxW = 0; bool valid = false; };
+    struct PrefetchFrame {
+        QString path;
+        double t = 0.0;
+        int maxW = 0;
+        QImage img;
+        bool valid = false;
+        bool requested = false;
+    };
     QMutex m_frameMutex;
     FrameReq m_pendingReq;
+    PrefetchFrame m_prefetch;
     bool m_workerBusy = false;
     QString m_shownPath;
     double m_shownT = -1.0;

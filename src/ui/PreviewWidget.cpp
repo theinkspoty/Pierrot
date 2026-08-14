@@ -30,6 +30,7 @@
 #include <cmath>
 #include <climits>
 #include <cstring>
+#include <memory>
 #include <QHash>
 #include <QMutex>
 #include <QDebug>
@@ -52,34 +53,50 @@ void PreviewWidget::setMaxDecodeWidth(int w) {
     s_maxDecodeWidth = qMax(320, w);
 }
 
-// Decodifica quadros de vídeo na própria thread (com seu FFmpegDecoder).
+// Decodifica quadros de vídeo na própria thread (com dois FFmpegDecoder dedicados:
+// um para o clipe principal e outro para pré-carregamento especulativo).
 // O PreviewWidget pede o "último" quadro desejado e descarta intermediários.
 class FrameWorker : public QObject {
     Q_OBJECT
 public:
-    explicit FrameWorker(QObject* parent = nullptr) : QObject(parent) {}
+    explicit FrameWorker(QObject* parent = nullptr)
+        : QObject(parent),
+          m_mainDecoder(std::make_unique<FFmpegDecoder>()),
+          m_prefetchDecoder(std::make_unique<FFmpegDecoder>()) {}
+
 public slots:
     void decodeOne(const QString& path, double t, int maxW) {
-        if (!m_decoder.isOpen() || m_decoder.source() != path)
-            if (!m_decoder.open(path)) {
-                emit frameReady(path, t, maxW, QImage());
-                return;
+        if (!m_mainDecoder->isOpen() || m_mainDecoder->source() != path) {
+            if (m_prefetchDecoder->isOpen() && m_prefetchDecoder->source() == path) {
+                // O decodificador de prefetch já abriu e aqueceu este arquivo: swap instantâneo!
+                std::swap(m_mainDecoder, m_prefetchDecoder);
+            } else {
+                if (!m_mainDecoder->open(path)) {
+                    emit frameReady(path, t, maxW, QImage());
+                    return;
+                }
             }
-        emit frameReady(path, t, maxW, m_decoder.frameAt(t, maxW));
+        }
+        emit frameReady(path, t, maxW, m_mainDecoder->frameAt(t, maxW));
     }
+
     void decodePrefetch(const QString& path, double t, int maxW) {
-        if (!m_decoder.isOpen() || m_decoder.source() != path)
-            if (!m_decoder.open(path)) {
+        if (!m_prefetchDecoder->isOpen() || m_prefetchDecoder->source() != path) {
+            if (!m_prefetchDecoder->open(path)) {
                 emit prefetchReady(path, t, maxW, QImage());
                 return;
             }
-        emit prefetchReady(path, t, maxW, m_decoder.frameAt(t, maxW));
+        }
+        emit prefetchReady(path, t, maxW, m_prefetchDecoder->frameAt(t, maxW));
     }
+
 signals:
     void frameReady(const QString& path, double t, int maxW, const QImage& img);
     void prefetchReady(const QString& path, double t, int maxW, const QImage& img);
+
 private:
-    FFmpegDecoder m_decoder;
+    std::unique_ptr<FFmpegDecoder> m_mainDecoder;
+    std::unique_ptr<FFmpegDecoder> m_prefetchDecoder;
 };
 
 // Mixer de áudio: soma o PCM de todos os clipes ativos em `t` (clipe de vídeo
@@ -390,6 +407,8 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     connect(m_frameThread, &QThread::finished, m_frameWorker, &QObject::deleteLater);
     connect(m_frameWorker, &FrameWorker::frameReady,
             this, &PreviewWidget::onFrameReady, Qt::QueuedConnection);
+    connect(m_frameWorker, &FrameWorker::prefetchReady,
+            this, &PreviewWidget::onPrefetchReady, Qt::QueuedConnection);
     m_frameThread->start();
 
     setMinimumSize(320, 200);
@@ -416,6 +435,7 @@ void PreviewWidget::setProject(Project* p) {
     {
         QMutexLocker l(&m_frameMutex);
         m_pendingReq = FrameReq();
+        m_prefetch = PrefetchFrame();
         m_shownPath.clear();
         m_shownT = -1.0;
         m_shownW = -1;
@@ -519,6 +539,9 @@ void PreviewWidget::seek(double t) {
     // Snap ao frame do projeto (playhead sempre em frame cheio).
     const double fps = projFps(m_project);
     m_playhead = (fps > 0.0) ? std::round(t * fps) / fps : std::max(0.0, t);
+    if (!m_playing) {
+        m_currentFrameIndex = std::llround(m_playhead * fps);
+    }
     updateFrame();
     update();
     emit playheadMoved(m_playhead);
@@ -535,13 +558,13 @@ void PreviewWidget::togglePlay() {
         if (m_playhead < m_loopIn || m_playhead >= m_loopOut)
             m_playhead = m_loopIn;
     }
+    const double fps = projFps(m_project);
+    m_currentFrameIndex = std::llround(m_playhead * fps);
     m_playStart = m_playhead;
     m_clock.start();
     m_playing = true;
-    // Sincroniza o tick com o fps do projeto (evita stutter em 50/60fps);
-    // com limite de ~83 Hz para não sobrecarregar a UI com decodificações extras.
-    const double fps = projFps(m_project);
-    m_timer->setInterval(fps > 0.0 ? qBound(12, (int)std::lround(1000.0 / fps), 40) : 33);
+    // Sincroniza o tick com o fps do projeto
+    m_timer->setInterval(fps > 0.0 ? qBound(10, (int)std::lround(1000.0 / fps), 40) : 33);
     m_timer->start();
     m_playBtn->setText(tr("Pausar"));
     startAudio(m_playhead);
@@ -571,7 +594,12 @@ void PreviewWidget::stopPlayback() {
     m_playing = false;
     m_timer->stop();
     m_playBtn->setText(tr("Reproduzir"));
+    m_currentFrameIndex = -1;
     stopAudio();
+    {
+        QMutexLocker l(&m_frameMutex);
+        m_prefetch = PrefetchFrame();
+    }
     emit stateChanged(false);
 }
 
@@ -579,11 +607,22 @@ void PreviewWidget::tick() {
     if (!m_project) { stopPlayback(); return; }
     const double fps = projFps(m_project);
     const double dur = m_project->duration();
-    // Avança por frames inteiros do projeto (playback determinístico, sem drift).
-    double t = m_playStart + m_clock.elapsed() / 1000.0;
-    t = std::floor(t * fps + 1e-6) / fps;
+
+    // Determina o índice de frame com base no clock de alta precisão
+    const double elapsed = m_clock.elapsed() / 1000.0;
+    const qint64 targetFrame = std::llround((m_playStart + elapsed) * fps);
+
+    // Se o timer acordou ligeiramente antes de 1 frame inteiro passar, não repete nem duplica o frame
+    if (targetFrame <= m_currentFrameIndex) {
+        return;
+    }
+
+    m_currentFrameIndex = targetFrame;
+    const double t = (fps > 0.0) ? (targetFrame / fps) : (m_playStart + elapsed);
+
     if (m_loopOut > m_loopIn && t >= m_loopOut - 1e-9) {
         m_playStart = m_loopIn;
+        m_currentFrameIndex = std::llround(m_loopIn * fps);
         m_clock.restart();
         seek(m_loopIn);
         updateMixAudio(m_loopIn, true);
@@ -595,6 +634,7 @@ void PreviewWidget::tick() {
         return;
     }
     seek(t);
+    updatePrefetch();
     // Mixer acompanha o playhead: volumes/fades e troca de clipes acontecem
     // aqui, sem reiniciar o sink a cada transição.
     updateMixAudio(t, false);
@@ -756,7 +796,6 @@ void PreviewWidget::stopAudio() {
 void PreviewWidget::updateMixAudio(double t, bool reseek) {
     if (!m_audioFeed) return;
     m_audioFeed->updateSources(buildMixSources(m_project, t), reseek);
-    emit m_audioFeed->readyRead();
 }
 
 void PreviewWidget::updateFrame() {
@@ -790,6 +829,27 @@ void PreviewWidget::updateFrame() {
     m_lastCropT = cT;
     m_lastCropB = cB;
 
+    // Se temos um quadro pré-carregado que bate com a posição de entrada do novo clipe, exibe imediatamente.
+    {
+        QMutexLocker l(&m_frameMutex);
+        const double frameDur = 1.0 / projFps(m_project);
+        if (m_prefetch.valid && m_prefetch.path == m->filePath
+            && std::fabs(m_prefetch.t - srcT) <= frameDur * 3.0 + 0.1
+            && m_prefetch.maxW == decW) {
+            m_frameFull = m_prefetch.img;
+            m_shownPath = m->filePath;
+            m_shownT = srcT;
+            m_shownW = decW;
+            m_lastSrcT = srcT;
+            m_lastDecodeW = decW;
+            m_lastFile = m->filePath;
+            m_prefetch.valid = false;
+            m_prefetch.requested = false;
+            applyCrop();
+            update();
+        }
+    }
+
     // O quadro do tamanho/posição atuais já está pronto? Apenas reaplica o
     // pan/crop (por exemplo quando só o corte mudou) sem decodificar de novo.
     {
@@ -817,7 +877,7 @@ void PreviewWidget::requestFrame(const QString& path, double t, int maxW) {
     kickFrameWorker();
 }
 
-// Chamado com m_frameMutex segura do.
+// Chamado com m_frameMutex segurado.
 void PreviewWidget::kickFrameWorker() {
     if (m_workerBusy || !m_pendingReq.valid || !m_frameWorker) return;
     m_workerBusy = true;
@@ -840,9 +900,9 @@ void PreviewWidget::onFrameReady(const QString& path, double t, int maxW, const 
     const MediaItem* m = m_project->findMedia(clip->mediaId);
     if (!m || m->filePath != path) return;
 
-    // Ignora quadros decodificados para outra posição (scrub/seek rápido).
+    // Ignora quadros decodificados para outra posição (scrub/seek rápido muito distante).
     const double wantT = clip->in + (m_playhead - clip->pos);
-    if (std::fabs(wantT - t) > 0.4) return;
+    if (std::fabs(wantT - t) > 1.5) return;
 
     {
         QMutexLocker l(&m_frameMutex);
@@ -856,6 +916,67 @@ void PreviewWidget::onFrameReady(const QString& path, double t, int maxW, const 
     m_lastFile = path;
     applyCrop();
     update();
+}
+
+void PreviewWidget::onPrefetchReady(const QString& path, double t, int maxW, const QImage& img) {
+    QMutexLocker l(&m_frameMutex);
+    if (m_prefetch.requested && m_prefetch.path == path
+        && std::fabs(m_prefetch.t - t) < 1e-4 && m_prefetch.maxW == maxW) {
+        m_prefetch.img = img;
+        m_prefetch.valid = !img.isNull();
+    }
+}
+
+void PreviewWidget::updatePrefetch() {
+    if (!m_project || !m_frameWorker || !m_playing) return;
+    const Clip* clip = clipAt(m_playhead);
+    if (!clip) {
+        QMutexLocker l(&m_frameMutex);
+        m_prefetch.valid = false;
+        m_prefetch.requested = false;
+        return;
+    }
+    const double remain = (clip->pos + clip->dur) - m_playhead;
+    if (remain > 1.0 || remain <= 0.0) return;
+
+    // Procura o próximo clipe que será exibido no fim do clipe atual
+    const Clip* nextClip = nullptr;
+    double nextPos = 1e9;
+    for (int tr = (int)m_project->videoTracks.size() - 1; tr >= 0; --tr) {
+        for (const Clip& c : m_project->videoTracks[tr].clips) {
+            if (c.pos >= clip->pos + clip->dur - 1e-4 && c.pos < nextPos) {
+                nextPos = c.pos;
+                nextClip = &c;
+            }
+        }
+    }
+    if (!nextClip) return;
+
+    const MediaItem* nextMedia = m_project->findMedia(nextClip->mediaId);
+    if (!nextMedia || !nextMedia->hasVideo) return;
+
+    const double srcT = nextClip->in;
+    const int decW = qMax(320, qMin(PreviewWidget::maxDecodeWidth(), m_videoRect.width() > 0
+                                    ? m_videoRect.width() : 960));
+
+    {
+        QMutexLocker l(&m_frameMutex);
+        if (m_prefetch.requested && m_prefetch.path == nextMedia->filePath
+            && std::fabs(m_prefetch.t - srcT) < 1e-4 && m_prefetch.maxW == decW) {
+            return; // já solicitado ou já pronto
+        }
+        m_prefetch.path = nextMedia->filePath;
+        m_prefetch.t = srcT;
+        m_prefetch.maxW = decW;
+        m_prefetch.img = QImage();
+        m_prefetch.valid = false;
+        m_prefetch.requested = true;
+    }
+
+    QMetaObject::invokeMethod(m_frameWorker, "decodePrefetch", Qt::QueuedConnection,
+                              Q_ARG(QString, nextMedia->filePath),
+                              Q_ARG(double, srcT),
+                              Q_ARG(int, decW));
 }
 
 // Aplica pan/crop sobre o quadro cheio (m_frameFull) e guarda em m_frame.
