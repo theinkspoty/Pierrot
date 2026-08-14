@@ -59,6 +59,7 @@ public:
 public slots:
     void cutAtPlayhead();
     void deleteSelected();
+    void deleteSelection(); // clipes selecionados, ou faixas selecionadas se não houver clipes
     void deleteSelectedLeaveGap();
     void deleteClipBeforePlayhead();
     void deleteClipAfterPlayhead();
@@ -193,6 +194,7 @@ private:
     void createTrackGroup();
     void renameTrackGroup(const QString& gid);
     void selectGroupTracks(const QString& gid);
+    void toggleGroupTracks(const QString& gid);
     void pruneEmptyGroups();
 
     Project* m_project = nullptr;

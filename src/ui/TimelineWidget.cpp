@@ -1559,7 +1559,10 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
                 toggleGroupCollapsed(gid);
                 return;
             }
-            selectGroupTracks(gid);
+            if (e->modifiers() & Qt::ControlModifier)
+                toggleGroupTracks(gid);
+            else
+                selectGroupTracks(gid);
             refreshView();
             return;
         }
@@ -2115,15 +2118,10 @@ void TimelineWidget::keyPressEvent(QKeyEvent* e) {
         break;
     case Qt::Key_Delete:
     case Qt::Key_Backspace:
-        if (m_selected.isEmpty() && !m_selTracks.isEmpty()) {
-            deleteSelectedTracks();
-            e->accept();
-            break;
-        }
         if (shift)
             deleteSelectedLeaveGap();
         else
-            deleteSelected();
+            deleteSelection();
         e->accept();
         break;
     case Qt::Key_Plus:
@@ -2985,6 +2983,16 @@ void TimelineWidget::deleteSelectedLeaveGap() {
     emit modified();
 }
 
+// Delete: prioriza clipes selecionados; se não houver, apaga as faixas
+// selecionadas. Usado pela tecla Delete e pelo atalho da barra de ferramentas.
+void TimelineWidget::deleteSelection() {
+    if (m_selected.isEmpty() && !m_selTracks.isEmpty()) {
+        deleteSelectedTracks();
+        return;
+    }
+    deleteSelected();
+}
+
 void TimelineWidget::deleteClipBeforePlayhead() {
     if (!m_project) return;
     const QStringList scope = m_selected.isEmpty() ? [this]() {
@@ -3348,6 +3356,33 @@ void TimelineWidget::selectGroupTracks(const QString& gid) {
     if (!m_selected.isEmpty()) {
         m_selected.clear();
         emit selectionChanged(QString());
+    }
+    m_hasAnchor = false;
+}
+
+// Ctrl+clique na pasta: alterna as faixas dela dentro da seleção atual, para
+// acumular pastas sem perder o que já estava selecionado.
+void TimelineWidget::toggleGroupTracks(const QString& gid) {
+    if (!m_selected.isEmpty()) {
+        m_selected.clear();
+        emit selectionChanged(QString());
+    }
+    QVector<TrackSel> group;
+    for (int i = 0; i < (int)m_project->videoTracks.size(); ++i)
+        if (m_project->videoTracks[i].groupId == gid)
+            group.append(TrackSel{i, false});
+    for (int i = 0; i < (int)m_project->audioTracks.size(); ++i)
+        if (m_project->audioTracks[i].groupId == gid)
+            group.append(TrackSel{i, true});
+    bool allIn = true;
+    for (const TrackSel& ts : group)
+        if (!m_selTracks.contains(ts)) { allIn = false; break; }
+    if (allIn) {
+        for (const TrackSel& ts : group)
+            m_selTracks.removeAll(ts);
+    } else {
+        for (const TrackSel& ts : group)
+            if (!m_selTracks.contains(ts)) m_selTracks.append(ts);
     }
     m_hasAnchor = false;
 }

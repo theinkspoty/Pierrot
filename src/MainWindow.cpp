@@ -425,7 +425,7 @@ void MainWindow::createActions() {
     deleteAction->setShortcut(QKeySequence(Qt::Key_Delete));
     deleteAction->setIcon(stdIcon(QStyle::SP_TrashIcon));
     deleteAction->setToolTip(tr("Excluir clipe selecionado e fechar o espaço (Delete; Shift+Delete deixa espaço)"));
-    connect(deleteAction, &QAction::triggered, m_timeline, &TimelineWidget::deleteSelected);
+    connect(deleteAction, &QAction::triggered, m_timeline, &TimelineWidget::deleteSelection);
 
     m_undoAction = new QAction(tr("Desfazer"), this);
     m_undoAction->setShortcut(QKeySequence::Undo);
