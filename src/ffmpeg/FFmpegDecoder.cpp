@@ -48,8 +48,20 @@ static void installLogFilter() {
     }
 }
 
-FFmpegDecoder::FFmpegDecoder() { installLogFilter(); }
-FFmpegDecoder::~FFmpegDecoder() { close(); }
+FFmpegDecoder::FFmpegDecoder() {
+    installLogFilter();
+    m_pkt = av_packet_alloc();
+    m_frame = av_frame_alloc();
+    m_audioPkt = av_packet_alloc();
+    m_audioFrame = av_frame_alloc();
+}
+FFmpegDecoder::~FFmpegDecoder() {
+    close();
+    if (m_audioPkt) av_packet_free(&m_audioPkt);
+    if (m_audioFrame) av_frame_free(&m_audioFrame);
+    if (m_pkt) av_packet_free(&m_pkt);
+    if (m_frame) av_frame_free(&m_frame);
+}
 
 FFmpegMediaInfo FFmpegDecoder::probe(const QString& filePath) {
     installLogFilter();
@@ -476,6 +488,10 @@ void FFmpegDecoder::freeAllLocked() {
     m_swsSrcW = m_swsSrcH = 0;
     m_swsDstW = m_swsDstH = 0;
     m_swsSrcFmt = -1;
+    if (m_pkt) av_packet_unref(m_pkt);
+    if (m_frame) av_frame_unref(m_frame);
+    if (m_audioPkt) av_packet_unref(m_audioPkt);
+    if (m_audioFrame) av_frame_unref(m_audioFrame);
 }
 
 bool FFmpegDecoder::isOpen() const {
@@ -506,7 +522,7 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
     const double targetSec = seconds;
 
     // Playback contínuo: decodifica adiante sem re-seek.
-    const double forwardGap = 3.0;
+    const double forwardGap = 5.0;
     if (m_lastPtsSec < 0.0 || targetSec < m_lastPtsSec - 0.2
         || targetSec > m_lastPtsSec + forwardGap) {
         av_seek_frame(fmt, m_stream, target, AVSEEK_FLAG_BACKWARD);
@@ -514,36 +530,35 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
         m_lastPtsSec = -1.0;
     }
 
-    AVPacket* pkt = av_packet_alloc();
-    AVFrame* frame = av_frame_alloc();
-    if (!pkt || !frame) {
-        if (pkt) av_packet_free(&pkt);
-        if (frame) av_frame_free(&frame);
+    if (!m_pkt || !m_frame) {
         return result;
     }
+
+    av_packet_unref(m_pkt);
+    av_frame_unref(m_frame);
 
     AVFrame* chosen = nullptr;
     bool atEof = false;
     while (!chosen) {
-        const int r = av_read_frame(fmt, pkt);
+        const int r = av_read_frame(fmt, m_pkt);
         if (r < 0) { atEof = true; break; }
-        if (pkt->stream_index == m_stream) {
-            if (avcodec_send_packet(cc, pkt) == 0) {
-                while (avcodec_receive_frame(cc, frame) == 0) {
-                    int64_t pts = frame->pts;
+        if (m_pkt->stream_index == m_stream) {
+            if (avcodec_send_packet(cc, m_pkt) == 0) {
+                while (avcodec_receive_frame(cc, m_frame) == 0) {
+                    int64_t pts = m_frame->pts;
                     if (pts == AV_NOPTS_VALUE)
-                        pts = frame->best_effort_timestamp;
+                        pts = m_frame->best_effort_timestamp;
                     if (pts != AV_NOPTS_VALUE) {
                         const double fsec = pts * av_q2d(st->time_base);
                         if (fsec >= targetSec) {
-                            chosen = frame;
+                            chosen = m_frame;
                             break;
                         }
                         AVFrame* lastFrame = reinterpret_cast<AVFrame*>(m_lastFrame);
                         if (!lastFrame) lastFrame = av_frame_alloc();
                         if (lastFrame) {
                             av_frame_unref(lastFrame);
-                            av_frame_ref(lastFrame, frame);
+                            av_frame_ref(lastFrame, m_frame);
                             m_lastFrame = lastFrame;
                         }
                         m_lastPtsSec = fsec;
@@ -551,7 +566,7 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
                 }
             }
         }
-        av_packet_unref(pkt);
+        av_packet_unref(m_pkt);
     }
     (void)atEof;
 
@@ -593,8 +608,8 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
         }
     }
 
-    av_frame_free(&frame);
-    av_packet_free(&pkt);
+    av_frame_unref(m_frame);
+    av_packet_unref(m_pkt);
     return result;
 }
 
@@ -632,6 +647,7 @@ void FFmpegDecoder::seekAudio(double seconds) {
 int FFmpegDecoder::decodeAudio(void* outBuf, int maxBytes) {
     QMutexLocker locker(&m_audioMutex);
     if (!m_aCtx || m_audioStream < 0 || !outBuf || maxBytes <= 0) return 0;
+    if (!m_audioPkt || !m_audioFrame) return 0;
 
     AVFormatContext* afmt = static_cast<AVFormatContext*>(m_aCtx);
     AVCodecContext* acc = static_cast<AVCodecContext*>(m_aCodec);
@@ -642,31 +658,26 @@ int FFmpegDecoder::decodeAudio(void* outBuf, int maxBytes) {
     int produced = 0;
     bool readEof = false;
 
-    AVPacket* pkt = av_packet_alloc();
-    AVFrame* frame = av_frame_alloc();
-    if (!pkt || !frame) {
-        if (pkt) av_packet_free(&pkt);
-        if (frame) av_frame_free(&frame);
-        return 0;
-    }
+    av_packet_unref(m_audioPkt);
+    av_frame_unref(m_audioFrame);
 
     while (produced < maxBytes) {
-        const int recv = avcodec_receive_frame(acc, frame);
+        const int recv = avcodec_receive_frame(acc, m_audioFrame);
         if (recv == AVERROR(EAGAIN)) {
             // Precisa de mais pacotes (ou flush no fim do arquivo).
             if (readEof) {
                 avcodec_send_packet(acc, nullptr);
                 continue;
             }
-            const int r = av_read_frame(afmt, pkt);
+            const int r = av_read_frame(afmt, m_audioPkt);
             if (r < 0) {
                 readEof = true;
                 avcodec_send_packet(acc, nullptr);
                 continue;
             }
-            if (pkt->stream_index == m_audioStream)
-                avcodec_send_packet(acc, pkt);
-            av_packet_unref(pkt);
+            if (m_audioPkt->stream_index == m_audioStream)
+                avcodec_send_packet(acc, m_audioPkt);
+            av_packet_unref(m_audioPkt);
             continue;
         }
         if (recv == AVERROR_EOF) {
@@ -684,16 +695,16 @@ int FFmpegDecoder::decodeAudio(void* outBuf, int maxBytes) {
         const int cap = (maxBytes - produced) / bytesPerSample;
         if (cap <= 0) break;
         const int got = swr_convert(swr, &out, cap,
-                                    (const uint8_t**)frame->extended_data,
-                                    frame->nb_samples);
+                                    (const uint8_t**)m_audioFrame->extended_data,
+                                    m_audioFrame->nb_samples);
         if (got < 0) break;
         if (got == 0) continue;
         produced += got * bytesPerSample;
         out += got * bytesPerSample;
     }
 
-    av_frame_free(&frame);
-    av_packet_free(&pkt);
+    av_frame_unref(m_audioFrame);
+    av_packet_unref(m_audioPkt);
     if (audioDbg() && produced == 0)
         qDebug() << "[audio] decodeAudio -> 0 bytes (SILÊNCIO)";
     return produced;

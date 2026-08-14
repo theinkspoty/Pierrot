@@ -690,7 +690,12 @@ void PreviewWidget::startAudio(double t) {
     m_audioFeed->open(QIODevice::ReadOnly | QIODevice::Unbuffered);
     m_audioFeed->updateSources(sources, true);
 #if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
-    m_audioSink = new QAudioSink(QMediaDevices::defaultAudioOutput(), fmt, this);
+    const QAudioDevice def = QMediaDevices::defaultAudioOutput();
+    if (def.isNull()) {
+        if (audioDbg()) qDebug() << "[audio] defaultAudioOutput nulo — sem saída de áudio";
+        return;
+    }
+    m_audioSink = new QAudioSink(def, fmt, this);
     if (audioDbg()) {
         connect(m_audioSink, &QAudioSink::stateChanged, this, [this](QAudio::State s) {
             qDebug() << "[audio] sink state =" << s;
@@ -700,7 +705,12 @@ void PreviewWidget::startAudio(double t) {
     }
     m_audioSink->start(m_audioFeed);
 #else
-    m_audioOut = new QAudioOutput(QAudioDeviceInfo::defaultOutputDevice(), fmt, this);
+    const QAudioDeviceInfo def = QAudioDeviceInfo::defaultOutputDevice();
+    if (def.isNull()) {
+        if (audioDbg()) qDebug() << "[audio] defaultOutputDevice nulo — sem saída de áudio";
+        return;
+    }
+    m_audioOut = new QAudioOutput(def, fmt, this);
     if (audioDbg()) {
         connect(m_audioOut, &QAudioOutput::stateChanged, this, [](QAudioOutput::State s) {
             qDebug() << "[audio] sink state =" << s;

@@ -83,4 +83,10 @@ private:
     int m_audioOutRate = 48000;
     int m_audioOutCh = 2;
     mutable QMutex m_audioMutex;
+
+    // Buffers reutilizáveis para evitar alocação a cada decodificação.
+    AVPacket* m_pkt = nullptr;        // frameAt()
+    AVFrame* m_frame = nullptr;       // frameAt()
+    AVPacket* m_audioPkt = nullptr;   // decodeAudio()
+    AVFrame* m_audioFrame = nullptr;  // decodeAudio()
 };

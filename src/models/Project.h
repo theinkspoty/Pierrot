@@ -62,40 +62,39 @@ inline double kfValue(const QVector<Keyframe>& keys, double base, double t) {
     if (keys.isEmpty()) return base;
     if (t <= keys.first().time) return keys.first().value;
     if (t >= keys.last().time) return keys.last().value;
-    for (int i = 0; i + 1 < keys.size(); ++i) {
-        const Keyframe& a = keys[i];
-        const Keyframe& b = keys[i + 1];
-        if (t >= a.time && t <= b.time) {
-            const double span = b.time - a.time;
-            if (span <= 1e-9) return b.value;
-            const double f = (t - a.time) / span;
-            switch (a.interp) {
-                case KfStep:
-                    return a.value;
-                case KfSmooth: {
-                    // Tangente Catmull-Rom por diferenças finitas com os
-                    // vizinhos (extrapola nos extremos) -> curva suave.
-                    const Keyframe& p0 = (i > 0) ? keys[i - 1] : a;
-                    const Keyframe& p3 = (i + 2 < keys.size()) ? keys[i + 2] : b;
-                    const double dt0 = (i > 0) ? (b.time - p0.time) : span;
-                    const double m0 = (b.value - p0.value) / dt0;
-                    const double dt3 = (i + 2 < keys.size()) ? (p3.time - a.time) : span;
-                    const double m3 = (p3.value - a.value) / dt3;
-                    return cubicBezier(a.value, a.value + m0 * span,
-                                       b.value - m3 * span, b.value, f);
-                }
-                case KfBezier: {
-                    const double c1 = a.value + a.hy;
-                    const double c2 = b.value - b.hy;
-                    return cubicBezier(a.value, c1, c2, b.value, f);
-                }
-                case KfLinear:
-                default:
-                    return a.value + (b.value - a.value) * f;
-            }
-        }
+    int lo = 0, hi = (int)keys.size() - 1;
+    while (lo + 1 < hi) {
+        const int mid = (lo + hi) / 2;
+        if (t < keys[mid].time) hi = mid;
+        else lo = mid;
     }
-    return keys.last().value;
+    const Keyframe& a = keys[lo];
+    const Keyframe& b = keys[lo + 1];
+    const double span = b.time - a.time;
+    if (span <= 1e-9) return b.value;
+    const double f = (t - a.time) / span;
+    switch (a.interp) {
+        case KfStep:
+            return a.value;
+        case KfSmooth: {
+            const Keyframe& p0 = (lo > 0) ? keys[lo - 1] : a;
+            const Keyframe& p3 = (lo + 2 < (int)keys.size()) ? keys[lo + 2] : b;
+            const double dt0 = (lo > 0) ? (b.time - p0.time) : span;
+            const double m0 = (b.value - p0.value) / dt0;
+            const double dt3 = (lo + 2 < (int)keys.size()) ? (p3.time - a.time) : span;
+            const double m3 = (p3.value - a.value) / dt3;
+            return cubicBezier(a.value, a.value + m0 * span,
+                               b.value - m3 * span, b.value, f);
+        }
+        case KfBezier: {
+            const double c1 = a.value + a.hy;
+            const double c2 = b.value - b.hy;
+            return cubicBezier(a.value, c1, c2, b.value, f);
+        }
+        case KfLinear:
+        default:
+            return a.value + (b.value - a.value) * f;
+    }
 }
 
 struct Clip {

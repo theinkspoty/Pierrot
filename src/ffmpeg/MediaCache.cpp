@@ -14,10 +14,10 @@
 namespace {
 constexpr int kPeaksPerSecond = 50;
 constexpr int kThumbMaxWidth = 160;
-constexpr int kMaxPeakCache = 16;
-constexpr int kMaxThumbCache = 256;
-constexpr int kMaxThumbPending = 96;
-constexpr int kMaxPeakPending = 16;
+constexpr int kMaxPeakCache = 32;
+constexpr int kMaxThumbCache = 512;
+constexpr int kMaxThumbPending = 192;
+constexpr int kMaxPeakPending = 32;
 
 double thumbKey(double seconds) {
     return std::round(seconds * 10.0) / 10.0;
