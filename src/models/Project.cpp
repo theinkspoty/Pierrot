@@ -202,6 +202,7 @@ static QJsonObject trackToJson(const Track& t) {
     o["solo"] = t.solo;
     o["locked"] = t.locked;
     o["height"] = t.height;
+    o["groupId"] = t.groupId;
     QJsonArray clips;
     for (const Clip& c : t.clips) clips.append(clipToJson(c));
     o["clips"] = clips;
@@ -219,6 +220,7 @@ static Track trackFromJson(const QJsonObject& o, bool audio) {
     t.solo = o["solo"].toBool();
     t.locked = o["locked"].toBool();
     t.height = o["height"].toInt(0);
+    t.groupId = o["groupId"].toString();
     const QJsonArray clips = o["clips"].toArray();
     for (const QJsonValue& v : clips)
         t.clips.append(clipFromJson(v.toObject()));
@@ -249,6 +251,16 @@ QJsonObject Project::toJson() const {
     for (const Marker& m : markers) mks.append(markerToJson(m));
     o["markers"] = mks;
 
+    QJsonArray tgs;
+    for (const TrackGroup& g : trackGroups) {
+        QJsonObject go;
+        go["id"] = g.id;
+        go["name"] = g.name;
+        go["collapsed"] = g.collapsed;
+        tgs.append(go);
+    }
+    o["trackGroups"] = tgs;
+
     return o;
 }
 
@@ -262,6 +274,7 @@ void Project::fromJson(const QJsonObject& o) {
     media.clear();
     videoTracks.clear();
     audioTracks.clear();
+    trackGroups.clear();
 
     const QJsonArray ma = o["media"].toArray();
     for (const QJsonValue& v : ma) media.append(mediaFromJson(v.toObject()));
@@ -275,4 +288,14 @@ void Project::fromJson(const QJsonObject& o) {
     markers.clear();
     const QJsonArray mka = o["markers"].toArray();
     for (const QJsonValue& v : mka) markers.append(markerFromJson(v.toObject()));
+
+    const QJsonArray tga = o["trackGroups"].toArray();
+    for (const QJsonValue& v : tga) {
+        const QJsonObject go = v.toObject();
+        TrackGroup g;
+        g.id = go["id"].toString();
+        g.name = go["name"].toString();
+        g.collapsed = go["collapsed"].toBool();
+        if (!g.id.isEmpty()) trackGroups.append(g);
+    }
 }

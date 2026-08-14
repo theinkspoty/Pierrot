@@ -62,6 +62,7 @@ constexpr int kAudioRowH = 44;
 constexpr int kMinRowH = 24;
 constexpr int kMaxRowH = 400;
 constexpr int kResizeHandleH = 5;
+constexpr int kFolderH = 22; // altura da faixa de cabeçalho de uma pasta
 constexpr double kMinPps = 2.0;
 constexpr double kMaxPps = 4000.0;
 constexpr double kMinDur = 0.04;
@@ -195,6 +196,7 @@ void TimelineWidget::refreshView() {
 void TimelineWidget::setProject(Project* p) {
     m_project = p;
     m_selected.clear();
+    clearTrackSelection();
     m_clipPix.clear();
     m_clipBytes = 0;
     emit selectionChanged(QString());
@@ -299,9 +301,13 @@ void TimelineWidget::updateScrollRanges() {
 
     const double total = m_project->duration();
     int rowsH = 0;
-    for (int i = 0; i < (int)m_project->videoTracks.size(); ++i) rowsH += trackH(i, false);
-    for (int i = 0; i < (int)m_project->audioTracks.size(); ++i) rowsH += trackH(i, true);
-    const int totalH = kRulerH + rowsH + 20;
+    for (int i = 0; i < (int)m_project->videoTracks.size(); ++i)
+        rowsH += trackVisible(i, false) ? trackH(i, false) : 0;
+    for (int i = 0; i < (int)m_project->audioTracks.size(); ++i)
+        rowsH += trackVisible(i, true) ? trackH(i, true) : 0;
+    int foldersH = folderStripsAboveVideo(-1) * kFolderH;
+    foldersH += folderStripsAboveAudio((int)m_project->audioTracks.size() - 1) * kFolderH;
+    const int totalH = kRulerH + rowsH + foldersH + 20;
     const int totalW = kHeaderW + (int)(total * m_pps) + kMarginR;
 
     m_hbar->setRange(0, std::max(0, totalW - viewW));
@@ -338,11 +344,19 @@ int TimelineWidget::rowY(int videoIdx, int audioIdx) const {
         // Faixas de vídeo em ordem invertida: a primeira (índice 0) fica
         // embaixo e as demais por cima (V1 na base, estilo NLE).
         const int rev = n - 1 - videoIdx;
-        for (int i = 0; i < rev; ++i) y += trackH(n - 1 - i, false);
+        for (int i = 0; i < rev; ++i) {
+            const int j = n - 1 - i;
+            if (trackVisible(j, false)) y += trackH(j, false);
+        }
+        y += folderStripsAboveVideo(videoIdx) * kFolderH;
         return y;
     }
-    for (int i = 0; i < n; ++i) y += trackH(i, false);
-    for (int i = 0; i < audioIdx; ++i) y += trackH(i, true);
+    for (int i = 0; i < n; ++i)
+        if (trackVisible(i, false)) y += trackH(i, false);
+    y += folderStripsAboveVideo(-1) * kFolderH;
+    y += folderStripsAboveAudio(audioIdx) * kFolderH;
+    for (int i = 0; i < audioIdx; ++i)
+        if (trackVisible(i, true)) y += trackH(i, true);
     return y;
 }
 
@@ -353,11 +367,19 @@ bool TimelineWidget::rowFromY(int y, int& row, bool& audio) const {
     const int n = (int)m_project->videoTracks.size();
     for (int k = 0; k < n; ++k) {
         const int i = n - 1 - k;
+        if (!trackVisible(i, false)) continue;
+        const int above = folderStripsAboveVideo(i);
+        const int below = (i < n - 1) ? folderStripsAboveVideo(i + 1) : 0;
+        rem -= (above - below) * kFolderH;
         const int h = trackH(i, false);
         if (rem < h) { row = i; audio = false; return true; }
         rem -= h;
     }
     for (int i = 0; i < (int)m_project->audioTracks.size(); ++i) {
+        if (!trackVisible(i, true)) continue;
+        const int above = folderStripsAboveAudio(i);
+        const int below = (i > 0) ? folderStripsAboveAudio(i - 1) : 0;
+        rem -= (above - below) * kFolderH;
         const int h = trackH(i, true);
         if (rem < h) { row = i; audio = true; return true; }
         rem -= h;
@@ -518,10 +540,12 @@ void TimelineWidget::renderScene(QPainter& p) {
 
     // O grid de tempo só vai até o fim das faixas, não pelo espaço vazio abaixo.
     int rowsBottom = kRulerH - m_viewTop;
+    rowsBottom += folderStripsAboveVideo(-1) * kFolderH;
+    rowsBottom += folderStripsAboveAudio((int)m_project->audioTracks.size() - 1) * kFolderH;
     for (int i = 0; i < (int)m_project->videoTracks.size(); ++i)
-        rowsBottom += trackH(i, false);
+        if (trackVisible(i, false)) rowsBottom += trackH(i, false);
     for (int i = 0; i < (int)m_project->audioTracks.size(); ++i)
-        rowsBottom += trackH(i, true);
+        if (trackVisible(i, true)) rowsBottom += trackH(i, true);
     const int gridBottom = std::min(height(), rowsBottom);
     double step = 1.0;
     while (step * m_pps < 70.0) step *= 2.0;
@@ -570,21 +594,42 @@ void TimelineWidget::renderScene(QPainter& p) {
     p.save();
     p.setClipRect(QRect(0, R, width(), height() - R));
     for (int i = 0; i < (int)m_project->videoTracks.size(); ++i) {
+        if (!trackVisible(i, false)) continue;
         const int y = rowY(i, -1);
         const int rowH = trackH(i, false);
-        p.fillRect(0, y, width(), rowH, (i % 2) ? QColor(31, 31, 34) : QColor(28, 28, 31));
+        const bool sel = isTrackSelected(i, false);
+        p.fillRect(0, y, width(), rowH, sel ? QColor(44, 50, 64)
+                                            : ((i % 2) ? QColor(31, 31, 34) : QColor(28, 28, 31)));
+        if (sel) {
+            p.fillRect(0, y, 4, rowH, QColor(120, 170, 255));
+            p.setPen(QPen(QColor(110, 160, 240), 1));
+            p.drawRect(0, y, width() - 1, rowH - 1);
+        }
         p.setPen(QColor(48, 48, 54));
         p.drawLine(0, y + rowH, width(), y + rowH);
-        drawTrackHeader(p, y, rowH, m_project->videoTracks[i]);
+        drawTrackHeader(p, y, rowH, m_project->videoTracks[i], sel);
     }
     for (int i = 0; i < (int)m_project->audioTracks.size(); ++i) {
+        if (!trackVisible(i, true)) continue;
         const int y = rowY(-1, i);
         const int rowH = trackH(i, true);
-        p.fillRect(0, y, width(), rowH, (i % 2) ? QColor(29, 29, 32) : QColor(26, 26, 29));
+        const bool sel = isTrackSelected(i, true);
+        p.fillRect(0, y, width(), rowH, sel ? QColor(42, 48, 62)
+                                            : ((i % 2) ? QColor(29, 29, 32) : QColor(26, 26, 29)));
+        if (sel) {
+            p.fillRect(0, y, 4, rowH, QColor(120, 170, 255));
+            p.setPen(QPen(QColor(106, 150, 224), 1));
+            p.drawRect(0, y, width() - 1, rowH - 1);
+        }
         p.setPen(QColor(46, 46, 52));
         p.drawLine(0, y + rowH, width(), y + rowH);
-        drawTrackHeader(p, y, rowH, m_project->audioTracks[i]);
+        drawTrackHeader(p, y, rowH, m_project->audioTracks[i], sel);
     }
+
+    // Faixas de cabeçalho das pastas (grupos de faixas).
+    for (const TrackGroup& g : m_project->trackGroups)
+        drawFolderStrip(p, g);
+
     p.restore();
 
     // Clipes: nunca invadem a régua nem a coluna de cabeçalho, mesmo quando um
@@ -592,6 +637,7 @@ void TimelineWidget::renderScene(QPainter& p) {
     p.save();
     p.setClipRect(QRect(H, R, width() - H, height() - R));
     for (int i = 0; i < (int)m_project->videoTracks.size(); ++i) {
+        if (!trackVisible(i, false)) continue;
         const Track& tr = m_project->videoTracks[i];
         const int y = rowY(i, -1);
         const int rowH = trackH(i, false);
@@ -604,6 +650,7 @@ void TimelineWidget::renderScene(QPainter& p) {
         }
     }
     for (int i = 0; i < (int)m_project->audioTracks.size(); ++i) {
+        if (!trackVisible(i, true)) continue;
         const Track& tr = m_project->audioTracks[i];
         const int y = rowY(-1, i);
         const int rowH = trackH(i, true);
@@ -623,6 +670,7 @@ void TimelineWidget::renderScene(QPainter& p) {
         p.save();
         p.setClipRect(QRect(H, kRulerH, width() - H, height() - kRulerH));
         for (int i = 0; i < (int)m_project->audioTracks.size(); ++i) {
+            if (!trackVisible(i, true)) continue;
             const Track& tr = m_project->audioTracks[i];
             const int ly = volLineY(i, true, tr);
             const bool active = m_dragMode == TrackVol && m_volRow == i;
@@ -633,6 +681,7 @@ void TimelineWidget::renderScene(QPainter& p) {
         // Linha de volume individual de cada clipe de áudio (arrastar ajusta
         // só aquele clipe, sem mexer no resto da faixa).
         for (int i = 0; i < (int)m_project->audioTracks.size(); ++i) {
+            if (!trackVisible(i, true)) continue;
             const Track& tr = m_project->audioTracks[i];
             const int y = rowY(-1, i);
             for (const Clip& c : tr.clips) {
@@ -1065,7 +1114,7 @@ void TimelineWidget::toggleMarker(double t) {
     update();
 }
 
-void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& tr) {
+void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& tr, bool selected) {
     const int H = kHeaderW;
     bool anySolo = false;
     if (m_project) {
@@ -1074,8 +1123,11 @@ void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& 
             for (const Track& t : m_project->audioTracks) if (t.solo) { anySolo = true; break; }
     }
     p.fillRect(0, y, H, rowH,
-               tr.locked ? QColor(56, 44, 44)
-                         : (tr.audio ? QColor(36, 36, 40) : QColor(38, 38, 42)));
+               selected ? QColor(44, 50, 62)
+                        : (tr.locked ? QColor(56, 44, 44)
+                                     : (tr.audio ? QColor(36, 36, 40) : QColor(38, 38, 42))));
+    if (selected)
+        p.fillRect(0, y, 3, rowH, QColor(130, 175, 255));
     // Faixa lateral colorida: azul para vídeo, verde para áudio.
     p.fillRect(0, y, 3, rowH,
                tr.locked ? QColor(200, 90, 90)
@@ -1480,8 +1532,47 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
             if (b == 0) tr->muted = !tr->muted;
             else if (b == 1) tr->solo = !tr->solo;
             else tr->locked = !tr->locked;
+            // Clicar no botão também seleciona a faixa (qualquer lugar do
+            // cabeçalho seleciona), respeitando Shift/Ctrl.
+            if (e->modifiers() & Qt::ShiftModifier)
+                selectTrackRange(brow, baudio);
+            else if (e->modifiers() & Qt::ControlModifier)
+                toggleTrackSel(brow, baudio);
+            else
+                setTrackSel(brow, baudio);
             invalidateScene();
             emit modified();
+            return;
+        }
+    }
+
+    // Seleção de faixas: clicar na coluna do cabeçalho seleciona a faixa.
+    // Shift = seleção em faixa (ordem exibida), Ctrl = alterna uma a uma.
+    if (x < kHeaderW) {
+        // Clicar na faixa de cabeçalho de uma pasta seleciona todas as suas
+        // faixas; clicar na seta (à esquerda) recolhe/expande a pasta.
+        QString gid;
+        if (folderStripAt(y, gid)) {
+            TrackGroup* g = m_project->findGroup(gid);
+            const QRect ar = g ? folderArrowRect(*g) : QRect();
+            if (g && x >= ar.left() && x <= ar.right()) {
+                toggleGroupCollapsed(gid);
+                return;
+            }
+            selectGroupTracks(gid);
+            refreshView();
+            return;
+        }
+        int srow;
+        bool saudio;
+        if (rowFromY(y, srow, saudio)) {
+            if (e->modifiers() & Qt::ControlModifier)
+                toggleTrackSel(srow, saudio);
+            else if (e->modifiers() & Qt::ShiftModifier)
+                selectTrackRange(srow, saudio);
+            else
+                setTrackSel(srow, saudio);
+            refreshView();
             return;
         }
     }
@@ -1494,6 +1585,15 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
         setPlayhead(std::max(0.0, snapTime(t)));
         emit playheadChanged(std::max(0.0, snapTime(t)));
         Clip* clip = clipAt(row, audio, t);
+
+        // Shift+clique em qualquer ponto da faixa (mesmo sobre um clipe)
+        // seleciona o intervalo de faixas na ordem exibida, mantendo o que já
+        // estava selecionado a partir da âncora.
+        if (e->modifiers() & Qt::ShiftModifier) {
+            selectTrackRange(row, audio);
+            refreshView();
+            return;
+        }
 
         if (m_tool == ToolScissors) {
             m_dragMode = Razor;
@@ -1513,6 +1613,18 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
             m_dragStart = e->pos();
             update();
             return;
+        }
+
+        // Seleção de faixas também clicando no corpo vazio da faixa (sem
+        // clipe sob o cursor): clique seleciona, Ctrl alterna uma a uma.
+        // (Shift já foi tratado acima.) O playhead continua movendo e o
+        // marquee continua funcionando no arraste.
+        if (!clip && (m_tool == ToolSelect || m_tool == ToolMove)) {
+            if (e->modifiers() & Qt::ControlModifier)
+                toggleTrackSel(row, audio);
+            else
+                setTrackSel(row, audio);
+            refreshView();
         }
 
         if (clip) {
@@ -1570,6 +1682,7 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
         update();
     } else {
         m_selected.clear();
+        clearTrackSelection();
         refreshView();
         emit selectionChanged(QString());
         update();
@@ -1582,15 +1695,39 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
     if (e->buttons() & Qt::LeftButton) {
         if (m_dragMode == ResizeTrack) {
             const int dy = e->pos().y() - m_dragStart.y();
-            const int newH = std::clamp(m_resizeOrigH + dy, kMinRowH, kMaxRowH);
-            Track& t = m_resizeAudio ? m_project->audioTracks[m_resizeRow]
-                                     : m_project->videoTracks[m_resizeRow];
-            if (t.height != newH) {
-                t.height = newH;
-                updateScrollRanges();
-                invalidateScene();
-                update();
-                emit modified();
+            // Se a faixa arrastada está selecionada, redimensiona todas as
+            // faixas selecionadas juntas (mesmo delta).
+            if (isTrackSelected(m_resizeRow, m_resizeAudio)) {
+                bool any = false;
+                for (const TrackSel& s : m_selTracks) {
+                    if (s.row < 0) continue;
+                    Track* tt = s.audio
+                        ? (s.row < (int)m_project->audioTracks.size() ? &m_project->audioTracks[s.row] : nullptr)
+                        : (s.row < (int)m_project->videoTracks.size() ? &m_project->videoTracks[s.row] : nullptr);
+                    if (!tt) continue;
+                    const int nh = std::clamp(trackH(s.row, s.audio) + dy, kMinRowH, kMaxRowH);
+                    if (tt->height != nh) {
+                        tt->height = nh;
+                        any = true;
+                    }
+                }
+                if (any) {
+                    updateScrollRanges();
+                    invalidateScene();
+                    update();
+                    emit modified();
+                }
+            } else {
+                Track& t = m_resizeAudio ? m_project->audioTracks[m_resizeRow]
+                                         : m_project->videoTracks[m_resizeRow];
+                const int newH = std::clamp(m_resizeOrigH + dy, kMinRowH, kMaxRowH);
+                if (t.height != newH) {
+                    t.height = newH;
+                    updateScrollRanges();
+                    invalidateScene();
+                    update();
+                    emit modified();
+                }
             }
             return;
         }
@@ -1881,9 +2018,11 @@ void TimelineWidget::selectInMarquee(bool add) {
                 found.append(c.id);
     };
     for (int i = 0; i < (int)m_project->videoTracks.size(); ++i)
-        collect(m_project->videoTracks[i], false, i);
+        if (trackVisible(i, false))
+            collect(m_project->videoTracks[i], false, i);
     for (int i = 0; i < (int)m_project->audioTracks.size(); ++i)
-        collect(m_project->audioTracks[i], true, i);
+        if (trackVisible(i, true))
+            collect(m_project->audioTracks[i], true, i);
     if (!add) m_selected.clear();
     for (const QString& id : found)
         if (!m_selected.contains(id)) m_selected.append(id);
@@ -1894,6 +2033,18 @@ void TimelineWidget::selectInMarquee(bool add) {
 
 void TimelineWidget::mouseDoubleClickEvent(QMouseEvent* e) {
     if (!m_project) return;
+    // Duplo clique na faixa de uma pasta (fora da seta) renomeia a pasta.
+    if (e->pos().x() < kHeaderW) {
+        QString gid;
+        if (folderStripAt(e->pos().y(), gid)) {
+            TrackGroup* g = m_project->findGroup(gid);
+            const QRect ar = g ? folderArrowRect(*g) : QRect();
+            if (g && !(e->pos().x() >= ar.left() && e->pos().x() <= ar.right())) {
+                renameTrackGroup(gid);
+                return;
+            }
+        }
+    }
     // Duplo clique na agulha, ou na região do loop (na régua), limpa o loop.
     if (m_loopOut > m_loopIn) {
         const double px = timeToX(m_playhead);
@@ -1964,6 +2115,11 @@ void TimelineWidget::keyPressEvent(QKeyEvent* e) {
         break;
     case Qt::Key_Delete:
     case Qt::Key_Backspace:
+        if (m_selected.isEmpty() && !m_selTracks.isEmpty()) {
+            deleteSelectedTracks();
+            e->accept();
+            break;
+        }
         if (shift)
             deleteSelectedLeaveGap();
         else
@@ -2030,6 +2186,40 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
     if (!m_project) return;
     QMenu menu(this);
     Clip* clip = nullptr;
+    QString gid;
+    if (folderStripAt(e->pos().y(), gid)) {
+        TrackGroup* g = m_project->findGroup(gid);
+        if (g) {
+            QAction* selAll = menu.addAction(tr("Selecionar faixas da pasta"));
+            QAction* ren = menu.addAction(tr("Renomear pasta…"));
+            QAction* col = menu.addAction(g->collapsed ? tr("Expandir pasta")
+                                                       : tr("Recolher pasta"));
+            QAction* del = menu.addAction(tr("Desagrupar faixas"));
+            QAction* act = menu.exec(e->globalPos());
+            if (act == selAll) {
+                selectGroupTracks(gid);
+                refreshView();
+            } else if (act == ren) {
+                renameTrackGroup(gid);
+            } else if (act == col) {
+                toggleGroupCollapsed(gid);
+            } else if (act == del) {
+                emit editStart();
+                for (int i = (int)m_project->trackGroups.size() - 1; i >= 0; --i)
+                    if (m_project->trackGroups[i].id == gid)
+                        m_project->trackGroups.removeAt(i);
+                for (Track& t : m_project->videoTracks)
+                    if (t.groupId == gid) t.groupId.clear();
+                for (Track& t : m_project->audioTracks)
+                    if (t.groupId == gid) t.groupId.clear();
+                updateScrollRanges();
+                invalidateScene();
+                emit modified();
+            }
+        }
+        return;
+    }
+
     int row;
     bool audio;
     if (rowFromY(e->pos().y(), row, audio))
@@ -2141,12 +2331,33 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
                 grp->addAction(a);
             }
         }
+        // Clique com o direito na faixa: garante que ela esteja selecionada
+        // (sem desfazer a seleção múltipla quando o clique já está nela).
+        if (track) {
+            selectTrackRightClick(vrow, audio);
+            refreshView();
+        }
         QAction* trackVol = nullptr;
         if (track) trackVol = menu.addAction(tr("Volume da faixa: %1%").arg((int)llround(track->volume * 100.0)));
+        QAction* groupTracks = nullptr;
+        QAction* renameGroup = nullptr;
+        QAction* ungroupTracks = nullptr;
+        if (track) {
+            menu.addSeparator();
+            if (m_selTracks.size() >= 2)
+                groupTracks = menu.addAction(tr("Agrupar faixas em pasta…"));
+            if (!track->groupId.isEmpty()) {
+                renameGroup = menu.addAction(tr("Renomear pasta…"));
+                ungroupTracks = menu.addAction(tr("Desagrupar faixas"));
+            }
+        }
         QAction* delTrack = nullptr;
+        QAction* delSelTracks = nullptr;
         if (track) {
             menu.addSeparator();
             delTrack = menu.addAction(tr("Excluir faixa"));
+            if (m_selTracks.size() >= 2)
+                delSelTracks = menu.addAction(tr("Excluir faixas selecionadas"));
         }
         act = menu.exec(e->globalPos());
         if (act == addV) addTrack(false);
@@ -2167,9 +2378,34 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         else if (act == delTrack) {
             emit editStart();
             m_project->removeTrack(audio, vrow);
+            pruneEmptyGroups();
             m_selected.clear();
+            clearTrackSelection();
             invalidateScene();
             updateScrollRanges();
+            emit modified();
+        }
+        else if (act == delSelTracks) {
+            deleteSelectedTracks();
+        }
+        else if (act == groupTracks) {
+            createTrackGroup();
+        }
+        else if (act == renameGroup) {
+            renameTrackGroup(track->groupId);
+        }
+        else if (act == ungroupTracks) {
+            emit editStart();
+            const QString gid = track->groupId;
+            for (int i = (int)m_project->trackGroups.size() - 1; i >= 0; --i)
+                if (m_project->trackGroups[i].id == gid)
+                    m_project->trackGroups.removeAt(i);
+            for (Track& t : m_project->videoTracks)
+                if (t.groupId == gid) t.groupId.clear();
+            for (Track& t : m_project->audioTracks)
+                if (t.groupId == gid) t.groupId.clear();
+            updateScrollRanges();
+            invalidateScene();
             emit modified();
         }
         else if (track && act && blendMenu && act->parent() == blendMenu) {
@@ -2193,7 +2429,10 @@ void TimelineWidget::dragMoveEvent(QDragMoveEvent* e) {
     if (md->hasFormat(QLatin1String(kMimeMedia)) || md->hasUrls()) {
         int row = -1;
         bool audio = false;
-        if (rowFromY(e->position().toPoint().y(), row, audio)) {
+        QString gid;
+        if (folderStripAt(e->position().toPoint().y(), gid)) {
+            m_dragHoverRow = -1;
+        } else if (rowFromY(e->position().toPoint().y(), row, audio)) {
             m_dragHoverRow = row;
             m_dragHoverAudio = audio;
         } else {
@@ -2840,6 +3079,292 @@ void TimelineWidget::toggleSelection(const QString& id) {
     emit selectionChanged(m_selected.isEmpty() ? QString() : m_selected.last());
 }
 
+bool TimelineWidget::isTrackSelected(int row, bool audio) const {
+    return m_selTracks.contains(TrackSel{row, audio});
+}
+
+void TimelineWidget::setTrackSel(int row, bool audio) {
+    if (!m_selected.isEmpty()) {
+        m_selected.clear();
+        emit selectionChanged(QString());
+    }
+    m_selTracks.clear();
+    m_selTracks.append(TrackSel{row, audio});
+    m_selAnchor = TrackSel{row, audio};
+    m_hasAnchor = true;
+}
+
+void TimelineWidget::toggleTrackSel(int row, bool audio) {
+    if (!m_selected.isEmpty()) {
+        m_selected.clear();
+        emit selectionChanged(QString());
+    }
+    const TrackSel ts{row, audio};
+    const int i = m_selTracks.indexOf(ts);
+    if (i >= 0) m_selTracks.removeAt(i);
+    else m_selTracks.append(ts);
+    m_selAnchor = ts;
+    m_hasAnchor = true;
+}
+
+void TimelineWidget::selectTrackRange(int row, bool audio) {
+    if (!m_hasAnchor || m_selAnchor.audio != audio) {
+        setTrackSel(row, audio);
+        return;
+    }
+    if (!m_selected.isEmpty()) {
+        m_selected.clear();
+        emit selectionChanged(QString());
+    }
+    const int n = audio ? (int)m_project->audioTracks.size()
+                        : (int)m_project->videoTracks.size();
+    // Faixas de vídeo são exibidas invertidas (a 0 no topo); usa a posição
+    // exibida para o intervalo seguir a ordem que o usuário vê na tela.
+    auto disp = [&](int r) { return audio ? r : n - 1 - r; };
+    int a = disp(m_selAnchor.row);
+    int b = disp(row);
+    if (a > b) std::swap(a, b);
+    m_selTracks.clear();
+    for (int k = a; k <= b; ++k)
+        m_selTracks.append(TrackSel{audio ? k : n - 1 - k, audio});
+}
+
+void TimelineWidget::selectTrackRightClick(int row, bool audio) {
+    if (isTrackSelected(row, audio)) return;
+    if (!m_selected.isEmpty()) {
+        m_selected.clear();
+        emit selectionChanged(QString());
+    }
+    m_selTracks.clear();
+    m_selTracks.append(TrackSel{row, audio});
+    m_selAnchor = TrackSel{row, audio};
+    m_hasAnchor = true;
+}
+
+void TimelineWidget::clearTrackSelection() {
+    m_selTracks.clear();
+    m_hasAnchor = false;
+}
+
+void TimelineWidget::deleteSelectedTracks() {
+    if (!m_project || m_selTracks.isEmpty()) return;
+    emit editStart();
+    QVector<int> vrows, arows;
+    for (const TrackSel& s : m_selTracks) {
+        if (s.row < 0) continue;
+        if (s.audio) {
+            if (s.row < (int)m_project->audioTracks.size() && !arows.contains(s.row))
+                arows.append(s.row);
+        } else {
+            if (s.row < (int)m_project->videoTracks.size() && !vrows.contains(s.row))
+                vrows.append(s.row);
+        }
+    }
+    // Remove do fim para o começo para não invalidar os índices.
+    std::sort(vrows.begin(), vrows.end(), [](int a, int b) { return a > b; });
+    std::sort(arows.begin(), arows.end(), [](int a, int b) { return a > b; });
+    for (int r : vrows) m_project->removeTrack(false, r);
+    for (int r : arows) m_project->removeTrack(true, r);
+    pruneEmptyGroups();
+    m_selected.clear();
+    clearTrackSelection();
+    invalidateScene();
+    updateScrollRanges();
+    emit modified();
+}
+
+// Nº de pastas cujo membro de vídeo mais alto (maior índice, mais no topo) está
+// em um índice >= videoIdx. Cada pasta ocupa kFolderH acima desse membro.
+int TimelineWidget::folderStripsAboveVideo(int videoIdx) const {
+    int count = 0;
+    for (const TrackGroup& g : m_project->trackGroups) {
+        int top = -1;
+        for (int i = 0; i < (int)m_project->videoTracks.size(); ++i)
+            if (m_project->videoTracks[i].groupId == g.id) top = i;
+        if (top >= 0 && top >= videoIdx) ++count;
+    }
+    return count;
+}
+
+// Nº de pastas (só de áudio) cujo membro mais alto (menor índice) está em um
+// índice <= audioIdx. Pastas com vídeo têm a faixa na seção de vídeo.
+int TimelineWidget::folderStripsAboveAudio(int audioIdx) const {
+    int count = 0;
+    for (const TrackGroup& g : m_project->trackGroups) {
+        bool hasVideo = false;
+        for (const Track& t : m_project->videoTracks)
+            if (t.groupId == g.id) { hasVideo = true; break; }
+        if (hasVideo) continue;
+        int top = -1;
+        for (int i = 0; i < (int)m_project->audioTracks.size(); ++i)
+            if (m_project->audioTracks[i].groupId == g.id) { top = i; break; }
+        if (top >= 0 && top <= audioIdx) ++count;
+    }
+    return count;
+}
+
+QRect TimelineWidget::folderStripRect(const TrackGroup& g) const {
+    if (!m_project) return QRect();
+    int topVideo = -1;
+    for (int i = 0; i < (int)m_project->videoTracks.size(); ++i)
+        if (m_project->videoTracks[i].groupId == g.id) topVideo = i;
+    if (topVideo >= 0) {
+        const int y = rowY(topVideo, -1) - kFolderH;
+        return QRect(0, y, width(), kFolderH);
+    }
+    int topAudio = -1;
+    for (int i = 0; i < (int)m_project->audioTracks.size(); ++i)
+        if (m_project->audioTracks[i].groupId == g.id) { topAudio = i; break; }
+    if (topAudio >= 0) {
+        const int y = rowY(-1, topAudio) - kFolderH;
+        return QRect(0, y, width(), kFolderH);
+    }
+    return QRect();
+}
+
+bool TimelineWidget::folderStripAt(int y, QString& gid) const {
+    if (!m_project) return false;
+    for (const TrackGroup& g : m_project->trackGroups) {
+        const QRect r = folderStripRect(g);
+        if (y >= r.top() && y < r.bottom()) { gid = g.id; return true; }
+    }
+    return false;
+}
+
+QRect TimelineWidget::folderArrowRect(const TrackGroup& g) const {
+    const QRect r = folderStripRect(g);
+    if (r.isEmpty()) return QRect();
+    return QRect(r.left() + 2, r.top() + (kFolderH - 14) / 2, 18, 14);
+}
+
+// Uma faixa fica visível se não pertencer a uma pasta recolhida.
+bool TimelineWidget::trackVisible(int row, bool audio) const {
+    if (!m_project) return true;
+    const QVector<Track>& list = audio ? m_project->audioTracks : m_project->videoTracks;
+    if (row < 0 || row >= (int)list.size()) return true;
+    const QString& gid = list[row].groupId;
+    if (gid.isEmpty()) return true;
+    const TrackGroup* g = m_project->findGroup(gid);
+    return g ? !g->collapsed : true;
+}
+
+void TimelineWidget::toggleGroupCollapsed(const QString& gid) {
+    TrackGroup* g = m_project ? m_project->findGroup(gid) : nullptr;
+    if (!g) return;
+    emit editStart();
+    g->collapsed = !g->collapsed;
+    if (!m_selected.isEmpty()) {
+        m_selected.clear();
+        emit selectionChanged(QString());
+    }
+    clearTrackSelection();
+    updateScrollRanges();
+    invalidateScene();
+    emit modified();
+}
+
+void TimelineWidget::drawFolderStrip(QPainter& p, const TrackGroup& g) {
+    const QRect r = folderStripRect(g);
+    if (r.isEmpty()) return;
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(150, 118, 60));
+    p.drawRect(r);
+    p.setPen(QColor(120, 92, 46));
+    p.drawLine(r.left(), r.bottom(), r.right(), r.bottom());
+    // Seta de recolher/expandir (▾ aberta, ▸ fechada).
+    const QRect ar = folderArrowRect(g);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setBrush(QColor(235, 220, 180));
+    p.setPen(Qt::NoPen);
+    QPolygon tri;
+    const int cx = ar.center().x();
+    const int cy = ar.center().y();
+    if (g.collapsed)
+        tri << QPoint(cx - 4, cy - 5) << QPoint(cx + 3, cy) << QPoint(cx - 4, cy + 5);
+    else
+        tri << QPoint(cx - 5, cy - 4) << QPoint(cx + 5, cy - 4) << QPoint(cx, cy + 4);
+    p.drawPolygon(tri);
+    p.setRenderHint(QPainter::Antialiasing, false);
+    // Ícone de pasta.
+    p.setBrush(QColor(224, 192, 112));
+    p.drawRect(QRect(r.left() + 24, r.top() + 5, 11, 5));
+    p.drawRect(QRect(r.left() + 22, r.top() + 8, 17, 12));
+    // Nome da pasta.
+    p.setPen(QColor(245, 235, 210));
+    QFont f = p.font();
+    f.setBold(true);
+    f.setPointSizeF(8.5);
+    p.setFont(f);
+    p.drawText(QRect(r.left() + 46, r.top(), r.width() - 54, kFolderH),
+               Qt::AlignLeft | Qt::AlignVCenter, g.name);
+}
+
+void TimelineWidget::createTrackGroup() {
+    if (!m_project || m_selTracks.size() < 2) return;
+    bool ok = false;
+    const QString name = QInputDialog::getText(
+        this, tr("Agrupar faixas"), tr("Nome da pasta:"), QLineEdit::Normal,
+        tr("Pasta %1").arg(m_project->trackGroups.size() + 1), &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+    emit editStart();
+    TrackGroup g;
+    g.id = newId();
+    g.name = name.trimmed();
+    m_project->trackGroups.append(g);
+    for (const TrackSel& s : m_selTracks) {
+        if (s.row < 0) continue;
+        Track* t = s.audio
+            ? (s.row < (int)m_project->audioTracks.size() ? &m_project->audioTracks[s.row] : nullptr)
+            : (s.row < (int)m_project->videoTracks.size() ? &m_project->videoTracks[s.row] : nullptr);
+        if (t) t->groupId = g.id;
+    }
+    updateScrollRanges();
+    invalidateScene();
+    emit modified();
+}
+
+void TimelineWidget::renameTrackGroup(const QString& gid) {
+    TrackGroup* g = m_project ? m_project->findGroup(gid) : nullptr;
+    if (!g) return;
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, tr("Renomear pasta"),
+                                               tr("Nome da pasta:"), QLineEdit::Normal,
+                                               g->name, &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+    emit editStart();
+    g->name = name.trimmed();
+    invalidateScene();
+    emit modified();
+}
+
+void TimelineWidget::selectGroupTracks(const QString& gid) {
+    m_selTracks.clear();
+    for (int i = 0; i < (int)m_project->videoTracks.size(); ++i)
+        if (m_project->videoTracks[i].groupId == gid)
+            m_selTracks.append(TrackSel{i, false});
+    for (int i = 0; i < (int)m_project->audioTracks.size(); ++i)
+        if (m_project->audioTracks[i].groupId == gid)
+            m_selTracks.append(TrackSel{i, true});
+    if (!m_selected.isEmpty()) {
+        m_selected.clear();
+        emit selectionChanged(QString());
+    }
+    m_hasAnchor = false;
+}
+
+void TimelineWidget::pruneEmptyGroups() {
+    if (!m_project) return;
+    for (int i = (int)m_project->trackGroups.size() - 1; i >= 0; --i) {
+        bool has = false;
+        for (const Track& t : m_project->videoTracks)
+            if (t.groupId == m_project->trackGroups[i].id) { has = true; break; }
+        if (!has)
+            for (const Track& t : m_project->audioTracks)
+                if (t.groupId == m_project->trackGroups[i].id) { has = true; break; }
+        if (!has) m_project->trackGroups.removeAt(i);
+    }
+}
+
 double TimelineWidget::snapToEdges(double t, const QString& excludeId) const {
     if (!m_snap) return t;
     const double thresh = 8.0 / m_pps;
@@ -2916,6 +3441,7 @@ bool TimelineWidget::moveClipToTrack(const QString& id, int row, bool audio) {
     }
     Track& dst = audio ? m_project->audioTracks[row] : m_project->videoTracks[row];
     if (dst.locked) return false;
+    if (!trackVisible(row, audio)) return false;
 
     Clip* c = findClipById(id);
     if (!c) return false;

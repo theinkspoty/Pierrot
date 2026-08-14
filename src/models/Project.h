@@ -174,6 +174,12 @@ struct Clip {
     }
 };
 
+struct TrackGroup {
+    QString id;
+    QString name;
+    bool collapsed = false; // faixas da pasta ocultas na timeline
+};
+
 struct Track {
     QString name;
     bool audio = false;
@@ -182,6 +188,7 @@ struct Track {
     bool muted = false;
     bool solo = false;
     bool locked = false;
+    QString groupId; // pasta (TrackGroup) a que a faixa pertence; vazio = nenhuma
     int height = 0; // altura da faixa em pixels na timeline; 0 = padrão
     QVector<Clip> clips;
 };
@@ -202,6 +209,13 @@ public:
     QVector<Track> videoTracks;
     QVector<Track> audioTracks;
     QVector<Marker> markers;
+    QVector<TrackGroup> trackGroups;
+
+    TrackGroup* findGroup(const QString& id) {
+        for (auto& g : trackGroups)
+            if (g.id == id) return &g;
+        return nullptr;
+    }
 
     void addMarker(const Marker& m) {
         markers.append(m);

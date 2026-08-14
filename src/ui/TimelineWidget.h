@@ -106,6 +106,11 @@ private:
     enum DragMode { None, MoveClip, TrimLeft, TrimRight, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, ResizeTrack, TrackVol, ClipVol };
     struct ClipOrig { double pos = 0.0, in = 0.0, dur = 0.0; };
     struct ClipboardEntry { Clip clip; int track = 0; bool audio = false; };
+    struct TrackSel {
+        int row = 0;
+        bool audio = false;
+        bool operator==(const TrackSel& o) const { return row == o.row && audio == o.audio; }
+    };
 
     double timeToX(double t) const;
     double xToTime(int x) const;
@@ -157,7 +162,7 @@ private:
     void showEffectsDialog(Clip* c);
     void showTransformDialog(Clip* c);
     void showAudioEffectsDialog(Clip* c);
-    void drawTrackHeader(QPainter& p, int y, int rowH, const Track& tr);
+    void drawTrackHeader(QPainter& p, int y, int rowH, const Track& tr, bool selected);
     int headerBtnAt(const QPoint& pos, int& row, bool& audio) const;
     bool trackLocked(const Clip* c) const;
     int volLineY(int row, bool audio, const Track& tr) const;
@@ -170,6 +175,25 @@ private:
     void duplicateSelected();
     void nudgeSelected(int dir);
     void selectAllClips();
+    bool isTrackSelected(int row, bool audio) const;
+    void setTrackSel(int row, bool audio);
+    void toggleTrackSel(int row, bool audio);
+    void selectTrackRange(int row, bool audio);
+    void selectTrackRightClick(int row, bool audio);
+    void clearTrackSelection();
+    void deleteSelectedTracks();
+    int folderStripsAboveVideo(int videoIdx) const;
+    int folderStripsAboveAudio(int audioIdx) const;
+    QRect folderStripRect(const TrackGroup& g) const;
+    QRect folderArrowRect(const TrackGroup& g) const;
+    bool folderStripAt(int y, QString& gid) const;
+    void drawFolderStrip(QPainter& p, const TrackGroup& g);
+    bool trackVisible(int row, bool audio) const;
+    void toggleGroupCollapsed(const QString& gid);
+    void createTrackGroup();
+    void renameTrackGroup(const QString& gid);
+    void selectGroupTracks(const QString& gid);
+    void pruneEmptyGroups();
 
     Project* m_project = nullptr;
     double m_playhead = 0.0;
@@ -179,6 +203,9 @@ private:
     QScrollBar* m_hbar = nullptr;
     QScrollBar* m_vbar = nullptr;
     QStringList m_selected;
+    QVector<TrackSel> m_selTracks;
+    TrackSel m_selAnchor;
+    bool m_hasAnchor = false;
     int m_tool = 0;
     bool m_snap = true;
     bool m_showVolLines = true;
