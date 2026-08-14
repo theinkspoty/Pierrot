@@ -67,8 +67,17 @@ public slots:
             }
         emit frameReady(path, t, maxW, m_decoder.frameAt(t, maxW));
     }
+    void decodePrefetch(const QString& path, double t, int maxW) {
+        if (!m_decoder.isOpen() || m_decoder.source() != path)
+            if (!m_decoder.open(path)) {
+                emit prefetchReady(path, t, maxW, QImage());
+                return;
+            }
+        emit prefetchReady(path, t, maxW, m_decoder.frameAt(t, maxW));
+    }
 signals:
     void frameReady(const QString& path, double t, int maxW, const QImage& img);
+    void prefetchReady(const QString& path, double t, int maxW, const QImage& img);
 private:
     FFmpegDecoder m_decoder;
 };
