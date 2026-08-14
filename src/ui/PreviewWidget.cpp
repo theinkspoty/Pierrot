@@ -830,11 +830,12 @@ void PreviewWidget::updateFrame() {
     m_lastCropB = cB;
 
     // Se temos um quadro pré-carregado que bate com a posição de entrada do novo clipe, exibe imediatamente.
+    bool usedPrefetch = false;
     {
         QMutexLocker l(&m_frameMutex);
         const double frameDur = 1.0 / projFps(m_project);
         if (m_prefetch.valid && m_prefetch.path == m->filePath
-            && std::fabs(m_prefetch.t - srcT) <= frameDur * 3.0 + 0.1
+            && std::fabs(m_prefetch.t - srcT) <= frameDur * 0.5
             && m_prefetch.maxW == decW) {
             m_frameFull = m_prefetch.img;
             m_shownPath = m->filePath;
@@ -845,6 +846,7 @@ void PreviewWidget::updateFrame() {
             m_lastFile = m->filePath;
             m_prefetch.valid = false;
             m_prefetch.requested = false;
+            usedPrefetch = true;
             applyCrop();
             update();
         }
@@ -854,12 +856,18 @@ void PreviewWidget::updateFrame() {
     // pan/crop (por exemplo quando só o corte mudou) sem decodificar de novo.
     {
         QMutexLocker l(&m_frameMutex);
-        if (m_shownPath == m->filePath && std::fabs(m_shownT - srcT) < 1e-6
+        if (!usedPrefetch && m_shownPath == m->filePath && std::fabs(m_shownT - srcT) < 1e-6
             && m_shownW == decW) {
             applyCrop();
             update();
             return;
         }
+    }
+    if (usedPrefetch) {
+        // Já no tick do corte, dispara o próximo frame: o decoder trocado está
+        // posicionado e decodifica adiante, evitando "segurar" o frame do corte.
+        requestFrame(m->filePath, srcT + 1.0 / projFps(m_project), decW);
+        return;
     }
     requestFrame(m->filePath, srcT, decW);
 }
