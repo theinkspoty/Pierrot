@@ -332,12 +332,16 @@ int TimelineWidget::trackH(int idx, bool audio) const {
 }
 
 int TimelineWidget::rowY(int videoIdx, int audioIdx) const {
+    const int n = (int)m_project->videoTracks.size();
     int y = kRulerH - m_viewTop;
     if (videoIdx >= 0) {
-        for (int i = 0; i < videoIdx; ++i) y += trackH(i, false);
+        // Faixas de vídeo em ordem invertida: a primeira (índice 0) fica
+        // embaixo e as demais por cima (V1 na base, estilo NLE).
+        const int rev = n - 1 - videoIdx;
+        for (int i = 0; i < rev; ++i) y += trackH(n - 1 - i, false);
         return y;
     }
-    for (int i = 0; i < (int)m_project->videoTracks.size(); ++i) y += trackH(i, false);
+    for (int i = 0; i < n; ++i) y += trackH(i, false);
     for (int i = 0; i < audioIdx; ++i) y += trackH(i, true);
     return y;
 }
@@ -346,7 +350,9 @@ bool TimelineWidget::rowFromY(int y, int& row, bool& audio) const {
     if (!m_project) return false;
     int rem = y + m_viewTop - kRulerH;
     if (rem < 0) return false;
-    for (int i = 0; i < (int)m_project->videoTracks.size(); ++i) {
+    const int n = (int)m_project->videoTracks.size();
+    for (int k = 0; k < n; ++k) {
+        const int i = n - 1 - k;
         const int h = trackH(i, false);
         if (rem < h) { row = i; audio = false; return true; }
         rem -= h;
