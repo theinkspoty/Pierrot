@@ -156,3 +156,136 @@ No `AudioMixer::updateSources()`, se um source novo vai entrar em menos de 0.3s,
 
 - `src/ui/PreviewWidget.h` — adicionar `struct PrefetchFrame` e `void updatePrefetch()`
 - `src/ui/PreviewWidget.cpp` — `FrameWorker::decodePrefetch()`, `onPrefetchReady()`, `updatePrefetch()`, usar prefetch em `updateFrame()`
+
+---
+
+# Bug: `pasteClips()` não mantém ordem dos clips por posição
+
+**Arquivo:** `src/ui/TimelineWidget.cpp:1353`  
+**Severidade:** Alta
+
+## Descrição
+
+Ao colar clips com `pasteClips()`, os novos `Clip` são inseridos com `tr->clips.push_back(nc)`, sem ordenação por `pos`. A renderização (`renderScene`) e a detecção de sobreposição (`clampPosToTrack`, `clipAt`) assumem que os clips estão ordenados por posição.
+
+Clips não ordenados causam:
+- Ordem de renderização errada (clipes posteriores podem cobrir os anteriores incorretamente)
+- Detecção de sobreposição falha em `clampPosToTrack` (só verifica clips após o atual no vetor)
+- `finishDrop` insere corretamente ordenado (linha 2601-2603), mas `pasteClips` não
+
+## Fix
+
+Substituir `push_back` por inserção ordenada:
+
+```cpp
+auto it = tr->clips.begin();
+while (it != tr->clips.end() && it->pos <= nc.pos) ++it;
+tr->clips.insert(it, nc);
+```
+
+---
+
+# Bug: `Project::fromJson()` aceita `fps=0` causando divisão por zero em cascata
+
+**Arquivo:** `src/models/Project.cpp:271`  
+**Severidade:** Alta
+
+## Descrição
+
+`fromJson()` lê `fps = o["fps"].toInt(30)`. Se um JSON corrompido ou editado manualmente contiver `"fps": 0`, o valor propaga para:
+- `TimelineWidget::snapTime()` → `std::round(t * fps) / fps` → divisão por zero → NaN ou crash
+- `PreviewWidget::tick()` → `1000.0 / fps` → infinito ou crash
+- `TimelineWidget::nudgeSelected()` → `dir * frames / m_project->fps` → divisão por zero
+
+## Fix
+
+Validar e clamp fps após deserialização:
+
+```cpp
+fps = qMax(1, o["fps"].toInt(30));
+```
+
+---
+
+# Bug: TrimLeft pode produzir `in` negativo
+
+**Arquivo:** `src/ui/PreviewWidget.cpp:1913`  
+**Severidade:** Média
+
+## Descrição
+
+Durante o arraste de trim à esquerda, `sc->in = o.in + delta` é calculado sem clamp para `>= 0.0`. Se o usuário arrastar a alça de trim para a direita (delta grande positivo) ou houver edge case com modificador, `in` pode ficar negativo, referenciando mídia antes do início do arquivo.
+
+## Fix
+
+```cpp
+sc->in = std::max(0.0, o.in + delta);
+```
+
+---
+
+# Bug: `escText()` não escapa caracteres especiais para ffmpeg drawtext
+
+**Arquivo:** `src/export/ProjectExporter.cpp:161-167`  
+**Severidade:** Média
+
+## Descrição
+
+`escText()` escapa apenas `\`, `:`, e `'`. Faltam escapes para:
+- `%` — ffmpeg interpreta `%{...}` como expressão em drawtext
+- `[` e `]` — sintaxe de labels de filtros do ffmpeg
+- `;` — separador de filtros no filter_complex
+
+Textos com esses caracteres causam falhas na exportação ou crashes no ffmpeg.
+
+## Fix
+
+```cpp
+QString escText(const QString& t) {
+    QString s = t;
+    s.replace(QLatin1Char('\\'), QLatin1String("\\\\"));
+    s.replace(QLatin1Char(':'), QLatin1String("\\:"));
+    s.replace(QLatin1Char('\''), QLatin1String("\\'"));
+    s.replace(QLatin1Char('%'), QLatin1String("\\%"));
+    s.replace(QLatin1Char('['), QLatin1String("\\["));
+    s.replace(QLatin1Char(']'), QLatin1String("\\]"));
+    s.replace(QLatin1Char(';'), QLatin1String("\\;"));
+    return s;
+}
+```
+
+---
+
+# Bug: `kfExpr()` gera divisão por zero quando span de keyframe é zero
+
+**Arquivo:** `src/export/ProjectExporter.cpp:65-99`  
+**Severidade:** Média
+
+## Descrição
+
+No branch `KfSmooth` e `KfBezier`, cálculos como `m0 = (b.value - p0.value) / dt0` não verificam se `dt0` é zero. Se dois keyframes consecutivos têm o mesmo timestamp, `dt0 = 0` e a expressão gerada contém `inf` ou `nan`, fazendo o ffmpeg falhar.
+
+## Fix
+
+```cpp
+const double dt0 = (i > 1) ? (b.time - p0.time) : span;
+const double m0 = (dt0 > 1e-9) ? (b.value - p0.value) / dt0 : 0.0;
+```
+
+---
+
+# Bug: `Project::fromJson()` não valida `duration` nem `audioRate`
+
+**Arquivo:** `src/models/Project.cpp:30, 272`  
+**Severidade:** Média
+
+## Descrição
+
+`mediaFromJson()` lê `m.duration = o["duration"].toDouble()` sem validação. Duração negativa faz `Project::duration()` retornar valor negativo, causando timeline vazia ou retorno antecipado no preview. `audioRate = o["audioRate"].toDouble(48000.0)` pode ser 0, causando divisão por zero no `ProjectExporter`.
+
+## Fix
+
+```cpp
+m.duration = qMax(0.0, o["duration"].toDouble());
+audioRate = qMax(1.0, o["audioRate"].toDouble(48000.0));
+```
