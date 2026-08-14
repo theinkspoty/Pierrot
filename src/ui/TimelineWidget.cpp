@@ -219,7 +219,7 @@ void TimelineWidget::addMediaAtPlayhead(const QString& mediaId) {
     const double dur = m->duration > 0 ? m->duration : 1.0;
 
     // Usa uma faixa livre (sem sobreposição em `t`) ou cria uma nova vazia.
-    auto findFreeTrack = [this](bool audio, int prefer) {
+    auto findFreeTrack = [this](bool audio, double t, double dur, int prefer) {
         auto overlap = [t, dur](const QVector<Clip>& clips) {
             for (const Clip& o : clips)
                 if (o.pos < t + dur - 1e-9 && o.pos + o.dur > t + 1e-9) return true;
@@ -242,7 +242,7 @@ void TimelineWidget::addMediaAtPlayhead(const QString& mediaId) {
         clips.insert(it, c);
     };
     if (m->hasVideo) {
-        const int vRow = findFreeTrack(false, 0);
+        const int vRow = findFreeTrack(false, t, dur, 0);
         Clip c;
         c.id = newId();
         c.groupId = m->hasAudio ? newId() : QString();
@@ -254,13 +254,13 @@ void TimelineWidget::addMediaAtPlayhead(const QString& mediaId) {
         push(m_project->videoTracks[vRow].clips, c);
         lastPlaced = c.id;
         if (m->hasAudio) {
-            const int aRow = findFreeTrack(true, 0);
+            const int aRow = findFreeTrack(true, t, dur, 0);
             Clip ac = c;
             ac.id = newId();
             push(m_project->audioTracks[aRow].clips, ac);
         }
     } else if (m->hasAudio) {
-        const int aRow = findFreeTrack(true, 0);
+        const int aRow = findFreeTrack(true, t, dur, 0);
         Clip c;
         c.id = newId();
         c.mediaId = mediaId;
