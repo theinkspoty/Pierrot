@@ -58,6 +58,7 @@ private:
     void stripPress(QWidget* view, QMouseEvent* e);
     void stripMove(QWidget* view, QMouseEvent* e);
     void stripRelease(QWidget* view, QMouseEvent* e);
+    void stripContextMenu(QWidget* view, QContextMenuEvent* e);
 
     Clip* activeClip();
     void syncFromClip();

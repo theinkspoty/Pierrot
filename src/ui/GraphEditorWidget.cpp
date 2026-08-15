@@ -8,8 +8,9 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPolygon>
-#include <QComboBox>
 #include <QPushButton>
+#include <QToolButton>
+#include <QButtonGroup>
 #include <QLabel>
 #include <QMenu>
 #include <QSignalBlocker>
@@ -23,6 +24,12 @@
 #include <QDialogButtonBox>
 #include <QDialog>
 #include <QDoubleSpinBox>
+#include <QScrollArea>
+#include <QSplitter>
+#include <QFrame>
+#include <QPixmap>
+#include <QIcon>
+#include <QFont>
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -33,6 +40,7 @@ constexpr int kMarginL = 10;
 constexpr int kMarginR = 8;
 constexpr int kMarginT = 5;
 constexpr int kMarginB = 14;
+constexpr int kRulerH = 16;
 
 double niceStep(double raw) {
     if (raw <= 0) return 1.0;
@@ -48,27 +56,153 @@ double niceStep(double raw) {
 
 QString propName(GraphProp p) {
     switch (p) {
-        case GPropOpacity:   return "Opacity";
-        case GPropVolume:    return "Volume";
-        case GPropScale:     return "Scale";
-        case GPropRotation:  return "Rotation";
-        case GPropTx:        return "Position X";
-        case GPropTy:        return "Position Y";
-        case GPropCropL:     return "Crop Left";
-        case GPropCropR:     return "Crop Right";
-        case GPropCropT:     return "Crop Top";
-        case GPropCropB:     return "Crop Bottom";
+        case GPropOpacity:   return QStringLiteral("Opacity");
+        case GPropVolume:    return QStringLiteral("Volume");
+        case GPropScale:     return QStringLiteral("Scale");
+        case GPropRotation:  return QStringLiteral("Rotation");
+        case GPropTx:        return QStringLiteral("Position X");
+        case GPropTy:        return QStringLiteral("Position Y");
+        case GPropCropL:     return QStringLiteral("Crop Left");
+        case GPropCropR:     return QStringLiteral("Crop Right");
+        case GPropCropT:     return QStringLiteral("Crop Top");
+        case GPropCropB:     return QStringLiteral("Crop Bottom");
     }
     return QString();
 }
 
 QString interpName(int interp) {
     switch (interp) {
-        case KfSmooth: return "Suave";
-        case KfStep:   return "Segurar";
-        case KfBezier: return "Bezier";
-        default:       return "Linear";
+        case KfSmooth: return QStringLiteral("Auto Bezier");
+        case KfStep:   return QStringLiteral("Hold");
+        case KfBezier: return QStringLiteral("Bezier");
+        default:       return QStringLiteral("Linear");
     }
+}
+
+// Acessores compartilhados (editor + minifaixa) para os keyframes de uma
+// propriedade de um clipe.
+QVector<Keyframe>* keysFor(Clip* c, GraphProp p) {
+    if (!c) return nullptr;
+    switch (p) {
+        case GPropOpacity:  return &c->kfOpacity;
+        case GPropVolume:   return &c->kfVolume;
+        case GPropScale:    return &c->kfScale;
+        case GPropRotation: return &c->kfRotation;
+        case GPropTx:       return &c->kfTx;
+        case GPropTy:       return &c->kfTy;
+        case GPropCropL:    return &c->kfCropL;
+        case GPropCropR:    return &c->kfCropR;
+        case GPropCropT:    return &c->kfCropT;
+        case GPropCropB:    return &c->kfCropB;
+    }
+    return nullptr;
+}
+
+double baseFor(Clip* c, GraphProp p) {
+    if (!c) return 0.0;
+    switch (p) {
+        case GPropOpacity:  return c->opacity;
+        case GPropVolume:   return c->volume;
+        case GPropScale:    return c->scale;
+        case GPropRotation: return c->rotation;
+        case GPropTx:       return c->tx;
+        case GPropTy:       return c->ty;
+        case GPropCropL:    return c->cropL;
+        case GPropCropR:    return c->cropR;
+        case GPropCropT:    return c->cropT;
+        case GPropCropB:    return c->cropB;
+    }
+    return 0.0;
+}
+
+void rangeFor(GraphProp p, double* lo, double* hi) {
+    switch (p) {
+        case GPropOpacity:  *lo = 0.0; *hi = 1.0; return;
+        case GPropVolume:   *lo = 0.0; *hi = 2.0; return;
+        case GPropScale:    *lo = 0.0; *hi = 3.0; return;
+        case GPropRotation: *lo = -360.0; *hi = 360.0; return;
+        case GPropTx: *lo = -800.0; *hi = 800.0; return;
+        case GPropTy: *lo = -450.0; *hi = 450.0; return;
+        case GPropCropL: case GPropCropR:
+        case GPropCropT: case GPropCropB:
+            *lo = 0.0; *hi = 1.0; return;
+    }
+    *lo = 0.0; *hi = 1.0;
+}
+
+// Glifo do keyframe conforme a interpolação (estilo Premiere):
+// Linear = losango agudo, Auto Bezier = círculo, Bezier = losango arredondado,
+// Hold = "casa" com topo reto.
+void drawKeyGlyph(QPainter& p, const QPointF& c, int interp, qreal s,
+                  const QBrush& fill) {
+    p.setBrush(fill);
+    p.setPen(QPen(QColor(255, 255, 255), 1));
+    switch (interp) {
+    case KfStep: {
+        const QPolygonF pent = QPolygonF()
+            << QPointF(c.x() - s * 0.85, c.y() - s * 0.9)
+            << QPointF(c.x() + s * 0.85, c.y() - s * 0.9)
+            << QPointF(c.x() + s * 0.95, c.y() + s * 0.25)
+            << QPointF(c.x(), c.y() + s)
+            << QPointF(c.x() - s * 0.95, c.y() + s * 0.25);
+        p.drawPolygon(pent);
+        return;
+    }
+    case KfSmooth:
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.drawEllipse(c, s, s);
+        p.setRenderHint(QPainter::Antialiasing, false);
+        return;
+    case KfBezier: {
+        QPainterPath path;
+        path.moveTo(c.x(), c.y() - s);
+        path.quadTo(c.x() + s * 1.1, c.y() - s * 0.1, c.x(), c.y() + s);
+        path.quadTo(c.x() - s * 1.1, c.y() + s * 0.1, c.x(), c.y() - s);
+        path.closeSubpath();
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.fillPath(path, fill);
+        p.drawPath(path);
+        p.setRenderHint(QPainter::Antialiasing, false);
+        return;
+    }
+    case KfLinear:
+    default: {
+        const QPolygonF dia = QPolygonF()
+            << QPointF(c.x(), c.y() - s)
+            << QPointF(c.x() + s, c.y())
+            << QPointF(c.x(), c.y() + s)
+            << QPointF(c.x() - s, c.y());
+        p.drawPolygon(dia);
+        return;
+    }
+    }
+}
+
+QString fmtRuler(double t, double range) {
+    if (range <= 2.0)  return QString::number(t, 'f', 2);
+    if (range <= 60.0) return QString::number(t, 'f', 1);
+    return QString::number(t, 'g', 4);
+}
+
+QString fmtVal(double v, double span) {
+    const int prec = (span < 2.0) ? 4 : (span < 50.0 ? 3 : 2);
+    return QString::number(v, 'g', prec);
+}
+
+QIcon makeStopwatchIcon(bool on) {
+    QPixmap pm(16, 16);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    const QColor c = on ? QColor(82, 168, 255) : QColor(150, 155, 165);
+    p.setPen(QPen(c, 1.4));
+    p.setBrush(on ? QColor(82, 168, 255, 40) : Qt::NoBrush);
+    p.drawEllipse(QPointF(8, 8), 5.2, 5.2);
+    p.drawRect(QRectF(7, 0, 2, 2.6));
+    p.drawLine(QPointF(8, 8), QPointF(8, 4.6));
+    p.drawLine(QPointF(8, 8), QPointF(10.6, 9.4));
+    p.end();
+    return QIcon(pm);
 }
 
 } // namespace
@@ -77,8 +211,56 @@ QString interpName(int interp) {
 // GraphCanvas
 // --------------------------------------------------------------------------
 
+// Tangente (Catmull-Rom) de um keyframe Auto Bezier, em valor/segundo.
+// Nas pontas cai na secante — o mesmo que o kfValue() usa para KfSmooth.
+static double autoTangent(const QVector<Keyframe>& K, int i) {
+    if (i < 0 || i >= K.size()) return 0.0;
+    const Keyframe& k = K[i];
+    const Keyframe& prev = (i > 0) ? K[i - 1] : k;
+    const Keyframe& next = (i + 1 < K.size()) ? K[i + 1] : k;
+    const double dt = next.time - prev.time;
+    if (dt <= 1e-9) return 0.0;
+    return (next.value - prev.value) / dt;
+}
+
+// Ponto de controle do handle (saída se out==true, entrada se false) do
+// keyframe i, para interpolações suave (Auto Bezier) e bezier manual.
+// Para Auto Bezier o handle é calculado automaticamente ao longo da tangente;
+// para Bezier manual são usados os handles gravados.
+// ht/hv = (deslocamento em tempo, deslocamento em valor) a partir do keyframe.
+// Retorna false se o keyframe não tem handle naquele lado (pontas ou não-bezier).
+static bool bezierHandle(const QVector<Keyframe>& K, int i, bool out,
+                         double* ht, double* hv) {
+    if (i < 0 || i >= K.size()) return false;
+    const Keyframe& k = K[i];
+    if (k.interp == KfBezier) {
+        if (out) {
+            if (i + 1 >= K.size()) return false;
+            *ht = k.ox; *hv = k.oy;
+            return true;
+        }
+        if (i - 1 < 0) return false;
+        *ht = k.ix; *hv = k.iy;
+        return true;
+    }
+    if (k.interp == KfSmooth) {
+        const double span = out
+            ? ((i + 1 < K.size()) ? K[i + 1].time - k.time : 0.0)
+            : ((i - 1 >= 0) ? k.time - K[i - 1].time : 0.0);
+        if (span <= 1e-9) return false;
+        const double m = autoTangent(K, i);
+        // Controle real do Catmull-Rom (o mesmo que o kfValue() usa): a
+        // posição horizontal em 1/3 do segmento e a tangente inteira na
+        // vertical. Converte para bezier manual sem mudar a curva.
+        *ht = span / 3.0;
+        *hv = out ? m * span : -m * span;
+        return true;
+    }
+    return false;
+}
+
 GraphCanvas::GraphCanvas(QWidget* parent) : QWidget(parent) {
-    setMinimumHeight(52);
+    setMinimumHeight(84);
     setFocusPolicy(Qt::ClickFocus);
     setMouseTracking(true);
 }
@@ -93,6 +275,7 @@ void GraphCanvas::setData(Clip* clip, GraphProp prop, double playhead, double fp
     m_dragKey = -1;
     m_dragHandle = -1;
     m_hoverKey = -1;
+    m_curveNewKey = false;
     m_undoPushed = false;
     m_selKeys.clear();
     m_selOrig.clear();
@@ -103,58 +286,26 @@ void GraphCanvas::setData(Clip* clip, GraphProp prop, double playhead, double fp
 }
 
 QVector<Keyframe>* GraphCanvas::keys() const {
-    if (!m_clip) return nullptr;
-    switch (m_prop) {
-        case GPropOpacity:  return &m_clip->kfOpacity;
-        case GPropVolume:   return &m_clip->kfVolume;
-        case GPropScale:    return &m_clip->kfScale;
-        case GPropRotation: return &m_clip->kfRotation;
-        case GPropTx:       return &m_clip->kfTx;
-        case GPropTy:       return &m_clip->kfTy;
-        case GPropCropL:    return &m_clip->kfCropL;
-        case GPropCropR:    return &m_clip->kfCropR;
-        case GPropCropT:    return &m_clip->kfCropT;
-        case GPropCropB:    return &m_clip->kfCropB;
-    }
-    return nullptr;
+    return keysFor(m_clip, m_prop);
 }
 
 double GraphCanvas::baseValue() const {
-    if (!m_clip) return 0.0;
-    switch (m_prop) {
-        case GPropOpacity:  return m_clip->opacity;
-        case GPropVolume:   return m_clip->volume;
-        case GPropScale:    return m_clip->scale;
-        case GPropRotation: return m_clip->rotation;
-        case GPropTx:       return m_clip->tx;
-        case GPropTy:       return m_clip->ty;
-        case GPropCropL:    return m_clip->cropL;
-        case GPropCropR:    return m_clip->cropR;
-        case GPropCropT:    return m_clip->cropT;
-        case GPropCropB:    return m_clip->cropB;
-    }
-    return 0.0;
+    return baseFor(m_clip, m_prop);
 }
 
 void GraphCanvas::valueRange(double* lo, double* hi) const {
-    switch (m_prop) {
-        case GPropOpacity:  *lo = 0.0; *hi = 1.0; return;
-        case GPropVolume:   *lo = 0.0; *hi = 2.0; return;
-        case GPropScale:    *lo = 0.0; *hi = 3.0; return;
-        case GPropRotation: *lo = -360.0; *hi = 360.0; return;
-        case GPropTx: *lo = -800.0; *hi = 800.0; return;
-        case GPropTy: *lo = -450.0; *hi = 450.0; return;
-        case GPropCropL: case GPropCropR:
-        case GPropCropT: case GPropCropB:
-            *lo = 0.0; *hi = 1.0; return;
-    }
-    *lo = 0.0; *hi = 1.0;
+    rangeFor(m_prop, lo, hi);
 }
 
 QRect GraphCanvas::plotRect() const {
-    return QRect(kMarginL, kMarginT,
+    return QRect(kMarginL, kRulerH + kMarginT,
                  std::max(10, width() - kMarginL - kMarginR),
-                 std::max(10, height() - kMarginT - kMarginB));
+                 std::max(10, height() - kRulerH - kMarginT - kMarginB));
+}
+
+QRect GraphCanvas::rulerRect() const {
+    return QRect(kMarginL, 0,
+                 std::max(10, width() - kMarginL - kMarginR), kRulerH);
 }
 
 double GraphCanvas::xToT(int x) const {
@@ -196,8 +347,7 @@ QString GraphCanvas::fmtTime(double t) const {
 }
 
 QString GraphCanvas::fmtValue(double v) const {
-    const int prec = (std::fabs(m_hi - m_lo) < 2.0) ? 4 : 5;
-    return QString::number(v, 'g', prec);
+    return fmtVal(v, m_hi - m_lo);
 }
 
 double GraphCanvas::yToV(int y) const {
@@ -222,19 +372,23 @@ int GraphCanvas::keyframeHit(const QPoint& p) const {
     return -1;
 }
 
-int GraphCanvas::handleHit(const QPoint& p) const {
+int GraphCanvas::handleHit(const QPoint& p, int* side) const {
     const QVector<Keyframe>* ks = keys();
     if (!ks) return -1;
-    for (int i = 0; i + 1 < ks->size(); ++i) {
+    for (int i = 0; i < ks->size(); ++i) {
         const Keyframe& k = (*ks)[i];
         if (k.interp != KfSmooth && k.interp != KfBezier) continue;
-        const double span = (*ks)[i + 1].time - k.time;
-        if (span <= 1e-9) continue;
-        double cx = k.hx;
-        if (k.interp == KfSmooth)
-            cx = std::clamp(span * 0.35, 0.0, span);
-        const QPointF hp(tToX(k.time + cx), vToY(k.value + k.hy));
-        if (std::hypot(p.x() - hp.x(), p.y() - hp.y()) <= 8.0) return i;
+        for (int s = 0; s < 2; ++s) {
+            double ht, hv;
+            if (!bezierHandle(*ks, i, s == 0, &ht, &hv)) continue;
+            const double tx = (s == 0) ? k.time + ht : k.time - ht;
+            const double tv = k.value + hv;
+            const QPointF hp(tToX(tx), vToY(tv));
+            if (std::hypot(p.x() - hp.x(), p.y() - hp.y()) <= 8.0) {
+                if (side) *side = s;
+                return i;
+            }
+        }
     }
     return -1;
 }
@@ -258,17 +412,12 @@ int GraphCanvas::addKeyframe(double time, double value) {
     K.append(nk);
     sortKeys();
     fitValueRange();
-    // Seleciona o keyframe recém-criado (índice = último com o tempo/valor).
+    // Seleciona o keyframe recém-criado.
     m_selKeys.clear();
     m_selOrig.clear();
     int found = -1;
     for (int i = 0; i < K.size(); ++i)
-        if (std::fabs(K[i].time - time) < 1e-6
-            && std::fabs(K[i].value - value) < 1e-6)
-            found = i;
-    if (found < 0)
-        for (int i = 0; i < K.size(); ++i)
-            if (std::fabs(K[i].time - time) < 1e-6) found = i;
+        if (std::fabs(K[i].time - time) < 1e-9) { found = i; break; }
     if (found < 0) found = K.size() - 1;
     m_selKeys.append(found);
     m_dragKey = found;
@@ -276,6 +425,74 @@ int GraphCanvas::addKeyframe(double time, double value) {
     for (int i : m_selKeys) m_selOrig.append(K[i]);
     update();
     return found;
+}
+
+void GraphCanvas::selectKeyIndex(int idx) {
+    QVector<Keyframe>* ks = keys();
+    m_selKeys.clear();
+    m_selOrig.clear();
+    m_marqueeActive = false;
+    m_dragKey = -1;
+    m_dragHandle = -1;
+    if (ks && idx >= 0 && idx < ks->size()) m_selKeys.append(idx);
+    update();
+}
+
+void GraphCanvas::selectKeysAtTimes(const QVector<double>& ts) {
+    QVector<Keyframe>* ks = keys();
+    m_selKeys.clear();
+    m_selOrig.clear();
+    m_marqueeActive = false;
+    m_dragKey = -1;
+    m_dragHandle = -1;
+    if (ks) {
+        for (double t : ts) {
+            for (int i = 0; i < ks->size(); ++i) {
+                if (std::fabs((*ks)[i].time - t) < 1e-6) {
+                    m_selKeys.append(i);
+                    break;
+                }
+            }
+        }
+    }
+    update();
+}
+
+void GraphCanvas::clearSelection() {
+    m_selKeys.clear();
+    m_selOrig.clear();
+    m_dragKey = -1;
+    m_dragHandle = -1;
+    m_marqueeActive = false;
+    update();
+}
+
+QVector<double> GraphCanvas::selectionTimes() const {
+    QVector<double> out;
+    const QVector<Keyframe>* ks = keys();
+    if (ks) {
+        for (int i : m_selKeys)
+            if (i >= 0 && i < ks->size()) out.append((*ks)[i].time);
+    }
+    return out;
+}
+
+void GraphCanvas::setZoom(double t0, double t1) {
+    m_t0 = t0;
+    m_t1 = t1;
+    update();
+}
+
+void GraphCanvas::dragStripTime(int idx, double t) {
+    if (!m_clip) return;
+    QVector<Keyframe>& K = *keys();
+    if (idx < 0 || idx >= K.size()) return;
+    m_selKeys = { idx };
+    m_selOrig = { K[idx] };
+    m_grabT = K[idx].time;
+    m_grabV = K[idx].value;
+    moveSelected(t - m_grabT, 0.0, m_snap);
+    commitChange();
 }
 
 void GraphCanvas::commitChange() {
@@ -310,13 +527,10 @@ void GraphCanvas::fitValueRange() {
         const Keyframe& k = (*ks)[i];
         mn = std::min(mn, k.value);
         mx = std::max(mx, k.value);
-        // Inclui os extremos dos handles para a curva não estourar a janela.
-        mn = std::min(mn, k.value + k.hy);
-        mx = std::max(mx, k.value + k.hy);
-        if (i + 1 < ks->size()) {
-            mn = std::min(mn, (*ks)[i + 1].value - (*ks)[i + 1].hy);
-            mx = std::max(mx, (*ks)[i + 1].value - (*ks)[i + 1].hy);
-        }
+        mn = std::min(mn, k.value + k.oy);
+        mx = std::max(mx, k.value + k.oy);
+        mn = std::min(mn, k.value + k.iy);
+        mx = std::max(mx, k.value + k.iy);
     }
     const double pSpan = m_hiProp - m_loProp;
     if (pSpan > 0.0) {
@@ -362,7 +576,6 @@ void GraphCanvas::moveSelected(double dT, double dV, bool snap) {
         minT = std::min(minT, o.time);
         maxT = std::max(maxT, o.time);
     }
-    // Vizinhos imediatos fora da seleção (fixos durante o arrasto).
     double leftB = 0.0, rightB = dur;
     for (const Keyframe& k : K) {
         if (k.time < minT - 1e-9 && k.time > leftB) leftB = k.time;
@@ -400,67 +613,112 @@ void GraphCanvas::emitKeyInfo(int idx) {
     if (!ks || idx < 0 || idx >= ks->size()) return;
     const Keyframe& k = (*ks)[idx];
     const int frame = (int)std::lround(k.time * m_fps);
-    emit statusMessage(tr("Keyframe %1/%2  ·  t = %3 (frame %4)  ·  v = %5")
+    emit statusMessage(tr("Keyframe %1/%2  ·  t = %3 (frame %4)  ·  v = %5  ·  %6")
                            .arg(idx + 1)
                            .arg(ks->size())
                            .arg(fmtTime(k.time))
                            .arg(frame)
-                           .arg(fmtValue(k.value)));
+                           .arg(fmtValue(k.value))
+                           .arg(interpName(k.interp)));
 }
 
 void GraphCanvas::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.fillRect(rect(), QColor(26, 26, 29));
-    const QRect r = plotRect();
-    if (r.width() <= 0 || r.height() <= 0) return;
 
-    const double dur = m_clip ? std::max(0.05, m_clip->dur) : 1.0;
     const double t0 = timeStart();
     const double range = timeRange();
 
-    // Fundo sutil indicando o clipe selecionado (mini-timeline).
+    // Régua de tempo no topo.
+    const QRect rr = rulerRect();
+    p.fillRect(rr, QColor(24, 24, 27));
+    p.setPen(QColor(58, 58, 66));
+    p.drawLine(rr.left(), rr.bottom(), rr.right(), rr.bottom());
+    const double tStep = niceStep(range / 6.0);
+    p.setPen(QColor(150, 152, 160));
+    for (double t = std::ceil(t0 / tStep) * tStep; t <= t0 + range + 1e-9; t += tStep) {
+        const int x = tToX(t);
+        p.drawLine(x, rr.bottom() - 3, x, rr.bottom());
+        p.drawText(x + 2, rr.bottom() - 3, fmtRuler(t, range));
+    }
+    if (m_clip) {
+        const double rel = std::clamp(m_playhead - m_clip->pos, 0.0, m_clip->dur);
+        if (rel >= t0 - 1e-9 && rel <= t0 + range + 1e-9) {
+            const int x = tToX(rel);
+            QPolygon tri;
+            tri << QPoint(x - 5, rr.bottom()) << QPoint(x + 5, rr.bottom())
+                << QPoint(x, rr.bottom() - 6);
+            p.setPen(QPen(QColor(190, 220, 255), 1));
+            p.setBrush(QColor(190, 220, 255));
+            p.drawPolygon(tri);
+            QFont f = p.font();
+            f.setBold(true);
+            p.setFont(f);
+            p.setPen(QColor(170, 200, 235));
+            p.drawText(x + 7, rr.bottom() - 3,
+                       tr("%1 · f%2").arg(fmtRuler(rel, range))
+                                      .arg((int)std::lround(rel * m_fps)));
+        }
+    }
+
+    const QRect r = plotRect();
+    if (r.width() <= 0 || r.height() <= 0) return;
     p.fillRect(r, QColor(38, 42, 50));
 
-    // Linha central que representa o clipe selecionado (estilo mini-timeline).
-    p.setPen(QPen(QColor(70, 70, 80), 1));
-    p.drawLine(r.left(), r.center().y(), r.right(), r.center().y());
-
-    // Grade de tempo bem leve.
-    p.setPen(QColor(42, 42, 48));
-    const double tStep = niceStep(range / 8.0);
-    for (double t = std::ceil(t0 / tStep) * tStep; t <= t0 + range + 1e-9; t += tStep)
-        p.drawLine(tToX(t), r.top(), tToX(t), r.bottom());
+    // Sem grade cheia: só linhas horizontais de referência bem discretas
+    // (o gráfico do Premiere não tem grade).
+    p.setPen(QColor(255, 255, 255, 12));
+    const double vStep = niceStep((m_hi - m_lo) / 5.0);
+    for (double v = std::ceil(m_lo / vStep) * vStep; v <= m_hi + 1e-9; v += vStep)
+        p.drawLine(r.left(), vToY(v), r.right(), vToY(v));
 
     const QVector<Keyframe>* ks = keys();
     if (!ks) return;
 
-    // Curva da propriedade, com preenchimento suave abaixo dela.
+    // Curva da propriedade (janela visível).
     QPainterPath path;
-    QPainterPath fillPath;
     const int steps = std::max(2, r.width() / 2);
     for (int i = 0; i <= steps; ++i) {
-        const double t = dur * i / steps;
+        const double t = t0 + range * i / steps;
         const double v = kfValue(*ks, baseValue(), t);
         const QPointF pt(tToX(t), vToY(v));
-        if (i == 0) { path.moveTo(pt); fillPath.moveTo(pt); }
-        else { path.lineTo(pt); fillPath.lineTo(pt); }
+        if (i == 0) path.moveTo(pt); else path.lineTo(pt);
     }
     p.setRenderHint(QPainter::Antialiasing, true);
     if (ks->isEmpty()) {
-        p.setPen(QPen(QColor(110, 110, 120), 1, Qt::DashLine));
-        p.drawLine(r.left(), vToY(baseValue()), r.right(), vToY(baseValue()));
+        // Sem keyframes: linha horizontal padrão da propriedade, sincronizada
+        // com a duração do clipe (o usuário vê onde os pontos vão nascer).
+        const int y = vToY(baseValue());
+        p.setPen(QPen(QColor(130, 170, 200, 190), 1.6));
+        p.drawLine(r.left(), y, r.right(), y);
+        p.setPen(QColor(130, 170, 200, 90));
+        p.drawText(r.left() + 4, y - 4, tr("valor padrão"));
     } else {
-        fillPath.lineTo(r.right(), r.center().y());
-        fillPath.lineTo(r.left(), r.center().y());
-        fillPath.closeSubpath();
-        p.fillPath(fillPath, QColor(90, 180, 255, 28));
         p.setPen(QPen(QColor(110, 200, 255), 1.6));
         p.drawPath(path);
     }
-    p.setRenderHint(QPainter::Antialiasing, false);
 
-    // Keyframes: "caule" até a linha central + losango no valor. O keyframe
-    // que coincide com o playhead fica laranja (estilo do pancrop).
+    // Handles bezier dos keyframes selecionados (um de saída e um de entrada,
+    // como no Premiere).
+    for (int i = 0; i < ks->size(); ++i) {
+        if (!m_selKeys.contains(i)) continue;
+        const Keyframe& k = (*ks)[i];
+        if (k.interp != KfSmooth && k.interp != KfBezier) continue;
+        const QPointF kp(tToX(k.time), vToY(k.value));
+        for (int s = 0; s < 2; ++s) {
+            double ht, hv;
+            if (!bezierHandle(*ks, i, s == 0, &ht, &hv)) continue;
+            const QPointF hp(tToX(k.time + (s == 0 ? ht : -ht)),
+                             vToY(k.value + hv));
+            p.setPen(QPen(QColor(140, 200, 255, 200), 1, Qt::DashLine));
+            p.drawLine(kp, hp);
+            p.setPen(QPen(QColor(140, 200, 255), 1));
+            p.setBrush(QColor(60, 90, 130));
+            p.drawEllipse(hp, 2.5, 2.5);
+        }
+    }
+
+    // Keyframes com glifos por interpolação.
     const double relPh = m_clip ? std::clamp(m_playhead - m_clip->pos, 0.0, m_clip->dur) : -1.0;
     for (int i = 0; i < ks->size(); ++i) {
         const Keyframe& k = (*ks)[i];
@@ -470,22 +728,17 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
         const QColor fill = sel ? QColor(120, 230, 150)
                                 : active ? QColor(255, 179, 64)
                                          : QColor(200, 205, 215);
-        p.setPen(QPen(QColor(255, 255, 255), 1));
-        p.setBrush(fill);
-        const int size = (sel && i == m_dragKey) ? 6 : 5;
-        const QPolygonF dia = QPolygonF() << QPointF(kp.x(), kp.y() - size)
-                                          << QPointF(kp.x() + size, kp.y())
-                                          << QPointF(kp.x(), kp.y() + size)
-                                          << QPointF(kp.x() - size, kp.y());
-        p.drawPolygon(dia);
+        const qreal size = (sel && i == m_dragKey) ? 6 : 5;
+        drawKeyGlyph(p, kp, k.interp, size, fill);
     }
+    p.setRenderHint(QPainter::Antialiasing, false);
 
-    // Marcador do valor atual da propriedade no playhead (ponto na curva).
+    // Marcador do valor atual no playhead.
     if (m_clip && relPh >= 0.0 && relPh >= t0 - 1e-9 && relPh <= t0 + range + 1e-9) {
         const double vCur = kfValue(*ks, baseValue(), relPh);
         const QPointF cph(tToX(relPh), vToY(vCur));
-        p.setPen(QPen(QColor(255, 80, 80), 1.5));
-        p.setBrush(QColor(255, 80, 80));
+        p.setPen(QPen(QColor(190, 220, 255), 1.5));
+        p.setBrush(QColor(190, 220, 255));
         p.setRenderHint(QPainter::Antialiasing, true);
         p.drawEllipse(cph, 3, 3);
         p.setRenderHint(QPainter::Antialiasing, false);
@@ -504,7 +757,7 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
         QRect box(kp.x() + 12, kp.y() - 30, 168, 34);
         if (box.right() > width() - 4)
             box.moveLeft(kp.x() - 12 - box.width());
-        if (box.top() < 4)
+        if (box.top() < rr.bottom() + 4)
             box.moveTop(kp.y() + 12);
         p.setPen(QPen(QColor(255, 200, 90), 1));
         p.setBrush(QColor(40, 40, 46, 232));
@@ -523,13 +776,13 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
         }
     }
 
-    // Linha do playhead (só se estiver na janela visível).
+    // Linha do playhead no gráfico.
     if (m_clip) {
         const double rel = std::clamp(m_playhead - m_clip->pos, 0.0, m_clip->dur);
         if (rel >= timeStart() - 1e-9 && rel <= timeStart() + timeRange() + 1e-9) {
             const int x = tToX(rel);
-            p.setPen(QPen(QColor(255, 80, 80), 1));
-            p.drawLine(x, r.top(), x, r.bottom());
+            p.setPen(QPen(QColor(190, 220, 255, 150), 1));
+            p.drawLine(x, rr.bottom() + 1, x, r.bottom());
         }
     }
 }
@@ -566,24 +819,71 @@ void GraphCanvas::mousePressEvent(QMouseEvent* e) {
         emit editStart();
         m_undoPushed = true;
         setCursor(Qt::ClosedHandCursor);
+        emit keyframeJump(m_clip->pos + (*keys())[kh].time);
+        e->accept();
         update();
         return;
     }
-    const int hh = handleHit(e->pos());
+    int hSide = 0;
+    const int hh = handleHit(e->pos(), &hSide);
     if (hh >= 0) {
         // Handle só com um keyframe selecionado.
         if (!m_selKeys.contains(hh)) { m_selKeys.clear(); m_selKeys.append(hh); }
         m_dragKey = hh;
         m_dragHandle = hh;
+        m_dragSide = hSide;
         QVector<Keyframe>& K = *keys();
         if (K[hh].interp == KfSmooth) {
             // Pegar o handle de um keyframe suave o converte em bezier
-            // (os handles passam a ser manuais, como no DaVinci Resolve).
+            // manual, preservando a curva (handles = controle Catmull-Rom).
+            double ht0, hv0, ht1, hv1;
+            bezierHandle(K, hh, true, &ht0, &hv0);
+            bezierHandle(K, hh, false, &ht1, &hv1);
             K[hh].interp = KfBezier;
+            K[hh].ox = ht0; K[hh].oy = hv0;
+            K[hh].ix = ht1; K[hh].iy = hv1;
             emit editStart();
             m_undoPushed = true;
         }
         setCursor(Qt::SizeFDiagCursor);
+        e->accept();
+        update();
+        return;
+    }
+    // Ferramentas de adicionar/curva: clicar em espaço vazio cria um keyframe.
+    if (m_tool != ToolSelect) {
+        QVector<Keyframe>& K = *keys();
+        const double t = snapTime(xToT(e->pos().x()));
+        for (int i = 0; i < K.size(); ++i)
+            if (std::fabs(K[i].time - t) < 1e-9) {
+                m_selKeys.clear();
+                m_selKeys.append(i);
+                update();
+                return;
+            }
+        Keyframe nk;
+        nk.time = t;
+        nk.value = (K.isEmpty() ? baseValue() : kfValue(K, baseValue(), t));
+        nk.interp = (m_tool == ToolCurve) ? KfSmooth : KfLinear;
+        nk.ox = nk.oy = nk.ix = nk.iy = 0.0;
+        K.append(nk);
+        sortKeys();
+        int idx = -1;
+        for (int i = 0; i < K.size(); ++i)
+            if (std::fabs(K[i].time - t) < 1e-9) { idx = i; break; }
+        m_selKeys.clear();
+        m_selKeys.append(idx);
+        emit editStart();
+        m_undoPushed = true;
+        m_dragKey = idx;
+        m_dragHandle = (m_tool == ToolCurve) ? idx : -1;
+        m_curveNewKey = (m_tool == ToolCurve);
+        m_grabT = xToT(e->pos().x());
+        m_grabV = yToV(e->pos().y());
+        m_selOrig.clear();
+        for (int i : m_selKeys) m_selOrig.append(K[i]);
+        fitValueRange();
+        e->accept();
         update();
         return;
     }
@@ -597,14 +897,15 @@ void GraphCanvas::mousePressEvent(QMouseEvent* e) {
     m_marqueeActive = true;
     m_marqueeStart = e->pos();
     m_marqueeRect = QRect(e->pos(), QSize(0, 0));
+    e->accept();
     update();
-    QWidget::mousePressEvent(e);
 }
 
 void GraphCanvas::mouseMoveEvent(QMouseEvent* e) {
     m_lastPos = e->pos();
     if (m_marqueeActive && (e->buttons() & Qt::LeftButton)) {
         m_marqueeRect = QRect(m_marqueeStart, e->pos()).normalized();
+        e->accept();
         update();
         return;
     }
@@ -617,16 +918,61 @@ void GraphCanvas::mouseMoveEvent(QMouseEvent* e) {
     if (!ks || m_dragKey >= ks->size()) return;
     QVector<Keyframe>& K = *keys();
 
+    // Ponto recém-criado pela ferramenta de curva (suave): o primeiro arrasto
+    // o converte em bezier e define os handles, criando a curva.
+    if (m_curveNewKey && m_dragHandle >= 0 && m_selKeys.size() == 1
+        && K[m_dragKey].interp == KfSmooth) {
+        K[m_dragKey].interp = KfBezier;
+        const double maxDx = (m_dragKey + 1 < K.size())
+            ? (K[m_dragKey + 1].time - K[m_dragKey].time) * 0.5
+            : timeRange() * 0.5;
+        const double dx = std::clamp(xToT(e->pos().x()) - K[m_dragKey].time,
+                                     0.0, maxDx);
+        const double dy = std::clamp(yToV(e->pos().y()) - K[m_dragKey].value,
+                                     m_loProp - K[m_dragKey].value,
+                                     m_hiProp - K[m_dragKey].value);
+        const double spanR = (m_dragKey + 1 < K.size())
+            ? K[m_dragKey + 1].time - K[m_dragKey].time
+            : ((m_dragKey > 0)
+                   ? K[m_dragKey].time - K[m_dragKey - 1].time
+                   : timeRange());
+        K[m_dragKey].ox = dx;
+        K[m_dragKey].oy = dy;
+        K[m_dragKey].ix = spanR / 3.0;
+        K[m_dragKey].iy = 0.0;
+        m_dragSide = 0;
+        m_curveNewKey = false;
+        setCursor(Qt::SizeFDiagCursor);
+        emitKeyInfo(m_dragKey);
+        commitChange();
+        update();
+        return;
+    }
+
     if (m_dragHandle >= 0 && K[m_dragKey].interp == KfBezier
         && m_selKeys.size() == 1) {
         const Keyframe& k = K[m_dragKey];
-        const double maxDx = (m_dragKey + 1 < K.size())
-            ? (K[m_dragKey + 1].time - k.time) * 0.5 : timeRange() * 0.5;
-        const double newDx = std::clamp(xToT(e->pos().x()) - k.time, 0.0, maxDx);
-        const double newDy = std::clamp(yToV(e->pos().y()) - k.value,
-                                        m_loProp - k.value, m_hiProp - k.value);
-        K[m_dragKey].hx = newDx;
-        K[m_dragKey].hy = newDy;
+        if (m_dragSide == 0) {
+            const double maxDx = (m_dragKey + 1 < K.size())
+                ? (K[m_dragKey + 1].time - k.time) * 0.5 : timeRange() * 0.5;
+            const double newDx = std::clamp(xToT(e->pos().x()) - k.time,
+                                            0.0, maxDx);
+            const double newDy = std::clamp(yToV(e->pos().y()) - k.value,
+                                            m_loProp - k.value,
+                                            m_hiProp - k.value);
+            K[m_dragKey].ox = newDx;
+            K[m_dragKey].oy = newDy;
+        } else {
+            const double maxDx = (m_dragKey > 0)
+                ? (k.time - K[m_dragKey - 1].time) * 0.5 : timeRange() * 0.5;
+            const double newDx = std::clamp(k.time - xToT(e->pos().x()),
+                                            0.0, maxDx);
+            const double newDy = std::clamp(yToV(e->pos().y()) - k.value,
+                                            m_loProp - k.value,
+                                            m_hiProp - k.value);
+            K[m_dragKey].ix = newDx;
+            K[m_dragKey].iy = newDy;
+        }
         emitKeyInfo(m_dragKey);
         commitChange();
         return;
@@ -639,6 +985,7 @@ void GraphCanvas::mouseMoveEvent(QMouseEvent* e) {
     moveSelected(dT, dV, snap);
     emitKeyInfo(m_dragKey);
     commitChange();
+    e->accept();
 }
 
 void GraphCanvas::mouseReleaseEvent(QMouseEvent* e) {
@@ -646,22 +993,30 @@ void GraphCanvas::mouseReleaseEvent(QMouseEvent* e) {
         m_marqueeActive = false;
         marqueeSelect(m_marqueeRect, e->modifiers() & Qt::ShiftModifier);
         m_marqueeRect = QRect();
-        QWidget::mouseReleaseEvent(e);
+        e->accept();
+        update();
         return;
     }
     if (m_dragKey >= 0) {
         m_dragKey = -1;
         m_dragHandle = -1;
+        m_dragSide = 0;
+        m_curveNewKey = false;
         m_undoPushed = false;
         m_selOrig.clear();
         updateHover(e->pos());
+        e->accept();
         update();
+        return;
     }
     QWidget::mouseReleaseEvent(e);
 }
 
 void GraphCanvas::mouseDoubleClickEvent(QMouseEvent* e) {
-    if (!m_clip) { QWidget::mouseDoubleClickEvent(e); return; }
+    if (!m_clip || m_tool != ToolSelect) {
+        QWidget::mouseDoubleClickEvent(e);
+        return;
+    }
     // O press anterior iniciou uma marquee; sem isso, o release do segundo
     // clique chamaria marqueeSelect com retângulo vazio e DESELECIONARIA o
     // keyframe que o duplo clique acabou de criar.
@@ -743,6 +1098,19 @@ void GraphCanvas::wheelEvent(QWheelEvent* e) {
     e->accept();
 }
 
+bool GraphCanvas::event(QEvent* e) {
+    if (e->type() == QEvent::ShortcutOverride) {
+        QKeyEvent* ke = static_cast<QKeyEvent*>(e);
+        const int key = ke->key();
+        if ((key == Qt::Key_Delete || key == Qt::Key_Backspace)
+            && keys() && !m_selKeys.isEmpty()) {
+            e->accept();
+            return true;
+        }
+    }
+    return QWidget::event(e);
+}
+
 void GraphCanvas::keyPressEvent(QKeyEvent* e) {
     QVector<Keyframe>* ks = keys();
     const bool ctrl = e->modifiers() & Qt::ControlModifier;
@@ -769,9 +1137,14 @@ void GraphCanvas::keyPressEvent(QKeyEvent* e) {
         m_selOrig.clear();
         m_dragKey = -1;
         m_dragHandle = -1;
+        m_dragSide = 0;
         e->accept();
         return;
     }
+    // V/P/B trocam a ferramenta ativa.
+    if (e->key() == Qt::Key_V) { setTool(ToolSelect); e->accept(); return; }
+    if (e->key() == Qt::Key_P) { setTool(ToolAdd); e->accept(); return; }
+    if (e->key() == Qt::Key_B) { setTool(ToolCurve); e->accept(); return; }
     if (!ks || m_selKeys.isEmpty()) { QWidget::keyPressEvent(e); return; }
 
     if (e->key() == Qt::Key_Delete || e->key() == Qt::Key_Backspace) {
@@ -817,7 +1190,10 @@ void GraphCanvas::keyPressEvent(QKeyEvent* e) {
         emit editStart();
         for (int i : m_selKeys) {
             (*ks)[i].interp = mode;
-            if (mode == KfSmooth) (*ks)[i].hx = (*ks)[i].hy = 0.0;
+            if (mode == KfSmooth) {
+                (*ks)[i].ox = (*ks)[i].oy = 0.0;
+                (*ks)[i].ix = (*ks)[i].iy = 0.0;
+            }
         }
         commitChange();
         e->accept();
@@ -890,9 +1266,9 @@ void GraphCanvas::contextMenuEvent(QContextMenuEvent* e) {
 
     QMenu menu(this);
     QAction* lin = menu.addAction(tr("Linear"));
-    QAction* smo = menu.addAction(tr("Suave"));
-    QAction* ste = menu.addAction(tr("Segurar"));
     QAction* bez = menu.addAction(tr("Bezier"));
+    QAction* autoBez = menu.addAction(tr("Auto Bezier"));
+    QAction* hold = menu.addAction(tr("Hold"));
     menu.addSeparator();
     QAction* del = menu.addAction(m_selKeys.size() > 1
                                       ? tr("Excluir %1 keyframes").arg(m_selKeys.size())
@@ -901,12 +1277,12 @@ void GraphCanvas::contextMenuEvent(QContextMenuEvent* e) {
     if (!act) return;
     emit editStart();
     m_undoPushed = true;
-    if (act == lin || act == smo || act == ste || act == bez) {
+    if (act == lin || act == bez || act == autoBez || act == hold) {
         for (int i : m_selKeys) {
             K[i].interp = (act == lin) ? KfLinear
-                          : (act == smo) ? KfSmooth
-                          : (act == ste) ? KfStep : KfBezier;
-            if (act == smo) { K[i].hx = K[i].hy = 0.0; }
+                          : (act == bez) ? KfBezier
+                          : (act == autoBez) ? KfSmooth : KfStep;
+            if (act == autoBez) { K[i].ox = K[i].oy = 0.0; K[i].ix = K[i].iy = 0.0; }
         }
     } else if (act == del) {
         QVector<int> sel = m_selKeys;
@@ -919,146 +1295,437 @@ void GraphCanvas::contextMenuEvent(QContextMenuEvent* e) {
 }
 
 // --------------------------------------------------------------------------
+// KeyframeStrip
+// --------------------------------------------------------------------------
+
+KeyframeStrip::KeyframeStrip(QWidget* parent) : QWidget(parent) {
+    setMinimumHeight(26);
+    setCursor(Qt::PointingHandCursor);
+}
+
+QSize KeyframeStrip::sizeHint() const {
+    return QSize(160, 26);
+}
+
+void KeyframeStrip::setData(Clip* clip, GraphProp prop, double fps) {
+    m_clip = clip;
+    m_prop = prop;
+    m_fps = (fps > 1.0) ? fps : 30.0;
+    m_dragIdx = -1;
+    m_moved = false;
+    update();
+}
+
+void KeyframeStrip::setPlayhead(double t) {
+    m_playhead = t;
+    update();
+}
+
+double KeyframeStrip::xToT(int x) const {
+    const double dur = m_clip ? std::max(0.05, m_clip->dur) : 1.0;
+    const int w = std::max(1, width() - 8);
+    const double f = std::clamp((x - 4) / (double)w, 0.0, 1.0);
+    return f * dur;
+}
+
+int KeyframeStrip::tToX(double t) const {
+    const double dur = m_clip ? std::max(0.05, m_clip->dur) : 1.0;
+    const int w = std::max(1, width() - 8);
+    return 4 + (int)std::lround(std::clamp(t / dur, 0.0, 1.0) * w);
+}
+
+int KeyframeStrip::hitKey(const QPoint& p) const {
+    const QVector<Keyframe>* ks = keysFor(m_clip, m_prop);
+    if (!ks) return -1;
+    int best = -1;
+    int bestD = 6;
+    for (int i = 0; i < ks->size(); ++i) {
+        const int d = std::abs(tToX((*ks)[i].time) - p.x());
+        if (d <= 5 && d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+}
+
+void KeyframeStrip::paintEvent(QPaintEvent*) {
+    QPainter p(this);
+    const QVector<Keyframe>* ks = keysFor(m_clip, m_prop);
+    if (!ks || ks->isEmpty()) return;
+
+    const int midY = height() / 2;
+    p.setPen(QPen(QColor(70, 74, 84), 1));
+    p.drawLine(4, midY, width() - 4, midY);
+
+    const double rel = m_clip ? std::clamp(m_playhead - m_clip->pos, 0.0, m_clip->dur) : -1.0;
+    if (rel >= 0.0) {
+        const int x = tToX(rel);
+        p.setPen(QPen(QColor(190, 220, 255, 200), 1));
+        p.drawLine(x, 2, x, height() - 2);
+    }
+
+    for (int i = 0; i < ks->size(); ++i) {
+        const Keyframe& k = (*ks)[i];
+        const QPointF kp(tToX(k.time), midY);
+        const bool active = rel >= 0.0 && std::fabs(k.time - rel) < 1e-6;
+        const QColor fill = active ? QColor(255, 179, 64) : QColor(200, 205, 215);
+        drawKeyGlyph(p, kp, k.interp, 4.5, fill);
+    }
+}
+
+void KeyframeStrip::mousePressEvent(QMouseEvent* e) {
+    if (e->button() != Qt::LeftButton || !m_clip) {
+        QWidget::mousePressEvent(e);
+        return;
+    }
+    m_dragIdx = hitKey(e->pos());
+    m_moved = false;
+    if (m_dragIdx >= 0) {
+        const QVector<Keyframe>* ks = keysFor(m_clip, m_prop);
+        if (ks) m_dragT0 = (*ks)[m_dragIdx].time;
+        emit keyClicked(m_dragIdx);
+        e->accept();
+    }
+}
+
+void KeyframeStrip::mouseMoveEvent(QMouseEvent* e) {
+    if (!m_clip || m_dragIdx < 0 || !(e->buttons() & Qt::LeftButton)) {
+        QWidget::mouseMoveEvent(e);
+        return;
+    }
+    QVector<Keyframe>& K = *keysFor(m_clip, m_prop);
+    if (m_dragIdx >= K.size()) return;
+    const double t = std::clamp(xToT(e->pos().x()), 0.0, std::max(0.05, m_clip->dur));
+    if (!m_moved) {
+        if (std::fabs(t - m_dragT0) < 1e-9) return;
+        m_moved = true;
+        emit dragStart(m_dragIdx);
+    }
+    emit dragKey(m_dragIdx, t);
+    e->accept();
+    update();
+}
+
+void KeyframeStrip::mouseReleaseEvent(QMouseEvent* e) {
+    m_dragIdx = -1;
+    m_moved = false;
+    e->accept();
+}
+
+void KeyframeStrip::mouseDoubleClickEvent(QMouseEvent* e) {
+    if (!m_clip) { QWidget::mouseDoubleClickEvent(e); return; }
+    const int hit = hitKey(e->pos());
+    if (hit < 0) {
+        const double t = std::clamp(xToT(e->pos().x()), 0.0, std::max(0.05, m_clip->dur));
+        emit addKey(t);
+    }
+    e->accept();
+}
+
+// --------------------------------------------------------------------------
+// GraphPropRow
+// --------------------------------------------------------------------------
+
+GraphPropRow::GraphPropRow(GraphProp p, QWidget* parent) : QFrame(parent), m_prop(p) {
+    setObjectName(QStringLiteral("propRow"));
+    setCursor(Qt::PointingHandCursor);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+
+    m_expand = new QToolButton(this);
+    m_expand->setAutoRaise(true);
+    m_expand->setCheckable(true);
+    m_expand->setText(QStringLiteral("▸"));
+    m_expand->setCursor(Qt::PointingHandCursor);
+    m_expand->setToolTip(tr("Mostrar/ocultar linha de keyframes"));
+
+    m_name = new QLabel(propName(p), this);
+    m_name->setAttribute(Qt::WA_TransparentForMouseEvents);
+
+    m_value = new QLabel(this);
+    m_value->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_value->setStyleSheet(QStringLiteral("color:#8a9; font-size:11px;"));
+
+    m_stopwatch = new QToolButton(this);
+    m_stopwatch->setAutoRaise(true);
+    m_stopwatch->setCheckable(true);
+    m_stopwatch->setIcon(makeStopwatchIcon(false));
+    m_stopwatch->setCursor(Qt::PointingHandCursor);
+    m_stopwatch->setToolTip(tr("Alternar animação"));
+
+    m_prev = new QToolButton(this);
+    m_prev->setAutoRaise(true);
+    m_prev->setText(QStringLiteral("◀"));
+    m_prev->setCursor(Qt::PointingHandCursor);
+    m_prev->setToolTip(tr("Ir para o keyframe anterior"));
+
+    m_add = new QToolButton(this);
+    m_add->setAutoRaise(true);
+    m_add->setText(QStringLiteral("◆"));
+    m_add->setCursor(Qt::PointingHandCursor);
+    m_add->setToolTip(tr("Adicionar/remover keyframe no playhead"));
+
+    m_next = new QToolButton(this);
+    m_next->setAutoRaise(true);
+    m_next->setText(QStringLiteral("▶"));
+    m_next->setCursor(Qt::PointingHandCursor);
+    m_next->setToolTip(tr("Ir para o próximo keyframe"));
+
+    m_navBox = new QWidget(this);
+    auto* navLay = new QHBoxLayout(m_navBox);
+    navLay->setContentsMargins(0, 0, 0, 0);
+    navLay->setSpacing(0);
+    navLay->addWidget(m_prev);
+    navLay->addWidget(m_add);
+    navLay->addWidget(m_next);
+    m_navBox->setVisible(false);
+
+    m_strip = new KeyframeStrip(this);
+    m_strip->setVisible(false);
+
+    auto* topRow = new QHBoxLayout;
+    topRow->setContentsMargins(2, 1, 2, 1);
+    topRow->setSpacing(2);
+    topRow->addWidget(m_expand);
+    topRow->addWidget(m_name);
+    topRow->addStretch(1);
+    topRow->addWidget(m_value);
+    topRow->addWidget(m_stopwatch);
+    topRow->addWidget(m_navBox);
+
+    auto* lay = new QVBoxLayout(this);
+    lay->setContentsMargins(0, 0, 0, 0);
+    lay->setSpacing(0);
+    lay->addLayout(topRow);
+    lay->addWidget(m_strip);
+
+    connect(m_expand, &QToolButton::toggled, this, [this](bool on) {
+        m_strip->setVisible(on);
+        updateExpandText();
+    });
+    connect(m_stopwatch, &QToolButton::toggled, this, [this](bool on) {
+        m_stopwatch->setIcon(makeStopwatchIcon(on));
+        emit stopwatchClicked();
+    });
+    connect(m_prev, &QToolButton::clicked, this, &GraphPropRow::prevKeyframe);
+    connect(m_next, &QToolButton::clicked, this, &GraphPropRow::nextKeyframe);
+    connect(m_add, &QToolButton::clicked, this, &GraphPropRow::toggleKeyframe);
+    connect(m_strip, &KeyframeStrip::keyClicked, this, &GraphPropRow::stripKeyClicked);
+    connect(m_strip, &KeyframeStrip::dragStart, this, &GraphPropRow::stripDragStart);
+    connect(m_strip, &KeyframeStrip::dragKey, this, &GraphPropRow::stripDragKey);
+    connect(m_strip, &KeyframeStrip::addKey, this, &GraphPropRow::stripAddKey);
+}
+
+void GraphPropRow::updateExpandText() {
+    m_expand->setText(m_expand->isChecked() ? QStringLiteral("▾") : QStringLiteral("▸"));
+}
+
+void GraphPropRow::setAnimated(bool on) {
+    const QSignalBlocker b(m_stopwatch);
+    m_stopwatch->setChecked(on);
+    m_stopwatch->setIcon(makeStopwatchIcon(on));
+    m_navBox->setVisible(on);
+}
+
+void GraphPropRow::setActive(bool on) {
+    if (on)
+        setStyleSheet(QStringLiteral(
+            "#propRow { background:#1f3145; border:1px solid #2e4a68; border-radius:3px; }"));
+    else
+        setStyleSheet(QStringLiteral(
+            "#propRow { background:transparent; border:1px solid transparent; border-radius:3px; }"));
+}
+
+void GraphPropRow::setValueText(const QString& s) {
+    m_value->setText(s);
+}
+
+void GraphPropRow::setStripData(Clip* clip, double fps) {
+    m_strip->setData(clip, m_prop, fps);
+}
+
+void GraphPropRow::setStripPlayhead(double t) {
+    m_strip->setPlayhead(t);
+}
+
+void GraphPropRow::setExpanded(bool on) {
+    const QSignalBlocker b(m_expand);
+    m_expand->setChecked(on);
+    m_strip->setVisible(on);
+    updateExpandText();
+}
+
+void GraphPropRow::mousePressEvent(QMouseEvent* e) {
+    if (e->button() == Qt::LeftButton) emit propertyClicked();
+    QFrame::mousePressEvent(e);
+}
+
+// --------------------------------------------------------------------------
 // GraphEditorWidget
 // --------------------------------------------------------------------------
 
 GraphEditorWidget::GraphEditorWidget(QWidget* parent) : QWidget(parent) {
-    auto* lbl = new QLabel(tr("Propriedade:"), this);
-    m_propCombo = new QComboBox(this);
-    connect(m_propCombo, &QComboBox::currentIndexChanged, this, [this](int) {
-        m_canvas->setData(activeClip(), currentProp(), m_playhead,
-                          m_project ? m_project->fps : 30.0);
-    });
-
-    auto* addBtn = new QPushButton(tr("+ no playhead"), this);
-    addBtn->setToolTip(tr("Adicionar keyframe no playhead"));
-    connect(addBtn, &QPushButton::clicked, this, [this]() {
-        Clip* c = activeClip();
-        if (!c) return;
-        const double rel0 = std::clamp(m_playhead - c->pos, 0.0, c->dur);
-        const double fr = 1.0 / std::max(1.0, m_project ? m_project->fps : 30.0);
-        const double rel = std::round(rel0 / fr) * fr;
-        QVector<Keyframe>& K = *m_canvas->keys();
-        const double v = kfValue(K, m_canvas->baseValue(), rel);
-        if (m_canvas->addKeyframe(rel, v) < 0) return;
-        emit editStart();
-        m_canvas->commitChange();
-    });
-
-    auto* delBtn = new QPushButton(tr("Excluir keyframe"), this);
-    delBtn->setToolTip(tr("Excluir o keyframe mais próximo do playhead"));
-    connect(delBtn, &QPushButton::clicked, this, [this]() {
-        Clip* c = activeClip();
-        if (!c) return;
-        QVector<Keyframe>& K = *m_canvas->keys();
-        if (K.isEmpty()) return;
-        const double rel = std::clamp(m_playhead - c->pos, 0.0, c->dur);
-        int best = 0;
-        double bestD = 1e18;
-        for (int i = 0; i < K.size(); ++i) {
-            const double d = std::fabs(K[i].time - rel);
-            if (d < bestD) { bestD = d; best = i; }
-        }
-        emit editStart();
-        K.removeAt(best);
-        m_canvas->fitValueRange();
-        m_canvas->commitChange();
-    });
-
-    auto* prevBtn = new QPushButton(tr("◀"), this);
-    prevBtn->setToolTip(tr("Ir para o keyframe anterior desta propriedade"));
-    auto* nextBtn = new QPushButton(tr("▶"), this);
-    nextBtn->setToolTip(tr("Ir para o próximo keyframe desta propriedade"));
-    auto* fitBtn = new QPushButton(tr("Ajustar"), this);
-    fitBtn->setToolTip(tr("Mostrar o clipe inteiro (F; Ctrl+roda dá zoom)"));
     auto* snapBtn = new QPushButton(tr("Snap"), this);
     snapBtn->setCheckable(true);
     snapBtn->setChecked(true);
     snapBtn->setToolTip(tr("Encaixar nos frames (S; Ctrl durante o arrasto = livre)"));
 
-    const auto jump = [this](int dir) {
-        Clip* c = activeClip();
-        QVector<Keyframe>* kp = m_canvas->keys();
-        if (!c || !kp || kp->isEmpty()) return;
-        QVector<Keyframe>& K = *kp;
-        const double rel = std::clamp(m_playhead - c->pos, 0.0, c->dur);
-        int best = -1;
-        if (dir < 0) {
-            for (int i = 0; i < K.size(); ++i)
-                if (K[i].time < rel - 1e-9) best = i;
-            if (best < 0) best = K.size() - 1;
-        } else {
-            for (int i = K.size() - 1; i >= 0; --i)
-                if (K[i].time > rel + 1e-9) best = i;
-            if (best < 0) best = 0;
-        }
-        emit keyframeJump(c->pos + K[best].time);
-    };
-    connect(prevBtn, &QPushButton::clicked, this, [this, jump]() { jump(-1); });
-    connect(nextBtn, &QPushButton::clicked, this, [this, jump]() { jump(1); });
+    auto* fitBtn = new QPushButton(tr("Ajustar"), this);
+    fitBtn->setToolTip(tr("Mostrar o clipe inteiro (F; Ctrl+roda dá zoom)"));
 
-    auto* top = new QHBoxLayout;
-    top->setContentsMargins(6, 4, 6, 2);
-    top->addWidget(lbl);
-    top->addWidget(m_propCombo, 1);
-    top->addWidget(addBtn);
-    top->addWidget(delBtn);
-    top->addSpacing(8);
-    top->addWidget(prevBtn);
-    top->addWidget(nextBtn);
-    top->addWidget(fitBtn);
-    top->addWidget(snapBtn);
+    auto* topBar = new QHBoxLayout;
+    topBar->setContentsMargins(6, 2, 6, 0);
+    topBar->setSpacing(4);
+    topBar->addWidget(snapBtn);
+    topBar->addWidget(fitBtn);
+    topBar->addSpacing(8);
+
+    m_toolSel = new QToolButton(this);
+    m_toolSel->setCheckable(true);
+    m_toolSel->setChecked(true);
+    m_toolSel->setText(tr("Selecionar"));
+    m_toolSel->setToolTip(tr("Selecionar e mover keyframes (V)"));
+    m_toolAdd = new QToolButton(this);
+    m_toolAdd->setCheckable(true);
+    m_toolAdd->setText(tr("Adicionar"));
+    m_toolAdd->setToolTip(tr("Clicar no gráfico adiciona um keyframe (P)"));
+    m_toolCurve = new QToolButton(this);
+    m_toolCurve->setCheckable(true);
+    m_toolCurve->setText(tr("Curva"));
+    m_toolCurve->setToolTip(tr("Clicar cria um ponto suave; arrastar define a curva (B)"));
+
+    auto* tools = new QButtonGroup(this);
+    tools->setExclusive(true);
+    tools->addButton(m_toolSel, ToolSelect);
+    tools->addButton(m_toolAdd, ToolAdd);
+    tools->addButton(m_toolCurve, ToolCurve);
+    topBar->addWidget(m_toolSel);
+    topBar->addWidget(m_toolAdd);
+    topBar->addWidget(m_toolCurve);
+    topBar->addStretch(1);
 
     m_canvas = new GraphCanvas(this);
-    connect(m_canvas, &GraphCanvas::editStart, this, &GraphEditorWidget::editStart);
-    connect(m_canvas, &GraphCanvas::modified, this, &GraphEditorWidget::modified);
-    connect(fitBtn, &QPushButton::clicked, m_canvas, &GraphCanvas::resetZoom);
-    connect(snapBtn, &QPushButton::toggled, m_canvas, &GraphCanvas::setSnap);
-    connect(m_canvas, &GraphCanvas::snapChanged, snapBtn, &QPushButton::setChecked);
+
+    auto* canvasWrap = new QWidget(this);
+    auto* cw = new QVBoxLayout(canvasWrap);
+    cw->setContentsMargins(0, 0, 0, 0);
+    cw->setSpacing(0);
+    cw->addLayout(topBar);
+    cw->addWidget(m_canvas, 1);
+
+    m_scroll = new QScrollArea(this);
+    m_scroll->setWidgetResizable(true);
+    m_scroll->setFrameShape(QFrame::NoFrame);
+    m_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_scroll->setMinimumWidth(160);
+
+    auto* list = new QWidget(this);
+    m_rowsLayout = new QVBoxLayout(list);
+    m_rowsLayout->setContentsMargins(2, 2, 2, 2);
+    m_rowsLayout->setSpacing(2);
+    m_noClip = new QLabel(tr("Selecione um clipe na timeline para\neditar os keyframes."), list);
+    m_noClip->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
+    m_noClip->setStyleSheet(QStringLiteral("color:#667; font-size:11px; padding:8px 4px;"));
+    m_rowsLayout->addWidget(m_noClip);
+    m_rowsLayout->addStretch(1);
+    m_scroll->setWidget(list);
+
+    auto* splitter = new QSplitter(Qt::Horizontal, this);
+    splitter->addWidget(m_scroll);
+    splitter->addWidget(canvasWrap);
+    splitter->setStretchFactor(0, 0);
+    splitter->setStretchFactor(1, 1);
+    splitter->setChildrenCollapsible(false);
+    splitter->setHandleWidth(5);
+    splitter->setSizes({ 240, 600 });
 
     m_status = new QLabel(this);
     m_status->setTextFormat(Qt::PlainText);
     m_status->setStyleSheet(QStringLiteral("color:#9aa; font-size:11px; padding:2px 6px;"));
-    connect(m_canvas, &GraphCanvas::statusMessage, m_status, &QLabel::setText);
 
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);
     lay->setSpacing(0);
-    lay->addLayout(top);
-    lay->addWidget(m_canvas, 1);
+    lay->addWidget(splitter, 1);
     lay->addWidget(m_status);
+
+    setMinimumHeight(170);
+
+    connect(m_canvas, &GraphCanvas::editStart, this, &GraphEditorWidget::editStart);
+    connect(m_canvas, &GraphCanvas::modified, this, &GraphEditorWidget::modified);
+    connect(m_canvas, &GraphCanvas::statusMessage, m_status, &QLabel::setText);
+    connect(m_canvas, &GraphCanvas::keyframeJump, this, &GraphEditorWidget::keyframeJump);
+    connect(m_canvas, &GraphCanvas::snapChanged, snapBtn, &QPushButton::setChecked);
+    connect(snapBtn, &QPushButton::toggled, m_canvas, &GraphCanvas::setSnap);
+    connect(fitBtn, &QPushButton::clicked, m_canvas, &GraphCanvas::resetZoom);
+    connect(tools, &QButtonGroup::idClicked, m_canvas, [this](int id) {
+        m_canvas->setTool((CanvasTool)id);
+    });
+    connect(m_canvas, &GraphCanvas::toolChanged, this, [this, tools](CanvasTool t) {
+        if (QAbstractButton* b = tools->button((int)t)) b->setChecked(true);
+    });
 }
 
 // Tamanho padrão do painel: evita que o dock abra com metade da tela na
 // primeira execução (sem layout salvo ainda).
 QSize GraphEditorWidget::sizeHint() const {
-    return QSize(300, 104);
+    return QSize(520, 240);
 }
 
 void GraphEditorWidget::setProject(Project* p) {
     m_project = p;
-    rebuildProperties();
-    m_canvas->setData(activeClip(), currentProp(), m_playhead,
+    rebuildRows();
+    m_canvas->setData(activeClip(), m_prop, m_playhead,
                       m_project ? m_project->fps : 30.0);
 }
 
 void GraphEditorWidget::setClipId(const QString& id) {
     if (m_clipId == id) return;
     m_clipId = id;
-    rebuildProperties();
-    m_canvas->setData(activeClip(), currentProp(), m_playhead,
+    rebuildRows();
+    m_canvas->setData(activeClip(), m_prop, m_playhead,
                       m_project ? m_project->fps : 30.0);
 }
 
 void GraphEditorWidget::setPlayhead(double t) {
     m_playhead = t;
-    m_canvas->update();
+    m_canvas->setPlayhead(t);
+    for (GraphProp p : m_props) {
+        GraphPropRow* row = m_rows.value((int)p);
+        if (row) row->setStripPlayhead(t);
+    }
+    syncValueLabels();
 }
 
 void GraphEditorWidget::refresh() {
-    rebuildProperties();
-    m_canvas->setData(activeClip(), currentProp(), m_playhead,
+    // Se o tipo de mídia (vídeo/áudio) mudou, reconstrói a lista; senão só
+    // atualiza os dados preservando zoom e seleção do gráfico.
+    bool changed = false;
+    {
+        Clip* c = activeClip();
+        bool hasVideo = false, hasAudio = false;
+        if (c && m_project) {
+            const MediaItem* mi = m_project->findMedia(c->mediaId);
+            if (mi) { hasVideo = mi->hasVideo; hasAudio = mi->hasAudio; }
+        }
+        bool haveVideo = false, haveAudio = false;
+        for (GraphProp p : m_props) {
+            if (p == GPropVolume) haveAudio = true; else haveVideo = true;
+        }
+        changed = (haveVideo != hasVideo) || (haveAudio != hasAudio);
+    }
+    if (changed) {
+        rebuildRows();
+        m_canvas->setData(activeClip(), m_prop, m_playhead,
+                          m_project ? m_project->fps : 30.0);
+        return;
+    }
+
+    const double zt0 = m_canvas->zoomT0();
+    const double zt1 = m_canvas->zoomT1();
+    const QVector<double> selTimes = m_canvas->selectionTimes();
+    syncRowData();
+    m_canvas->setData(activeClip(), m_prop, m_playhead,
                       m_project ? m_project->fps : 30.0);
+    if (zt1 > zt0) m_canvas->setZoom(zt0, zt1);
+    if (!selTimes.isEmpty()) m_canvas->selectKeysAtTimes(selTimes);
 }
 
 Clip* GraphEditorWidget::activeClip() const {
@@ -1072,19 +1739,68 @@ Clip* GraphEditorWidget::activeClip() const {
     return nullptr;
 }
 
-GraphProp GraphEditorWidget::currentProp() const {
-    const int idx = m_propCombo->currentIndex();
-    if (idx >= 0 && idx < m_props.size()) return m_props[idx];
-    return GPropOpacity;
+double GraphEditorWidget::propValueAtPlayhead(GraphProp p) const {
+    Clip* c = activeClip();
+    if (!c) return 0.0;
+    const QVector<Keyframe>* K = keysFor(c, p);
+    const double rel = std::clamp(m_playhead - c->pos, 0.0, c->dur);
+    return kfValue(*K, baseFor(c, p), rel);
 }
 
-void GraphEditorWidget::rebuildProperties() {
-    const QSignalBlocker b(m_propCombo);
-    m_propCombo->clear();
+void GraphEditorWidget::setProperty(GraphProp p) {
+    if (!m_props.contains(p)) return;
+    m_prop = p;
+    m_canvas->setData(activeClip(), p, m_playhead,
+                      m_project ? m_project->fps : 30.0);
+    for (GraphProp q : m_props) {
+        GraphPropRow* row = m_rows.value((int)q);
+        if (row) row->setActive(q == p);
+    }
+    if (GraphPropRow* row = m_rows.value((int)p)) row->setExpanded(true);
+    syncValueLabels();
+}
+
+void GraphEditorWidget::syncRowData() {
+    Clip* c = activeClip();
+    const double fps = m_project ? m_project->fps : 30.0;
+    for (GraphProp p : m_props) {
+        GraphPropRow* row = m_rows.value((int)p);
+        if (!row) continue;
+        row->setStripData(c, fps);
+        const QVector<Keyframe>* K = keysFor(c, p);
+        row->setAnimated(K && !K->isEmpty());
+        row->setActive(p == m_prop);
+    }
+    syncValueLabels();
+}
+
+void GraphEditorWidget::syncValueLabels() {
+    for (GraphProp p : m_props) {
+        GraphPropRow* row = m_rows.value((int)p);
+        if (!row) continue;
+        const double v = propValueAtPlayhead(p);
+        double lo = 0.0, hi = 1.0;
+        rangeFor(p, &lo, &hi);
+        row->setValueText(fmtVal(v, hi - lo));
+    }
+}
+
+void GraphEditorWidget::rebuildRows() {
+    while (m_rowsLayout->count() > 2) {
+        QLayoutItem* it = m_rowsLayout->takeAt(1);
+        if (it->widget()) it->widget()->deleteLater();
+        delete it;
+    }
+    m_rows.clear();
     m_props.clear();
 
     Clip* c = activeClip();
-    if (!c) return;
+    if (!c) {
+        m_canvas->setData(nullptr, m_prop, m_playhead,
+                          m_project ? m_project->fps : 30.0);
+        m_noClip->setVisible(true);
+        return;
+    }
     bool hasVideo = false, hasAudio = false;
     if (m_project) {
         const MediaItem* mi = m_project->findMedia(c->mediaId);
@@ -1094,14 +1810,115 @@ void GraphEditorWidget::rebuildProperties() {
         const QVector<GraphProp> vid = { GPropOpacity, GPropScale, GPropRotation,
                                          GPropTx, GPropTy,
                                          GPropCropL, GPropCropR, GPropCropT, GPropCropB };
-        for (GraphProp p : vid) { m_props.append(p); m_propCombo->addItem(propName(p)); }
+        for (GraphProp p : vid) m_props.append(p);
     }
-    if (hasAudio) {
-        m_props.append(GPropVolume);
-        m_propCombo->addItem(propName(GPropVolume));
+    if (hasAudio) m_props.append(GPropVolume);
+    if (m_props.isEmpty()) m_props.append(GPropOpacity);
+    if (!m_props.contains(m_prop)) m_prop = m_props.first();
+    m_noClip->setVisible(false);
+
+    for (GraphProp p : m_props) {
+        auto* row = new GraphPropRow(p);
+        m_rowsLayout->insertWidget(m_rowsLayout->count() - 1, row);
+        m_rows.insert((int)p, row);
+
+        connect(row, &GraphPropRow::propertyClicked, this, [this, p]() { setProperty(p); });
+        connect(row, &GraphPropRow::stopwatchClicked, this, [this, p]() { toggleAnimation(p); });
+        connect(row, &GraphPropRow::prevKeyframe, this, [this, p]() { jumpKeyframe(p, -1); });
+        connect(row, &GraphPropRow::nextKeyframe, this, [this, p]() { jumpKeyframe(p, 1); });
+        connect(row, &GraphPropRow::toggleKeyframe, this, [this, p]() { toggleKeyAtPlayhead(p); });
+        connect(row, &GraphPropRow::stripKeyClicked, this, [this, p](int idx) {
+            setProperty(p);
+            m_canvas->selectKeyIndex(idx);
+            Clip* c = activeClip();
+            const QVector<Keyframe>* K = keysFor(c, p);
+            if (K && idx >= 0 && idx < K->size())
+                emit keyframeJump(c->pos + K->at(idx).time);
+        });
+        connect(row, &GraphPropRow::stripDragStart, this, [this](int) { emit editStart(); });
+        connect(row, &GraphPropRow::stripDragKey, this, [this, p](int idx, double t) {
+            m_canvas->dragStripTime(idx, t);
+        });
+        connect(row, &GraphPropRow::stripAddKey, this, [this, p](double t) {
+            Clip* c = activeClip();
+            if (!c) return;
+            const double rel = std::clamp(t, 0.0, c->dur);
+            QVector<Keyframe>& K = *keysFor(c, p);
+            for (const Keyframe& k : K)
+                if (std::fabs(k.time - rel) < 1e-9) {
+                    m_status->setText(tr("Já existe um keyframe nesse tempo."));
+                    return;
+                }
+            const double v = kfValue(K, baseFor(c, p), rel);
+            emit editStart();
+            m_canvas->addKeyframe(rel, v);
+            syncRowData();
+            m_canvas->commitChange();
+        });
     }
-    if (m_props.isEmpty()) {
-        m_props.append(GPropOpacity);
-        m_propCombo->addItem(propName(GPropOpacity));
+    syncRowData();
+    if (GraphPropRow* r = m_rows.value((int)m_prop)) r->setExpanded(true);
+}
+
+void GraphEditorWidget::toggleAnimation(GraphProp p) {
+    Clip* c = activeClip();
+    if (!c) return;
+    QVector<Keyframe>& K = *keysFor(c, p);
+    emit editStart();
+    if (K.isEmpty()) {
+        const double rel = std::clamp(m_playhead - c->pos, 0.0, c->dur);
+        Keyframe nk;
+        nk.time = rel;
+        nk.value = baseFor(c, p);
+        nk.interp = KfLinear;
+        K.append(nk);
+    } else {
+        K.clear();
+        m_canvas->clearSelection();
     }
+    m_canvas->fitValueRange();
+    syncRowData();
+    m_canvas->commitChange();
+}
+
+void GraphEditorWidget::toggleKeyAtPlayhead(GraphProp p) {
+    Clip* c = activeClip();
+    if (!c) return;
+    QVector<Keyframe>& K = *keysFor(c, p);
+    const double rel0 = std::clamp(m_playhead - c->pos, 0.0, c->dur);
+    const double fr = 1.0 / std::max(1.0, m_project ? m_project->fps : 30.0);
+    const double rel = std::round(rel0 / fr) * fr;
+    int at = -1;
+    for (int i = 0; i < K.size(); ++i)
+        if (std::fabs(K[i].time - rel) < 1e-9) { at = i; break; }
+    emit editStart();
+    if (at >= 0) {
+        K.removeAt(at);
+        m_canvas->clearSelection();
+    } else {
+        const double v = kfValue(K, baseFor(c, p), rel);
+        m_canvas->addKeyframe(rel, v);
+    }
+    m_canvas->fitValueRange();
+    syncRowData();
+    m_canvas->commitChange();
+}
+
+void GraphEditorWidget::jumpKeyframe(GraphProp p, int dir) {
+    Clip* c = activeClip();
+    if (!c) return;
+    const QVector<Keyframe>* K = keysFor(c, p);
+    if (!K || K->isEmpty()) return;
+    const double rel = std::clamp(m_playhead - c->pos, 0.0, c->dur);
+    int best = -1;
+    if (dir < 0) {
+        for (int i = 0; i < K->size(); ++i)
+            if ((*K)[i].time < rel - 1e-9) best = i;
+        if (best < 0) best = K->size() - 1;
+    } else {
+        for (int i = K->size() - 1; i >= 0; --i)
+            if ((*K)[i].time > rel + 1e-9) best = i;
+        if (best < 0) best = 0;
+    }
+    emit keyframeJump(c->pos + (*K)[best].time);
 }

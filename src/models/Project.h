@@ -35,18 +35,23 @@ struct Marker {
 // Modos de interpolação de keyframe.
 enum KfInterp {
     KfLinear = 0, // segmento reto
-    KfSmooth = 1, // Catmull-Rom (curva suave automática)
+    KfSmooth = 1, // Auto Bezier (curva suave automática, Catmull-Rom)
     KfStep   = 2, // segura o valor até o próximo keyframe
-    KfBezier = 3  // handles manuais (hx, hy)
+    KfBezier = 3  // Bezier manual (handles de entrada e saída independentes)
 };
 
 struct Keyframe {
     double time = 0.0;
     double value = 0.0;
     int interp = KfLinear; // interpolação do segmento que SAI deste keyframe
-    // Handle de saída (bezier manual): ponto = (time + hx, value + hy).
-    double hx = 0.0;
-    double hy = 0.0;
+    // Bezier manual, estilo Premiere: cada keyframe tem handle de SAÍDA
+    // (afeta o segmento à direita) e de ENTRADA (afeta o segmento à esquerda).
+    //   Handle de saída:   ponto = (time + ox, value + oy)
+    //   Handle de entrada: ponto = (time - ix, value + iy)
+    double ox = 0.0;
+    double oy = 0.0;
+    double ix = 0.0;
+    double iy = 0.0;
 };
 
 // Bezier cúbico: A e B são pontos, c1/c2 handles.
@@ -87,9 +92,34 @@ inline double kfValue(const QVector<Keyframe>& keys, double base, double t) {
                                b.value - m3 * span, b.value, f);
         }
         case KfBezier: {
-            const double c1 = a.value + a.hy;
-            const double c2 = b.value - b.hy;
-            return cubicBezier(a.value, c1, c2, b.value, f);
+            // Bezier paramétrico real (como o Premiere): os handles têm
+            // posição própria no tempo (ox, ix) e no valor (oy, iy).
+            // Resolve Bx(u)=t por Newton e avalia By(u).
+            const double p1x = a.time + a.ox;
+            const double p2x = b.time - b.ix;
+            const double p1y = a.value + a.oy;
+            const double p2y = b.value + b.iy;
+            double u = f;
+            for (int it = 0; it < 10; ++it) {
+                const double w0 = (1.0 - u) * (1.0 - u) * (1.0 - u);
+                const double w1 = 3.0 * (1.0 - u) * (1.0 - u) * u;
+                const double w2 = 3.0 * (1.0 - u) * u * u;
+                const double w3 = u * u * u;
+                const double bx = w0 * a.time + w1 * p1x + w2 * p2x + w3 * b.time;
+                const double dxdu = 3.0 * (1.0 - u) * (1.0 - u) * (p1x - a.time)
+                                  + 6.0 * (1.0 - u) * u * (p2x - p1x)
+                                  + 3.0 * u * u * (b.time - p2x);
+                const double err = bx - t;
+                if (std::fabs(err) < 1e-10) break;
+                if (std::fabs(dxdu) < 1e-12) break;
+                u -= err / dxdu;
+                u = std::clamp(u, 0.0, 1.0);
+            }
+            const double w0 = (1.0 - u) * (1.0 - u) * (1.0 - u);
+            const double w1 = 3.0 * (1.0 - u) * (1.0 - u) * u;
+            const double w2 = 3.0 * (1.0 - u) * u * u;
+            const double w3 = u * u * u;
+            return w0 * a.value + w1 * p1y + w2 * p2y + w3 * b.value;
         }
         case KfLinear:
         default:

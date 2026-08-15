@@ -17,6 +17,8 @@
 #include <QGridLayout>
 #include <QMouseEvent>
 #include <QWheelEvent>
+#include <QContextMenuEvent>
+#include <QMenu>
 #include <algorithm>
 #include <cmath>
 
@@ -27,6 +29,50 @@ constexpr int kCropMax = 80;   // %
 constexpr int kPanMax = 100;   // % da largura/altura do projeto
 
 enum Prop { P_CropL, P_CropR, P_CropT, P_CropB, P_Scale, P_PanX, P_PanY };
+
+// Presets de suavização "estilo Vegas" aplicados ao segmento que sai do
+// keyframe (ou, no último, ao segmento que chega).
+void applyEasePreset(QVector<Keyframe>& kf, int i, int preset) {
+    Keyframe* k = &kf[i];
+    if (i + 1 < kf.size()) {
+        const double span = kf[i + 1].time - k->time;
+        const double delta = kf[i + 1].value - k->value;
+        switch (preset) {
+            case 1: // Suave
+                k->interp = KfSmooth; k->ox = k->oy = k->ix = k->iy = 0.0; break;
+            case 2: // Rápido (começa rápido, desacelera)
+                k->interp = KfBezier; k->ox = span / 3.0; k->oy = 0.85 * delta;
+                k->ix = 0.0; k->iy = 0.0; break;
+            case 3: // Lento (começa devagar, acelera)
+                k->interp = KfBezier; k->ox = span / 3.0; k->oy = 0.15 * delta;
+                k->ix = 0.0; k->iy = 0.0; break;
+            case 4: // Acentuada (S acentuado no meio)
+                k->interp = KfBezier; k->ox = span / 3.0; k->oy = 0.55 * delta;
+                k->ix = 0.0; k->iy = 0.0; break;
+            default: // Linear
+                k->interp = KfLinear; break;
+        }
+    } else if (i > 0) {
+        Keyframe* p = &kf[i - 1];
+        const double span = k->time - p->time;
+        const double delta = k->value - p->value;
+        switch (preset) {
+            case 1:
+                p->interp = KfSmooth; p->ox = p->oy = p->ix = p->iy = 0.0; break;
+            case 2:
+                p->interp = KfBezier; p->ox = span / 3.0; p->oy = 0.85 * delta;
+                p->ix = 0.0; p->iy = 0.0; break;
+            case 3:
+                p->interp = KfBezier; p->ox = span / 3.0; p->oy = 0.15 * delta;
+                p->ix = 0.0; p->iy = 0.0; break;
+            case 4:
+                p->interp = KfBezier; p->ox = span / 3.0; p->oy = 0.55 * delta;
+                p->ix = 0.0; p->iy = 0.0; break;
+            default:
+                p->interp = KfLinear; break;
+        }
+    }
+}
 }
 
 // Viewfinder: widget que exibe o frame com a caixa de recorte/janela de saída
@@ -51,7 +97,7 @@ private:
 class PancropWidget::KeyframeStrip : public QWidget {
 public:
     explicit KeyframeStrip(PancropWidget* owner) : QWidget(owner), m_owner(owner) {
-        setMinimumHeight(30);
+        setMinimumHeight(36);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     }
 protected:
@@ -59,6 +105,7 @@ protected:
     void mousePressEvent(QMouseEvent* e) override { m_owner->stripPress(this, e); }
     void mouseMoveEvent(QMouseEvent* e) override { m_owner->stripMove(this, e); }
     void mouseReleaseEvent(QMouseEvent* e) override { m_owner->stripRelease(this, e); }
+    void contextMenuEvent(QContextMenuEvent* e) override { m_owner->stripContextMenu(this, e); }
 private:
     PancropWidget* m_owner;
 };
@@ -76,7 +123,9 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
         auto* l = new QLabel(tr("0%"), this);
         l->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         l->setFixedWidth(42);
-        l->setStyleSheet(QStringLiteral("color:#88c0ff; font-weight:bold;"));
+        l->setStyleSheet(QStringLiteral(
+            "color:#9cc4f0; font-weight:bold; background:#202228;"
+            "border:1px solid #2c2f36; border-radius:3px; padding:1px 4px;"));
         return l;
     };
     auto makeDiamond = [this](int prop) {
@@ -85,8 +134,8 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
         b->setCursor(Qt::PointingHandCursor);
         b->setToolTip(tr("Alternar keyframe no playhead"));
         b->setStyleSheet(QStringLiteral(
-            "QPushButton{color:#5a5a66; border:none; background:transparent; font-size:13px;}"
-            "QPushButton:hover{color:#ffffff;}"));
+            "QPushButton{color:#565d68; border:none; background:transparent; font-size:14px;}"
+            "QPushButton:hover{color:#c9d4e2;}"));
         connect(b, &QPushButton::clicked, this, [this, prop]() { toggleKeyframe(prop); });
         m_kfDiamonds[prop] = b;
         return b;
@@ -198,7 +247,7 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
                                "a roda do mouse para dar zoom."),
                             this);
     hint->setWordWrap(true);
-    hint->setStyleSheet(QStringLiteral("color:#999; font-size:11px;"));
+    hint->setStyleSheet(QStringLiteral("color:#7e8794; font-size:11px;"));
 
     // Navegação de keyframes (estilo DaVinci): anterior/próximo e auto-keyframe.
     auto* kfBar = new QHBoxLayout;
@@ -244,6 +293,24 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     lay->setSpacing(6);
     lay->addWidget(m_view, 1);
     lay->addWidget(controls);
+
+    // Visual escuro, plano e minimalista (estilo Effect Controls do Premiere).
+    setStyleSheet(QStringLiteral(
+        "QWidget{background:#15161a;}"
+        "QGroupBox{border:1px solid #2a2d34; border-radius:4px; margin-top:14px;"
+        " background:#1c1e23;}"
+        "QGroupBox::title{subcontrol-origin:margin; left:8px; top:2px; padding:0 4px;"
+        " color:#9db2c8; font-weight:bold; font-size:11px;}"
+        "QPushButton{border:1px solid #2e3138; border-radius:3px; background:#23252b;"
+        " color:#c9cdd4; padding:2px 8px;}"
+        "QPushButton:hover{background:#2b2e35; border-color:#3c414b;}"
+        "QPushButton:checked{background:#243447; border-color:#3f6ea5; color:#9cc4f0;}"
+        "QSlider::groove:horizontal{height:3px; background:#2e3138; border-radius:1px;}"
+        "QSlider::sub-page:horizontal{background:#3f6ea5; border-radius:1px;}"
+        "QSlider::handle:horizontal{width:11px; margin:-4px 0; border-radius:5px;"
+        " background:#7aa7d4; border:1px solid #3f6ea5;}"
+        "QSlider::handle:horizontal:hover{background:#93bde8;}"
+        "QLabel{color:#c9cdd4;}"));
 
     refreshDiamonds();
     m_strip->update();
@@ -468,11 +535,11 @@ void PancropWidget::gotoKeyframe(int dir) {
 void PancropWidget::refreshDiamonds() {
     const double rel = relPlayhead();
     const QString on =
-        QStringLiteral("QPushButton{color:#ffb340; border:none; background:transparent; font-size:13px;}"
+        QStringLiteral("QPushButton{color:#ffb340; border:none; background:transparent; font-size:14px;}"
                        "QPushButton:hover{color:#ffd080;}");
     const QString off =
-        QStringLiteral("QPushButton{color:#5a5a66; border:none; background:transparent; font-size:13px;}"
-                       "QPushButton:hover{color:#ffffff;}");
+        QStringLiteral("QPushButton{color:#565d68; border:none; background:transparent; font-size:14px;}"
+                       "QPushButton:hover{color:#c9d4e2;}");
     for (auto it = m_kfDiamonds.begin(); it != m_kfDiamonds.end(); ++it) {
         bool active = false;
         if (rel >= 0.0) {
@@ -634,7 +701,10 @@ void PancropWidget::applyPan(double sx, double sy) {
 
 void PancropWidget::paintViewfinder(QWidget* view) {
     QPainter p(view);
-    p.fillRect(view->rect(), QColor(30, 30, 34));
+    p.fillRect(view->rect(), QColor(14, 15, 18));
+    // Borda discreta do "monitor" (como o programa monitor do Premiere).
+    p.setPen(QPen(QColor(38, 41, 48), 1));
+    p.drawRect(view->rect().adjusted(0, 0, -1, -1));
     if (m_frame.isNull()) {
         p.setPen(QColor(140, 140, 150));
         p.drawText(view->rect(), Qt::AlignCenter,
@@ -688,16 +758,16 @@ void PancropWidget::paintViewfinder(QWidget* view) {
                         toDisp(cropS.right(), cropS.bottom())));
     p.fillPath(shp.subtracted(hole), QColor(0, 0, 0, 150));
 
-    // Contorno do crop.
-    p.setPen(QPen(QColor(90, 160, 255), 1.5, Qt::DashLine));
+    // Contorno do crop (branco tracejado, como o Premiere).
+    p.setPen(QPen(QColor(235, 238, 242), 1, Qt::DashLine));
     p.setBrush(Qt::NoBrush);
     const QRectF cropDisp(toDisp(cropS.left(), cropS.top()),
                           toDisp(cropS.right(), cropS.bottom()));
     p.drawRect(cropDisp);
 
-    // Alças de redimensionamento do crop.
-    p.setPen(QPen(QColor(255, 255, 255), 1));
-    p.setBrush(QColor(90, 160, 255));
+    // Alças de redimensionamento do crop (quadrados brancos).
+    p.setPen(QPen(QColor(18, 20, 24), 1));
+    p.setBrush(QColor(235, 238, 242));
     const double hd = 6.0;
     const QPointF tl(cropDisp.left(), cropDisp.top());
     const QPointF tr(cropDisp.right(), cropDisp.top());
@@ -800,6 +870,7 @@ void PancropWidget::viewportPress(QWidget* view, QMouseEvent* e) {
             case DragCropT:  case DragCropB:  view->setCursor(Qt::SizeVerCursor); break;
             default: break;
         }
+        e->accept();
         return;
     }
 
@@ -814,6 +885,7 @@ void PancropWidget::viewportPress(QWidget* view, QMouseEvent* e) {
         m_undoPushed = true;
         emit editStart();
         applyPan(sx + m_grabOffset.x(), sy + m_grabOffset.y());
+        e->accept();
     } else {
         e->ignore();
     }
@@ -824,6 +896,7 @@ void PancropWidget::viewportMove(QWidget* view, QMouseEvent* e) {
         e->ignore();
         return;
     }
+    e->accept();
     m_lastDrag = e->pos();
     double sx, sy;
     screenToSource(view->rect(), e->pos(), &sx, &sy);
@@ -914,24 +987,16 @@ static int kfStripX(double rel, const QWidget* view, double dur) {
 
 void PancropWidget::paintKeyframeStrip(QWidget* view) {
     QPainter p(view);
-    p.fillRect(view->rect(), QColor(26, 26, 29));
+    p.fillRect(view->rect(), QColor(19, 20, 24));
     Clip* c = activeClip();
     if (!c) return;
     const double dur = std::max(c->dur, 1e-3);
     const int w = view->width();
     const int h = view->height();
 
-    // Linha do tempo.
-    p.setPen(QColor(60, 60, 68));
+    // Linha do tempo discreta, como nas mini-tiras do editor de curvas.
+    p.setPen(QColor(46, 49, 56));
     p.drawLine(0, h / 2, w, h / 2);
-
-    // Agulha: posição relativa do playhead.
-    const double rel = relPlayhead();
-    if (rel >= 0.0) {
-        const int x = kfStripX(rel, view, dur);
-        p.setPen(QColor(255, 70, 70));
-        p.drawLine(x, 2, x, h - 2);
-    }
 
     // Keyframes: coleta os tempos únicos de todas as propriedades.
     const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
@@ -946,14 +1011,25 @@ void PancropWidget::paintKeyframeStrip(QWidget* view) {
         }
     }
     std::sort(times.begin(), times.end());
+    const double rel = relPlayhead();
+
+    // Linha do playhead (igual à das mini-tiras do editor de curvas).
+    if (rel >= 0.0) {
+        const int px = kfStripX(rel, view, dur);
+        p.setPen(QPen(QColor(190, 220, 255, 200), 1));
+        p.drawLine(px, 2, px, h - 2);
+    }
+
     for (double t : times) {
         const int x = kfStripX(t, view, dur);
-        const bool active = std::fabs(t - rel) < 1e-6;
+        const bool active = rel >= 0.0 && std::fabs(t - rel) < 1e-6;
         QPolygon dia = QPolygon()
             << QPoint(x, h / 2 - 6) << QPoint(x + 5, h / 2)
             << QPoint(x, h / 2 + 6) << QPoint(x - 5, h / 2);
-        p.setPen(QPen(QColor(20, 20, 24), 1));
-        p.setBrush(active ? QColor(255, 179, 64) : QColor(120, 170, 255));
+        p.setPen(QPen(QColor(10, 10, 12), 1));
+        // Mesma cor dos keyframes do editor de curvas: cinza quando inativo,
+        // laranja quando o playhead está em cima.
+        p.setBrush(active ? QColor(255, 179, 64) : QColor(200, 205, 215));
         p.drawPolygon(dia);
     }
 }
@@ -964,7 +1040,7 @@ void PancropWidget::stripPress(QWidget* view, QMouseEvent* e) {
     if (e->button() != Qt::LeftButton || !c) return;
     const double dur = std::max(c->dur, 1e-3);
 
-    // Encontra o keyframe mais próximo do clique (tol ~7 px).
+    // Encontra o keyframe mais próximo do clique (tol ~9 px).
     const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
                          P_Scale, P_PanX, P_PanY};
     QVector<double> times;
@@ -979,7 +1055,7 @@ void PancropWidget::stripPress(QWidget* view, QMouseEvent* e) {
     for (int i = 0; i < times.size(); ++i) {
         const int x = kfStripX(times[i], view, dur);
         const int dist = std::abs(e->pos().x() - x);
-        if (dist <= 7 && dist < bestDist) { bestDist = dist; bestIdx = i; }
+        if (dist <= 9 && dist < bestDist) { bestDist = dist; bestIdx = i; }
     }
     if (bestIdx < 0) {
         // Clique em ponto vazio: move a agulha para esse instante.
@@ -987,6 +1063,7 @@ void PancropWidget::stripPress(QWidget* view, QMouseEvent* e) {
                                        0.0, 1.0);
         emit keyframeJump(c->pos + frac * dur);
         m_strip->update();
+        e->accept();
         return;
     }
     m_stripDragging = true;
@@ -995,7 +1072,9 @@ void PancropWidget::stripPress(QWidget* view, QMouseEvent* e) {
     setCursor(Qt::ClosedHandCursor);
     emit editStart();
     m_undoPushed = true;
+    emit keyframeJump(c->pos + times[bestIdx]);
     m_strip->update();
+    e->accept();
 }
 
 void PancropWidget::stripMove(QWidget* view, QMouseEvent* e) {
@@ -1030,9 +1109,10 @@ void PancropWidget::stripMove(QWidget* view, QMouseEvent* e) {
     m_view->update();
     m_strip->update();
     emit modified();
+    e->accept();
 }
 
-void PancropWidget::stripRelease(QWidget* view, QMouseEvent*) {
+void PancropWidget::stripRelease(QWidget* view, QMouseEvent* e) {
     if (m_stripDragging) {
         m_stripDragging = false;
         m_stripDragFrom = -1.0;
@@ -1040,4 +1120,62 @@ void PancropWidget::stripRelease(QWidget* view, QMouseEvent*) {
         setCursor(Qt::ArrowCursor);
         m_strip->update();
     }
+    e->accept();
+}
+
+// Clique direito num keyframe da faixa: predefinições de suavização estilo
+// Vegas (linear, suave, rápido, lento, acentuada).
+void PancropWidget::stripContextMenu(QWidget* view, QContextMenuEvent* e) {
+    Clip* c = activeClip();
+    if (!c) { e->ignore(); return; }
+    const double dur = std::max(c->dur, 1e-3);
+
+    const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
+                         P_Scale, P_PanX, P_PanY};
+    QVector<double> times;
+    for (int prop : props) {
+        QVector<Keyframe>* kf = keyframesFor(prop);
+        if (!kf) continue;
+        for (const Keyframe& k : *kf)
+            if (!times.contains(k.time)) times.append(k.time);
+    }
+    int bestIdx = -1;
+    double bestDist = 1e9;
+    for (int i = 0; i < times.size(); ++i) {
+        const int x = kfStripX(times[i], view, dur);
+        const int dist = std::abs(e->pos().x() - x);
+        if (dist <= 9 && dist < bestDist) { bestDist = dist; bestIdx = i; }
+    }
+    if (bestIdx < 0) { e->accept(); return; }
+    const double t = times[bestIdx];
+
+    QMenu menu(view);
+    QAction* lin = menu.addAction(tr("Linear (padrão)"));
+    QAction* suave = menu.addAction(tr("Suave"));
+    QAction* rapido = menu.addAction(tr("Rápido"));
+    QAction* lento = menu.addAction(tr("Lento"));
+    QAction* acent = menu.addAction(tr("Acentuada"));
+    QAction* act = menu.exec(e->globalPos());
+    if (!act) return;
+
+    int preset = 0;
+    if (act == suave) preset = 1;
+    else if (act == rapido) preset = 2;
+    else if (act == lento) preset = 3;
+    else if (act == acent) preset = 4;
+
+    if (!m_undoPushed) { emit editStart(); m_undoPushed = true; }
+    for (int prop : props) {
+        QVector<Keyframe>* kf = keyframesFor(prop);
+        if (!kf) continue;
+        for (int i = 0; i < kf->size(); ++i) {
+            if (std::fabs((*kf)[i].time - t) < 1e-6) {
+                applyEasePreset(*kf, i, preset);
+                break;
+            }
+        }
+    }
+    emit modified();
+    refreshDiamonds();
+    m_strip->update();
 }

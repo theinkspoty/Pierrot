@@ -119,7 +119,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     m_graph = new GraphEditorWidget(this);
     m_graph->setProject(&m_project);
-    m_graph->setMinimumHeight(90);
+    m_graph->setMinimumHeight(170);
 
     createDocks();
     createActions();
@@ -379,7 +379,7 @@ void MainWindow::createDocks() {
                              | QDockWidget::DockWidgetClosable);
     addDockWidget(Qt::BottomDockWidgetArea, m_graphDock);
     splitDockWidget(m_timelineDock, m_graphDock, Qt::Vertical);
-    m_graphDock->setMinimumHeight(64);
+    m_graphDock->setMinimumHeight(170);
 
     // Qualquer mudança de arranjo dos painéis agenda o salvamento do layout.
     for (QDockWidget* dock : {m_poolDock, m_timelineDock, m_pancropDock, m_graphDock}) {
@@ -873,6 +873,7 @@ void MainWindow::applyUndoState() {
     m_timeline->setProject(&m_project);
     m_pool->refreshFromProject();
     m_pancrop->setProject(&m_project);
+    m_graph->refresh();
     m_preview->refreshView();
     m_timeline->setFocus();
     updateUndoActions();

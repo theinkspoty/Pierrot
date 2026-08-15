@@ -86,12 +86,27 @@ QString kfExpr(const QVector<Keyframe>& keys, double base, double offset) {
                               " + 3*(1-(%1))*(%1)^2*%4 + (%1)^3*%5")
                           .arg(f).arg(num(pv)).arg(num(c1)).arg(num(c2)).arg(num(v));
             } else if (mode == KfBezier) {
-                const Keyframe& a = keys[i - 1];
-                const double c1 = pv + a.hy;
-                const double c2 = v - keys[i].hy;
-                seg = QString("(1-(%1))^3*%2 + 3*(1-(%1))^2*(%1)*%3"
-                              " + 3*(1-(%1))*(%1)^2*%4 + (%1)^3*%5")
-                          .arg(f).arg(num(pv)).arg(num(c1)).arg(num(c2)).arg(num(v));
+                // O ffmpeg não resolve o u do bezier paramétrico (posição
+                // real dos handles no tempo). Amostra a curva exata (kfValue)
+                // em N sub-segmentos lineares, reproduzindo o preview.
+                constexpr int N = 12;
+                QVector<double> kts(N + 1), kvs(N + 1);
+                for (int s = 0; s <= N; ++s) {
+                    kts[s] = keys[i - 1].time + span * s / N;
+                    kvs[s] = kfValue(keys, base, kts[s]);
+                }
+                QString sub = QString("%1 + (%2-%1)*(t-%3)/%4")
+                                  .arg(num(kvs[N - 1])).arg(num(kvs[N]))
+                                  .arg(num(offset + kts[N - 1])).arg(num(kts[N] - kts[N - 1]));
+                for (int s = N - 1; s >= 1; --s) {
+                    const QString lin = QString("%1 + (%2-%1)*(t-%3)/%4")
+                                            .arg(num(kvs[s - 1])).arg(num(kvs[s]))
+                                            .arg(num(offset + kts[s - 1]))
+                                            .arg(num(kts[s] - kts[s - 1]));
+                    sub = QString("if(lte(t,%1),%2,%3)")
+                              .arg(num(offset + kts[s])).arg(lin).arg(sub);
+                }
+                seg = sub;
             } else {
                 const double m = (v - pv) / span;
                 seg = QString("%1+%2*(t-%3)").arg(num(pv)).arg(num(m)).arg(num(pt));

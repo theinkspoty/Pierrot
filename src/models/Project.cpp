@@ -42,10 +42,13 @@ static QJsonArray kfToJson(const QVector<Keyframe>& v) {
         QJsonObject o;
         o["t"] = k.time;
         o["v"] = k.value;
-        if (k.interp != KfLinear || k.hx != 0.0 || k.hy != 0.0) {
+        if (k.interp != KfLinear || k.ox != 0.0 || k.oy != 0.0
+            || k.ix != 0.0 || k.iy != 0.0) {
             o["i"] = k.interp;
-            o["hx"] = k.hx;
-            o["hy"] = k.hy;
+            o["ox"] = k.ox;
+            o["oy"] = k.oy;
+            o["ix"] = k.ix;
+            o["iy"] = k.iy;
         }
         a.append(o);
     }
@@ -61,12 +64,35 @@ static QVector<Keyframe> kfFromJson(const QJsonValue& val) {
         k.time = o["t"].toDouble();
         k.value = o["v"].toDouble();
         k.interp = o["i"].toInt(KfLinear);
-        k.hx = o["hx"].toDouble(0.0);
-        k.hy = o["hy"].toDouble(0.0);
+        if (o.contains("hx") || o.contains("hy")) {
+            // Projeto antigo (handle único): preserva a curva. A posição
+            // horizontal do controle (u = 1/3) é resolvida depois, com os
+            // vizinhos; marca com -1.
+            const double hy = o["hy"].toDouble(0.0);
+            k.oy = hy;
+            k.iy = -hy;
+            k.ox = (k.interp == KfBezier) ? -1.0 : 0.0;
+            k.ix = k.ox;
+        } else {
+            k.ox = o["ox"].toDouble(0.0);
+            k.oy = o["oy"].toDouble(0.0);
+            k.ix = o["ix"].toDouble(0.0);
+            k.iy = o["iy"].toDouble(0.0);
+        }
         v.append(k);
     }
     std::sort(v.begin(), v.end(),
               [](const Keyframe& a, const Keyframe& b) { return a.time < b.time; });
+    // Projetos antigos: posiciona o controle real (u = 1/3) do bezier.
+    for (int i = 0; i < v.size(); ++i) {
+        Keyframe& k = v[i];
+        if (k.interp != KfBezier || k.ox >= 0.0) continue;
+        const double spanR = (i + 1 < v.size()) ? v[i + 1].time - k.time : 0.0;
+        const double spanL = (i > 0) ? k.time - v[i - 1].time : 0.0;
+        const double span = (spanR > 1e-9) ? spanR : spanL;
+        k.ox = (span > 1e-9) ? span / 3.0 : 0.0;
+        k.ix = k.ox;
+    }
     return v;
 }
 
