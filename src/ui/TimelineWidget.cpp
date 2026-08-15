@@ -1365,6 +1365,7 @@ void TimelineWidget::pasteClips() {
         pasted.append(nc.id);
     }
     if (pasted.isEmpty()) return;
+    clearTrackSelection();
     m_selected = pasted;
     invalidateScene();
     updateScrollRanges();
@@ -1411,6 +1412,7 @@ void TimelineWidget::nudgeSelected(int dir) {
 
 void TimelineWidget::selectAllClips() {
     if (!m_project) return;
+    clearTrackSelection();
     m_selected.clear();
     for (const Track& t : m_project->videoTracks)
         for (const Clip& c : t.clips) m_selected.append(c.id);
@@ -1594,9 +1596,12 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
     bool audio;
     if (rowFromY(y, row, audio)) {
         const double t = xToTime(x);
-        // Clique na timeline move a agulha para onde o mouse clicou.
-        setPlayhead(std::max(0.0, snapTime(t)));
-        emit playheadChanged(std::max(0.0, snapTime(t)));
+        // Clique na timeline move a agulha para onde o mouse clicou. Ctrl+clique
+        // apenas seleciona (não mexe na agulha), para multi-seleção ficar confortável.
+        if (!(e->modifiers() & Qt::ControlModifier)) {
+            setPlayhead(std::max(0.0, snapTime(t)));
+            emit playheadChanged(std::max(0.0, snapTime(t)));
+        }
         Clip* clip = clipAt(row, audio, t);
 
         // Shift+clique em qualquer ponto da faixa (mesmo sobre um clipe)
@@ -1629,8 +1634,7 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
         }
 
         // Seleção de faixas também clicando no corpo da faixa: clique sem
-        // clipe seleciona/alterna a faixa; Ctrl sobre um clipe também alterna
-        // a faixa (tratado no bloco do clipe). O playhead continua movendo e o
+        // clipe seleciona/alterna a faixa. O playhead continua movendo e o
         // marquee continua funcionando no arraste.
         if (!clip && (m_tool == ToolSelect || m_tool == ToolMove)) {
             if (e->modifiers() & Qt::ControlModifier)
@@ -1641,12 +1645,11 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
         }
 
         if (clip) {
-            // Ctrl+clique sobre um clipe alterna a seleção da FAIXA (não do
-            // clipe), para que "Ctrl" signifique sempre "selecionar faixas",
-            // consistente com o cabeçalho e com o corpo vazio da faixa.
+            // Ctrl+clique sobre um clipe alterna a seleção do CLIPE (permite
+            // selecionar vários clipes). Seleção de faixas fica no cabeçalho e
+            // no corpo vazio da faixa (que continuam com Ctrl = alternar faixa).
             if (e->modifiers() & Qt::ControlModifier) {
-                toggleTrackSel(row, audio);
-                refreshView();
+                toggleSelection(clip->id);
                 return;
             }
             if (!isSelected(clip->id))
@@ -2045,6 +2048,7 @@ void TimelineWidget::selectInMarquee(bool add) {
     if (!add) m_selected.clear();
     for (const QString& id : found)
         if (!m_selected.contains(id)) m_selected.append(id);
+    clearTrackSelection();
     refreshView();
     emit selectionChanged(m_selected.isEmpty() ? QString() : m_selected.last());
     update();
@@ -2366,12 +2370,9 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
             }
         }
         QAction* delTrack = nullptr;
-        QAction* delSelTracks = nullptr;
         if (track) {
             menu.addSeparator();
             delTrack = menu.addAction(tr("Excluir faixa"));
-            if (m_selTracks.size() >= 2)
-                delSelTracks = menu.addAction(tr("Excluir faixas selecionadas"));
         }
         act = menu.exec(e->globalPos());
         if (act == addV) addTrack(false);
@@ -2398,9 +2399,6 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
             invalidateScene();
             updateScrollRanges();
             emit modified();
-        }
-        else if (act == delSelTracks) {
-            deleteSelectedTracks();
         }
         else if (act == groupTracks) {
             createTrackGroup();
@@ -3009,10 +3007,6 @@ void TimelineWidget::deleteSelected() {
 }
 
 void TimelineWidget::deleteSelectedLeaveGap() {
-    if (!m_selTracks.isEmpty()) {
-        deleteSelectedTracks();
-        return;
-    }
     if (!m_project || m_selected.isEmpty()) return;
     emit editStart();
     QStringList sel;
@@ -3028,14 +3022,9 @@ void TimelineWidget::deleteSelectedLeaveGap() {
     emit modified();
 }
 
-// Delete: prioriza as faixas selecionadas (apaga todas de uma vez) e, se não
-// houver, apaga os clipes selecionados. Assim, cliques em clipes feitos depois
-// de selecionar faixas não "escondem" mais a seleção de faixas do Delete.
+// Delete: apaga somente os clipes selecionados. A seleção de faixa é apenas
+// informativa (mostra em qual faixa você está) e NÃO apaga faixa nenhuma.
 void TimelineWidget::deleteSelection() {
-    if (!m_selTracks.isEmpty()) {
-        deleteSelectedTracks();
-        return;
-    }
     deleteSelected();
 }
 
@@ -3119,6 +3108,7 @@ bool TimelineWidget::isSelected(const QString& id) const {
 }
 
 void TimelineWidget::setSelection(const QString& id) {
+    clearTrackSelection();
     m_selected.clear();
     m_selected.append(id);
     refreshView();
@@ -3126,6 +3116,7 @@ void TimelineWidget::setSelection(const QString& id) {
 }
 
 void TimelineWidget::toggleSelection(const QString& id) {
+    clearTrackSelection();
     const int i = m_selected.indexOf(id);
     if (i >= 0) m_selected.removeAt(i);
     else m_selected.append(id);
@@ -3198,33 +3189,6 @@ void TimelineWidget::selectTrackRightClick(int row, bool audio) {
 void TimelineWidget::clearTrackSelection() {
     m_selTracks.clear();
     m_hasAnchor = false;
-}
-
-void TimelineWidget::deleteSelectedTracks() {
-    if (!m_project || m_selTracks.isEmpty()) return;
-    emit editStart();
-    QVector<int> vrows, arows;
-    for (const TrackSel& s : m_selTracks) {
-        if (s.row < 0) continue;
-        if (s.audio) {
-            if (s.row < (int)m_project->audioTracks.size() && !arows.contains(s.row))
-                arows.append(s.row);
-        } else {
-            if (s.row < (int)m_project->videoTracks.size() && !vrows.contains(s.row))
-                vrows.append(s.row);
-        }
-    }
-    // Remove do fim para o começo para não invalidar os índices.
-    std::sort(vrows.begin(), vrows.end(), [](int a, int b) { return a > b; });
-    std::sort(arows.begin(), arows.end(), [](int a, int b) { return a > b; });
-    for (int r : vrows) m_project->removeTrack(false, r);
-    for (int r : arows) m_project->removeTrack(true, r);
-    pruneEmptyGroups();
-    m_selected.clear();
-    clearTrackSelection();
-    invalidateScene();
-    updateScrollRanges();
-    emit modified();
 }
 
 // Nº de pastas cujo membro de vídeo mais alto (maior índice, mais no topo) está

@@ -182,7 +182,6 @@ private:
     void selectTrackRange(int row, bool audio);
     void selectTrackRightClick(int row, bool audio);
     void clearTrackSelection();
-    void deleteSelectedTracks();
     int folderStripsAboveVideo(int videoIdx) const;
     int folderStripsAboveAudio(int audioIdx) const;
     QRect folderStripRect(const TrackGroup& g) const;

@@ -118,9 +118,10 @@ void PoolList::mousePressEvent(QMouseEvent* e) {
     m_pressWasSelected = m_pressItem
         ? selectionModel()->isSelected(indexFromItem(m_pressItem))
         : false;
+    m_pressCtrl = (e->modifiers() & Qt::ControlModifier) != 0;
     m_dragging = false;
     m_bandActive = false;
-    m_bandAdd = (e->modifiers() & Qt::ControlModifier) != 0;
+    m_bandAdd = m_pressCtrl;
 
     // Nunca deixa o rubber band nativo da base começar: ele apareceria junto
     // com o nosso e o estado ficaria preso em DragSelectingState.
@@ -129,10 +130,20 @@ void PoolList::mousePressEvent(QMouseEvent* e) {
     if (e->button() == Qt::LeftButton) {
         e->accept();
         if (m_pressItem) {
-            // A base cuida da seleção no clique e do índice atual. Um item já
-            // selecionado NÃO muda de seleção no press (command NoUpdate), então
-            // arrastar um item de uma seleção múltipla mantém todos selecionados.
-            QListWidget::mousePressEvent(e);
+            if (m_pressCtrl) {
+                // Ctrl+clique: o toggle é aplicado no release (e no início do
+                // arrasto, se virar arrasto). Não repassamos o press à base,
+                // para que a mudança de seleção seja única e previsível em
+                // qualquer versão/flags dela. Só atualiza o índice atual.
+                selectionModel()->setCurrentIndex(indexFromItem(m_pressItem),
+                                                  QItemSelectionModel::NoUpdate);
+            } else {
+                // A base cuida da seleção no clique e do índice atual. Um item
+                // já selecionado NÃO muda de seleção no press (command NoUpdate),
+                // então arrastar um item de uma seleção múltipla mantém todos
+                // selecionados.
+                QListWidget::mousePressEvent(e);
+            }
         } else {
             // Clique no vazio: seleção em caixa feita à mão (não chama a base,
             // senão o rubber band nativo apareceria junto).
@@ -154,6 +165,13 @@ void PoolList::mouseMoveEvent(QMouseEvent* e) {
     if ((e->buttons() & Qt::LeftButton) && !m_dragging && !m_bandActive
         && (p - m_pressPos).manhattanLength() >= QApplication::startDragDistance()) {
         if (m_pressItem) {
+            if (m_pressCtrl) {
+                // Um Ctrl+clique que virou arrasto: garante que o item entra na
+                // seleção para o arrasto levá-lo junto com os demais.
+                const QModelIndex idx = indexFromItem(m_pressItem);
+                if (!selectionModel()->isSelected(idx))
+                    selectionModel()->select(idx, QItemSelectionModel::Select);
+            }
             m_dragging = true;
             qApp->installEventFilter(this);
             showDragIcon(e->globalPosition().toPoint());
@@ -222,12 +240,17 @@ void PoolList::mouseReleaseEvent(QMouseEvent* e) {
         return;
     }
     if (e->button() == Qt::LeftButton) {
-        const bool mod = (e->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier)) != 0;
+        const bool shift = (e->modifiers() & Qt::ShiftModifier) != 0;
         if (!m_pressItem) {
             // Clique simples no vazio (sem arrastar): limpa a seleção (Ctrl mantém).
             if (!(e->modifiers() & Qt::ControlModifier))
                 clearSelection();
-        } else if (!mod && !m_pressWasSelected) {
+        } else if (m_pressCtrl) {
+            // Ctrl+clique (sem arrasto): alterna o item na seleção, permitindo
+            // selecionar várias mídias de uma em uma.
+            selectionModel()->select(indexFromItem(m_pressItem),
+                                     QItemSelectionModel::Toggle);
+        } else if (!shift && !m_pressWasSelected) {
             // Clique num item que não estava selecionado: seleciona só ele.
             // Se já estava selecionado (veio de uma seleção múltipla), mantém
             // todos selecionados para poder arrastá-los juntos depois.

@@ -53,6 +53,7 @@ private:
     QPoint m_pressPos;
     QListWidgetItem* m_pressItem = nullptr;
     bool m_pressWasSelected = false;
+    bool m_pressCtrl = false;
     bool m_dragging = false;
     QRubberBand* m_band = nullptr;
     bool m_bandActive = false;
