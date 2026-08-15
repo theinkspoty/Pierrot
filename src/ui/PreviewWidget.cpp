@@ -65,7 +65,7 @@ public:
           m_prefetchDecoder(std::make_unique<FFmpegDecoder>()) {}
 
 public slots:
-    void decodeOne(const QString& path, double t, int maxW) {
+    void decodeOne(const QString& path, double t, int maxW, double dt) {
         if (!m_mainDecoder->isOpen() || m_mainDecoder->source() != path) {
             if (m_prefetchDecoder->isOpen() && m_prefetchDecoder->source() == path) {
                 // O decodificador de prefetch já abriu e aqueceu este arquivo: swap instantâneo!
@@ -83,10 +83,15 @@ public slots:
         // seguinte. Esconde a latência do decode quando ele passa de 33ms
         // (fontes pesadas, ex. 4K) — o preview mantém a cadência mesmo que um
         // frame individual demore. Em seek/atraso cai para decode normal.
-        const double fd = (m_mainDecoder->fps() > 0.0) ? 1.0 / m_mainDecoder->fps() : 1.0 / 30.0;
+        // O passo usa a cadência do PROJETO (dt = 1/fps do projeto), não a do
+        // arquivo: a UI pede quadros no ritmo do projeto, e prefetchar com o
+        // fps do arquivo (fd) deixava o m_ready fora de fase quando os dois
+        // diferem, entregando frame repetido ou atrasado.
+        const double step = (dt > 0.0) ? dt
+                            : ((m_mainDecoder->fps() > 0.0) ? 1.0 / m_mainDecoder->fps() : 1.0 / 30.0);
         QImage img;
         if (m_readyValid && m_readyPath == path && m_readyMaxW == maxW
-            && std::fabs(m_readyT - t) <= fd * 1.5) {
+            && std::fabs(m_readyT - t) <= step * 0.5) {
             img = m_readyImg;
             m_readyValid = false;
         } else {
@@ -97,8 +102,8 @@ public slots:
         // Decodifica o próximo frame na folga para o próximo pedido (apenas se
         // o decoder ainda estiver no mesmo arquivo).
         if (!img.isNull() && m_mainDecoder->isOpen() && m_mainDecoder->source() == path) {
-            m_readyImg = m_mainDecoder->frameAt(t + fd, maxW);
-            m_readyT = t + fd;
+            m_readyImg = m_mainDecoder->frameAt(t + step, maxW);
+            m_readyT = t + step;
             m_readyPath = path;
             m_readyMaxW = maxW;
             m_readyValid = !m_readyImg.isNull();
@@ -917,7 +922,7 @@ void PreviewWidget::requestFrame(const QString& path, double t, int maxW) {
         return; // já enfileirado
     if (m_shownPath == path && std::fabs(m_shownT - t) < 1e-6 && m_shownW == maxW)
         return; // já exibido
-    m_pendingReq = {path, t, maxW, true};
+    m_pendingReq = {path, t, 1.0 / projFps(m_project), maxW, true};
     kickFrameWorker();
 }
 
@@ -928,7 +933,8 @@ void PreviewWidget::kickFrameWorker() {
     const FrameReq r = m_pendingReq;
     m_pendingReq.valid = false;
     QMetaObject::invokeMethod(m_frameWorker, "decodeOne", Qt::QueuedConnection,
-                              Q_ARG(QString, r.path), Q_ARG(double, r.t), Q_ARG(int, r.maxW));
+                              Q_ARG(QString, r.path), Q_ARG(double, r.t),
+                              Q_ARG(int, r.maxW), Q_ARG(double, r.dt));
 }
 
 void PreviewWidget::onFrameReady(const QString& path, double t, int maxW, const QImage& img) {

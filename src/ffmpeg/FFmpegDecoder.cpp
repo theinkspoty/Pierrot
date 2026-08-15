@@ -77,6 +77,10 @@ FFmpegMediaInfo FFmpegDecoder::probe(const QString& filePath) {
             info.height = st->codecpar->height;
             if (info.duration <= 0.0 && st->duration > 0)
                 info.duration = st->duration * av_q2d(st->time_base);
+            if (st->avg_frame_rate.num > 0 && st->avg_frame_rate.den > 0) {
+                const double r = av_q2d(st->avg_frame_rate);
+                if (r > 0.0 && r < 240.0) info.fps = r;
+            }
         } else if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
             info.hasAudio = true;
             ++info.audioStreams;
@@ -451,6 +455,13 @@ void FFmpegDecoder::freeAllLocked() {
         av_frame_free(reinterpret_cast<AVFrame**>(&m_lastFrame));
         m_lastFrame = nullptr;
     }
+    if (m_nextFrame) {
+        av_frame_unref(reinterpret_cast<AVFrame*>(m_nextFrame));
+        av_frame_free(reinterpret_cast<AVFrame**>(&m_nextFrame));
+        m_nextFrame = nullptr;
+    }
+    m_lastFrameSec = -1.0;
+    m_nextFrameSec = -1.0;
     if (m_swr) {
         swr_free(reinterpret_cast<SwrContext**>(&m_swr));
         m_swr = nullptr;
@@ -521,9 +532,12 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
         av_seek_frame(fmt, m_stream, target, AVSEEK_FLAG_BACKWARD);
         avcodec_flush_buffers(cc);
         m_lastPtsSec = -1.0;
-        if (m_lastFrame) {
+        if (m_lastFrame)
             av_frame_unref(reinterpret_cast<AVFrame*>(m_lastFrame));
-        }
+        if (m_nextFrame)
+            av_frame_unref(reinterpret_cast<AVFrame*>(m_nextFrame));
+        m_lastFrameSec = -1.0;
+        m_nextFrameSec = -1.0;
     }
 
     if (!m_pkt || !m_frame) {
@@ -533,54 +547,113 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
     av_packet_unref(m_pkt);
     av_frame_unref(m_frame);
 
+    // fsec de um quadro no tempo do stream (fallback: o próprio alvo).
+    auto frameSec = [&](const AVFrame* fr) -> double {
+        int64_t pts = fr->pts;
+        if (pts == AV_NOPTS_VALUE)
+            pts = fr->best_effort_timestamp;
+        return (pts != AV_NOPTS_VALUE) ? (pts * av_q2d(st->time_base)) : targetSec;
+    };
+    // Guarda um quadro como o candidato de exibição atual (m_lastFrame).
+    auto keepAsDisplay = [&](const AVFrame* fr, double fsec) {
+        AVFrame* lf = reinterpret_cast<AVFrame*>(m_lastFrame);
+        if (!lf) {
+            lf = av_frame_alloc();
+            m_lastFrame = lf;
+        }
+        if (lf) {
+            av_frame_unref(lf);
+            av_frame_ref(lf, fr);
+        }
+        m_lastFrameSec = fsec;
+    };
+
     AVFrame* chosen = nullptr;
     bool atEof = false;
+    // Tolerância mínima: cobre apenas ruído de PTS. A seleção é a convenção de
+    // EXIBIÇÃO (hold) — o frame mostrado em `targetSec` é o último cujo início
+    // (fsec) ainda não passou de `targetSec + tolerance`. Antes selecionávamos
+    // "o primeiro frame com fsec >= alvo - 0.4/fps", que aceitava frames que
+    // começavam até 40% de um frame ANTES do alvo: no corte, a borda do clipe
+    // 2 mostrava o mesmo frame com que o clipe 1 terminava (pedaço do clipe
+    // repetido / duplicado) e o vídeo parecia "alguns ms atrasado".
+    const double tolerance = (m_fps > 0.0) ? (0.1 / m_fps) : 0.003;
+
+    // Primeiro candidato: o frame que passou do alvo na chamada anterior
+    // (decodificado na folga, m_next*). Para o novo alvo ele pode qualificar
+    // de novo (sobe para m_lastFrame) ou passar de novo (continua um à frente).
+    if (m_nextFrameSec >= 0.0 && m_nextFrame) {
+        const double nfSec = m_nextFrameSec;
+        if (nfSec <= targetSec + tolerance) {
+            keepAsDisplay(reinterpret_cast<AVFrame*>(m_nextFrame), nfSec);
+            av_frame_unref(reinterpret_cast<AVFrame*>(m_nextFrame));
+            m_nextFrameSec = -1.0;
+        } else if (m_lastFrameSec >= 0.0 && m_lastFrame) {
+            chosen = reinterpret_cast<AVFrame*>(m_lastFrame);
+        } else {
+            // Sem quadro anterior: exibe o próprio m_nextFrame (NÃO dá unref —
+            // chosen aponta para ele; m_nextFrame continua segurando a referência).
+            chosen = reinterpret_cast<AVFrame*>(m_nextFrame);
+            m_nextFrameSec = -1.0;
+        }
+        m_lastPtsSec = nfSec; // progresso do codec
+    }
 
     while (!chosen && !atEof) {
-        // 1. Drena frames já decodificados no codec
+        // 1. Drena frames já decodificados no codec. O quadro exibido é o último
+        // que ainda não passou do alvo (m_lastFrame); quando um frame passa
+        // (fsec > alvo + tol), a exibição é o anterior e o que passou fica
+        // guardado como m_nextFrame (um à frente, para o próximo pedido).
         while (avcodec_receive_frame(cc, m_frame) == 0) {
-            int64_t pts = m_frame->pts;
-            if (pts == AV_NOPTS_VALUE)
-                pts = m_frame->best_effort_timestamp;
-            const double fsec = (pts != AV_NOPTS_VALUE) ? (pts * av_q2d(st->time_base)) : targetSec;
+            const double fsec = frameSec(m_frame);
 
-            if (!needSeek) {
-                // Playback sequencial contínuo: entrega o próximo quadro na ordem linear de exibição
-                chosen = m_frame;
+            if (fsec <= targetSec + tolerance) {
+                keepAsDisplay(m_frame, fsec);
                 m_lastPtsSec = fsec;
-                break;
-            } else {
-                // Pós-seek: descarta quadros de GOP anteriores ao targetSec
-                const double tolerance = (m_fps > 0.0) ? (0.4 / m_fps) : 0.015;
-                if (fsec >= targetSec - tolerance) {
-                    chosen = m_frame;
-                    m_lastPtsSec = fsec;
-                    break;
-                }
-                AVFrame* lastFrame = reinterpret_cast<AVFrame*>(m_lastFrame);
-                if (!lastFrame) {
-                    lastFrame = av_frame_alloc();
-                    m_lastFrame = lastFrame;
-                }
-                if (lastFrame) {
-                    av_frame_unref(lastFrame);
-                    av_frame_ref(lastFrame, m_frame);
-                }
-                m_lastPtsSec = fsec;
+                av_frame_unref(m_frame);
+                continue;
             }
-            av_frame_unref(m_frame);
+
+            // Passou do alvo: exibe o último que ainda estava nele.
+            if (m_lastFrameSec >= 0.0 && m_lastFrame) {
+                chosen = reinterpret_cast<AVFrame*>(m_lastFrame);
+            } else {
+                chosen = m_frame; // sem anterior: usa o primeiro disponível
+                m_nextFrameSec = -1.0;
+            }
+            m_lastPtsSec = fsec;
+            if (chosen != m_frame) {
+                // Guarda o que passou como candidato do próximo pedido.
+                AVFrame* nf = reinterpret_cast<AVFrame*>(m_nextFrame);
+                if (!nf) {
+                    nf = av_frame_alloc();
+                    m_nextFrame = nf;
+                }
+                if (nf) {
+                    av_frame_unref(nf);
+                    av_frame_ref(nf, m_frame);
+                    m_nextFrameSec = fsec;
+                }
+                av_frame_unref(m_frame);
+            }
+            break;
         }
 
         if (chosen) break;
 
-        // 2. Lê novos pacotes do demuxer se o codec precisar
+        // 2. Lê novos pacotes do demuxer se o codec precisar.
         const int r = av_read_frame(fmt, m_pkt);
         if (r < 0) {
-            // EOF: esvazia o codec
+            // EOF: esvazia o codec; o último frame ainda dentro do alvo (ou o
+            // fim do arquivo) fica em m_lastFrame e é devolvido abaixo.
             avcodec_send_packet(cc, nullptr);
             while (avcodec_receive_frame(cc, m_frame) == 0) {
-                chosen = m_frame;
-                break;
+                const double fsec = frameSec(m_frame);
+                if (fsec > targetSec + tolerance)
+                    break; // passou do alvo no fim: mantém m_lastFrame
+                keepAsDisplay(m_frame, fsec);
+                m_lastPtsSec = fsec;
+                av_frame_unref(m_frame);
             }
             atEof = true;
             break;
@@ -591,8 +664,9 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
         av_packet_unref(m_pkt);
     }
 
-    // Final do arquivo: devolve o último frame decodificado.
-    if (!chosen && m_lastFrame)
+    // Fim do arquivo (nenhum frame passou do alvo): devolve o último frame
+    // decodificado — o que cobre o alvo, ou o último do arquivo.
+    if (!chosen && m_lastFrameSec >= 0.0 && m_lastFrame)
         chosen = reinterpret_cast<AVFrame*>(m_lastFrame);
 
     if (chosen) {
@@ -643,6 +717,13 @@ void FFmpegDecoder::releaseBuffers() {
         av_frame_free(reinterpret_cast<AVFrame**>(&m_lastFrame));
         m_lastFrame = nullptr;
     }
+    if (m_nextFrame) {
+        av_frame_unref(reinterpret_cast<AVFrame*>(m_nextFrame));
+        av_frame_free(reinterpret_cast<AVFrame**>(&m_nextFrame));
+        m_nextFrame = nullptr;
+    }
+    m_lastFrameSec = -1.0;
+    m_nextFrameSec = -1.0;
     m_lastPtsSec = -1.0;
 }
 

@@ -79,6 +79,16 @@ QString fmtRuler(double t) {
         .arg(total % 60, 2, 10, QLatin1Char('0'));
 }
 
+// fps do stream de vídeo do arquivo, com cache (o probe abre o arquivo).
+double sourceFps(const QString& path) {
+    static QHash<QString, double> cache;
+    const auto it = cache.constFind(path);
+    if (it != cache.constEnd()) return it.value();
+    const FFmpegMediaInfo info = FFmpegDecoder::probe(path);
+    cache.insert(path, info.fps);
+    return info.fps;
+}
+
 // Remove os clipes selecionados de uma faixa e desloca os que estão à
 // direita da lacuna removida para a esquerda (edição ripple).
 void rippleDeleteInTrack(Track& t, const QStringList& sel) {
@@ -2666,6 +2676,31 @@ void TimelineWidget::splitClipAt(Clip* c, double t) {
     } else {
         ids.append(c->id);
     }
+
+    // Precisão do corte: além da grade do projeto (snapTime), desloca o corte
+    // para a grade de frames da MÍDIA de vídeo (fps do arquivo). Assim a borda
+    // cai no início exato de um frame de origem e o clipe 2 começa no frame
+    // seguinte — sem repetir o último frame do clipe 1 (o "pedaço do clipe que
+    // fica" / frame duplicado no corte). Usa o primeiro membro do grupo com
+    // vídeo como referência e aplica o MESMO t' a todos os membros, mantendo
+    // vídeo+áudio sincronizados.
+    double tCut = t;
+    for (const QString& id : ids) {
+        Clip* ref = findClipById(id);
+        if (!ref) continue;
+        const MediaItem* m = m_project->findMedia(ref->mediaId);
+        if (!m || !m->hasVideo) continue;
+        const double fps = sourceFps(m->filePath);
+        if (fps > 0.0) {
+            const double t0 = ref->in + (t - ref->pos);       // instante na mídia
+            const double t0s = std::round(t0 * fps) / fps;    // na grade do arquivo
+            tCut = std::clamp(ref->pos + (t0s - ref->in),
+                              ref->pos + 1e-6, ref->pos + ref->dur - 1e-6);
+        }
+        break; // uma única referência (vídeo) define o corte do grupo
+    }
+    t = tCut;
+
     const bool grouped = ids.size() > 1;
     // Cada metade vira um grupo próprio (vídeo+áudio da frente ficam
     // juntos, e os de trás juntos), para que excluir um lado não apague o outro.

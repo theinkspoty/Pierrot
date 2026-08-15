@@ -89,7 +89,7 @@ private:
     // Decodificação de vídeo em thread própria (não trava a UI na reprodução).
     QThread* m_frameThread = nullptr;
     FrameWorker* m_frameWorker = nullptr;
-    struct FrameReq { QString path; double t = 0.0; int maxW = 0; bool valid = false; };
+    struct FrameReq { QString path; double t = 0.0; double dt = 1.0 / 30.0; int maxW = 0; bool valid = false; };
     struct PrefetchFrame {
         QString path;
         double t = 0.0;

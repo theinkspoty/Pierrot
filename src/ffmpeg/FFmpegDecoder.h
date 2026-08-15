@@ -23,6 +23,7 @@ struct FFmpegMediaInfo {
     bool hasVideo = false;
     bool hasAudio = false;
     int audioStreams = 0;
+    double fps = 0.0; // fps do stream de vídeo (0 se não houver)
 };
 
 struct FFmpegAudioPeaks {
@@ -78,7 +79,16 @@ private:
 
     // Decodificação progressiva (playback não precisa re-seek).
     double m_lastPtsSec = -1.0;
-    void* m_lastFrame = nullptr; // AVFrame* (referência do último frame)
+
+    // Cache de quadros da convenção de exibição/hold do frameAt():
+    //  - m_lastFrame: último quadro cujo início NÃO passou do alvo (a exibir);
+    //  - m_nextFrame: primeiro quadro que PASSOU do alvo (decodificado na
+    //    folga, é o candidato do pedido seguinte).
+    // m_lastFrameSec / m_nextFrameSec guardam o fsec de cada um (-1 = vazio).
+    void* m_lastFrame = nullptr;  // AVFrame*
+    void* m_nextFrame = nullptr;  // AVFrame*
+    double m_lastFrameSec = -1.0;
+    double m_nextFrameSec = -1.0;
 
     // Áudio: contexto separado, para decodificar em outra thread sem
     // disputar o demuxer de vídeo.
