@@ -553,7 +553,9 @@ void MediaPoolWidget::addFiles() {
            "*.3gp *.mpg *.mpeg *.ogv *.mts *.m2ts *.vob "
            "*.mp3 *.wav *.aac *.flac *.ogg *.m4a *.opus *.wma *.aiff *.aif *.au "
            "*.ac3 *.amr *.ape *.caf *.dts *.mka *.mid *.midi *.mp2 *.oga *.spx "
-           "*.w64 *.wv *.alac *.mp1 *.mpa *.ra *.wpl *.tta *.tak *.shn);;Todos os arquivos (*)"));
+           "*.w64 *.wv *.alac *.mp1 *.mpa *.ra *.wpl *.tta *.tak *.shn);;"
+           "Imagens (*.jpg *.jpeg *.png *.bmp *.gif *.webp *.tif *.tiff *.svg);;"
+           "Todos os arquivos (*)"));
     if (files.isEmpty()) return;
     importPaths(files);
 }
