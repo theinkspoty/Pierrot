@@ -23,6 +23,8 @@
 #include <QSize>
 #include <QCoreApplication>
 #include <QPixmap>
+#include <QStyle>
+#include <QResizeEvent>
 
 namespace {
 QStringList loadRecentList() {
@@ -32,8 +34,8 @@ QStringList loadRecentList() {
 
 WelcomeWindow::WelcomeWindow(QWidget* parent) : QDialog(parent) {
     setWindowTitle(tr("Bem-vindo ao Pierrot"));
-    setMinimumSize(900, 520);
-    resize(980, 560);
+    setMinimumSize(800, 460);
+    resize(1020, 600);
 
     buildLayout();
     loadRecentProjects();
@@ -64,40 +66,51 @@ WelcomeWindow::WelcomeWindow(QWidget* parent) : QDialog(parent) {
 }
 
 void WelcomeWindow::buildLayout() {
-    // Imagem à esquerda
+    // Imagem à esquerda, adaptável ao tamanho da janela.
     m_imageLabel = new QLabel(this);
     m_imageLabel->setAlignment(Qt::AlignCenter);
+    m_imageLabel->setMinimumSize(180, 240);
+    m_imageLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     QPixmap pm;
     if (pm.load(":/pierrot.jpg")
         || pm.load("imagens/pierrot.jpg")
         || pm.load(QCoreApplication::applicationDirPath() + "/imagens/pierrot.jpg")) {
+        m_img = pm;
         QSize disp = pm.size();
-        disp.scale(QSize(360, 560), Qt::KeepAspectRatio);
+        disp.scale(QSize(360, 520), Qt::KeepAspectRatio);
         m_imageLabel->setPixmap(pm.scaled(disp, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-        m_imageLabel->setFixedSize(disp);
     } else {
         m_imageLabel->setText(tr("Pierrot"));
-        m_imageLabel->setFixedSize(360, 560);
+        QFont pf = m_imageLabel->font();
+        pf.setPointSize(30);
+        pf.setBold(true);
+        m_imageLabel->setFont(pf);
+        m_imageLabel->setStyleSheet("color:#9db2c8;");
     }
 
     // Título central
     auto* title = new QLabel(tr("Pierrot"), this);
     QFont tf = title->font();
-    tf.setPointSize(28);
+    tf.setPointSize(34);
     tf.setBold(true);
     title->setFont(tf);
+    title->setStyleSheet("color:#e8ebf0;");
 
     auto* subtitle = new QLabel(tr("Editor de vídeo"), this);
     subtitle->setStyleSheet("color: #9a9a9a;");
 
     auto* credits = new QLabel(tr("by InkSpoty"), this);
-    credits->setStyleSheet("color: #777777; font-size: 11px;");
+    credits->setStyleSheet("color: #6b7280; font-size: 11px;");
     credits->setAlignment(Qt::AlignHCenter);
+
+    auto* version = new QLabel(tr("Versão 0.2.0"), this);
+    version->setStyleSheet("color: #4e5560; font-size: 10px;");
+    version->setAlignment(Qt::AlignHCenter);
 
     // Projetos recentes
     auto* recentBox = new QGroupBox(tr("Projetos recentes"), this);
     m_recent = new QListWidget(recentBox);
-    m_recent->setMinimumHeight(150);
+    m_recent->setMinimumHeight(190);
     connect(m_recent, &QListWidget::itemDoubleClicked, this,
             &WelcomeWindow::openSelected);
 
@@ -170,6 +183,11 @@ void WelcomeWindow::buildLayout() {
 
     auto* createBtn = new QPushButton(tr("Criar projeto"), newBox);
     createBtn->setDefault(true);
+    createBtn->setStyleSheet(
+        "QPushButton{background:#2c3d57; border:1px solid #4a6a94; border-radius:6px;"
+        " color:#dce8f5; padding:9px 24px; font-weight:bold;}"
+        "QPushButton:hover{background:#36506f;}"
+        "QPushButton:pressed{background:#253550;}");
     connect(createBtn, &QPushButton::clicked, this, &WelcomeWindow::requestNewProject);
 
     auto* newLay = new QVBoxLayout(newBox);
@@ -235,7 +253,6 @@ void WelcomeWindow::buildLayout() {
     auto* centerCol = new QVBoxLayout;
     centerCol->addWidget(title);
     centerCol->addWidget(subtitle);
-    centerCol->addWidget(credits);
     centerCol->addSpacing(14);
     centerCol->addWidget(recentBox);
     centerCol->addWidget(newBox);
@@ -251,8 +268,16 @@ void WelcomeWindow::buildLayout() {
     topRow->addLayout(rightCol);
 
     auto* root = new QVBoxLayout(this);
+    root->setContentsMargins(28, 22, 28, 12);
     root->addLayout(topRow, 1);
-    root->addWidget(hint, 0, Qt::AlignHCenter);
+    // Rodapé: dica à esquerda; créditos e versão no canto inferior direito.
+    auto* footer = new QHBoxLayout;
+    footer->addWidget(hint);
+    footer->addStretch(1);
+    footer->addWidget(credits);
+    footer->addSpacing(12);
+    footer->addWidget(version);
+    root->addLayout(footer);
     root->addWidget(m_devWarn);
     root->addSpacing(8);
 
@@ -261,19 +286,46 @@ void WelcomeWindow::buildLayout() {
 #else
     m_devWarn->setVisible(true);
 #endif
+
+    // Tema escuro, elegante e consistente com o restante do app.
+    setStyleSheet(QStringLiteral(
+        "QDialog{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+        " stop:0 #24262c, stop:1 #16171a);}"
+        "QGroupBox{border:1px solid #2b2e36; border-radius:9px; margin-top:15px;"
+        " background:rgba(255,255,255,0.018);}"
+        "QGroupBox::title{subcontrol-origin:margin; left:13px; top:0; padding:0 8px;"
+        " color:#8fa3bc; font-weight:bold; font-size:11px;}"
+        "QListWidget{background:rgba(0,0,0,0.20); border:1px solid #2b2e36;"
+        " border-radius:6px; padding:4px; outline:none;}"
+        "QListWidget::item{padding:10px 12px; border-radius:5px; margin:2px; color:#d5d9e0;}"
+        "QListWidget::item:hover{background:rgba(120,160,220,0.10);}"
+        "QListWidget::item:selected{background:rgba(80,130,200,0.26); color:#ffffff;}"
+        "QPushButton{border:1px solid #30343c; border-radius:5px; background:#26282e;"
+        " color:#d5d9e0; padding:6px 15px;}"
+        "QPushButton:hover{background:#2d3037; border-color:#454a55;}"
+        "QLineEdit,QComboBox,QSpinBox{background:rgba(0,0,0,0.20);"
+        " border:1px solid #30343c; border-radius:5px; padding:5px 9px;"
+        " color:#d5d9e0; selection-background-color:#2c3c52;}"
+        "QComboBox::drop-down{border:none; width:20px;}"
+        "QComboBox QAbstractItemView{background:#1e2026; border:1px solid #30343c;"
+        " selection-background-color:#2c3c52; border-radius:4px;}"
+        "QCheckBox{color:#c9cdd4;}"
+        "QLabel{color:#c9cdd4;}"));
 }
 
 void WelcomeWindow::loadRecentProjects() {
     m_recent->clear();
+    const QIcon fileIcon = style()->standardIcon(QStyle::SP_FileIcon);
     for (const QString& path : loadRecentList()) {
         if (!QFile::exists(path)) continue;
-        auto* it = new QListWidgetItem(QFileInfo(path).fileName(), m_recent);
+        auto* it = new QListWidgetItem(fileIcon, QFileInfo(path).fileName(), m_recent);
         it->setData(Qt::UserRole, path);
         it->setToolTip(path);
     }
     if (m_recent->count() == 0) {
         auto* it = new QListWidgetItem(tr("Nenhum projeto recente."), m_recent);
         it->setFlags(Qt::NoItemFlags);
+        it->setForeground(QColor(120, 124, 132));
     }
 }
 
@@ -361,4 +413,16 @@ void WelcomeWindow::saveAutoSettings() const {
     QSettings s;
     s.setValue("autosaveEnabled", m_autoSave->isChecked());
     s.setValue("autosaveMinutes", autosaveMinutes());
+}
+
+// Escala a imagem da esquerda para acompanhar o tamanho da janela (mantendo a
+// proporção), sem loop de redimensionamento.
+void WelcomeWindow::resizeEvent(QResizeEvent*) {
+    if (m_img.isNull()) return;
+    const QSize ls = m_imageLabel->size();
+    if (ls.width() <= 20 || ls.height() <= 20) return;
+    const QPixmap scaled = m_img.scaled(ls, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    const QPixmap cur = m_imageLabel->pixmap();
+    if (cur.isNull() || cur.size() != scaled.size())
+        m_imageLabel->setPixmap(scaled);
 }

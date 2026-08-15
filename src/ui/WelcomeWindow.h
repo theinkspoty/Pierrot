@@ -6,6 +6,7 @@
 #pragma once
 
 #include <QDialog>
+#include <QPixmap>
 
 class QComboBox;
 class QSpinBox;
@@ -38,8 +39,10 @@ private:
     void loadRecentProjects();
     int autosaveMinutes() const;
     void saveAutoSettings() const;
+    void resizeEvent(QResizeEvent* e) override;
 
     QLabel* m_imageLabel = nullptr;
+    QPixmap m_img; // imagem carregada (escalada dinamicamente no resize)
     QListWidget* m_recent = nullptr;
     QLineEdit* m_name = nullptr;
     QComboBox* m_resolution = nullptr;
