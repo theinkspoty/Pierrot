@@ -13,6 +13,7 @@
 #include "ui/ExportDialog.h"
 #include "ui/ProjectSettingsDialog.h"
 #include "ui/SettingsDialog.h"
+#include "ui/WelcomeWindow.h"
 #include "ffmpeg/MediaCache.h"
 
 #include <QApplication>
@@ -487,9 +488,15 @@ void MainWindow::createActions() {
     QAction* settingsAction = new QAction(tr("Configurações do projeto…"), this);
     connect(settingsAction, &QAction::triggered, this, &MainWindow::projectSettings);
 
+    // Reabre a janela inicial (boas-vindas) sem fechar o editor.
+    QAction* homeAction = new QAction(tr("Janela inicial"), this);
+    homeAction->setToolTip(tr("Abrir a janela inicial (novo projeto / recentes)"));
+    connect(homeAction, &QAction::triggered, this, &MainWindow::showWelcomeWindow);
+
     QMenu* fileMenu = menuBar()->addMenu(tr("&Arquivo"));
     fileMenu->addAction(newAction);
     fileMenu->addAction(openAction);
+    fileMenu->addAction(homeAction);
     fileMenu->addAction(m_saveAction);
     fileMenu->addAction(m_saveAsAction);
     fileMenu->addSeparator();
@@ -951,6 +958,19 @@ void MainWindow::openProject() {
         tr("Pierrot (*.Blanc *.ovp);;Todos os arquivos (*)"));
     if (path.isEmpty()) return;
     openProjectFile(path);
+}
+
+// Reabre a janela inicial sem fechar o editor. Se o usuário escolher abrir um
+// projeto ou criar um novo, substitui o projeto atual (como em Arquivo → Novo).
+void MainWindow::showWelcomeWindow() {
+    WelcomeWindow welcome(this);
+    if (welcome.exec() != QDialog::Accepted) return;
+    if (!welcome.projectPath().isEmpty()) {
+        openProjectFile(welcome.projectPath());
+    } else if (welcome.newProjectRequested()) {
+        createProject(welcome.projectWidth(), welcome.projectHeight(),
+                      welcome.projectFps(), welcome.projectName());
+    }
 }
 
 void MainWindow::openProjectFile(const QString& path) {

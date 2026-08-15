@@ -61,6 +61,7 @@ private:
     void exportVideo();
     void newProject();
     void openProject();
+    void showWelcomeWindow();
     bool saveProject();
     bool saveProjectAs();
     void projectSettings();

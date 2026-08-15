@@ -17,6 +17,8 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QRegularExpression>
+#include <QApplication>
+#include <QClipboard>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -75,7 +77,15 @@ ExportDialog::ExportDialog(Project* project, QWidget* parent)
     connect(cancelBtn, &QPushButton::clicked, this, &ExportDialog::requestCancel);
     connect(m_startBtn, &QPushButton::clicked, this, &ExportDialog::startExport);
 
+    // Copia todo o log para a área de transferência (útil para reportar erros).
+    auto* copyBtn = new QPushButton(tr("Copiar tudo"), this);
+    copyBtn->setToolTip(tr("Copiar todo o log para a área de transferência"));
+    connect(copyBtn, &QPushButton::clicked, this, [this]() {
+        QApplication::clipboard()->setText(m_logEdit->toPlainText());
+    });
+
     auto* btnRow = new QHBoxLayout;
+    btnRow->addWidget(copyBtn);
     btnRow->addStretch();
     btnRow->addWidget(cancelBtn);
     btnRow->addWidget(m_startBtn);
@@ -193,6 +203,14 @@ void ExportDialog::onReadyRead() {
                           + m.captured(2).toDouble() * 60.0
                           + m.captured(3).toDouble();
         m_progress->setValue((int)(secs / m_total * 100.0));
+    }
+    // Grava a saída do ffmpeg no log (sem as linhas de progresso, para não
+    // poluir). Assim o arquivo do log mostra o erro exato de uma falha.
+    const QStringList lines = text.split('\n');
+    for (const QString& ln : lines) {
+        if (ln.contains(QStringLiteral("time=")) && ln.contains(QStringLiteral("frame=")))
+            continue;
+        if (!ln.trimmed().isEmpty()) log(ln);
     }
 }
 

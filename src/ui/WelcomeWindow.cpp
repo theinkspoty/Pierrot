@@ -19,6 +19,7 @@
 #include <QFile>
 #include <QMessageBox>
 #include <QShortcut>
+#include <QSignalBlocker>
 #include <QSettings>
 #include <QSize>
 #include <QCoreApplication>
@@ -42,6 +43,19 @@ WelcomeWindow::WelcomeWindow(QWidget* parent) : QDialog(parent) {
 
     QSettings s;
     m_autoSave->setChecked(s.value("autosaveEnabled", false).toBool());
+    // Aviso quando o usuário habilita o salvamento automático (experimental).
+    connect(m_autoSave, &QCheckBox::toggled, this, [this](bool on) {
+        if (!on) return;
+        QMessageBox box(QMessageBox::Warning,
+                        tr("Recurso experimental"),
+                        tr("O salvamento automático é um recurso experimental e pode "
+                           "apresentar falhas. Deseja habilitá-lo?"),
+                        QMessageBox::Ok | QMessageBox::Cancel, this);
+        if (box.exec() != QMessageBox::Ok) {
+            QSignalBlocker b(m_autoSave);
+            m_autoSave->setChecked(false);
+        }
+    });
     const int mins = qMax(1, s.value("autosaveMinutes", 10).toInt());
     const int idx = m_autoInterval->findData(mins);
     if (idx >= 0) {
@@ -236,6 +250,12 @@ void WelcomeWindow::buildLayout() {
     auto* hint = new QLabel(tr("Feche esta janela para abrir o editor vazio."), this);
     hint->setStyleSheet("color: #777777;");
 
+    // Aviso de fase inicial de desenvolvimento, no canto inferior esquerdo.
+    auto* betaWarn = new QLabel(
+        tr("O editor está no início do desenvolvimento e pode apresentar falhas."), this);
+    betaWarn->setStyleSheet("color: #b08a3c; font-size: 10px; font-style: italic;");
+    betaWarn->setWordWrap(false);
+
     // Aviso de versão de desenvolvimento: exibido apenas em builds de debug.
     m_devWarn = new QLabel(tr("Você está usando uma versão de desenvolvimento do Pierrot. "
                               "Recursos podem estar incompletos ou instáveis."), this);
@@ -270,8 +290,10 @@ void WelcomeWindow::buildLayout() {
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(28, 22, 28, 12);
     root->addLayout(topRow, 1);
-    // Rodapé: dica à esquerda; créditos e versão no canto inferior direito.
+    // Rodapé: aviso à esquerda; créditos e versão no canto inferior direito.
     auto* footer = new QHBoxLayout;
+    footer->addWidget(betaWarn);
+    footer->addSpacing(16);
     footer->addWidget(hint);
     footer->addStretch(1);
     footer->addWidget(credits);

@@ -7,11 +7,25 @@
 
 #include <QColor>
 #include <QFile>
+#include <QFileInfo>
 
 #include <algorithm>
 #include <cmath>
 
 namespace {
+
+// Imagens estáticas precisam de "-loop 1" para virarem um fluxo contínuo de
+// quadros (senão o ffmpeg lê um único frame e a imagem "pisca" ou quebra o
+// gráfico de filtros).
+bool isImageFile(const QString& path) {
+    const QString ext = QFileInfo(path).suffix().toLower();
+    static const QStringList exts = {
+        QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"),
+        QStringLiteral("bmp"), QStringLiteral("gif"), QStringLiteral("webp"),
+        QStringLiteral("tif"), QStringLiteral("tiff"), QStringLiteral("svg")
+    };
+    return exts.contains(ext);
+}
 
 struct VideoClipRef {
     const Clip* c;
@@ -55,31 +69,37 @@ constexpr double kPi = 3.14159265358979323846;
 // preview, em Project.h::kfValue).
 QString kfExpr(const QVector<Keyframe>& keys, double base, double offset) {
     if (keys.isEmpty()) return num(base);
+    // Ordena por tempo: keyframes fora de ordem geram uma expressão malformada
+    // (o ffmpeg falha no setup do filtro com erro "filter graph").
+    QVector<Keyframe> sorted = keys;
+    std::sort(sorted.begin(), sorted.end(),
+              [](const Keyframe& a, const Keyframe& b) { return a.time < b.time; });
+    const QVector<Keyframe>& ks = sorted;
     QString e = QString("if(lte(t,%1),%2")
-                    .arg(num(offset + keys[0].time)).arg(num(keys[0].value));
-    double pt = offset + keys[0].time;
-    double pv = keys[0].value;
-    for (int i = 1; i < keys.size(); ++i) {
-        const double t = offset + keys[i].time;
-        const double v = keys[i].value;
+                    .arg(num(offset + ks[0].time)).arg(num(ks[0].value));
+    double pt = offset + ks[0].time;
+    double pv = ks[0].value;
+    for (int i = 1; i < ks.size(); ++i) {
+        const double t = offset + ks[i].time;
+        const double v = ks[i].value;
         const double span = t - pt;
         QString seg;
         if (span <= 1e-9) {
             seg = num(v);
         } else {
-            const int mode = keys[i - 1].interp;
+            const int mode = ks[i - 1].interp;
             const QString f = QString("(t-%1)/%2").arg(num(pt)).arg(num(span));
             if (mode == KfStep) {
                 seg = num(pv);
             } else if (mode == KfSmooth) {
-                const Keyframe& a = keys[i - 1];
-                const Keyframe& b = keys[i];
-                const Keyframe& p0 = (i > 1) ? keys[i - 2] : a;
-                const Keyframe& p3 = (i + 1 < keys.size()) ? keys[i + 1] : b;
+                const Keyframe& a = ks[i - 1];
+                const Keyframe& b = ks[i];
+                const Keyframe& p0 = (i > 1) ? ks[i - 2] : a;
+                const Keyframe& p3 = (i + 1 < ks.size()) ? ks[i + 1] : b;
                 const double dt0 = (i > 1) ? (b.time - p0.time) : span;
-                const double m0 = (b.value - p0.value) / dt0;
-                const double dt3 = (i + 1 < keys.size()) ? (p3.time - a.time) : span;
-                const double m3 = (p3.value - a.value) / dt3;
+                const double m0 = (dt0 > 1e-9) ? (b.value - p0.value) / dt0 : 0.0;
+                const double dt3 = (i + 1 < ks.size()) ? (p3.time - a.time) : span;
+                const double m3 = (dt3 > 1e-9) ? (p3.value - a.value) / dt3 : 0.0;
                 const double c1 = a.value + m0 * span;
                 const double c2 = v - m3 * span;
                 seg = QString("(1-(%1))^3*%2 + 3*(1-(%1))^2*(%1)*%3"
@@ -92,8 +112,8 @@ QString kfExpr(const QVector<Keyframe>& keys, double base, double offset) {
                 constexpr int N = 12;
                 QVector<double> kts(N + 1), kvs(N + 1);
                 for (int s = 0; s <= N; ++s) {
-                    kts[s] = keys[i - 1].time + span * s / N;
-                    kvs[s] = kfValue(keys, base, kts[s]);
+                    kts[s] = ks[i - 1].time + span * s / N;
+                    kvs[s] = kfValue(sorted, base, kts[s]);
                 }
                 QString sub = QString("%1 + (%2-%1)*(t-%3)/%4")
                                   .arg(num(kvs[N - 1])).arg(num(kvs[N]))
@@ -117,7 +137,7 @@ QString kfExpr(const QVector<Keyframe>& keys, double base, double offset) {
         pv = v;
     }
     e += QString(",%1").arg(num(pv));
-    e += QString(keys.size(), QLatin1Char(')'));
+    e += QString(ks.size(), QLatin1Char(')'));
     return e;
 }
 
@@ -189,9 +209,11 @@ QString cropFilter(const Clip& c, double pos) {
     const QString b = kfExpr(c.kfCropB, c.cropB, pos);
     if (!c.kfCropL.isEmpty() || !c.kfCropR.isEmpty()
         || !c.kfCropT.isEmpty() || !c.kfCropB.isEmpty())
+        // O filtro crop não tem a opção "eval" (x/y já são avaliados por
+        // frame); adicionar eval=frame faz o ffmpeg falhar no setup.
         return QStringLiteral(
                    "crop=w='iw*(1-(%1)-(%2))':h='ih*(1-(%3)-(%4))':"
-                   "x='iw*(%1)':y='ih*(%3)':eval=frame")
+                   "x='iw*(%1)':y='ih*(%3)'")
                    .arg(l, r, t, b);
     return QStringLiteral("crop=w='iw*(1-(%1)-(%2))':h='ih*(1-(%3)-(%4))':"
                           "x='iw*(%1)':y='ih*(%3)'")
@@ -267,8 +289,17 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     args << "-f" << "lavfi"
          << "-i" << QString("color=c=black:s=%1x%2:r=%3:d=%4").arg(W).arg(H).arg(FPS).arg(num(total));
 
-    for (const VideoClipRef& v : vclips)
-        args << "-ss" << num(v.c->in) << "-t" << num(v.c->dur * v.c->speed) << "-i" << v.m->filePath;
+    for (const VideoClipRef& v : vclips) {
+        if (isImageFile(v.m->filePath)) {
+            // Imagem estática: loop contínuo na taxa do projeto, limitado à
+            // duração do clipe.
+            args << "-loop" << "1" << "-framerate" << num(FPS)
+                 << "-t" << num(v.c->dur * v.c->speed) << "-i" << v.m->filePath;
+        } else {
+            args << "-ss" << num(v.c->in) << "-t" << num(v.c->dur * v.c->speed)
+                 << "-i" << v.m->filePath;
+        }
+    }
 
     for (const AudioClipRef& ar : aclips) {
         const Clip* c = ar.c;
@@ -455,8 +486,11 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                 src = QStringLiteral("[%1]").arg(mixLbl);
             }
 
-            fc << src + QStringLiteral("atrim=start=%1:duration=%2,asetpts=PTS-STARTPTS")
-                             .arg(num(c->in)).arg(num(dur * speed));
+            // O input já vem com -ss in -t dur (frames começando em 0 relativo);
+            // usar atrim=start=in descartaria todo o áudio dos cortes (in > 0).
+            // atrim=duration basta para garantir a duração exata.
+            fc << src + QStringLiteral("atrim=duration=%1,asetpts=PTS-STARTPTS")
+                             .arg(num(dur * speed));
             if (std::fabs(speed - 1.0) > 1e-4)
                 fc.last().append(QLatin1Char(',') + atempoChain(speed));
             if (fadeIn > 0)
@@ -502,7 +536,11 @@ QStringList ProjectExporter::buildCommand(const Project& project,
         if (albl.size() == 1) {
             aout = QStringLiteral("[%1]").arg(albl[0]);
         } else {
-            fc << albl.join(QString())
+            // Cada rótulo precisa dos colchetes ([a1][a2]...) senão o ffmpeg
+            // interpreta o nome inteiro como um filtro inexistente.
+            QString aIn;
+            for (const QString& l : albl) aIn += QStringLiteral("[%1]").arg(l);
+            fc << aIn
                 + QStringLiteral(
                       "amix=inputs=%1:duration=longest:dropout_transition=0[aout]")
                       .arg(albl.size());
