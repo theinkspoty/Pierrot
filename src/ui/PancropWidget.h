@@ -68,6 +68,7 @@ private:
     void stripRelease(QWidget* view, QMouseEvent* e);
     void stripDoubleClick(QWidget* view, QMouseEvent* e);
     void stripContextMenu(QWidget* view, QContextMenuEvent* e);
+    void deleteSelectedKeyframes();
 
     Clip* activeClip();
     void syncFromClip();
@@ -131,6 +132,8 @@ private:
     bool m_stripDragging = false;
     double m_stripDragFrom = -1.0;
     double m_stripDragTo = -1.0;
+    // Tempos (relativos ao clipe) dos keyframes selecionados na faixa.
+    QVector<double> m_selectedTimes;
     // Arraste da agulha (playhead) na faixa de tempo.
     bool m_stripPlayheadDrag = false;
 };

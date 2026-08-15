@@ -209,7 +209,7 @@ private:
     bool m_hasAnchor = false;
     int m_tool = 0;
     bool m_snap = true;
-    bool m_showVolLines = true;
+    bool m_showVolLines = false;
     double m_loopIn = -1.0;
     double m_loopOut = -1.0;
     DragMode m_dragMode = None;

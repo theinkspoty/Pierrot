@@ -119,6 +119,8 @@ private:
     int m_hoverKey = -1;
     QPoint m_lastPos;
     bool m_undoPushed = false;
+    // Arraste da agulha (playhead) pela régua ou pela linha do playhead.
+    bool m_playheadDrag = false;
     // Faixa natural da propriedade (fixa) e faixa visível (auto-fit).
     double m_loProp = 0.0, m_hiProp = 1.0;
     double m_lo = 0.0, m_hi = 1.0;

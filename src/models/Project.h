@@ -85,9 +85,9 @@ inline double kfValue(const QVector<Keyframe>& keys, double base, double t) {
             const Keyframe& p0 = (lo > 0) ? keys[lo - 1] : a;
             const Keyframe& p3 = (lo + 2 < (int)keys.size()) ? keys[lo + 2] : b;
             const double dt0 = (lo > 0) ? (b.time - p0.time) : span;
-            const double m0 = (b.value - p0.value) / dt0;
+            const double m0 = (dt0 > 1e-9) ? (b.value - p0.value) / dt0 : 0.0;
             const double dt3 = (lo + 2 < (int)keys.size()) ? (p3.time - a.time) : span;
-            const double m3 = (p3.value - a.value) / dt3;
+            const double m3 = (dt3 > 1e-9) ? (p3.value - a.value) / dt3 : 0.0;
             return cubicBezier(a.value, a.value + m0 * span,
                                b.value - m3 * span, b.value, f);
         }

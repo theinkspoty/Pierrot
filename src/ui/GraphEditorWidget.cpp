@@ -270,12 +270,16 @@ void GraphCanvas::setData(Clip* clip, GraphProp prop, double playhead, double fp
     m_prop = prop;
     m_playhead = playhead;
     m_fps = (fps > 1.0) ? fps : 30.0;
+    // Garante a ordem por tempo ao carregar/refrescar (defensivo contra
+    // keyframes fora de ordem vindos de outras edições).
+    if (m_clip && keys()) sortKeys();
     valueRange(&m_loProp, &m_hiProp);
     fitValueRange();
     m_dragKey = -1;
     m_dragHandle = -1;
     m_hoverKey = -1;
     m_curveNewKey = false;
+    m_playheadDrag = false;
     m_undoPushed = false;
     m_selKeys.clear();
     m_selOrig.clear();
@@ -408,7 +412,7 @@ int GraphCanvas::addKeyframe(double time, double value) {
     Keyframe nk;
     nk.time = time;
     nk.value = value;
-    nk.interp = KfLinear;
+    nk.interp = KfSmooth;
     K.append(nk);
     sortKeys();
     fitValueRange();
@@ -513,40 +517,45 @@ void GraphCanvas::commitChange() {
 // mudam; durante o arrasto a escala fica fixa para não desorientar.
 void GraphCanvas::fitValueRange() {
     const QVector<Keyframe>* ks = keys();
+    double mn, mx;
     if (!ks || ks->isEmpty()) {
         const double b = baseValue();
-        const double lo = std::min(b, m_loProp);
-        const double hi = std::max(b, m_hiProp);
-        const double pad = (hi - lo) * 0.5;
-        m_lo = lo - pad;
-        m_hi = hi + pad;
-        return;
-    }
-    double mn = 1e18, mx = -1e18;
-    for (int i = 0; i < ks->size(); ++i) {
-        const Keyframe& k = (*ks)[i];
-        mn = std::min(mn, k.value);
-        mx = std::max(mx, k.value);
-        mn = std::min(mn, k.value + k.oy);
-        mx = std::max(mx, k.value + k.oy);
-        mn = std::min(mn, k.value + k.iy);
-        mx = std::max(mx, k.value + k.iy);
-    }
-    const double pSpan = m_hiProp - m_loProp;
-    if (pSpan > 0.0) {
+        mn = mx = b;
+    } else {
+        mn = 1e18; mx = -1e18;
+        for (const Keyframe& k : *ks) {
+            mn = std::min(mn, k.value);
+            mx = std::max(mx, k.value);
+            mn = std::min(mn, k.value + k.oy);
+            mx = std::max(mx, k.value + k.oy);
+            mn = std::min(mn, k.value + k.iy);
+            mx = std::max(mx, k.value + k.iy);
+        }
         mn = std::clamp(mn, m_loProp, m_hiProp);
         mx = std::clamp(mx, m_loProp, m_hiProp);
     }
+    const double pSpan = std::max(1e-9, m_hiProp - m_loProp);
+    // Folga mínima de 25% da faixa natural: quando o dado está num único ponto
+    // ou na borda (ex.: opacidade/escala em 1.0), a linha não "some" no topo —
+    // a janela fica centralizada e o valor continua no meio.
     double span = mx - mn;
-    if (span < 1e-6) span = std::max(1e-6, 0.1 * pSpan);
+    if (span < pSpan * 0.25) span = pSpan * 0.25;
     const double pad = span * 0.15;
-    m_lo = mn - pad;
-    m_hi = mx + pad;
-    if (pSpan > 0.0) {
-        m_lo = std::max(m_lo, m_loProp);
-        m_hi = std::min(m_hi, m_hiProp);
+    double lo = mn - pad;
+    double hi = mx + pad;
+    if (hi - lo < span) {
+        const double mid = (mn + mx) / 2.0;
+        lo = mid - span / 2.0;
+        hi = mid + span / 2.0;
     }
-    if (m_hi <= m_lo) { m_lo = mn - span * 0.5; m_hi = mx + span * 0.5; }
+    // Margem de 10% além da faixa natural para valores na borda continuarem
+    // visíveis, sem deixar a janela escapar demais.
+    const double margin = pSpan * 0.1;
+    lo = std::max(lo, m_loProp - margin);
+    hi = std::min(hi, m_hiProp + margin);
+    if (hi <= lo) { lo = m_loProp; hi = m_hiProp; }
+    m_lo = lo;
+    m_hi = hi;
 }
 
 void GraphCanvas::marqueeSelect(const QRect& r, bool add) {
@@ -566,6 +575,7 @@ void GraphCanvas::marqueeSelect(const QRect& r, bool add) {
 // Move todos os keyframes selecionados pelo mesmo delta, sem deixar que um
 // cruze um vizinho fora da seleção (nem saia do clipe).
 void GraphCanvas::moveSelected(double dT, double dV, bool snap) {
+    (void)dV; // o valor do keyframe não muda no arraste (só o tempo)
     if (!m_clip) return;
     QVector<Keyframe>& K = *keys();
     if (K.isEmpty() || m_selKeys.isEmpty() || m_selOrig.size() != m_selKeys.size()) return;
@@ -592,7 +602,9 @@ void GraphCanvas::moveSelected(double dT, double dV, bool snap) {
         if (snap) nt = snapTime(nt);
         nt = std::clamp(nt, leftB + 0.001, rightB - 0.001);
         k.time = nt;
-        k.value = std::clamp(o.value + dV, m_loProp, m_hiProp);
+        // Keyframes não se movem na vertical: o valor só muda ao criar/editar
+        // (diálogo, pancrop ou ferramenta de curva). O arraste é só no tempo.
+        k.value = o.value;
     }
 }
 
@@ -675,16 +687,13 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
     const QVector<Keyframe>* ks = keys();
     if (!ks) return;
 
-    // Curva da propriedade (janela visível).
-    QPainterPath path;
-    const int steps = std::max(2, r.width() / 2);
-    for (int i = 0; i <= steps; ++i) {
-        const double t = t0 + range * i / steps;
-        const double v = kfValue(*ks, baseValue(), t);
-        const QPointF pt(tToX(t), vToY(v));
-        if (i == 0) path.moveTo(pt); else path.lineTo(pt);
-    }
+    // Curva da propriedade desenhada como splines — uma cubic bezier por
+    // segmento (igual ao Premiere), exata e suave, sem polígono amostrado.
+    // O clipping na área do gráfico impede a curva de invadir régua/bordas.
+    p.save();
+    p.setClipRect(r);
     p.setRenderHint(QPainter::Antialiasing, true);
+    QPainterPath path;
     if (ks->isEmpty()) {
         // Sem keyframes: linha horizontal padrão da propriedade, sincronizada
         // com a duração do clipe (o usuário vê onde os pontos vão nascer).
@@ -694,27 +703,87 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
         p.setPen(QColor(130, 170, 200, 90));
         p.drawText(r.left() + 4, y - 4, tr("valor padrão"));
     } else {
+        const double win0 = timeStart();
+        const double win1 = win0 + timeRange();
+        const Keyframe& first = ks->first();
+        const Keyframe& last = ks->last();
+        bool started = false;
+        auto addTo = [&](double t, double v) {
+            const QPointF pt(tToX(t), vToY(v));
+            if (!started) { path.moveTo(pt); started = true; }
+            else path.lineTo(pt);
+        };
+        // Linha plana antes do primeiro keyframe (até a borda da janela).
+        const double flat0 = std::min(win0, first.time);
+        if (flat0 < first.time - 1e-9) {
+            addTo(flat0, first.value);
+            addTo(first.time, first.value);
+        }
+        for (int i = 0; i + 1 < ks->size(); ++i) {
+            const Keyframe& a = (*ks)[i];
+            const Keyframe& b = (*ks)[i + 1];
+            const double span = b.time - a.time;
+            if (!started) {
+                path.moveTo(tToX(a.time), vToY(a.value));
+                started = true;
+            }
+            switch (a.interp) {
+                case KfStep:
+                    addTo(b.time, a.value);
+                    addTo(b.time, b.value);
+                    break;
+                case KfSmooth: {
+                    const Keyframe& p0 = (i > 0) ? (*ks)[i - 1] : a;
+                    const Keyframe& p3 = (i + 2 < ks->size()) ? (*ks)[i + 2] : b;
+                    const double dt0 = (i > 0) ? (b.time - p0.time) : span;
+                    const double m0 = (dt0 > 1e-9) ? (b.value - p0.value) / dt0 : 0.0;
+                    const double dt3 = (i + 2 < ks->size()) ? (p3.time - a.time) : span;
+                    const double m3 = (dt3 > 1e-9) ? (p3.value - a.value) / dt3 : 0.0;
+                    path.cubicTo(tToX(a.time + span / 3.0), vToY(a.value + m0 * span),
+                                 tToX(b.time - span / 3.0), vToY(b.value - m3 * span),
+                                 tToX(b.time), vToY(b.value));
+                    break;
+                }
+                case KfBezier: {
+                    path.cubicTo(tToX(a.time + a.ox), vToY(a.value + a.oy),
+                                 tToX(b.time - b.ix), vToY(b.value + b.iy),
+                                 tToX(b.time), vToY(b.value));
+                    break;
+                }
+                case KfLinear:
+                default:
+                    addTo(b.time, b.value);
+                    break;
+            }
+        }
+        // Linha plana depois do último keyframe (até a borda da janela).
+        if (win1 > last.time + 1e-9) {
+            addTo(last.time, last.value);
+            addTo(std::max(win1, last.time), last.value);
+        }
         p.setPen(QPen(QColor(110, 200, 255), 1.6));
         p.drawPath(path);
     }
 
-    // Handles bezier dos keyframes selecionados (um de saída e um de entrada,
-    // como no Premiere).
-    for (int i = 0; i < ks->size(); ++i) {
-        if (!m_selKeys.contains(i)) continue;
-        const Keyframe& k = (*ks)[i];
-        if (k.interp != KfSmooth && k.interp != KfBezier) continue;
-        const QPointF kp(tToX(k.time), vToY(k.value));
-        for (int s = 0; s < 2; ++s) {
-            double ht, hv;
-            if (!bezierHandle(*ks, i, s == 0, &ht, &hv)) continue;
-            const QPointF hp(tToX(k.time + (s == 0 ? ht : -ht)),
-                             vToY(k.value + hv));
-            p.setPen(QPen(QColor(140, 200, 255, 200), 1, Qt::DashLine));
-            p.drawLine(kp, hp);
-            p.setPen(QPen(QColor(140, 200, 255), 1));
-            p.setBrush(QColor(60, 90, 130));
-            p.drawEllipse(hp, 2.5, 2.5);
+    // Handles bezier: só aparecem DURANTE o arrasto ativo de uma alça. No
+    // resto do tempo a linha fica limpa, sem a "membrana" em volta da curva.
+    if (m_dragHandle >= 0) {
+        for (int i = 0; i < ks->size(); ++i) {
+            if (i != m_dragHandle) continue;
+            const Keyframe& k = (*ks)[i];
+            if (k.interp != KfSmooth && k.interp != KfBezier) continue;
+            const QPointF kp(tToX(k.time), vToY(k.value));
+            for (int s = 0; s < 2; ++s) {
+                double ht, hv;
+                if (!bezierHandle(*ks, i, s == 0, &ht, &hv)) continue;
+                const QPointF hp(tToX(k.time + (s == 0 ? ht : -ht)),
+                                 vToY(k.value + hv));
+                p.setPen(QPen(QColor(140, 200, 255, 200), 1, Qt::DashLine));
+                p.drawLine(kp, hp);
+                p.setPen(QPen(QColor(140, 200, 255), 1));
+                p.setBrush(QColor(60, 90, 130));
+                p.drawEllipse(hp, 2.5, 2.5);
+            }
         }
     }
 
@@ -732,6 +801,7 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
         drawKeyGlyph(p, kp, k.interp, size, fill);
     }
     p.setRenderHint(QPainter::Antialiasing, false);
+    p.restore(); // fim do clipping na área do gráfico
 
     // Marcador do valor atual no playhead.
     if (m_clip && relPh >= 0.0 && relPh >= t0 - 1e-9 && relPh <= t0 + range + 1e-9) {
@@ -788,12 +858,25 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
 }
 
 void GraphCanvas::mousePressEvent(QMouseEvent* e) {
+    setFocus(); // garante foco para o Delete apagar keyframes, não o clipe
     if (e->button() != Qt::LeftButton || !m_clip) {
         QWidget::mousePressEvent(e);
         return;
     }
     m_lastPos = e->pos();
     updateHover(e->pos());
+    // Clicou na régua: move/arrasta a agulha (igual às outras agulhas do app).
+    if (e->pos().y() <= rulerRect().bottom()) {
+        m_playheadDrag = true;
+        m_dragKey = -1;
+        m_dragHandle = -1;
+        m_marqueeActive = false;
+        setCursor(Qt::SizeHorCursor);
+        emit keyframeJump(m_clip->pos + snapTime(xToT(e->pos().x())));
+        e->accept();
+        update();
+        return;
+    }
     const int kh = keyframeHit(e->pos());
     if (kh >= 0) {
         // Seleção múltipla: Shift adiciona/alterna; clique simples seleciona só este.
@@ -850,6 +933,22 @@ void GraphCanvas::mousePressEvent(QMouseEvent* e) {
         update();
         return;
     }
+    // Perto da linha do playhead (sem keyframe/handle por cima): arrasta a
+    // agulha como nas outras janelas.
+    if (m_tool == ToolSelect && m_clip) {
+        const double rel = std::clamp(m_playhead - m_clip->pos, 0.0, m_clip->dur);
+        if (std::abs(e->pos().x() - tToX(rel)) <= 5) {
+            m_playheadDrag = true;
+            m_dragKey = -1;
+            m_dragHandle = -1;
+            m_marqueeActive = false;
+            setCursor(Qt::SizeHorCursor);
+            emit keyframeJump(m_clip->pos + snapTime(xToT(e->pos().x())));
+            e->accept();
+            update();
+            return;
+        }
+    }
     // Ferramentas de adicionar/curva: clicar em espaço vazio cria um keyframe.
     if (m_tool != ToolSelect) {
         QVector<Keyframe>& K = *keys();
@@ -903,6 +1002,13 @@ void GraphCanvas::mousePressEvent(QMouseEvent* e) {
 
 void GraphCanvas::mouseMoveEvent(QMouseEvent* e) {
     m_lastPos = e->pos();
+    // Arrasto da agulha: faz scrub do playhead pela régua.
+    if (m_playheadDrag && (e->buttons() & Qt::LeftButton) && m_clip) {
+        emit keyframeJump(m_clip->pos + snapTime(xToT(e->pos().x())));
+        e->accept();
+        update();
+        return;
+    }
     if (m_marqueeActive && (e->buttons() & Qt::LeftButton)) {
         m_marqueeRect = QRect(m_marqueeStart, e->pos()).normalized();
         e->accept();
@@ -989,6 +1095,14 @@ void GraphCanvas::mouseMoveEvent(QMouseEvent* e) {
 }
 
 void GraphCanvas::mouseReleaseEvent(QMouseEvent* e) {
+    if (m_playheadDrag) {
+        m_playheadDrag = false;
+        setCursor(Qt::ArrowCursor);
+        updateHover(e->pos());
+        e->accept();
+        update();
+        return;
+    }
     if (m_marqueeActive) {
         m_marqueeActive = false;
         marqueeSelect(m_marqueeRect, e->modifiers() & Qt::ShiftModifier);
@@ -1023,6 +1137,12 @@ void GraphCanvas::mouseDoubleClickEvent(QMouseEvent* e) {
     m_marqueeActive = false;
     m_marqueeRect = QRect();
     QVector<Keyframe>& K = *keys();
+
+    // Duplo clique na régua não cria keyframe (a régua serve para a agulha).
+    if (e->pos().y() <= rulerRect().bottom()) {
+        e->accept();
+        return;
+    }
 
     // Duplo clique em cima de um keyframe: edita tempo/valor exatos.
     const int hit = keyframeHit(e->pos());
@@ -1102,8 +1222,10 @@ bool GraphCanvas::event(QEvent* e) {
     if (e->type() == QEvent::ShortcutOverride) {
         QKeyEvent* ke = static_cast<QKeyEvent*>(e);
         const int key = ke->key();
-        if ((key == Qt::Key_Delete || key == Qt::Key_Backspace)
-            && keys() && !m_selKeys.isEmpty()) {
+        // Intercepta Delete/Backspace sempre que o canvas estiver focado: o
+        // atalho global do MainWindow não pode apagar o clipe enquanto o
+        // usuário está editando keyframes (mesmo sem seleção).
+        if (key == Qt::Key_Delete || key == Qt::Key_Backspace) {
             e->accept();
             return true;
         }
@@ -1870,7 +1992,7 @@ void GraphEditorWidget::toggleAnimation(GraphProp p) {
         Keyframe nk;
         nk.time = rel;
         nk.value = baseFor(c, p);
-        nk.interp = KfLinear;
+        nk.interp = KfSmooth;
         K.append(nk);
     } else {
         K.clear();

@@ -97,6 +97,7 @@ public:
     explicit KeyframeStrip(PancropWidget* owner) : QWidget(owner), m_owner(owner) {
         setMinimumHeight(36);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        setFocusPolicy(Qt::ClickFocus);
     }
 protected:
     void paintEvent(QPaintEvent*) override { m_owner->paintKeyframeStrip(this); }
@@ -105,6 +106,26 @@ protected:
     void mouseReleaseEvent(QMouseEvent* e) override { m_owner->stripRelease(this, e); }
     void mouseDoubleClickEvent(QMouseEvent* e) override { m_owner->stripDoubleClick(this, e); }
     void contextMenuEvent(QContextMenuEvent* e) override { m_owner->stripContextMenu(this, e); }
+    void keyPressEvent(QKeyEvent* e) override {
+        if (e->key() == Qt::Key_Delete || e->key() == Qt::Key_Backspace) {
+            m_owner->deleteSelectedKeyframes();
+            e->accept();
+        } else {
+            QWidget::keyPressEvent(e);
+        }
+    }
+    bool event(QEvent* e) override {
+        if (e->type() == QEvent::ShortcutOverride) {
+            const int key = static_cast<QKeyEvent*>(e)->key();
+            // Impede o atalho global do MainWindow de apagar o clipe quando a
+            // faixa de keyframes do pancrop está com foco.
+            if (key == Qt::Key_Delete || key == Qt::Key_Backspace) {
+                e->accept();
+                return true;
+            }
+        }
+        return QWidget::event(e);
+    }
 private:
     PancropWidget* m_owner;
 };
@@ -486,7 +507,7 @@ void PancropWidget::toggleKeyframe(int prop) {
     Keyframe k;
     k.time = rel;
     k.value = propValue(prop);
-    k.interp = KfLinear;
+    k.interp = KfSmooth;
     kf->append(k);
     std::sort(kf->begin(), kf->end(),
               [](const Keyframe& a, const Keyframe& b) { return a.time < b.time; });
@@ -509,7 +530,7 @@ void PancropWidget::writeKeyframe(int prop, double value) {
     Keyframe k;
     k.time = rel;
     k.value = value;
-    k.interp = KfLinear;
+    k.interp = KfSmooth;
     kf->append(k);
     std::sort(kf->begin(), kf->end(),
               [](const Keyframe& a, const Keyframe& b) { return a.time < b.time; });
@@ -1040,13 +1061,16 @@ void PancropWidget::paintKeyframeStrip(QWidget* view) {
     for (double t : times) {
         const int x = kfStripX(t, view, dur);
         const bool active = rel >= 0.0 && std::fabs(t - rel) < 1e-6;
+        const bool sel = m_selectedTimes.contains(t);
         QPolygon dia = QPolygon()
             << QPoint(x, h / 2 - 6) << QPoint(x + 5, h / 2)
             << QPoint(x, h / 2 + 6) << QPoint(x - 5, h / 2);
         p.setPen(QPen(QColor(10, 10, 12), 1));
-        // Mesma cor dos keyframes do editor de curvas: cinza quando inativo,
-        // laranja quando o playhead está em cima.
-        p.setBrush(active ? QColor(255, 179, 64) : QColor(200, 205, 215));
+        // Selecionado = verde; no playhead = laranja; senão cinza (mesmos
+        // critérios de cor do editor de curvas).
+        p.setBrush(sel ? QColor(120, 230, 150)
+                       : active ? QColor(255, 179, 64)
+                                : QColor(200, 205, 215));
         p.drawPolygon(dia);
     }
 }
@@ -1081,6 +1105,21 @@ void PancropWidget::stripPress(QWidget* view, QMouseEvent* e) {
         }
     }
     if (bestIdx >= 0) {
+        // Shift+clique alterna a seleção sem iniciar arraste.
+        if (e->modifiers() & Qt::ShiftModifier) {
+            if (m_selectedTimes.contains(times[bestIdx]))
+                m_selectedTimes.removeAll(times[bestIdx]);
+            else
+                m_selectedTimes.append(times[bestIdx]);
+            std::sort(m_selectedTimes.begin(), m_selectedTimes.end());
+            view->setFocus();
+            m_strip->update();
+            e->accept();
+            return;
+        }
+        // Clique simples seleciona só este keyframe e permite arrastar.
+        m_selectedTimes = { times[bestIdx] };
+        view->setFocus();
         m_stripDragging = true;
         m_stripDragFrom = times[bestIdx];
         m_stripDragTo = times[bestIdx];
@@ -1093,7 +1132,8 @@ void PancropWidget::stripPress(QWidget* view, QMouseEvent* e) {
         return;
     }
 
-    // Clique vazio / na agulha: pula o playhead e permite arrastá-lo (scrub).
+    // Clique vazio / na agulha: limpa a seleção e pula/arrasta o playhead.
+    m_selectedTimes.clear();
     m_stripPlayheadDrag = true;
     const double frac = std::clamp((double)(e->pos().x() - 4) / (view->width() - 8),
                                    0.0, 1.0);
@@ -1145,6 +1185,12 @@ void PancropWidget::stripMove(QWidget* view, QMouseEvent* e) {
     refreshDiamonds();
     m_view->update();
     m_strip->update();
+    // A seleção acompanha o keyframe arrastado.
+    if (m_selectedTimes.contains(from)) {
+        m_selectedTimes.removeAll(from);
+        m_selectedTimes.append(newRel);
+        std::sort(m_selectedTimes.begin(), m_selectedTimes.end());
+    }
     emit modified();
     e->accept();
 }
@@ -1191,7 +1237,7 @@ void PancropWidget::stripDoubleClick(QWidget* view, QMouseEvent* e) {
         if (!kf) continue;
         Keyframe k;
         k.time = rel;
-        k.interp = KfLinear;
+        k.interp = KfSmooth;
         switch (prop) {
             case P_CropL: k.value = kfValue(c->kfCropL, c->cropL, rel); break;
             case P_CropR: k.value = kfValue(c->kfCropR, c->cropR, rel); break;
@@ -1209,6 +1255,29 @@ void PancropWidget::stripDoubleClick(QWidget* view, QMouseEvent* e) {
     refreshDiamonds();
     m_strip->update();
     e->accept();
+}
+
+// Apaga os keyframes selecionados na faixa (em todas as propriedades de
+// transformação no mesmo instante). Ligado ao Delete/Backspace da faixa.
+void PancropWidget::deleteSelectedKeyframes() {
+    Clip* c = activeClip();
+    if (!c || m_selectedTimes.isEmpty()) return;
+    const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
+                         P_Scale, P_PanX, P_PanY};
+    if (!m_undoPushed) { emit editStart(); m_undoPushed = true; }
+    for (double t : m_selectedTimes) {
+        for (int prop : props) {
+            QVector<Keyframe>* kf = keyframesFor(prop);
+            if (!kf) continue;
+            for (int i = kf->size() - 1; i >= 0; --i) {
+                if (std::fabs((*kf)[i].time - t) < 1e-6) kf->removeAt(i);
+            }
+        }
+    }
+    m_selectedTimes.clear();
+    emit modified();
+    refreshDiamonds();
+    m_strip->update();
 }
 
 // Clique direito num keyframe da faixa: predefinições de suavização estilo
