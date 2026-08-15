@@ -16,6 +16,7 @@
 #include "ffmpeg/MediaCache.h"
 
 #include <QApplication>
+#include <QPointer>
 #include <QDockWidget>
 #include <QMenuBar>
 #include <QToolBar>
@@ -95,7 +96,7 @@ bool saneLayoutArray(const QByteArray& state) {
 }
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle(tr("Pierrot — Editor de Vídeo"));
+    setWindowTitle(tr("Pierrot 0.2.0 — Editor de Vídeo"));
     resize(1280, 800);
 
     for (int i = 0; i < 3; ++i) m_project.addTrack(false);
@@ -616,6 +617,10 @@ void MainWindow::createActions() {
     clearLoopTb->setToolTip(tr("Limpar região de loop"));
     connect(clearLoopTb, &QAction::triggered, m_timeline, &TimelineWidget::clearLoop);
     toolTb->addAction(clearLoopTb);
+    QAction* styleAct = new QAction(tr("Estilo"), this);
+    styleAct->setToolTip(tr("Estilo das faixas: minimizada, normal ou grande (experimental)"));
+    connect(styleAct, &QAction::triggered, m_timeline, &TimelineWidget::showTrackPresetMenu);
+    toolTb->addAction(styleAct);
 
     tlLay->addWidget(toolTb);
     tlLay->addWidget(m_timeline, 1);
@@ -872,15 +877,25 @@ void MainWindow::restoreSnapshot(const QByteArray& snap) {
 
 void MainWindow::undo() {
     if (m_undoIndex <= 0) return;
+    const QString sel = m_timeline->lastSelectedId();
+    QPointer<QWidget> fw = focusWidget();
     --m_undoIndex;
     applyUndoState();
+    // Preserva a seleção e o foco (o setProject da timeline limpa a seleção e
+    // o editor de curvas/pancrop perderiam o clipe após o Ctrl+Z).
+    if (!sel.isEmpty()) m_timeline->selectClip(sel);
+    if (fw) fw->setFocus();
     setModified();
 }
 
 void MainWindow::redo() {
     if (m_undoIndex >= m_undoStack.size() - 1) return;
+    const QString sel = m_timeline->lastSelectedId();
+    QPointer<QWidget> fw = focusWidget();
     ++m_undoIndex;
     applyUndoState();
+    if (!sel.isEmpty()) m_timeline->selectClip(sel);
+    if (fw) fw->setFocus();
     setModified();
 }
 
@@ -891,7 +906,6 @@ void MainWindow::applyUndoState() {
     m_pancrop->setProject(&m_project);
     m_graph->refresh();
     m_preview->refreshView();
-    m_timeline->setFocus();
     updateUndoActions();
 }
 
@@ -910,7 +924,7 @@ void MainWindow::updateTitle() {
     const QString name = m_currentFile.isEmpty()
         ? tr("Sem título")
         : QFileInfo(m_currentFile).fileName();
-    setWindowTitle(tr("Pierrot — %1%2")
+    setWindowTitle(tr("Pierrot 0.2.0 — %1%2")
                        .arg(name, m_modified ? tr(" *") : QString()));
 }
 

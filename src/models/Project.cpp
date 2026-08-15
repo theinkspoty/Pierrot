@@ -237,8 +237,8 @@ static QJsonObject trackToJson(const Track& t) {
 
 static Track trackFromJson(const QJsonObject& o, bool audio) {
     Track t;
-    t.name = o["name"].toString(audio ? QStringLiteral("Faixa de Áudio")
-                                      : QStringLiteral("Faixa de Vídeo"));
+    t.name = o["name"].toString(audio ? QStringLiteral("Audio")
+                                      : QStringLiteral("Video"));
     t.audio = audio;
     t.blendMode = o["blendMode"].toString(QStringLiteral("normal"));
     t.volume = o["volume"].toDouble(1.0);

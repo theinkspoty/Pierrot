@@ -53,6 +53,14 @@ public:
 
     double playhead() const { return m_playhead; }
     void setPlayhead(double t);
+    // Último clipe selecionado (ou vazio se não houver seleção).
+    QString lastSelectedId() const {
+        return m_selected.isEmpty() ? QString() : m_selected.last();
+    }
+    // Seleciona um clipe (usado para restaurar a seleção após undo/redo).
+    void selectClip(const QString& id) { setSelection(id); }
+    // Abre o menu de estilos das faixas (minimizada/normal/grande).
+    void showTrackPresetMenu();
 
     void addTrack(bool audio);
     void updateScrollRanges();
@@ -76,6 +84,9 @@ public slots:
     void showDropHover(const QPoint& globalPos);
     void hideDropHover();
     void dropMediaAt(const QStringList& mediaIds, const QPoint& globalPos);
+    void moveTrack(bool audio, int from, int to);
+    void moveTracksTo(bool audio, const QVector<int>& idxs, int to);
+    void finishTrackDrag();
     // Recria o conteúdo dos clipes (ex.: mudou o modo de exibição das
     // miniaturas nas configurações).
     void refreshSettings();
@@ -104,7 +115,7 @@ protected:
     void dragLeaveEvent(QDragLeaveEvent*) override;
     void dropEvent(QDropEvent*) override;
 private:
-    enum DragMode { None, MoveClip, TrimLeft, TrimRight, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, ResizeTrack, TrackVol, ClipVol };
+    enum DragMode { None, MoveClip, TrimLeft, TrimRight, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, ResizeTrack, TrackVol, ClipVol, TrackDrag };
     struct ClipOrig { double pos = 0.0, in = 0.0, dur = 0.0; };
     struct ClipboardEntry { Clip clip; int track = 0; bool audio = false; };
     struct TrackSel {
@@ -116,6 +127,7 @@ private:
     double timeToX(double t) const;
     double xToTime(int x) const;
     int trackH(int idx, bool audio) const;
+    void applyTrackPreset(int preset);
     int rowY(int videoIdx, int audioIdx) const;
     bool rowFromY(int y, int& row, bool& audio) const;
     int resizeHandleAt(const QPoint& pos, int& row, bool& audio) const;
@@ -231,6 +243,16 @@ private:
     int m_resizeRow = -1;
     bool m_resizeAudio = false;
     int m_resizeOrigH = 0;
+    QVector<int> m_resizeSelOrigH; // alturas originais das faixas selecionadas
+    int m_trackPreset = 1; // 0=minimizada, 1=normal, 2=grande
+    // Arrasto de faixa (reordenar ou soltar em pasta).
+    int m_dragTrackRow = -1;
+    bool m_dragTrackAudio = false;
+    bool m_trackDragActive = false;
+    int m_dropRow = -1;
+    bool m_dropAudio = false;
+    QString m_dropGroup;
+    QString m_dragGroupId; // grupo sendo arrastado pela faixa de pasta (vazio = faixa única)
     int m_dragHoverRow = -1;
     bool m_dragHoverAudio = false;
     int m_volRow = -1;

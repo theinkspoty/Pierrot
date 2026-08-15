@@ -256,8 +256,8 @@ public:
         Track t;
         t.audio = audio;
         t.name = audio
-            ? QString("Faixa de Áudio %1").arg(audioTracks.size() + 1)
-            : QString("Faixa de Vídeo %1").arg(videoTracks.size() + 1);
+            ? QString("Audio %1").arg(audioTracks.size() + 1)
+            : QString("Video %1").arg(videoTracks.size() + 1);
         (audio ? audioTracks : videoTracks).append(t);
     }
 

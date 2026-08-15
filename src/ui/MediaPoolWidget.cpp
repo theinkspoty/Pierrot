@@ -32,6 +32,11 @@
 #include <QScrollBar>
 #include <QItemSelection>
 #include <QLabel>
+#include <QMimeData>
+#include <QUrl>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
 #include <cmath>
 #include <algorithm>
 
@@ -110,6 +115,33 @@ PoolList::PoolList(QWidget* parent) : QListWidget(parent) {
     setMovement(QListView::Static);
     setSpacing(8);
     setTextElideMode(Qt::ElideRight);
+    // Aceita arquivos arrastados do sistema para importar mídia.
+    setAcceptDrops(true);
+}
+
+void PoolList::dragEnterEvent(QDragEnterEvent* e) {
+    if (e->mimeData()->hasUrls())
+        e->acceptProposedAction();
+    else
+        e->ignore();
+}
+
+void PoolList::dragMoveEvent(QDragMoveEvent* e) {
+    if (e->mimeData()->hasUrls())
+        e->acceptProposedAction();
+    else
+        e->ignore();
+}
+
+void PoolList::dropEvent(QDropEvent* e) {
+    QStringList files;
+    const QList<QUrl> urls = e->mimeData()->urls();
+    for (const QUrl& u : urls)
+        if (u.isLocalFile())
+            files << u.toLocalFile();
+    if (files.isEmpty()) { e->ignore(); return; }
+    emit filesDropped(files);
+    e->acceptProposedAction();
 }
 
 void PoolList::mousePressEvent(QMouseEvent* e) {
@@ -171,6 +203,11 @@ void PoolList::mouseMoveEvent(QMouseEvent* e) {
                 const QModelIndex idx = indexFromItem(m_pressItem);
                 if (!selectionModel()->isSelected(idx))
                     selectionModel()->select(idx, QItemSelectionModel::Select);
+            } else if (!selectionModel()->isSelected(indexFromItem(m_pressItem))) {
+                // Garante que o item arrastado está na seleção (senão a soltura
+                // viria com a lista vazia e nada seria adicionado).
+                selectionModel()->select(indexFromItem(m_pressItem),
+                                        QItemSelectionModel::Select);
             }
             m_dragging = true;
             qApp->installEventFilter(this);
@@ -349,7 +386,16 @@ QPixmap PoolList::makeDragPixmap() const {
     const QList<QListWidgetItem*> items = selectedItems();
     if (items.isEmpty()) return QPixmap();
     QPixmap pm = items.first()->icon().pixmap(96, 54);
-    if (pm.isNull()) return QPixmap();
+    if (pm.isNull()) {
+        // Sem miniatura (ex.: áudio sem imagem): um quadro padrão para o
+        // arrasto ter feedback visual.
+        pm = QPixmap(96, 54);
+        pm.fill(QColor(40, 42, 48));
+        QPainter pp(&pm);
+        pp.setPen(QColor(150, 155, 165));
+        pp.drawRect(1, 1, pm.width() - 2, pm.height() - 2);
+        pp.drawText(pm.rect(), Qt::AlignCenter, items.first()->text());
+    }
     if (items.size() > 1) {
         // Vários itens: selo com a contagem no canto da miniatura.
         QPainter p(&pm);
@@ -378,6 +424,9 @@ MediaPoolWidget::MediaPoolWidget(QWidget* parent) : QWidget(parent) {
     connect(m_list, &PoolList::dragHover, this, &MediaPoolWidget::dragHover);
     connect(m_list, &PoolList::dragHoverCleared, this, &MediaPoolWidget::dragHoverCleared);
     connect(m_list, &PoolList::mediaDropped, this, &MediaPoolWidget::mediaDropped);
+    // Importa arquivos arrastados do sistema para o painel.
+    connect(m_list, &PoolList::filesDropped, this, &MediaPoolWidget::importPaths);
+    setAcceptDrops(true);
 
     m_addBtn = new QPushButton(tr("Adicionar"), this);
     m_removeBtn = new QPushButton(tr("Remover"), this);
@@ -506,6 +555,12 @@ void MediaPoolWidget::addFiles() {
            "*.ac3 *.amr *.ape *.caf *.dts *.mka *.mid *.midi *.mp2 *.oga *.spx "
            "*.w64 *.wv *.alac *.mp1 *.mpa *.ra *.wpl *.tta *.tak *.shn);;Todos os arquivos (*)"));
     if (files.isEmpty()) return;
+    importPaths(files);
+}
+
+// Importa uma lista de arquivos (botão Adicionar ou arrastar do sistema).
+void MediaPoolWidget::importPaths(const QStringList& files) {
+    if (!m_project || files.isEmpty()) return;
     emit editStart();
 
     auto* watcher = new QFutureWatcher<ProbeResult>(this);
@@ -556,6 +611,32 @@ void MediaPoolWidget::addFiles() {
     m_importBar->setValue(0);
     m_importBar->show();
     watcher->setFuture(QtConcurrent::mapped(files, probeFile));
+}
+
+// Arrastar arquivos do sistema sobre o painel (fora da lista) também importa.
+void MediaPoolWidget::dragEnterEvent(QDragEnterEvent* e) {
+    if (e->mimeData()->hasUrls())
+        e->acceptProposedAction();
+    else
+        e->ignore();
+}
+
+void MediaPoolWidget::dragMoveEvent(QDragMoveEvent* e) {
+    if (e->mimeData()->hasUrls())
+        e->acceptProposedAction();
+    else
+        e->ignore();
+}
+
+void MediaPoolWidget::dropEvent(QDropEvent* e) {
+    QStringList files;
+    const QList<QUrl> urls = e->mimeData()->urls();
+    for (const QUrl& u : urls)
+        if (u.isLocalFile())
+            files << u.toLocalFile();
+    if (files.isEmpty()) { e->ignore(); return; }
+    importPaths(files);
+    e->acceptProposedAction();
 }
 
 void MediaPoolWidget::removeSelected() {

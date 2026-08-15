@@ -33,6 +33,20 @@ Editor de vídeo simples — feito de um editor para outro editor — estilo
   são salvos ao fechar e restaurados ao abrir. Geometria inválida ou vinda de um
   monitor que não está mais conectado (ex.: TV 4K) é descartada — a janela nunca
   abre fora da tela nem maior que a área disponível.
+- **Editor de curvas** (docking): curva por propriedade desenhada como splines
+  suaves (cubic bezier por segmento, estilo Premiere), agulha arrastável, grade
+  de referência, keyframes com alças (bezier) para entortar a curva, seleção
+  múltipla (Shift/marquee), interpolações (Linear/Suave/Degrau/Bezier) e
+  movimento de keyframes no tempo e valor.
+- **Pan/Crop** com keyframes: arrastar a agulha na faixa de tempo (scrub),
+  duplo clique cria keyframe, seleção e exclusão de keyframes (Delete) — tudo
+  **sincronizado** com o editor de curvas (mesmos dados, um reflete o outro).
+- **Timeline**: faixas de vídeo na ordem `V1` no topo; arraste o cabeçalho de
+  uma faixa para **reordenar** ou soltá-la numa **pasta (grupo)**; arraste a
+  faixa da pasta para mover o grupo inteiro; presets de tamanho de faixa
+  (**Estilo**: minimizada/normal/grande) na barra de ferramentas da timeline.
+- **Media Pool**: importe arrastando arquivos do sistema para dentro do painel,
+  ou arraste itens do painel para a timeline (com miniatura seguindo o cursor).
 
 ## Especificações
 
@@ -63,6 +77,11 @@ Editor de vídeo simples — feito de um editor para outro editor — estilo
 | `Ctrl+clique`      | Alterna marcador na régua       |
 | Clique + arraste   | Mover clipe / bordas = trim     |
 | Botão direito      | Menu do clipe (propriedades, efeitos de vídeo), marcadores, faixas (adicionar, modo de composição) |
+| V (timeline)       | Mostrar/ocultar linhas de volume |
+| 0 / M / R / E / Z  | Ferramentas da timeline: selecionar, mover, tesoura, envelope, lupa |
+| V / P / B (curvas) | Ferramentas do editor de curvas: selecionar, adicionar, curva |
+| 1 / 2 / 3 / 4 (curvas) | Interpolação do keyframe: linear, suave, degrau, bezier |
+| Delete (curvas/pancrop) | Exclui os keyframes selecionados (não o clipe) |
 
 ## Dependências (Ubuntu/Debian)
 
@@ -174,8 +193,10 @@ src/
   ffmpeg/FFmpegDecoder       Decodificação de frames e picos de áudio (libav*)
   ffmpeg/MediaCache          Cache de waveforms/thumbnails em thread de fundo
   export/ProjectExporter     Geração do comando ffmpeg (filter_complex)
-  ui/TimelineWidget          Timeline interativa (drag, corte, trim, zoom, propriedades, efeitos, blend)
-  ui/MediaPoolWidget         Painel de mídia com drag-and-drop e import assíncrono
+  ui/TimelineWidget          Timeline interativa (drag, corte, trim, zoom, reordenação de faixas/pastas, presets de estilo)
+  ui/GraphEditorWidget       Editor de curvas (keyframes, splines bezier, interpolações)
+  ui/PancropWidget           Pan/Crop com keyframes sincronizados com o editor de curvas
+  ui/MediaPoolWidget         Painel de mídia com arrasto do sistema e para a timeline
   ui/PreviewWidget           Preview + reprodução
   ui/ExportDialog            Diálogo de exportação com progresso
   ui/ProjectSettingsDialog   Resolução e fps do projeto
@@ -188,9 +209,14 @@ Marcado com 💀 o que já foi implementado.
 
 ### Edição
 - 💀 Keyframes/curvas de volume, opacidade, transform, crop e efeitos ao longo
-  do tempo (editor de curvas com interpolação linear, suave, segurar e bezier,
-  com snap ao frame).
+  do tempo, com **editor de curvas** (splines suaves por segmento, agulha
+  arrastável, alças bezier, grade de referência, interpolação linear/suave/
+  degrau/bezier e snap ao frame).
+- 💀 Pan/Crop com keyframes **sincronizados com o editor de curvas** (mesmos
+  dados): duplo clique cria keyframe, seleção e exclusão na faixa de tempo.
 - 💀 Texto/título sobreposto por clipe.
+- 💀 Reordenar faixas de vídeo/áudio e **pastas (grupos)** por arraste do
+  cabeçalho, além de presets de tamanho (**Estilo**: minimizada/normal/grande).
 - Transições entre clipes (dissolve, wipe) com duração ajustável.
 - Imagens estáticas como clipes na timeline (PNG/JPEG, com trim e pan/crop).
 - Seleção múltipla de clipes (editar, mover, duplicar, excluir em lote).
@@ -224,6 +250,7 @@ Marcado com 💀 o que já foi implementado.
 - **Transcode/Proxy** automático para mídia pesada (4K/HEVC) e troca
   transparente na timeline.
 - **Undo mais granular** (passo a passo das operações, em vez de snapshots).
+- 💀 Importar arquivos por **arrastar do sistema** para o media pool.
 - **Importar pasta inteira** para o media pool, com subpastas.
 - Suporte a **projetos 60/120 fps** (hoje o preview e os keyframes já respeitam
   o fps do projeto; validar exportação e timestamps).

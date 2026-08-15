@@ -243,15 +243,15 @@ static bool bezierHandle(const QVector<Keyframe>& K, int i, bool out,
         *ht = k.ix; *hv = k.iy;
         return true;
     }
-    if (k.interp == KfSmooth) {
+    // Suave, Linear e Degrau recebem uma alça padrão (tangente Catmull-Rom):
+    // fica visível para o usuário entortar a curva, e ao arrastá-la o keyframe
+    // é convertido para Bezier manual.
+    if (k.interp == KfSmooth || k.interp == KfLinear || k.interp == KfStep) {
         const double span = out
             ? ((i + 1 < K.size()) ? K[i + 1].time - k.time : 0.0)
             : ((i - 1 >= 0) ? k.time - K[i - 1].time : 0.0);
         if (span <= 1e-9) return false;
         const double m = autoTangent(K, i);
-        // Controle real do Catmull-Rom (o mesmo que o kfValue() usa): a
-        // posição horizontal em 1/3 do segmento e a tangente inteira na
-        // vertical. Converte para bezier manual sem mudar a curva.
         *ht = span / 3.0;
         *hv = out ? m * span : -m * span;
         return true;
@@ -362,7 +362,8 @@ double GraphCanvas::yToV(int y) const {
 
 int GraphCanvas::vToY(double v) const {
     const QRect r = plotRect();
-    const double f = (std::clamp(v, m_lo, m_hi) - m_lo) / (m_hi - m_lo);
+    const double span = std::max(1e-9, m_hi - m_lo);
+    const double f = (std::clamp(v, m_lo, m_hi) - m_lo) / span;
     return r.bottom() - (int)std::lround(f * r.height());
 }
 
@@ -381,7 +382,6 @@ int GraphCanvas::handleHit(const QPoint& p, int* side) const {
     if (!ks) return -1;
     for (int i = 0; i < ks->size(); ++i) {
         const Keyframe& k = (*ks)[i];
-        if (k.interp != KfSmooth && k.interp != KfBezier) continue;
         for (int s = 0; s < 2; ++s) {
             double ht, hv;
             if (!bezierHandle(*ks, i, s == 0, &ht, &hv)) continue;
@@ -575,7 +575,6 @@ void GraphCanvas::marqueeSelect(const QRect& r, bool add) {
 // Move todos os keyframes selecionados pelo mesmo delta, sem deixar que um
 // cruze um vizinho fora da seleção (nem saia do clipe).
 void GraphCanvas::moveSelected(double dT, double dV, bool snap) {
-    (void)dV; // o valor do keyframe não muda no arraste (só o tempo)
     if (!m_clip) return;
     QVector<Keyframe>& K = *keys();
     if (K.isEmpty() || m_selKeys.isEmpty() || m_selOrig.size() != m_selKeys.size()) return;
@@ -602,9 +601,8 @@ void GraphCanvas::moveSelected(double dT, double dV, bool snap) {
         if (snap) nt = snapTime(nt);
         nt = std::clamp(nt, leftB + 0.001, rightB - 0.001);
         k.time = nt;
-        // Keyframes não se movem na vertical: o valor só muda ao criar/editar
-        // (diálogo, pancrop ou ferramenta de curva). O arraste é só no tempo.
-        k.value = o.value;
+        // Movimento vertical restaurado: o valor acompanha o arraste.
+        k.value = std::clamp(o.value + dV, m_loProp, m_hiProp);
     }
 }
 
@@ -657,12 +655,6 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
         const double rel = std::clamp(m_playhead - m_clip->pos, 0.0, m_clip->dur);
         if (rel >= t0 - 1e-9 && rel <= t0 + range + 1e-9) {
             const int x = tToX(rel);
-            QPolygon tri;
-            tri << QPoint(x - 5, rr.bottom()) << QPoint(x + 5, rr.bottom())
-                << QPoint(x, rr.bottom() - 6);
-            p.setPen(QPen(QColor(190, 220, 255), 1));
-            p.setBrush(QColor(190, 220, 255));
-            p.drawPolygon(tri);
             QFont f = p.font();
             f.setBold(true);
             p.setFont(f);
@@ -675,14 +667,18 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
 
     const QRect r = plotRect();
     if (r.width() <= 0 || r.height() <= 0) return;
-    p.fillRect(r, QColor(38, 42, 50));
 
-    // Sem grade cheia: só linhas horizontais de referência bem discretas
-    // (o gráfico do Premiere não tem grade).
-    p.setPen(QColor(255, 255, 255, 12));
+    // Fundo quadriculado de referência (grade sutil de tempo x valor), sem
+    // preenchimento azul — só as linhas dão a noção de posição.
+    p.setPen(QColor(255, 255, 255, 10));
     const double vStep = niceStep((m_hi - m_lo) / 5.0);
     for (double v = std::ceil(m_lo / vStep) * vStep; v <= m_hi + 1e-9; v += vStep)
         p.drawLine(r.left(), vToY(v), r.right(), vToY(v));
+    const double tStepGrid = niceStep(range / 8.0);
+    for (double t = std::ceil(t0 / tStepGrid) * tStepGrid; t <= t0 + range + 1e-9; t += tStepGrid) {
+        const int x = tToX(t);
+        p.drawLine(x, r.top(), x, r.bottom());
+    }
 
     const QVector<Keyframe>* ks = keys();
     if (!ks) return;
@@ -765,24 +761,27 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
         p.drawPath(path);
     }
 
-    // Handles bezier: só aparecem DURANTE o arrasto ativo de uma alça. No
-    // resto do tempo a linha fica limpa, sem a "membrana" em volta da curva.
-    if (m_dragHandle >= 0) {
-        for (int i = 0; i < ks->size(); ++i) {
-            if (i != m_dragHandle) continue;
+    // Varinha (handles bezier) da curva: aparece ao selecionar UM keyframe,
+    // para modelar a curva. Com seleção múltipla a linha fica limpa (sem a
+    // "membrana"). Durante a CRIAÇÃO de curva (ferramenta curva) não desenha
+    // alças — só a linha, que já se dobra enquanto você arrasta.
+    if (m_selKeys.size() == 1 && !m_curveNewKey) {
+        const int i = m_selKeys.first();
+        if (i >= 0 && i < ks->size()) {
             const Keyframe& k = (*ks)[i];
-            if (k.interp != KfSmooth && k.interp != KfBezier) continue;
-            const QPointF kp(tToX(k.time), vToY(k.value));
-            for (int s = 0; s < 2; ++s) {
-                double ht, hv;
-                if (!bezierHandle(*ks, i, s == 0, &ht, &hv)) continue;
-                const QPointF hp(tToX(k.time + (s == 0 ? ht : -ht)),
-                                 vToY(k.value + hv));
-                p.setPen(QPen(QColor(140, 200, 255, 200), 1, Qt::DashLine));
-                p.drawLine(kp, hp);
-                p.setPen(QPen(QColor(140, 200, 255), 1));
-                p.setBrush(QColor(60, 90, 130));
-                p.drawEllipse(hp, 2.5, 2.5);
+            if (k.interp != KfStep) {
+                const QPointF kp(tToX(k.time), vToY(k.value));
+                for (int s = 0; s < 2; ++s) {
+                    double ht, hv;
+                    if (!bezierHandle(*ks, i, s == 0, &ht, &hv)) continue;
+                    const QPointF hp(tToX(k.time + (s == 0 ? ht : -ht)),
+                                     vToY(k.value + hv));
+                    p.setPen(QPen(QColor(140, 200, 255, 220), 1.5, Qt::DashLine));
+                    p.drawLine(kp, hp);
+                    p.setPen(QPen(QColor(255, 255, 255), 1.5));
+                    p.setBrush(QColor(90, 150, 220));
+                    p.drawEllipse(hp, 4.5, 4.5);
+                }
             }
         }
     }
@@ -797,22 +796,14 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
         const QColor fill = sel ? QColor(120, 230, 150)
                                 : active ? QColor(255, 179, 64)
                                          : QColor(200, 205, 215);
-        const qreal size = (sel && i == m_dragKey) ? 6 : 5;
+        const qreal size = (sel && i == m_dragKey) ? 7 : 6;
         drawKeyGlyph(p, kp, k.interp, size, fill);
     }
     p.setRenderHint(QPainter::Antialiasing, false);
     p.restore(); // fim do clipping na área do gráfico
 
-    // Marcador do valor atual no playhead.
-    if (m_clip && relPh >= 0.0 && relPh >= t0 - 1e-9 && relPh <= t0 + range + 1e-9) {
-        const double vCur = kfValue(*ks, baseValue(), relPh);
-        const QPointF cph(tToX(relPh), vToY(vCur));
-        p.setPen(QPen(QColor(190, 220, 255), 1.5));
-        p.setBrush(QColor(190, 220, 255));
-        p.setRenderHint(QPainter::Antialiasing, true);
-        p.drawEllipse(cph, 3, 3);
-        p.setRenderHint(QPainter::Antialiasing, false);
-    }
+    // O playhead no gráfico é só a linha (varinha) — sem círculo de valor nem
+    // faixa de preenchimento, para o valor não "mover vertical com a agulha".
 
     // Leitura exata do keyframe sob o mouse ou sendo arrastado.
     const int infoKey = (m_dragKey >= 0) ? m_dragKey : m_hoverKey;
@@ -846,12 +837,12 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
         }
     }
 
-    // Linha do playhead no gráfico.
+    // Linha do playhead no gráfico (varinha), sem faixa de preenchimento.
     if (m_clip) {
         const double rel = std::clamp(m_playhead - m_clip->pos, 0.0, m_clip->dur);
         if (rel >= timeStart() - 1e-9 && rel <= timeStart() + timeRange() + 1e-9) {
             const int x = tToX(rel);
-            p.setPen(QPen(QColor(190, 220, 255, 150), 1));
+            p.setPen(QPen(QColor(190, 220, 255, 230), 2));
             p.drawLine(x, rr.bottom() + 1, x, r.bottom());
         }
     }
@@ -902,7 +893,6 @@ void GraphCanvas::mousePressEvent(QMouseEvent* e) {
         emit editStart();
         m_undoPushed = true;
         setCursor(Qt::ClosedHandCursor);
-        emit keyframeJump(m_clip->pos + (*keys())[kh].time);
         e->accept();
         update();
         return;
@@ -916,9 +906,10 @@ void GraphCanvas::mousePressEvent(QMouseEvent* e) {
         m_dragHandle = hh;
         m_dragSide = hSide;
         QVector<Keyframe>& K = *keys();
-        if (K[hh].interp == KfSmooth) {
-            // Pegar o handle de um keyframe suave o converte em bezier
-            // manual, preservando a curva (handles = controle Catmull-Rom).
+        if (K[hh].interp != KfBezier) {
+            // Pegar a alça de qualquer keyframe (suave, linear ou degrau) o
+            // converte em bezier manual, preservando a curva (handles =
+            // tangente Catmull-Rom) e deixando o usuário entortar/fazer ondas.
             double ht0, hv0, ht1, hv1;
             bezierHandle(K, hh, true, &ht0, &hv0);
             bezierHandle(K, hh, false, &ht1, &hv1);
@@ -1084,7 +1075,8 @@ void GraphCanvas::mouseMoveEvent(QMouseEvent* e) {
         return;
     }
 
-    // Arrasta o grupo selecionado (todos juntos, mantendo os deltas).
+    // Arrasta o grupo selecionado (todos juntos, mantendo os deltas). O valor
+    // segue o mouse 1:1 limitado à faixa visível — movimento rígido e previsível.
     const double dT = xToT(e->pos().x()) - m_grabT;
     const double dV = yToV(e->pos().y()) - m_grabV;
     const bool snap = m_snap && !(e->modifiers() & Qt::ControlModifier);
@@ -1188,7 +1180,11 @@ void GraphCanvas::mouseDoubleClickEvent(QMouseEvent* e) {
     }
 
     const double t = m_snap ? snapTime(xToT(e->pos().x())) : xToT(e->pos().x());
-    const double v = yToV(e->pos().y());
+    double v = yToV(e->pos().y());
+    // Duplo clique perto da linha da curva: cria o keyframe EM CIMA dela
+    // (mais fácil e intuitivo de adicionar keyframes na curva).
+    const double vLine = kfValue(K, baseValue(), t);
+    if (std::abs(vToY(vLine) - e->pos().y()) <= 8) v = vLine;
     if (addKeyframe(t, v) < 0) {
         emit statusMessage(tr("Já existe um keyframe nesse tempo."));
         return;
@@ -1802,8 +1798,28 @@ void GraphEditorWidget::setClipId(const QString& id) {
     if (m_clipId == id) return;
     m_clipId = id;
     rebuildRows();
+    Clip* c = activeClip();
+    if (c) {
+        // Ao (re)selecionar o clipe, se a propriedade ativa não tiver keyframe
+        // mas o clipe tiver em outra, mostra uma propriedade que tenha — assim
+        // o editor não "esquece" os keyframes ao sair e voltar.
+        if (keysFor(c, m_prop)->isEmpty()) {
+            for (GraphProp p : m_props) {
+                if (!keysFor(c, p)->isEmpty()) { m_prop = p; break; }
+            }
+        }
+        if (!m_props.contains(m_prop)) m_prop = m_props.first();
+    }
     m_canvas->setData(activeClip(), m_prop, m_playhead,
                       m_project ? m_project->fps : 30.0);
+    for (GraphProp p : m_props) {
+        GraphPropRow* row = m_rows.value((int)p);
+        if (row) {
+            row->setActive(p == m_prop);
+            row->setExpanded(p == m_prop);
+        }
+    }
+    syncValueLabels();
 }
 
 void GraphEditorWidget::setPlayhead(double t) {
@@ -1871,6 +1887,9 @@ double GraphEditorWidget::propValueAtPlayhead(GraphProp p) const {
 
 void GraphEditorWidget::setProperty(GraphProp p) {
     if (!m_props.contains(p)) return;
+    // Se já está mostrando essa curva, não recarrega (evita perder o zoom a
+    // cada movimento de slider no pancrop).
+    if (p == m_prop) return;
     m_prop = p;
     m_canvas->setData(activeClip(), p, m_playhead,
                       m_project ? m_project->fps : 30.0);
@@ -1952,10 +1971,6 @@ void GraphEditorWidget::rebuildRows() {
         connect(row, &GraphPropRow::stripKeyClicked, this, [this, p](int idx) {
             setProperty(p);
             m_canvas->selectKeyIndex(idx);
-            Clip* c = activeClip();
-            const QVector<Keyframe>* K = keysFor(c, p);
-            if (K && idx >= 0 && idx < K->size())
-                emit keyframeJump(c->pos + K->at(idx).time);
         });
         connect(row, &GraphPropRow::stripDragStart, this, [this](int) { emit editStart(); });
         connect(row, &GraphPropRow::stripDragKey, this, [this, p](int idx, double t) {

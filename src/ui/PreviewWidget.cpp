@@ -683,7 +683,9 @@ void PreviewWidget::tick() {
 
 const Clip* PreviewWidget::clipAt(double t) const {
     if (!m_project) return nullptr;
-    for (int tr = (int)m_project->videoTracks.size() - 1; tr >= 0; --tr)
+    // Faixa de vídeo de índice 0 = topo da timeline = camada de cima na
+    // composição (V1 por cima), então é a primeira a ser considerada.
+    for (int tr = 0; tr < (int)m_project->videoTracks.size(); ++tr)
         for (const Clip& c : m_project->videoTracks[tr].clips)
             if (t >= c.pos && t < c.pos + c.dur) return &c;
     return nullptr;

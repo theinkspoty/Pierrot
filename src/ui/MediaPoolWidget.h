@@ -20,6 +20,9 @@ class QEvent;
 class QRubberBand;
 class QLabel;
 class QPixmap;
+class QDragEnterEvent;
+class QDragMoveEvent;
+class QDropEvent;
 
 // Lista de mídia com arrasto manual (não usa o DnD do compositor, que pode
 // falhar em alguns ambientes/Wayland). O arrasto inteiro acontece dentro do
@@ -35,11 +38,16 @@ signals:
     void dragHover(const QPoint& globalPos);
     void dragHoverCleared();
     void mediaDropped(const QStringList& mediaIds, const QPoint& globalPos);
+    // Arquivos arrastados do sistema para importar no painel.
+    void filesDropped(const QStringList& files);
 protected:
     void mousePressEvent(QMouseEvent* e) override;
     void mouseMoveEvent(QMouseEvent* e) override;
     void mouseReleaseEvent(QMouseEvent* e) override;
     bool eventFilter(QObject* obj, QEvent* ev) override;
+    void dragEnterEvent(QDragEnterEvent* e) override;
+    void dragMoveEvent(QDragMoveEvent* e) override;
+    void dropEvent(QDropEvent* e) override;
 private:
     QStringList selectedIds() const;
     void cancelDrag();
@@ -68,6 +76,7 @@ public:
     void setProject(Project* p);
 public slots:
     void addFiles();
+    void importPaths(const QStringList& files);
     void removeSelected();
     void refreshFromProject();
     void onThumbReady(const QString& filePath, double seconds);
@@ -83,6 +92,10 @@ signals:
     void dragHover(const QPoint& globalPos);
     void dragHoverCleared();
     void mediaDropped(const QStringList& mediaIds, const QPoint& globalPos);
+protected:
+    void dragEnterEvent(QDragEnterEvent* e) override;
+    void dragMoveEvent(QDragMoveEvent* e) override;
+    void dropEvent(QDropEvent* e) override;
 private:
     void refresh();
     void setThumb(const QString& mediaId, const QImage& img);

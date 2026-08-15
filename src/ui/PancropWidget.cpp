@@ -485,24 +485,18 @@ void PancropWidget::toggleKeyframe(int prop) {
     if (!kf) return;
     const double rel = relPlayhead();
     if (rel < 0.0) return;
+    if (!m_undoPushed) { emit editStart(); m_undoPushed = true; }
+    // Sempre informa a propriedade editada, para o editor de curvas exibir a
+    // curva correspondente (independente de undo pendente).
+    emit propertyEdited(prop);
     for (int i = 0; i < kf->size(); ++i) {
         if (std::fabs((*kf)[i].time - rel) < 1e-6) {
-            if (!m_undoPushed) {
-                emit editStart();
-                m_undoPushed = true;
-                emit propertyEdited(prop);
-            }
             kf->removeAt(i);
             emitChange();
             refreshDiamonds();
             m_view->update();
             return;
         }
-    }
-    if (!m_undoPushed) {
-        emit editStart();
-        m_undoPushed = true;
-        emit propertyEdited(prop);
     }
     Keyframe k;
     k.time = rel;
@@ -586,13 +580,10 @@ void PancropWidget::refreshDiamonds() {
 void PancropWidget::commitSlider(int prop, double baseValue) {
     Clip* c = activeClip();
     if (!c) return;
-    // Empurra o undo UMA vez por gesto e avisa o editor de curvas qual
-    // propriedade está sendo animada (troca a curva visível).
-    if (!m_undoPushed) {
-        emit editStart();
-        m_undoPushed = true;
-        emit propertyEdited(prop);
-    }
+    // Empurra o undo UMA vez por gesto; o propertyEdited é emitido sempre
+    // (o editor de curvas ignora repetições da mesma propriedade).
+    if (!m_undoPushed) { emit editStart(); m_undoPushed = true; }
+    emit propertyEdited(prop);
     switch (prop) {
         case P_CropL: c->cropL = baseValue; break;
         case P_CropR: c->cropR = baseValue; break;
@@ -1227,11 +1218,8 @@ void PancropWidget::stripDoubleClick(QWidget* view, QMouseEvent* e) {
             if (std::fabs(k.time - rel) < 1e-6) { e->accept(); return; }
     }
 
-    if (!m_undoPushed) {
-        emit editStart();
-        m_undoPushed = true;
-        emit propertyEdited(P_Scale);
-    }
+    if (!m_undoPushed) { emit editStart(); m_undoPushed = true; }
+    emit propertyEdited(P_Scale);
     for (int prop : props) {
         QVector<Keyframe>* kf = keyframesFor(prop);
         if (!kf) continue;
