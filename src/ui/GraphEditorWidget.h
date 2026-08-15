@@ -220,6 +220,8 @@ public:
     void setProject(Project* p);
     void setClipId(const QString& id);
     void setPlayhead(double t);
+    // Seleciona a curva a exibir (usado também pelo pancrop ao animar).
+    void setProperty(GraphProp p);
     QSize sizeHint() const override;
 public slots:
     void refresh();
@@ -229,7 +231,6 @@ signals:
     void keyframeJump(double t);
 private:
     void rebuildRows();
-    void setProperty(GraphProp p);
     void syncRowData();
     void syncValueLabels();
     Clip* activeClip() const;

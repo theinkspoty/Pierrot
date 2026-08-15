@@ -28,8 +28,6 @@ constexpr double kMaxScale = 4.0;
 constexpr int kCropMax = 80;   // %
 constexpr int kPanMax = 100;   // % da largura/altura do projeto
 
-enum Prop { P_CropL, P_CropR, P_CropT, P_CropB, P_Scale, P_PanX, P_PanY };
-
 // Presets de suavização "estilo Vegas" aplicados ao segmento que sai do
 // keyframe (ou, no último, ao segmento que chega).
 void applyEasePreset(QVector<Keyframe>& kf, int i, int preset) {
@@ -105,6 +103,7 @@ protected:
     void mousePressEvent(QMouseEvent* e) override { m_owner->stripPress(this, e); }
     void mouseMoveEvent(QMouseEvent* e) override { m_owner->stripMove(this, e); }
     void mouseReleaseEvent(QMouseEvent* e) override { m_owner->stripRelease(this, e); }
+    void mouseDoubleClickEvent(QMouseEvent* e) override { m_owner->stripDoubleClick(this, e); }
     void contextMenuEvent(QContextMenuEvent* e) override { m_owner->stripContextMenu(this, e); }
 private:
     PancropWidget* m_owner;
@@ -467,7 +466,11 @@ void PancropWidget::toggleKeyframe(int prop) {
     if (rel < 0.0) return;
     for (int i = 0; i < kf->size(); ++i) {
         if (std::fabs((*kf)[i].time - rel) < 1e-6) {
-            if (!m_undoPushed) { emit editStart(); m_undoPushed = true; }
+            if (!m_undoPushed) {
+                emit editStart();
+                m_undoPushed = true;
+                emit propertyEdited(prop);
+            }
             kf->removeAt(i);
             emitChange();
             refreshDiamonds();
@@ -475,7 +478,11 @@ void PancropWidget::toggleKeyframe(int prop) {
             return;
         }
     }
-    if (!m_undoPushed) { emit editStart(); m_undoPushed = true; }
+    if (!m_undoPushed) {
+        emit editStart();
+        m_undoPushed = true;
+        emit propertyEdited(prop);
+    }
     Keyframe k;
     k.time = rel;
     k.value = propValue(prop);
@@ -558,7 +565,13 @@ void PancropWidget::refreshDiamonds() {
 void PancropWidget::commitSlider(int prop, double baseValue) {
     Clip* c = activeClip();
     if (!c) return;
-    emitChange();
+    // Empurra o undo UMA vez por gesto e avisa o editor de curvas qual
+    // propriedade está sendo animada (troca a curva visível).
+    if (!m_undoPushed) {
+        emit editStart();
+        m_undoPushed = true;
+        emit propertyEdited(prop);
+    }
     switch (prop) {
         case P_CropL: c->cropL = baseValue; break;
         case P_CropR: c->cropR = baseValue; break;
@@ -572,6 +585,9 @@ void PancropWidget::commitSlider(int prop, double baseValue) {
         writeKeyframe(prop, baseValue);
     else if (QVector<Keyframe>* kf = keyframesFor(prop))
         kf->clear();
+    // modified() DEPOIS de escrever o keyframe, senão o editor de curvas
+    // atualiza com dados antigos e o keyframe novo nunca aparece.
+    emit modified();
     refreshDiamonds();
 }
 
@@ -884,6 +900,7 @@ void PancropWidget::viewportPress(QWidget* view, QMouseEvent* e) {
         view->setCursor(Qt::ClosedHandCursor);
         m_undoPushed = true;
         emit editStart();
+        emit propertyEdited(P_PanX);
         applyPan(sx + m_grabOffset.x(), sy + m_grabOffset.y());
         e->accept();
     } else {
@@ -1036,11 +1053,15 @@ void PancropWidget::paintKeyframeStrip(QWidget* view) {
 
 void PancropWidget::stripPress(QWidget* view, QMouseEvent* e) {
     m_stripDragging = false;
+    m_stripPlayheadDrag = false;
     Clip* c = activeClip();
     if (e->button() != Qt::LeftButton || !c) return;
     const double dur = std::max(c->dur, 1e-3);
+    const int midY = view->height() / 2;
 
-    // Encontra o keyframe mais próximo do clique (tol ~9 px).
+    // Encontra o keyframe mais próximo do clique. O hit é limitado à zona do
+    // losango (vertical) para não roubar o arraste da agulha quando o playhead
+    // está exatamente sobre um keyframe.
     const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
                          P_Scale, P_PanX, P_PanY};
     QVector<double> times;
@@ -1055,38 +1076,54 @@ void PancropWidget::stripPress(QWidget* view, QMouseEvent* e) {
     for (int i = 0; i < times.size(); ++i) {
         const int x = kfStripX(times[i], view, dur);
         const int dist = std::abs(e->pos().x() - x);
-        if (dist <= 9 && dist < bestDist) { bestDist = dist; bestIdx = i; }
+        if (dist <= 9 && std::abs(e->pos().y() - midY) <= 12 && dist < bestDist) {
+            bestDist = dist; bestIdx = i;
+        }
     }
-    if (bestIdx < 0) {
-        // Clique em ponto vazio: move a agulha para esse instante.
-        const double frac = std::clamp((double)(e->pos().x() - 4) / (view->width() - 8),
-                                       0.0, 1.0);
-        emit keyframeJump(c->pos + frac * dur);
+    if (bestIdx >= 0) {
+        m_stripDragging = true;
+        m_stripDragFrom = times[bestIdx];
+        m_stripDragTo = times[bestIdx];
+        setCursor(Qt::ClosedHandCursor);
+        emit editStart();
+        m_undoPushed = true;
+        emit keyframeJump(c->pos + times[bestIdx]);
         m_strip->update();
         e->accept();
         return;
     }
-    m_stripDragging = true;
-    m_stripDragFrom = times[bestIdx];
-    m_stripDragTo = times[bestIdx];
-    setCursor(Qt::ClosedHandCursor);
-    emit editStart();
-    m_undoPushed = true;
-    emit keyframeJump(c->pos + times[bestIdx]);
+
+    // Clique vazio / na agulha: pula o playhead e permite arrastá-lo (scrub).
+    m_stripPlayheadDrag = true;
+    const double frac = std::clamp((double)(e->pos().x() - 4) / (view->width() - 8),
+                                   0.0, 1.0);
+    emit keyframeJump(c->pos + frac * dur);
     m_strip->update();
     e->accept();
 }
 
 void PancropWidget::stripMove(QWidget* view, QMouseEvent* e) {
-    if (!m_stripDragging || m_stripDragFrom < 0.0) return;
     Clip* c = activeClip();
     if (!c) return;
     const double dur = std::max(c->dur, 1e-3);
     const double frac = std::clamp((double)(e->pos().x() - 4) / (view->width() - 8),
                                    0.0, 1.0);
     const double newRel = frac * dur;
+
+    // Arraste da agulha: move o playhead (scrub).
+    if (m_stripPlayheadDrag) {
+        if (std::fabs(newRel - relPlayhead()) < 1e-6) return;
+        emit keyframeJump(c->pos + newRel);
+        m_strip->update();
+        e->accept();
+        return;
+    }
+
+    if (!m_stripDragging || m_stripDragTo < 0.0) return;
     if (std::fabs(newRel - m_stripDragTo) < 1e-6) return;
-    const double from = m_stripDragFrom;
+    // Usa a posição ATUAL do keyframe como origem (não a original), senão o
+    // keyframe "descola" do cursor já no segundo evento de mouse.
+    const double from = m_stripDragTo;
     m_stripDragTo = newRel;
 
     // Move o tempo de TODAS as propriedades que tinham keyframe na posição
@@ -1113,13 +1150,64 @@ void PancropWidget::stripMove(QWidget* view, QMouseEvent* e) {
 }
 
 void PancropWidget::stripRelease(QWidget* view, QMouseEvent* e) {
-    if (m_stripDragging) {
+    if (m_stripDragging || m_stripPlayheadDrag) {
         m_stripDragging = false;
+        m_stripPlayheadDrag = false;
         m_stripDragFrom = -1.0;
         m_stripDragTo = -1.0;
         setCursor(Qt::ArrowCursor);
         m_strip->update();
     }
+    e->accept();
+}
+
+// Duplo clique na faixa: cria keyframes em todas as propriedades de
+// transformação naquele instante, fixando os valores interpolados.
+void PancropWidget::stripDoubleClick(QWidget* view, QMouseEvent* e) {
+    Clip* c = activeClip();
+    if (!c) { e->ignore(); return; }
+    const double dur = std::max(c->dur, 1e-3);
+    const double frac = std::clamp((double)(e->pos().x() - 4) / (view->width() - 8),
+                                   0.0, 1.0);
+    const double rel = frac * dur;
+
+    const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
+                         P_Scale, P_PanX, P_PanY};
+    // Já existe keyframe nesse instante: nada a fazer.
+    for (int prop : props) {
+        QVector<Keyframe>* kf = keyframesFor(prop);
+        if (!kf) continue;
+        for (const Keyframe& k : *kf)
+            if (std::fabs(k.time - rel) < 1e-6) { e->accept(); return; }
+    }
+
+    if (!m_undoPushed) {
+        emit editStart();
+        m_undoPushed = true;
+        emit propertyEdited(P_Scale);
+    }
+    for (int prop : props) {
+        QVector<Keyframe>* kf = keyframesFor(prop);
+        if (!kf) continue;
+        Keyframe k;
+        k.time = rel;
+        k.interp = KfLinear;
+        switch (prop) {
+            case P_CropL: k.value = kfValue(c->kfCropL, c->cropL, rel); break;
+            case P_CropR: k.value = kfValue(c->kfCropR, c->cropR, rel); break;
+            case P_CropT: k.value = kfValue(c->kfCropT, c->cropT, rel); break;
+            case P_CropB: k.value = kfValue(c->kfCropB, c->cropB, rel); break;
+            case P_Scale: k.value = kfValue(c->kfScale, c->scale, rel); break;
+            case P_PanX:  k.value = kfValue(c->kfTx, c->tx, rel); break;
+            case P_PanY:  k.value = kfValue(c->kfTy, c->ty, rel); break;
+        }
+        kf->append(k);
+        std::sort(kf->begin(), kf->end(),
+                  [](const Keyframe& a, const Keyframe& b) { return a.time < b.time; });
+    }
+    emit modified();
+    refreshDiamonds();
+    m_strip->update();
     e->accept();
 }
 

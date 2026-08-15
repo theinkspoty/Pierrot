@@ -25,6 +25,11 @@ class QPushButton;
 class PancropWidget : public QWidget {
     Q_OBJECT
 public:
+    // Propriedades de transformação do pancrop (mesmas usadas nos sliders).
+    enum Prop {
+        P_CropL = 0, P_CropR, P_CropT, P_CropB, P_Scale, P_PanX, P_PanY
+    };
+
     explicit PancropWidget(QWidget* parent = nullptr);
 
     void setProject(Project* p);
@@ -38,6 +43,9 @@ signals:
     void editStart();
     void modified();
     void keyframeJump(double t);
+    // Informa qual propriedade de transformação foi editada/criou keyframe,
+    // para o editor de curvas exibir a curva correspondente.
+    void propertyEdited(int prop);
 protected:
     // O viewfinder é um QWidget aninhado (Viewport); o PancropWidget apenas
     // monta o layout lado a lado (viewfinder | controles) e delega o desenho
@@ -58,6 +66,7 @@ private:
     void stripPress(QWidget* view, QMouseEvent* e);
     void stripMove(QWidget* view, QMouseEvent* e);
     void stripRelease(QWidget* view, QMouseEvent* e);
+    void stripDoubleClick(QWidget* view, QMouseEvent* e);
     void stripContextMenu(QWidget* view, QContextMenuEvent* e);
 
     Clip* activeClip();
@@ -122,4 +131,6 @@ private:
     bool m_stripDragging = false;
     double m_stripDragFrom = -1.0;
     double m_stripDragTo = -1.0;
+    // Arraste da agulha (playhead) na faixa de tempo.
+    bool m_stripPlayheadDrag = false;
 };

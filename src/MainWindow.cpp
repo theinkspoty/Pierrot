@@ -194,6 +194,22 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     connect(m_timeline, &TimelineWidget::modified, m_graph, &GraphEditorWidget::refresh);
     connect(m_pancrop, &PancropWidget::modified, m_graph, &GraphEditorWidget::refresh);
+    // Correspondência pancrop ↔ editor de curvas: ao animar uma propriedade
+    // no pancrop, o editor de curvas exibe a curva correspondente.
+    connect(m_pancrop, &PancropWidget::propertyEdited, this, [this](int prop) {
+        GraphProp gp;
+        switch (prop) {
+            case PancropWidget::P_CropL: gp = GPropCropL; break;
+            case PancropWidget::P_CropR: gp = GPropCropR; break;
+            case PancropWidget::P_CropT: gp = GPropCropT; break;
+            case PancropWidget::P_CropB: gp = GPropCropB; break;
+            case PancropWidget::P_Scale: gp = GPropScale; break;
+            case PancropWidget::P_PanX:  gp = GPropTx; break;
+            case PancropWidget::P_PanY:  gp = GPropTy; break;
+            default: return;
+        }
+        m_graph->setProperty(gp);
+    });
     connect(m_timeline, &TimelineWidget::pancropRequested, this, [this](const QString& id) {
         m_pancrop->setClipId(id);
         m_pancropDock->show();
