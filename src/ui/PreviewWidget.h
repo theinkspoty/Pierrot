@@ -49,6 +49,7 @@ private:
     void drawEmptyMonitor(QPainter& p, const QRect& canvas);
     void updateFrame();
     void applyCrop();
+    QImage applyCropTo(const QImage& img, int cL, int cR, int cT, int cB);
     void requestFrame(const QString& path, double t, int maxW);
     void kickFrameWorker();
     void onFrameReady(const QString& path, double t, int maxW, const QImage& img);
@@ -105,4 +106,15 @@ private:
     QString m_shownPath;
     double m_shownT = -1.0;
     int m_shownW = -1;
+
+    // Transição ativa: quadro do clipe de trás (A) para compor com o da frente
+    // (B) durante a sobreposição. m_transAlpha = progresso 0..1 (-1 = nenhuma).
+    QImage m_underFrame;
+    QString m_underPath;
+    double m_underT = -1.0;
+    int m_underW = -1;
+    bool m_underRequested = false;
+    int m_underCropL = 0, m_underCropR = 0, m_underCropT = 0, m_underCropB = 0;
+    double m_transAlpha = -1.0;
+    QString m_transType;
 };

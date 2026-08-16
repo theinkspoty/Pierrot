@@ -105,6 +105,7 @@ static QJsonObject clipToJson(const Clip& c) {
     o["in"] = c.in;
     o["dur"] = c.dur;
     o["name"] = c.name;
+    o["transitionType"] = c.transitionType;
     o["volume"] = c.volume;
     o["opacity"] = c.opacity;
     o["fadeIn"] = c.fadeIn;
@@ -156,6 +157,7 @@ static Clip clipFromJson(const QJsonObject& o) {
     c.in = o["in"].toDouble();
     c.dur = o["dur"].toDouble();
     c.name = o["name"].toString();
+    c.transitionType = o["transitionType"].toString();
     c.volume = o["volume"].toDouble(1.0);
     c.opacity = o["opacity"].toDouble(1.0);
     c.fadeIn = o["fadeIn"].toDouble(0.0);

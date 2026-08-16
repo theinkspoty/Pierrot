@@ -208,6 +208,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             case PancropWidget::P_Scale: gp = GPropScale; break;
             case PancropWidget::P_PanX:  gp = GPropTx; break;
             case PancropWidget::P_PanY:  gp = GPropTy; break;
+            case PancropWidget::P_Rotation: gp = GPropRotation; break;
             default: return;
         }
         m_graph->setProperty(gp);

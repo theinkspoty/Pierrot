@@ -27,7 +27,8 @@ class PancropWidget : public QWidget {
 public:
     // Propriedades de transformação do pancrop (mesmas usadas nos sliders).
     enum Prop {
-        P_CropL = 0, P_CropR, P_CropT, P_CropB, P_Scale, P_PanX, P_PanY
+        P_CropL = 0, P_CropR, P_CropT, P_CropB, P_Scale, P_PanX, P_PanY,
+        P_Rotation
     };
 
     explicit PancropWidget(QWidget* parent = nullptr);
@@ -91,6 +92,9 @@ private:
                      QRectF* cropS, QRectF* outS) const;
     void screenToSource(const QRect& viewRect, const QPoint& sp,
                         double* sx, double* sy) const;
+    // Rotaciona um ponto da tela de volta para o espaço não-rotacionado do
+    // viewfinder (para hit-test e arraste funcionarem com a imagem girada).
+    QPointF rotatedViewPos(const QRect& viewRect, const QPoint& sp) const;
     void applyPan(double sx, double sy);
 
     enum DragMode { DragNone, DragPan,
@@ -113,6 +117,7 @@ private:
     QSlider* m_scale = nullptr;
     QSlider* m_panX = nullptr;
     QSlider* m_panY = nullptr;
+    QSlider* m_rotation = nullptr;
 
     QLabel* m_cropLVal = nullptr;
     QLabel* m_cropRVal = nullptr;
@@ -121,6 +126,7 @@ private:
     QLabel* m_scaleVal = nullptr;
     QLabel* m_panXVal = nullptr;
     QLabel* m_panYVal = nullptr;
+    QLabel* m_rotationVal = nullptr;
 
     QHash<int, QPushButton*> m_kfDiamonds;
     QPushButton* m_kfAuto = nullptr;

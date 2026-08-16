@@ -127,6 +127,14 @@ inline double kfValue(const QVector<Keyframe>& keys, double base, double t) {
     }
 }
 
+// Tipos de transição de saída de um clipe (aplicada quando ele se sobrepõe ao
+// próximo clipe da mesma faixa de vídeo; a duração é o tamanho da sobreposição).
+//  ""/"dissolve" = crossfade; "wipeleft"/"wiperight"/"wipeup"/"wipedown" = o
+//  próximo clipe desliza de um dos lados sobre o atual.
+inline bool isTransition(const QString& type) {
+    return !type.isEmpty();
+}
+
 struct Clip {
     QString id;
     QString mediaId;
@@ -135,6 +143,7 @@ struct Clip {
     double in = 0.0;
     double dur = 0.0;
     QString name;
+    QString transitionType; // transição de saída (vazio = dissolve ao sobrepor)
     double volume = 1.0;
     double opacity = 1.0;
     double fadeIn = 0.0;

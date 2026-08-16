@@ -436,18 +436,21 @@ bool TimelineWidget::rowFromY(int y, int& row, bool& audio) const {
 
 Clip* TimelineWidget::clipAt(int row, bool audio, double t) const {
     if (!m_project) return nullptr;
+    auto top = [t](QVector<Clip>& clips) -> Clip* {
+        // Com sobreposições, o clipe visível no topo é o que começa mais tarde.
+        Clip* best = nullptr;
+        for (auto& c : clips)
+            if (t >= c.pos && t < c.pos + c.dur)
+                if (!best || c.pos > best->pos) best = &c;
+        return best;
+    };
     if (audio) {
         if (row < 0 || row >= (int)m_project->audioTracks.size()) return nullptr;
-        auto& clips = m_project->audioTracks[row].clips;
-        for (auto& c : clips)
-            if (t >= c.pos && t < c.pos + c.dur) return &c;
+        return top(m_project->audioTracks[row].clips);
     } else {
         if (row < 0 || row >= (int)m_project->videoTracks.size()) return nullptr;
-        auto& clips = m_project->videoTracks[row].clips;
-        for (auto& c : clips)
-            if (t >= c.pos && t < c.pos + c.dur) return &c;
+        return top(m_project->videoTracks[row].clips);
     }
-    return nullptr;
 }
 
 Clip* TimelineWidget::findClipById(const QString& id) {
@@ -681,32 +684,58 @@ void TimelineWidget::renderScene(QPainter& p) {
 
     // Clipes: nunca invadem a régua nem a coluna de cabeçalho, mesmo quando um
     // clipe está parcialmente à esquerda da janela (zoom out / scroll).
+    // Desenha na ordem de `pos`: com sobreposições, o clipe que começa depois
+    // (camada de cima) sai por último.
     p.save();
     p.setClipRect(QRect(H, R, width() - H, height() - R));
+    auto drawClips = [&](const QVector<Track>& tracks, bool audio) {
+        QVector<QPair<int, const Clip*>> order;
+        for (int i = 0; i < (int)tracks.size(); ++i) {
+            if (!trackVisible(i, audio)) continue;
+            for (const Clip& c : tracks[i].clips)
+                order.append(QPair<int, const Clip*>(i, &c));
+        }
+        std::stable_sort(order.begin(), order.end(),
+                         [](const QPair<int, const Clip*>& a,
+                            const QPair<int, const Clip*>& b) {
+                             return a.second->pos < b.second->pos;
+                         });
+        for (const auto& it : order) {
+            const int i = it.first;
+            const Clip& c = *it.second;
+            const Track& tr = tracks[i];
+            const int y = audio ? rowY(-1, i) : rowY(i, -1);
+            const int rowH = audio ? trackH(i, true) : trackH(i, false);
+            const int cx = (int)(H + (c.pos - m_viewStart) * m_pps);
+            const int cw = std::max(2, (int)(c.dur * m_pps));
+            QRect r(cx + 1, y + 4, cw - 2, rowH - 8);
+            if (r.right() < H || r.left() > width()) continue;
+            drawClip(p, r, c, tr, audio);
+        }
+    };
+    drawClips(m_project->videoTracks, false);
+    drawClips(m_project->audioTracks, true);
+
+    // Indicadores de transição: faixa diagonal com o símbolo do tipo sobre a
+    // região de sobreposição entre o clipe anterior e o seguinte.
     for (int i = 0; i < (int)m_project->videoTracks.size(); ++i) {
         if (!trackVisible(i, false)) continue;
-        const Track& tr = m_project->videoTracks[i];
+        const QVector<Clip>& clips = m_project->videoTracks[i].clips;
         const int y = rowY(i, -1);
         const int rowH = trackH(i, false);
-        for (const Clip& c : tr.clips) {
-            const int cx = (int)(H + (c.pos - m_viewStart) * m_pps);
-            const int cw = std::max(2, (int)(c.dur * m_pps));
-            QRect r(cx + 1, y + 4, cw - 2, rowH - 8);
-            if (r.right() < H || r.left() > width()) continue;
-            drawClip(p, r, c, tr, false);
-        }
-    }
-    for (int i = 0; i < (int)m_project->audioTracks.size(); ++i) {
-        if (!trackVisible(i, true)) continue;
-        const Track& tr = m_project->audioTracks[i];
-        const int y = rowY(-1, i);
-        const int rowH = trackH(i, true);
-        for (const Clip& c : tr.clips) {
-            const int cx = (int)(H + (c.pos - m_viewStart) * m_pps);
-            const int cw = std::max(2, (int)(c.dur * m_pps));
-            QRect r(cx + 1, y + 4, cw - 2, rowH - 8);
-            if (r.right() < H || r.left() > width()) continue;
-            drawClip(p, r, c, tr, true);
+        for (int k = 1; k < (int)clips.size(); ++k) {
+            const Clip& prev = clips[k - 1];
+            const Clip& cur = clips[k];
+            const double end = prev.pos + prev.dur;
+            if (cur.pos >= end - 1e-6) continue; // sem sobreposição
+            const int x0 = (int)(H + (cur.pos - m_viewStart) * m_pps);
+            const int x1 = (int)(H + (end - m_viewStart) * m_pps);
+            if (x1 < H || x0 > width()) continue;
+            const QRect r(x0 + 1, y + 4, std::max(2, x1 - x0 - 2), rowH - 8);
+            const QString type = isTransition(prev.transitionType)
+                                     ? prev.transitionType
+                                     : QStringLiteral("dissolve");
+            drawTransitionIndicator(p, r, type);
         }
     }
     p.restore();
@@ -1103,6 +1132,38 @@ void TimelineWidget::drawFadeCorners(QPainter& p, const QRect& r, const Clip& c)
         p.setBrush(QColor(0, 0, 0, 130));
         p.drawPath(path);
     }
+}
+
+// Indicador de transição na região de sobreposição entre dois clipes.
+void TimelineWidget::drawTransitionIndicator(QPainter& p, const QRect& r,
+                                             const QString& type) {
+    if (r.width() < 3 || r.height() < 3) return;
+    p.fillRect(r, QColor(255, 170, 40, 70));
+    // Hachura diagonal para o "não-lugar" da transição.
+    p.setPen(QPen(QColor(255, 190, 80, 120), 1));
+    const int step = 5;
+    for (int x = r.left() - r.height(); x < r.right() + r.height(); x += step)
+        p.drawLine(x, r.bottom(), x + r.height(), r.top());
+    // Símbolo central: X para dissolve, seta para wipe.
+    QFont f = p.font();
+    f.setPointSizeF(8.5);
+    f.setBold(true);
+    p.setFont(f);
+    QFontMetrics fm(f);
+    QString glyph;
+    if (type == QStringLiteral("wipeleft"))
+        glyph = QStringLiteral("←");
+    else if (type == QStringLiteral("wiperight"))
+        glyph = QStringLiteral("→");
+    else if (type == QStringLiteral("wipeup"))
+        glyph = QStringLiteral("↑");
+    else if (type == QStringLiteral("wipedown"))
+        glyph = QStringLiteral("↓");
+    else
+        glyph = QStringLiteral("✕");
+    const QRect symRect(r.left(), r.top(), r.width(), fm.height());
+    p.setPen(QColor(255, 220, 140));
+    p.drawText(symRect, Qt::AlignHCenter | Qt::AlignTop, glyph);
 }
 
 // Losangos de keyframe animados (estilo Vegas) marcando posição na linha do
@@ -2444,6 +2505,55 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         } else {
             audioFx = menu.addAction(tr("Efeitos de áudio…"));
         }
+        // Tipo da transição de saída (aplicada quando este clipe se sobrepõe
+        // ao próximo da mesma faixa; a duração é o tamanho da sobreposição).
+        QMenu* transMenu = nullptr;
+        QActionGroup* transGrp = nullptr;
+        QAction* transDissolve = nullptr;
+        QAction* transWipeL = nullptr;
+        QAction* transWipeR = nullptr;
+        QAction* transWipeU = nullptr;
+        QAction* transWipeD = nullptr;
+        if (!audio) {
+            menu.addSeparator();
+            transMenu = menu.addMenu(tr("Transição de saída"));
+            transGrp = new QActionGroup(transMenu);
+            const QString cur = isTransition(clip->transitionType)
+                                    ? clip->transitionType
+                                    : QStringLiteral("dissolve");
+            transDissolve = transMenu->addAction(tr("Dissolver"));
+            transDissolve->setCheckable(true);
+            transDissolve->setChecked(cur == QStringLiteral("dissolve"));
+            transGrp->addAction(transDissolve);
+            transMenu->addSeparator();
+            transWipeL = transMenu->addAction(tr("Wipe ← (próximo vem da direita)"));
+            transWipeL->setCheckable(true);
+            transWipeL->setChecked(cur == QStringLiteral("wipeleft"));
+            transGrp->addAction(transWipeL);
+            transWipeR = transMenu->addAction(tr("Wipe → (próximo vem da esquerda)"));
+            transWipeR->setCheckable(true);
+            transWipeR->setChecked(cur == QStringLiteral("wiperight"));
+            transGrp->addAction(transWipeR);
+            transWipeU = transMenu->addAction(tr("Wipe ↑ (próximo vem de baixo)"));
+            transWipeU->setCheckable(true);
+            transWipeU->setChecked(cur == QStringLiteral("wipeup"));
+            transGrp->addAction(transWipeU);
+            transWipeD = transMenu->addAction(tr("Wipe ↓ (próximo vem de cima)"));
+            transWipeD->setCheckable(true);
+            transWipeD->setChecked(cur == QStringLiteral("wipedown"));
+            transGrp->addAction(transWipeD);
+            transMenu->setEnabled([&]() {
+                // Só faz sentido se o clipe seguinte da faixa se sobrepõe a ele.
+                const Track* tr = trackOf(clip);
+                if (!tr || tr->audio) return false;
+                const double end = clip->pos + clip->dur;
+                for (const Clip& o : tr->clips)
+                    if (o.id != clip->id && o.pos < end - 1e-6 && o.pos + o.dur > clip->pos + 1e-6
+                        && o.pos >= clip->pos - 1e-6)
+                        return true;
+                return false;
+            }());
+        }
         QAction* act = menu.exec(e->globalPos());
         if (act == cut) cutAtPlayhead();
         else if (act == del) deleteSelected();
@@ -2464,6 +2574,17 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         else if (act == audioFx) showAudioEffectsDialog(clip);
         else if (act == transform) showTransformDialog(clip);
         else if (act == panCrop) emit pancropRequested(clip->id);
+        else if (act == transDissolve || act == transWipeL || act == transWipeR
+                 || act == transWipeU || act == transWipeD) {
+            emit editStart();
+            if (act == transDissolve) clip->transitionType = QStringLiteral("dissolve");
+            else if (act == transWipeL) clip->transitionType = QStringLiteral("wipeleft");
+            else if (act == transWipeR) clip->transitionType = QStringLiteral("wiperight");
+            else if (act == transWipeU) clip->transitionType = QStringLiteral("wipeup");
+            else if (act == transWipeD) clip->transitionType = QStringLiteral("wipedown");
+            invalidateScene();
+            emit modified();
+        }
     } else if (e->pos().y() < kRulerH) {
         const double t = std::max(0.0, snapTime(xToTime(e->pos().x())));
         QAction* addM = menu.addAction(tr("Adicionar marcador"));
@@ -3704,27 +3825,9 @@ double TimelineWidget::snapToEdges(double t, const QString& excludeId) const {
 double TimelineWidget::clampPosToTrack(Clip* c, double newPos,
                                        const QSet<QString>& moving) const {
     if (!m_project || !c) return newPos;
-    newPos = std::max(0.0, newPos);
-    const QVector<Clip>* clips = nullptr;
-    auto findIn = [&](const QVector<Track>& tracks) {
-        for (const Track& tr : tracks)
-            for (const Clip& o : tr.clips)
-                if (o.id == c->id) { clips = &tr.clips; return true; }
-        return false;
-    };
-    if (findIn(m_project->videoTracks)) { /* ok */ }
-    else findIn(m_project->audioTracks);
-    if (!clips) return newPos;
-    for (const Clip& o : *clips) {
-        if (o.id == c->id || moving.contains(o.id)) continue;
-        if (newPos < o.pos) {
-            if (newPos + c->dur > o.pos)
-                newPos = o.pos - c->dur;
-        } else {
-            if (newPos < o.pos + o.dur)
-                newPos = o.pos + o.dur;
-        }
-    }
+    Q_UNUSED(moving)
+    // Clipes podem se sobrepor na mesma faixa: a sobreposição vira uma
+    // transição (estilo Vegas). Só garante que não vá para o negativo.
     return std::max(0.0, newPos);
 }
 

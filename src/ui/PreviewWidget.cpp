@@ -471,6 +471,13 @@ void PreviewWidget::setProject(Project* p) {
     m_lastDecodeW = -1;
     m_lastFile.clear();
     m_lastCropL = m_lastCropR = m_lastCropT = m_lastCropB = -1;
+    m_underFrame = QImage();
+    m_underPath.clear();
+    m_underT = -1.0;
+    m_underW = -1;
+    m_underRequested = false;
+    m_transAlpha = -1.0;
+    m_transType.clear();
     {
         QMutexLocker l(&m_frameMutex);
         m_pendingReq = FrameReq();
@@ -551,16 +558,46 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
     const double ty = clip ? kfValue(clip->kfTy, clip->ty, m_playhead - clip->pos) : 0.0;
 
     // "Fit": o vídeo inteiro (já com crop aplicado) cabe no quadro do projeto.
-    const double fit = qMin(pw / m_frame.width(), ph / m_frame.height());
+    const auto drawFrame = [&](const QImage& img, double s, double r,
+                               double x, double y, double alpha = 1.0,
+                               double ox = 0.0, double oy = 0.0) {
+        const double fit = qMin(pw / img.width(), ph / img.height());
+        p.save();
+        p.setClipRect(canvas);
+        p.translate(canvas.center().x() + x * k + ox * k,
+                    canvas.center().y() + y * k + oy * k);
+        p.rotate(r);
+        p.scale(k * fit * s, k * fit * s);
+        p.translate(-img.width() / 2.0, -img.height() / 2.0);
+        if (alpha < 1.0) {
+            QImage img2 = img;
+            QPainter ip(&img2);
+            ip.setCompositionMode(QPainter::CompositionMode_DestinationIn);
+            ip.fillRect(img2.rect(), QColor(0, 0, 0, (int)(alpha * 255)));
+            ip.end();
+            p.drawImage(0, 0, img2);
+        } else {
+            p.drawImage(0, 0, img);
+        }
+        p.restore();
+    };
 
-    p.save();
-    p.setClipRect(canvas);
-    p.translate(canvas.center().x() + tx * k, canvas.center().y() + ty * k);
-    p.rotate(rot);
-    p.scale(k * fit * S, k * fit * S);
-    p.translate(-m_frame.width() / 2.0, -m_frame.height() / 2.0);
-    p.drawImage(0, 0, m_frame);
-    p.restore();
+    // Transição: desenha o clipe de trás (A) por baixo e o da frente (B) por
+    // cima com fade (dissolve) ou deslizando (wipe).
+    const bool transActive = m_transAlpha >= 0.0
+                             && !m_frame.isNull() && !m_underFrame.isNull();
+    if (transActive) {
+        drawFrame(m_underFrame, 1.0, 0.0, 0.0, 0.0);
+        double ox = 0.0, oy = 0.0;
+        if (m_transType == QStringLiteral("wipeleft")) ox = pw * (1.0 - m_transAlpha);
+        else if (m_transType == QStringLiteral("wiperight")) ox = -pw * (1.0 - m_transAlpha);
+        else if (m_transType == QStringLiteral("wipeup")) oy = ph * (1.0 - m_transAlpha);
+        else if (m_transType == QStringLiteral("wipedown")) oy = -ph * (1.0 - m_transAlpha);
+        const double a = (m_transType == QStringLiteral("dissolve")) ? m_transAlpha : 1.0;
+        drawFrame(m_frame, S, rot, tx, ty, a, ox, oy);
+    } else {
+        drawFrame(m_frame, S, rot, tx, ty);
+    }
 }
 
 // Tela vazia: monitor escuro com mensagem discreta (como no DaVinci/Vegas).
@@ -684,10 +721,15 @@ void PreviewWidget::tick() {
 const Clip* PreviewWidget::clipAt(double t) const {
     if (!m_project) return nullptr;
     // Faixa de vídeo de índice 0 = topo da timeline = camada de cima na
-    // composição (V1 por cima), então é a primeira a ser considerada.
-    for (int tr = 0; tr < (int)m_project->videoTracks.size(); ++tr)
+    // composição (V1 por cima), então é a primeira a ser considerada. Dentro
+    // de uma faixa, sobreposições deixam o clipe que começa depois no topo.
+    for (int tr = 0; tr < (int)m_project->videoTracks.size(); ++tr) {
+        const Clip* best = nullptr;
         for (const Clip& c : m_project->videoTracks[tr].clips)
-            if (t >= c.pos && t < c.pos + c.dur) return &c;
+            if (t >= c.pos && t < c.pos + c.dur)
+                if (!best || c.pos > best->pos) best = &c;
+        if (best) return best;
+    }
     return nullptr;
 }
 
@@ -719,6 +761,18 @@ QVector<AudioMixer::SourceInfo> buildMixSources(const Project* p, double t) {
                 double vol = c.volume * kfValue(c.kfVolume, 1.0, rel) * tr.volume;
                 if (c.fadeIn > 1e-6) vol *= std::min(1.0, rel / c.fadeIn);
                 if (c.fadeOut > 1e-6) vol *= std::min(1.0, (c.dur - rel) / c.fadeOut);
+                // Crossfade de transição: sobreposição com vizinho da MESMA
+                // faixa vira fade-in (da frente) / fade-out (de trás).
+                double transIn = 0.0, transOut = 0.0;
+                for (const Clip& o : tr.clips) {
+                    if (o.id == c.id) continue;
+                    if (o.pos < c.pos - 1e-6 && o.pos + o.dur > c.pos + 1e-6)
+                        transIn = std::max(transIn, o.pos + o.dur - c.pos);
+                    if (o.pos > c.pos + 1e-6 && o.pos < c.pos + c.dur - 1e-6)
+                        transOut = std::max(transOut, c.pos + c.dur - o.pos);
+                }
+                if (transIn > 1e-6) vol *= std::clamp((t - c.pos) / transIn, 0.0, 1.0);
+                if (transOut > 1e-6) vol *= std::clamp((c.pos + c.dur - t) / transOut, 0.0, 1.0);
                 vol = std::clamp(vol, 0.0, 2.0);
                 const QString key = c.groupId.isEmpty() ? c.id : c.groupId;
                 reps.insert(key, {&c, vol});
@@ -843,17 +897,25 @@ void PreviewWidget::updateMixAudio(double t, bool reseek) {
 
 void PreviewWidget::updateFrame() {
     m_timeLabel->setText(fmtTimecode(m_playhead, projFps(m_project)));
-    if (!m_project) { m_frame = QImage(); update(); return; }
+    if (!m_project) { m_frame = QImage(); m_transAlpha = -1.0; m_underFrame = QImage(); update(); return; }
 
     const Clip* clip = clipAt(m_playhead);
     if (!clip) {
         m_frame = QImage();
+        m_transAlpha = -1.0;
+        m_underFrame = QImage();
         update();
         return;
     }
 
     const MediaItem* m = m_project->findMedia(clip->mediaId);
-    if (!m || !m->hasVideo) { m_frame = QImage(); update(); return; }
+    if (!m || !m->hasVideo) {
+        m_frame = QImage();
+        m_transAlpha = -1.0;
+        m_underFrame = QImage();
+        update();
+        return;
+    }
 
     const double srcT = clip->in + (m_playhead - clip->pos);
     // Decodifica no tamanho de exibição: muito mais rápido que 4K/1080p.
@@ -872,9 +934,67 @@ void PreviewWidget::updateFrame() {
     m_lastCropT = cT;
     m_lastCropB = cB;
 
+    // Transição: procura o clipe anterior da MESMA faixa que se sobrepõe a
+    // este (estilo Vegas). O quadro de trás é decodificado pelo canal de
+    // prefetch e o paintEvent compõe dissolve/wipe durante a sobreposição.
+    const Clip* under = nullptr;
+    double overlap = 0.0;
+    for (const Track& tr : m_project->videoTracks) {
+        bool inTrack = false;
+        for (const Clip& c : tr.clips)
+            if (c.id == clip->id) { inTrack = true; break; }
+        if (!inTrack) continue;
+        for (const Clip& o : tr.clips)
+            if (o.id != clip->id && o.pos < clip->pos - 1e-6
+                && o.pos + o.dur > clip->pos + 1e-6
+                && (!under || o.pos > under->pos))
+                under = &o;
+        break;
+    }
+    if (under) overlap = under->pos + under->dur - clip->pos;
+    if (under && overlap > 1e-6 && m_playhead < clip->pos + overlap - 1e-9) {
+        m_transAlpha = std::clamp((m_playhead - clip->pos) / overlap, 0.0, 1.0);
+        m_transType = isTransition(under->transitionType)
+                          ? under->transitionType
+                          : QStringLiteral("dissolve");
+        const double rel = m_playhead - under->pos;
+        m_underCropL = (int)std::lround(
+            std::clamp(kfValue(under->kfCropL, under->cropL, rel), 0.0, 0.9) * 1000.0);
+        m_underCropR = (int)std::lround(
+            std::clamp(kfValue(under->kfCropR, under->cropR, rel), 0.0, 0.9) * 1000.0);
+        m_underCropT = (int)std::lround(
+            std::clamp(kfValue(under->kfCropT, under->cropT, rel), 0.0, 0.9) * 1000.0);
+        m_underCropB = (int)std::lround(
+            std::clamp(kfValue(under->kfCropB, under->cropB, rel), 0.0, 0.9) * 1000.0);
+        const MediaItem* um = m_project->findMedia(under->mediaId);
+        if (um && um->hasVideo && m_frameWorker) {
+            const double uSrcT = under->in + (m_playhead - under->pos);
+            QMutexLocker l(&m_frameMutex);
+            const bool already = m_underRequested && m_underPath == um->filePath
+                                 && m_underW == decW
+                                 && std::fabs(m_underT - uSrcT) <= 0.5 / projFps(m_project)
+                                 && !m_underFrame.isNull();
+            if (!already) {
+                m_underPath = um->filePath;
+                m_underT = uSrcT;
+                m_underW = decW;
+                m_underRequested = true;
+                m_underFrame = QImage();
+                QMetaObject::invokeMethod(m_frameWorker, "decodePrefetch", Qt::QueuedConnection,
+                                          Q_ARG(QString, um->filePath),
+                                          Q_ARG(double, uSrcT),
+                                          Q_ARG(int, decW));
+            }
+        }
+    } else {
+        m_transAlpha = -1.0;
+        m_underFrame = QImage();
+        m_underRequested = false;
+    }
+
     // Se temos um quadro pré-carregado que bate com a posição de entrada do novo clipe, exibe imediatamente.
     bool usedPrefetch = false;
-    {
+    if (m_transAlpha < 0.0) {
         QMutexLocker l(&m_frameMutex);
         const double frameDur = 1.0 / projFps(m_project);
         if (m_prefetch.valid && m_prefetch.path == m->filePath
@@ -972,6 +1092,12 @@ void PreviewWidget::onFrameReady(const QString& path, double t, int maxW, const 
 
 void PreviewWidget::onPrefetchReady(const QString& path, double t, int maxW, const QImage& img) {
     QMutexLocker l(&m_frameMutex);
+    // Quadro do clipe de trás (transição ativa).
+    if (m_underRequested && m_underPath == path
+        && std::fabs(m_underT - t) < 1e-4 && m_underW == maxW) {
+        m_underFrame = img.isNull() ? QImage() : applyCropTo(img, m_underCropL, m_underCropR,
+                                                             m_underCropT, m_underCropB);
+    }
     if (m_prefetch.requested && m_prefetch.path == path
         && std::fabs(m_prefetch.t - t) < 1e-4 && m_prefetch.maxW == maxW) {
         m_prefetch.img = img;
@@ -981,6 +1107,8 @@ void PreviewWidget::onPrefetchReady(const QString& path, double t, int maxW, con
 
 void PreviewWidget::updatePrefetch() {
     if (!m_project || !m_frameWorker || !m_playing) return;
+    // Durante uma transição o canal de prefetch decodifica o clipe de trás.
+    if (m_transAlpha >= 0.0) return;
     const Clip* clip = clipAt(m_playhead);
     if (!clip) {
         QMutexLocker l(&m_frameMutex);
@@ -1031,21 +1159,23 @@ void PreviewWidget::updatePrefetch() {
                               Q_ARG(int, decW));
 }
 
+// Aplica pan/crop sobre um quadro e devolve o recorte.
+QImage PreviewWidget::applyCropTo(const QImage& img, int cL, int cR, int cT, int cB) {
+    const double w = img.width();
+    const double h = img.height();
+    if (w <= 1 || h <= 1 || (!cL && !cR && !cT && !cB)) return img;
+    const int x = (int)std::lround(w * cL / 1000.0);
+    const int y = (int)std::lround(h * cT / 1000.0);
+    const int cw = (int)std::lround(w * (1.0 - (cL + cR) / 1000.0));
+    const int ch = (int)std::lround(h * (1.0 - (cT + cB) / 1000.0));
+    return img.copy(QRect(std::clamp(x, 0, (int)w - 1), std::clamp(y, 0, (int)h - 1),
+                          qMin(cw, (int)w - std::clamp(x, 0, (int)w - 1)),
+                          qMin(ch, (int)h - std::clamp(y, 0, (int)h - 1))));
+}
+
 // Aplica pan/crop sobre o quadro cheio (m_frameFull) e guarda em m_frame.
 void PreviewWidget::applyCrop() {
-    m_frame = m_frameFull;
-    const double w = m_frameFull.width();
-    const double h = m_frameFull.height();
-    if (w > 1 && h > 1 && (m_lastCropL || m_lastCropR || m_lastCropT || m_lastCropB)) {
-        const int x = (int)std::lround(w * m_lastCropL / 1000.0);
-        const int y = (int)std::lround(h * m_lastCropT / 1000.0);
-        const int cw = (int)std::lround(w * (1.0 - (m_lastCropL + m_lastCropR) / 1000.0));
-        const int ch = (int)std::lround(h * (1.0 - (m_lastCropT + m_lastCropB) / 1000.0));
-        m_frame = m_frameFull.copy(
-            QRect(std::clamp(x, 0, (int)w - 1), std::clamp(y, 0, (int)h - 1),
-                  qMin(cw, (int)w - std::clamp(x, 0, (int)w - 1)),
-                  qMin(ch, (int)h - std::clamp(y, 0, (int)h - 1))));
-    }
+    m_frame = applyCropTo(m_frameFull, m_lastCropL, m_lastCropR, m_lastCropT, m_lastCropB);
 }
 
 #include "PreviewWidget.moc"

@@ -8,6 +8,7 @@
 #include <QColor>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 
 #include <algorithm>
 #include <cmath>
@@ -265,6 +266,29 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     std::stable_sort(vclips.begin(), vclips.end(),
                      [](const VideoClipRef& a, const VideoClipRef& b) { return a.c->pos < b.c->pos; });
 
+    // Transições: para cada clipe de vídeo, verifica se ele se sobrepõe ao
+    // clipe anterior da MESMA faixa. A duração é o tamanho da sobreposição e o
+    // tipo vem do clipe de trás (transição de saída; vazio = dissolve).
+    // clipTrans[id do clipe seguinte] = {tipo, duração}.
+    QHash<QString, QPair<QString, double>> clipTrans;
+    for (const Track& tr : project.videoTracks) {
+        QVector<const Clip*> sorted;
+        for (const Clip& c : tr.clips) sorted.push_back(&c);
+        std::sort(sorted.begin(), sorted.end(),
+                  [](const Clip* a, const Clip* b) { return a->pos < b->pos; });
+        for (int i = 1; i < (int)sorted.size(); ++i) {
+            const Clip* prev = sorted[i - 1];
+            const Clip* cur = sorted[i];
+            const double d = prev->pos + prev->dur - cur->pos;
+            if (d > 1e-6) {
+                const QString type = isTransition(prev->transitionType)
+                                         ? prev->transitionType
+                                         : QStringLiteral("dissolve");
+                clipTrans.insert(cur->id, qMakePair(type, d));
+            }
+        }
+    }
+
     bool anySolo = false;
     for (const Track& t : project.videoTracks)
         if (t.solo) { anySolo = true; break; }
@@ -282,6 +306,26 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     }
     std::sort(aclips.begin(), aclips.end(),
               [](const AudioClipRef& a, const AudioClipRef& b) { return a.c->pos < b.c->pos; });
+
+    // Crossfade de áudio: clipes de áudio que se sobrepõem na MESMA faixa
+    // ganham fade-in (o da frente) e fade-out (o de trás) sobre a sobreposição,
+    // acompanhando a transição de vídeo. audioFades[id] = {fadeIn, fadeOut}.
+    QHash<QString, QPair<double, double>> audioFades;
+    for (const Track& tr : project.audioTracks) {
+        QVector<const Clip*> sorted;
+        for (const Clip& c : tr.clips) sorted.push_back(&c);
+        std::sort(sorted.begin(), sorted.end(),
+                  [](const Clip* a, const Clip* b) { return a->pos < b->pos; });
+        for (int i = 1; i < (int)sorted.size(); ++i) {
+            const double d = sorted[i - 1]->pos + sorted[i - 1]->dur - sorted[i]->pos;
+            if (d > 1e-6) {
+                auto& fi = audioFades[sorted[i]->id];
+                fi.first = std::max(fi.first, std::min(d, sorted[i]->dur));
+                auto& fo = audioFades[sorted[i - 1]->id];
+                fo.second = std::max(fo.second, std::min(d, sorted[i - 1]->dur));
+            }
+        }
+    }
 
     args << "-y" << "-hide_banner" << "-loglevel" << "info";
 
@@ -339,6 +383,10 @@ QStringList ProjectExporter::buildCommand(const Project& project,
             const QString rotExpr = kfExpr(v.c->kfRotation, v.c->rotation, pos);
             const QString txExpr = kfExpr(v.c->kfTx, v.c->tx, pos);
             const QString tyExpr = kfExpr(v.c->kfTy, v.c->ty, pos);
+            const auto trIt = clipTrans.find(v.c->id);
+            const bool hasTrans = trIt != clipTrans.end();
+            const QString transType = hasTrans ? trIt->first : QString();
+            const double transDur = hasTrans ? trIt->second : 0.0;
             QString chain = QStringLiteral("[%1:v]setpts=(PTS-STARTPTS)/%2+%3/TB,trim=duration=%4")
                                 .arg(inIdx).arg(num(speed)).arg(num(pos)).arg(num(dur));
             if (v.c->hasCrop()) {
@@ -385,6 +433,11 @@ QStringList ProjectExporter::buildCommand(const Project& project,
             if (fadeOut > 0)
                 fc.last().append(QStringLiteral(",fade=t=out:st=%1:d=%2")
                                      .arg(num(end - fadeOut)).arg(num(fadeOut)));
+            // Transição dissolve: o clipe da frente entra com alpha 0→1 sobre
+            // o anterior (que segue por baixo, cobrindo a sobreposição).
+            if (hasTrans && transType == QStringLiteral("dissolve"))
+                fc.last().append(QStringLiteral(",fade=t=in:st=%1:d=%2:alpha=1")
+                                     .arg(num(pos)).arg(num(transDur)));
             if (v.c->chromaKey)
                 fc.last().append(QStringLiteral(",chromakey=color=%1:similarity=%2:blend=0.1")
                                      .arg(hexColor(v.c->chromaKeyColor))
@@ -425,12 +478,35 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                     fc.last().append(QStringLiteral(",colorchannelmixer=aa=%1").arg(num(mul)));
             }
             fc.last().append(QStringLiteral("[%1]").arg(lbl));
+            // Wipe: o clipe da frente desliza de um dos lados sobre o anterior
+            // durante a sobreposição (progresso = min(1,(t-pos)/dur)).
+            const bool isWipe = hasTrans && transType != QStringLiteral("dissolve");
+            QString slideX, slideY;
+            if (isWipe) {
+                const QString s = QString("(1-min(1,(t-%1)/%2))").arg(num(pos)).arg(num(transDur));
+                if (transType == QStringLiteral("wipeleft")) slideX = QString("+main_w*%1").arg(s);
+                else if (transType == QStringLiteral("wiperight")) slideX = QString("-main_w*%1").arg(s);
+                else if (transType == QStringLiteral("wipeup")) slideY = QString("+main_h*%1").arg(s);
+                else if (transType == QStringLiteral("wipedown")) slideY = QString("-main_h*%1").arg(s);
+            }
             if (hasT) {
-                fc << QStringLiteral("%1[%2]overlay=x='main_w/2-overlay_w/2+%3':y='main_h/2-overlay_h/2+%4':eof_action=pass:enable='between(t,%5,%6)':eval=frame[%7]")
-                           .arg(vout, lbl).arg(txExpr).arg(tyExpr).arg(num(pos)).arg(num(end)).arg(outLbl);
+                QString x = QString("main_w/2-overlay_w/2+%1").arg(txExpr);
+                QString y = QString("main_h/2-overlay_h/2+%1").arg(tyExpr);
+                if (!slideX.isEmpty()) x += slideX;
+                if (!slideY.isEmpty()) y += slideY;
+                fc << QStringLiteral("%1[%2]overlay=x='%3':y='%4':eof_action=pass:enable='between(t,%5,%6)':eval=frame[%7]")
+                           .arg(vout, lbl, x, y).arg(num(pos)).arg(num(end)).arg(outLbl);
             } else if (v.blend == QStringLiteral("normal")) {
-                fc << QStringLiteral("%1[%2]overlay=0:0:eof_action=pass:enable='between(t,%3,%4)':eval=frame[%5]")
-                           .arg(vout, lbl).arg(num(pos)).arg(num(end)).arg(outLbl);
+                if (isWipe) {
+                    fc << QStringLiteral("%1[%2]overlay=x='%3':y='%4':eof_action=pass:enable='between(t,%5,%6)':eval=frame[%7]")
+                               .arg(vout, lbl,
+                                    slideX.isEmpty() ? QStringLiteral("0") : slideX,
+                                    slideY.isEmpty() ? QStringLiteral("0") : slideY)
+                               .arg(num(pos)).arg(num(end)).arg(outLbl);
+                } else {
+                    fc << QStringLiteral("%1[%2]overlay=0:0:eof_action=pass:enable='between(t,%3,%4)':eval=frame[%5]")
+                               .arg(vout, lbl).arg(num(pos)).arg(num(end)).arg(outLbl);
+                }
             } else {
                 const QString rs = QStringLiteral("rs%1").arg(n);
                 const QString cs = QStringLiteral("cs%1").arg(n);
@@ -444,8 +520,16 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                            .arg(rs, cs, v.blend, bs);
                 fc << QStringLiteral("[%1]setpts=PTS-STARTPTS+%2/TB[%3]")
                            .arg(bs).arg(num(pos)).arg(pl);
-                fc << QStringLiteral("%1[%2]overlay=0:0:eof_action=pass:enable='between(t,%3,%4)':eval=frame[%5]")
-                           .arg(vout, pl).arg(num(pos)).arg(num(end)).arg(outLbl);
+                if (isWipe) {
+                    fc << QStringLiteral("%1[%2]overlay=x='%3':y='%4':eof_action=pass:enable='between(t,%5,%6)':eval=frame[%7]")
+                               .arg(vout, pl,
+                                    slideX.isEmpty() ? QStringLiteral("0") : slideX,
+                                    slideY.isEmpty() ? QStringLiteral("0") : slideY)
+                               .arg(num(pos)).arg(num(end)).arg(outLbl);
+                } else {
+                    fc << QStringLiteral("%1[%2]overlay=0:0:eof_action=pass:enable='between(t,%3,%4)':eval=frame[%5]")
+                               .arg(vout, pl).arg(num(pos)).arg(num(end)).arg(outLbl);
+                }
             }
             vout = QStringLiteral("[%1]").arg(outLbl);
         }
@@ -498,6 +582,18 @@ QStringList ProjectExporter::buildCommand(const Project& project,
             if (fadeOut > 0)
                 fc.last().append(QStringLiteral(",afade=t=out:st=%1:d=%2")
                                      .arg(num(dur - fadeOut)).arg(num(fadeOut)));
+            // Crossfade de transição: fade-in no clipe da frente e fade-out no
+            // de trás, sobre a sobreposição com o vizinho da mesma faixa.
+            const auto afIt = audioFades.find(c->id);
+            if (afIt != audioFades.end()) {
+                if (afIt->first > 0.0)
+                    fc.last().append(QStringLiteral(",afade=t=in:st=0:d=%1")
+                                         .arg(num(afIt->first)));
+                if (afIt->second > 0.0)
+                    fc.last().append(QStringLiteral(",afade=t=out:st=%1:d=%2")
+                                         .arg(num(dur - afIt->second))
+                                         .arg(num(afIt->second)));
+            }
             fc.last().append(QStringLiteral(",adelay=%1:all=1").arg(delayMs));
             // Lógica Vegas: volume efetivo = envelope do clipe (relativo, base 1.0)
             // × volume do clipe × volume da faixa, limitado a 200% como no preview.

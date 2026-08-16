@@ -27,6 +27,8 @@ constexpr double kMinScale = 0.1;
 constexpr double kMaxScale = 4.0;
 constexpr int kCropMax = 80;   // %
 constexpr int kPanMax = 100;   // % da largura/altura do projeto
+constexpr int kRotMax = 180;   // graus (±)
+constexpr int kRotStep = 5;    // graus por tick da roda (Alt+roda)
 
 // Presets de suavização "estilo Vegas" aplicados ao segmento que sai do
 // keyframe (ou, no último, ao segmento que chega).
@@ -169,9 +171,10 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     m_scale->setValue(100);
     m_panX = makeSlider(-kPanMax, kPanMax);
     m_panY = makeSlider(-kPanMax, kPanMax);
+    m_rotation = makeSlider(-kRotMax, kRotMax);
     m_cropLVal = makeVal(); m_cropRVal = makeVal(); m_cropTVal = makeVal();
     m_cropBVal = makeVal(); m_scaleVal = makeVal(); m_panXVal = makeVal();
-    m_panYVal = makeVal();
+    m_panYVal = makeVal(); m_rotationVal = makeVal();
 
     auto addValRow = [&](QGridLayout* g, int r, const QString& label,
                          QSlider* s, QLabel* v, int prop) {
@@ -203,6 +206,13 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     addValRow(moveGrid, 1, tr("Pan X:"), m_panX, m_panXVal, P_PanX);
     addValRow(moveGrid, 2, tr("Pan Y:"), m_panY, m_panYVal, P_PanY);
 
+    auto* rotBox = new QGroupBox(tr("Rotação"), this);
+    auto* rotGrid = new QGridLayout(rotBox);
+    rotGrid->setSpacing(3);
+    rotGrid->setContentsMargins(6, 8, 6, 6);
+    rotGrid->setColumnStretch(1, 1);
+    addValRow(rotGrid, 0, tr("Ângulo:"), m_rotation, m_rotationVal, P_Rotation);
+
     auto connectSlider = [&](QSlider* s, int prop) {
         connect(s, &QSlider::sliderReleased, this, [this]() { m_undoPushed = false; });
         connect(s, &QSlider::valueChanged, this, [this, prop]() {
@@ -224,6 +234,9 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
                     commitSlider(prop, m_panY->value() / 100.0 * H);
                     break;
                 }
+                case P_Rotation:
+                    commitSlider(prop, (double)m_rotation->value());
+                    break;
             }
             updateValueLabels();
             m_view->update();
@@ -236,16 +249,18 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     connectSlider(m_scale, P_Scale);
     connectSlider(m_panX, P_PanX);
     connectSlider(m_panY, P_PanY);
+    connectSlider(m_rotation, P_Rotation);
 
     auto* resetBtn = new QPushButton(tr("Redefinir"), this);
     resetBtn->setMinimumHeight(22);
-    resetBtn->setToolTip(tr("Zera recorte, zoom e posição do clipe"));
+    resetBtn->setToolTip(tr("Zera recorte, zoom, posição e rotação do clipe"));
     connect(resetBtn, &QPushButton::clicked, this, [this]() {
         QSignalBlocker b1(m_cropL), b2(m_cropR), b3(m_cropT), b4(m_cropB),
-                       b5(m_scale), b6(m_panX), b7(m_panY);
+                       b5(m_scale), b6(m_panX), b7(m_panY), b8(m_rotation);
         m_cropL->setValue(0); m_cropR->setValue(0);
         m_cropT->setValue(0); m_cropB->setValue(0);
         m_scale->setValue(100); m_panX->setValue(0); m_panY->setValue(0);
+        m_rotation->setValue(0);
         Clip* c = activeClip();
         if (c) {
             c->kfCropL.clear(); c->kfCropR.clear();
@@ -255,6 +270,8 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
             c->scale = 1.0;
             c->kfTx.clear(); c->kfTy.clear();
             c->tx = c->ty = 0.0;
+            c->kfRotation.clear();
+            c->rotation = 0.0;
         }
         m_undoPushed = false;
         updateValueLabels();
@@ -263,8 +280,9 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     });
 
     auto* hint = new QLabel(tr("Dica: arraste dentro da caixa branca para mover "
-                               "(pan), arraste as bordas/alças para recortar e use "
-                               "a roda do mouse para dar zoom."),
+                               "(pan), arraste as bordas/alças para recortar, use "
+                               "a roda do mouse para dar zoom e Alt+roda para "
+                               "rotacionar."),
                             this);
     hint->setWordWrap(true);
     hint->setStyleSheet(QStringLiteral("color:#7e8794; font-size:11px;"));
@@ -304,6 +322,7 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     ctlLay->addWidget(m_strip);
     ctlLay->addWidget(cropBox);
     ctlLay->addWidget(moveBox);
+    ctlLay->addWidget(rotBox);
     ctlLay->addWidget(resetBtn);
     ctlLay->addWidget(hint);
     ctlLay->addStretch(1);
@@ -408,9 +427,10 @@ void PancropWidget::syncFromClip() {
     const double H = m_project ? m_project->height : 1080.0;
     const double tx = c ? kfValue(c->kfTx, c->tx, rel) : 0.0;
     const double ty = c ? kfValue(c->kfTy, c->ty, rel) : 0.0;
+    const double rot = c ? kfValue(c->kfRotation, c->rotation, rel) : 0.0;
 
     QSignalBlocker b1(m_cropL), b2(m_cropR), b3(m_cropT), b4(m_cropB);
-    QSignalBlocker b5(m_scale), b6(m_panX), b7(m_panY);
+    QSignalBlocker b5(m_scale), b6(m_panX), b7(m_panY), b8(m_rotation);
     m_cropL->setValue((int)std::lround(L * 100.0));
     m_cropR->setValue((int)std::lround(R * 100.0));
     m_cropT->setValue((int)std::lround(T * 100.0));
@@ -418,6 +438,7 @@ void PancropWidget::syncFromClip() {
     m_scale->setValue((int)std::lround(std::clamp(s, kMinScale, kMaxScale) * 100.0));
     m_panX->setValue((int)std::lround(std::clamp(tx / W * 100.0, -100.0, 100.0)));
     m_panY->setValue((int)std::lround(std::clamp(ty / H * 100.0, -100.0, 100.0)));
+    m_rotation->setValue((int)std::lround(std::clamp(rot, -double(kRotMax), double(kRotMax))));
     updateValueLabels();
     refreshDiamonds();
 }
@@ -430,6 +451,7 @@ void PancropWidget::updateValueLabels() {
     const int sc = m_scale->value();
     const int px = m_panX->value();
     const int py = m_panY->value();
+    const int rot = m_rotation->value();
     auto fmt = [](int v) { return QStringLiteral("%1%").arg(v); };
     if (m_cropLVal) m_cropLVal->setText(fmt(L));
     if (m_cropRVal) m_cropRVal->setText(fmt(R));
@@ -438,6 +460,7 @@ void PancropWidget::updateValueLabels() {
     if (m_scaleVal) m_scaleVal->setText(fmt(sc));
     if (m_panXVal) m_panXVal->setText(fmt(px));
     if (m_panYVal) m_panYVal->setText(fmt(py));
+    if (m_rotationVal) m_rotationVal->setText(QStringLiteral("%1°").arg(rot));
 }
 
 double PancropWidget::relPlayhead() {
@@ -457,6 +480,7 @@ QVector<Keyframe>* PancropWidget::keyframesFor(int prop) {
         case P_Scale: return &c->kfScale;
         case P_PanX:  return &c->kfTx;
         case P_PanY:  return &c->kfTy;
+        case P_Rotation: return &c->kfRotation;
     }
     return nullptr;
 }
@@ -476,6 +500,8 @@ double PancropWidget::propValue(int prop) const {
             const double H = m_project ? m_project->height : 1080.0;
             return m_panY->value() / 100.0 * H;
         }
+        case P_Rotation:
+            return m_rotation->value();
     }
     return 0.0;
 }
@@ -534,7 +560,7 @@ void PancropWidget::gotoKeyframe(int dir) {
     Clip* c = activeClip();
     if (!c) return;
     const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
-                         P_Scale, P_PanX, P_PanY};
+                         P_Scale, P_PanX, P_PanY, P_Rotation};
     QVector<double> times;
     for (int prop : props) {
         QVector<Keyframe>* kf = keyframesFor(prop);
@@ -592,6 +618,7 @@ void PancropWidget::commitSlider(int prop, double baseValue) {
         case P_Scale: c->scale = baseValue; break;
         case P_PanX:  c->tx = baseValue; break;
         case P_PanY:  c->ty = baseValue; break;
+        case P_Rotation: c->rotation = baseValue; break;
     }
     if (m_kfAuto && m_kfAuto->isChecked())
         writeKeyframe(prop, baseValue);
@@ -661,6 +688,41 @@ void PancropWidget::computeView(double s, double tx, double ty, int w0, int h0,
                    w, h);
 }
 
+// Rotaciona um ponto da tela de volta para o espaço não-rotacionado do
+// viewfinder, girando por -deg em torno do centro da área de exibição (disp).
+// É o inverso do p.rotate(deg) usado no paintViewfinder, para que o hit-test
+// e o arraste continuem funcionando com a imagem girada.
+QPointF PancropWidget::rotatedViewPos(const QRect& viewRect, const QPoint& sp) const {
+    const int w0 = m_frame.width();
+    const int h0 = m_frame.height();
+    if (w0 <= 0 || h0 <= 0) return QPointF(sp);
+    const int M = 12;
+    const QRectF screen = QRectF(viewRect).adjusted(M, M, -M, -M);
+    const double fr = (double)h0 / w0;
+    const double sr = screen.height() / screen.width();
+    QRectF disp;
+    if (fr < sr) {
+        disp.setWidth(screen.width());
+        disp.setHeight(screen.width() * fr);
+        disp.moveLeft(screen.left());
+        disp.moveTop(screen.top() + (screen.height() - disp.height()) / 2.0);
+    } else {
+        disp.setHeight(screen.height());
+        disp.setWidth(screen.height() / fr);
+        disp.moveTop(screen.top());
+        disp.moveLeft(screen.left() + (screen.width() - disp.width()) / 2.0);
+    }
+    const double a = m_rotation->value() * M_PI / 180.0;
+    const double c = std::cos(a);
+    const double s = std::sin(a);
+    const QPointF ctr = disp.center();
+    const double dx = sp.x() - ctr.x();
+    const double dy = sp.y() - ctr.y();
+    // R(-a): x' = x·cos + y·sin; y' = -x·sin + y·cos
+    return QPointF(ctr.x() + dx * c + dy * s,
+                   ctr.y() - dx * s + dy * c);
+}
+
 void PancropWidget::screenToSource(const QRect& viewRect, const QPoint& sp,
                                    double* sx, double* sy) const {
     const int w0 = m_frame.width();
@@ -682,8 +744,11 @@ void PancropWidget::screenToSource(const QRect& viewRect, const QPoint& sp,
         disp.moveTop(screen.top());
         disp.moveLeft(screen.left() + (screen.width() - disp.width()) / 2.0);
     }
-    *sx = (sp.x() - disp.left()) / disp.width() * w0;
-    *sy = (sp.y() - disp.top()) / disp.height() * h0;
+    // Desfaz a rotação antes de mapear para o espaço do source, senão o
+    // recorte/pan "descolam" do mouse quando a imagem está girada.
+    const QPointF rp = rotatedViewPos(viewRect, sp);
+    *sx = (rp.x() - disp.left()) / disp.width() * w0;
+    *sy = (rp.y() - disp.top()) / disp.height() * h0;
 }
 
 void PancropWidget::applyPan(double sx, double sy) {
@@ -775,7 +840,13 @@ void PancropWidget::paintViewfinder(QWidget* view) {
     };
 
     p.save();
-    p.setClipRect(disp);
+    // Gira a cena inteira (imagem + recorte + alças + janela de saída) em
+    // torno do centro da área de exibição. Sem clipRect para os cantos da
+    // imagem girada aparecerem sobre o fundo escuro.
+    const double rot = m_rotation->value();
+    p.translate(disp.center());
+    p.rotate(rot);
+    p.translate(-disp.center());
     p.drawImage(QRectF(disp.left(), disp.top(), disp.width(), disp.height()), m_frame);
 
     // Escurece fora da área recortada.
@@ -864,7 +935,7 @@ void PancropWidget::viewportPress(QWidget* view, QMouseEvent* e) {
     const QPointF mb = toDisp(cropS.center().x(), cropS.bottom());
     const QPointF ml = toDisp(cropS.left(), cropS.center().y());
     const QPointF mr = toDisp(cropS.right(), cropS.center().y());
-    const QPointF pos = e->pos();
+    const QPointF pos = rotatedViewPos(view->rect(), e->pos());
     const double tol = 8.0;
 
     auto near = [&](const QPointF& a, const QPointF& b) {
@@ -966,6 +1037,19 @@ void PancropWidget::viewportWheel(QWidget* view, QWheelEvent* e) {
         e->ignore();
         return;
     }
+    // Alt+roda rotaciona a imagem em passos de kRotStep.
+    if (e->modifiers() & Qt::AltModifier) {
+        const int nv = std::clamp(m_rotation->value()
+                                      + (e->angleDelta().y() > 0 ? kRotStep : -kRotStep),
+                                  -kRotMax, kRotMax);
+        QSignalBlocker b8(m_rotation);
+        m_rotation->setValue(nv);
+        commitSlider(P_Rotation, (double)nv);
+        updateValueLabels();
+        m_view->update();
+        e->accept();
+        return;
+    }
     const double factor = e->angleDelta().y() > 0 ? 1.1 : 1.0 / 1.1;
     const double sOld = std::clamp(m_scale->value() / 100.0, kMinScale, kMaxScale);
     const double sNew = std::clamp(sOld * factor, kMinScale, kMaxScale);
@@ -1029,7 +1113,7 @@ void PancropWidget::paintKeyframeStrip(QWidget* view) {
 
     // Keyframes: coleta os tempos únicos de todas as propriedades.
     const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
-                         P_Scale, P_PanX, P_PanY};
+                         P_Scale, P_PanX, P_PanY, P_Rotation};
     QVector<double> times;
     for (int prop : props) {
         QVector<Keyframe>* kf = keyframesFor(prop);
@@ -1078,7 +1162,7 @@ void PancropWidget::stripPress(QWidget* view, QMouseEvent* e) {
     // losango (vertical) para não roubar o arraste da agulha quando o playhead
     // está exatamente sobre um keyframe.
     const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
-                         P_Scale, P_PanX, P_PanY};
+                         P_Scale, P_PanX, P_PanY, P_Rotation};
     QVector<double> times;
     for (int prop : props) {
         QVector<Keyframe>* kf = keyframesFor(prop);
@@ -1160,7 +1244,7 @@ void PancropWidget::stripMove(QWidget* view, QMouseEvent* e) {
     // Move o tempo de TODAS as propriedades que tinham keyframe na posição
     // original (preserva o agrupamento visual no playhead).
     const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
-                         P_Scale, P_PanX, P_PanY};
+                         P_Scale, P_PanX, P_PanY, P_Rotation};
     for (int prop : props) {
         QVector<Keyframe>* kf = keyframesFor(prop);
         if (!kf) continue;
@@ -1209,7 +1293,7 @@ void PancropWidget::stripDoubleClick(QWidget* view, QMouseEvent* e) {
     const double rel = frac * dur;
 
     const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
-                         P_Scale, P_PanX, P_PanY};
+                         P_Scale, P_PanX, P_PanY, P_Rotation};
     // Já existe keyframe nesse instante: nada a fazer.
     for (int prop : props) {
         QVector<Keyframe>* kf = keyframesFor(prop);
@@ -1234,6 +1318,7 @@ void PancropWidget::stripDoubleClick(QWidget* view, QMouseEvent* e) {
             case P_Scale: k.value = kfValue(c->kfScale, c->scale, rel); break;
             case P_PanX:  k.value = kfValue(c->kfTx, c->tx, rel); break;
             case P_PanY:  k.value = kfValue(c->kfTy, c->ty, rel); break;
+            case P_Rotation: k.value = kfValue(c->kfRotation, c->rotation, rel); break;
         }
         kf->append(k);
         std::sort(kf->begin(), kf->end(),
@@ -1251,7 +1336,7 @@ void PancropWidget::deleteSelectedKeyframes() {
     Clip* c = activeClip();
     if (!c || m_selectedTimes.isEmpty()) return;
     const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
-                         P_Scale, P_PanX, P_PanY};
+                         P_Scale, P_PanX, P_PanY, P_Rotation};
     if (!m_undoPushed) { emit editStart(); m_undoPushed = true; }
     for (double t : m_selectedTimes) {
         for (int prop : props) {
@@ -1276,7 +1361,7 @@ void PancropWidget::stripContextMenu(QWidget* view, QContextMenuEvent* e) {
     const double dur = std::max(c->dur, 1e-3);
 
     const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
-                         P_Scale, P_PanX, P_PanY};
+                         P_Scale, P_PanX, P_PanY, P_Rotation};
     QVector<double> times;
     for (int prop : props) {
         QVector<Keyframe>* kf = keyframesFor(prop);
