@@ -19,6 +19,9 @@
 #include <QWheelEvent>
 #include <QContextMenuEvent>
 #include <QMenu>
+#include <QFont>
+#include <QFontMetrics>
+#include <QFontMetricsF>
 #include <algorithm>
 #include <cmath>
 
@@ -28,6 +31,70 @@ constexpr double kMaxScale = 4.0;
 constexpr int kCropMax = 80;   // %
 constexpr int kPanMax = 100;   // % da largura/altura do projeto
 constexpr int kRotMax = 180;   // graus (±)
+
+// Renderiza um TextStyle sobre um frame transparente (usado no pancrop de
+// clipes de texto, que não têm quadro decodificado). Aplica o transform do
+// clipe (pan/zoom/rotação) para o texto aparecer ONDE o preview mostra —
+// antes ficava centralizado no pancrop mesmo com o clipe deslocado.
+void renderTextStyleFrame(QImage& img, const TextStyle& st,
+                          double tx, double ty, double rotDeg, double s) {
+    const double W = img.width();
+    const double H = img.height();
+    const double sizeFrac = st.textSize > 0.0 ? st.textSize : (1.0 / 18.0);
+    const int pxSize = qMax(4, (int)qRound(sizeFrac * H));
+    QFont font;
+    if (!st.fontFamily.isEmpty()) font.setFamily(st.fontFamily);
+    font.setPixelSize(pxSize);
+    font.setBold(st.textBold);
+    const QFontMetricsF fm(font);
+
+    const double maxW = W * 0.9;
+    QStringList wrapped;
+    for (const QString& raw : st.text.split(QLatin1Char('\n'))) {
+        if (raw.isEmpty()) { wrapped << QString(); continue; }
+        QString cur;
+        const QStringList words = raw.split(QLatin1Char(' '));
+        for (const QString& w : words) {
+            const QString trial = cur.isEmpty() ? w : cur + QLatin1Char(' ') + w;
+            if (fm.horizontalAdvance(trial) <= maxW || cur.isEmpty())
+                cur = trial;
+            else { wrapped << cur; cur = w; }
+        }
+        wrapped << cur;
+    }
+
+    double tw = 0.0;
+    for (const QString& l : wrapped) tw = qMax(tw, fm.horizontalAdvance(l));
+    const double th = wrapped.size() * fm.height();
+    const double pad = pxSize * 0.25;
+    const double bw = tw + 2.0 * pad;
+    const double bh = th + 2.0 * pad;
+
+    // Posição RELATIVA ao centro do quadro (o transform translada para o
+    // centro + pan). textX=0.5 → x=0 → centralizado.
+    double x;
+    if (st.textAlign == 1) x = st.textX * W - W / 2.0;
+    else if (st.textAlign == 2) x = st.textX * W - bw - W / 2.0;
+    else x = st.textX * W - bw / 2.0 - W / 2.0;
+    const double y = st.textY * H - bh / 2.0 - H / 2.0;
+    const QRectF box(x, y, bw, bh);
+
+    QPainter p(&img);
+    p.translate(W / 2.0 + tx, H / 2.0 + ty);
+    p.rotate(rotDeg);
+    p.scale(s, s);
+    if (st.textBackground) p.fillRect(box, st.textBackgroundColor);
+    QPainterPath path;
+    const double baseline = box.top() + pad + fm.ascent();
+    for (int i = 0; i < wrapped.size(); ++i)
+        path.addText(QPointF(box.left() + pad, baseline + i * fm.height()), font, wrapped[i]);
+    if (st.textOutline > 0.0) {
+        QPen pen(st.textOutlineColor, qMax(1.0, st.textOutline * H),
+                 Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+        p.strokePath(path, pen);
+    }
+    p.fillPath(path, st.textColor);
+}
 constexpr int kRotStep = 5;    // graus por tick da roda (Alt+roda)
 
 // Presets de suavização "estilo Vegas" aplicados ao segmento que sai do
@@ -275,6 +342,7 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
         }
         m_undoPushed = false;
         updateValueLabels();
+        if (c && c->isText) loadFrame(); // reposiciona o texto zerado
         m_view->update();
         if (c) emitChange();
     });
@@ -404,6 +472,26 @@ Clip* PancropWidget::activeClip() {
 void PancropWidget::loadFrame() {
     Clip* c = activeClip();
     if (!c) { m_frame = QImage(); m_framePath.clear(); return; }
+    // Clipe de texto: gera o frame com o texto (fundo transparente) para o
+    // pancrop mostrar como nos clipes de vídeo.
+    if (c->isText) {
+        const TextStyle& st = *m_project->textStyleFor(*c);
+        const int W = m_project ? m_project->width : 1920;
+        const int H = m_project ? m_project->height : 1080;
+        QImage img(W, H, QImage::Format_ARGB32);
+        img.fill(Qt::transparent);
+        // Aplica o transform do clipe (mesmo do preview) para o texto aparecer
+        // no pancrop exatamente onde aparece no monitor.
+        const double rel = std::clamp(m_playhead - c->pos, 0.0, std::max(0.0, c->dur));
+        const double tx = kfValue(c->kfTx, c->tx, rel);
+        const double ty = kfValue(c->kfTy, c->ty, rel);
+        const double rot = kfValue(c->kfRotation, c->rotation, rel);
+        const double s = kfValue(c->kfScale, c->scale, rel);
+        renderTextStyleFrame(img, st, tx, ty, rot, s);
+        m_frame = img;
+        m_framePath.clear();
+        return;
+    }
     const MediaItem* mi = m_project->findMedia(c->mediaId);
     if (!mi || !mi->hasVideo) { m_frame = QImage(); m_framePath.clear(); return; }
     if (!m_decoder.isOpen() || m_decoder.source() != mi->filePath)
@@ -628,6 +716,9 @@ void PancropWidget::commitSlider(int prop, double baseValue) {
     // atualiza com dados antigos e o keyframe novo nunca aparece.
     emit modified();
     refreshDiamonds();
+    // Clipe de texto: o frame é gerado com o transform do clipe, então
+    // recarrega para o texto acompanhar pan/zoom/rotação na janelinha.
+    if (c->isText) loadFrame();
 }
 
 void PancropWidget::setCropValues(double L, double R, double T, double B) {
@@ -849,12 +940,15 @@ void PancropWidget::paintViewfinder(QWidget* view) {
     p.translate(-disp.center());
     p.drawImage(QRectF(disp.left(), disp.top(), disp.width(), disp.height()), m_frame);
 
-    // Escurece fora da área recortada.
+    // Escurece fora da JANELA DE SAÍDA (o que será exportado). Antes escurecia
+    // em volta do recorte, então clipes com aspecto diferente do projeto (ex.:
+    // quadrados) mostravam o conteúdo que o "cover" corta como se estivesse
+    // "estourando" para fora da tela.
     QPainterPath shp;
     shp.addRect(disp);
     QPainterPath hole;
-    hole.addRect(QRectF(toDisp(cropS.left(), cropS.top()),
-                        toDisp(cropS.right(), cropS.bottom())));
+    hole.addRect(QRectF(toDisp(outS.left(), outS.top()),
+                        toDisp(outS.right(), outS.bottom())));
     p.fillPath(shp.subtracted(hole), QColor(0, 0, 0, 150));
 
     // Contorno do crop (branco tracejado, como o Premiere).

@@ -9,6 +9,9 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
+#include <QDir>
+#include <QSet>
+#include <QRegularExpression>
 
 #include <algorithm>
 #include <cmath>
@@ -235,6 +238,54 @@ QString fontFilePath() {
     return QString();
 }
 
+// Resolve o caminho de um arquivo de fonte para a família pedida (busca
+// recursiva em /usr/share/fonts e nas pastas de fontes do usuário). Retorna
+// a fonte padrão se a família não for encontrada.
+QString fontFileForFamily(const QString& family) {
+    if (family.isEmpty()) return fontFilePath();
+    static const QRegularExpression keep(QStringLiteral("[^a-z0-9]"));
+    const QString safe = family.toLower().remove(keep);
+    if (safe.isEmpty()) return fontFilePath();
+    const QStringList dirs = {
+        QStringLiteral("/usr/share/fonts"),
+        QStringLiteral("/usr/local/share/fonts"),
+        QString::fromLocal8Bit(qgetenv("HOME")) + QStringLiteral("/.fonts"),
+        QString::fromLocal8Bit(qgetenv("HOME")) + QStringLiteral("/.local/share/fonts"),
+    };
+    QStringList stack;
+    for (const QString& d : dirs) stack.append(d);
+    QSet<QString> seen;
+    while (!stack.isEmpty()) {
+        const QString dir = stack.takeLast();
+        if (seen.contains(dir)) continue;
+        seen.insert(dir);
+        QDir d(dir);
+        if (!d.exists()) continue;
+        const QFileInfoList entries = d.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
+        for (const QFileInfo& e : entries) {
+            if (e.isDir()) {
+                stack.append(e.absoluteFilePath());
+            } else {
+                const QString suf = e.suffix().toLower();
+                if (suf == QLatin1String("ttf") || suf == QLatin1String("otf")
+                    || suf == QLatin1String("ttc")) {
+                    const QString fname = e.completeBaseName().toLower().remove(keep);
+                    if (fname.contains(safe)) return e.absoluteFilePath();
+                }
+            }
+        }
+    }
+    return fontFilePath();
+}
+
+// Cor no formato do drawtext: 0xRRGGBB com @alpha quando houver transparência.
+QString drawColor(const QColor& c) {
+    QString s = hexColor(c);
+    if (c.alpha() < 255)
+        s += QStringLiteral("@%1").arg(num(c.alpha() / 255.0));
+    return s;
+}
+
 }
 
 QStringList ProjectExporter::buildCommand(const Project& project,
@@ -259,6 +310,11 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     QVector<VideoClipRef> vclips;
     for (int tr = (int)project.videoTracks.size() - 1; tr >= 0; --tr)
         for (const Clip& c : project.videoTracks[tr].clips) {
+            if (c.isText) {
+                // Clipe independente de texto: vira uma camada gerada.
+                vclips.push_back({&c, nullptr, project.videoTracks[tr].blendMode});
+                continue;
+            }
             const MediaItem* m = project.findMedia(c.mediaId);
             if (m && m->hasVideo)
                 vclips.push_back({&c, m, project.videoTracks[tr].blendMode});
@@ -334,7 +390,13 @@ QStringList ProjectExporter::buildCommand(const Project& project,
          << "-i" << QString("color=c=black:s=%1x%2:r=%3:d=%4").arg(W).arg(H).arg(FPS).arg(num(total));
 
     for (const VideoClipRef& v : vclips) {
-        if (isImageFile(v.m->filePath)) {
+        if (v.m == nullptr) {
+            // Clipe de texto: fonte gerada transparente (a drawtext desenha o
+            // texto por cima), com a duração do clipe.
+            args << "-f" << "lavfi"
+                 << "-i" << QString("color=c=black@0.0:s=%1x%2:r=%3:d=%4")
+                                .arg(W).arg(H).arg(FPS).arg(num(v.c->dur * v.c->speed));
+        } else if (isImageFile(v.m->filePath)) {
             // Imagem estática: loop contínuo na taxa do projeto, limitado à
             // duração do clipe.
             args << "-loop" << "1" << "-framerate" << num(FPS)
@@ -387,23 +449,69 @@ QStringList ProjectExporter::buildCommand(const Project& project,
             const bool hasTrans = trIt != clipTrans.end();
             const QString transType = hasTrans ? trIt->first : QString();
             const double transDur = hasTrans ? trIt->second : 0.0;
-            QString chain = QStringLiteral("[%1:v]setpts=(PTS-STARTPTS)/%2+%3/TB,trim=duration=%4")
-                                .arg(inIdx).arg(num(speed)).arg(num(pos)).arg(num(dur));
-            if (v.c->hasCrop()) {
-                // Com crop, o conteúdo recortado preenche o quadro (cover).
-                chain += QLatin1Char(',') + cropFilter(*v.c, pos);
-                chain += QStringLiteral(
-                             ",scale=%1:%2:force_original_aspect_ratio=increase:"
-                             "force_divisible_by=2,crop=%1:%2,fps=%3,format=rgba")
-                             .arg(W).arg(H).arg(FPS);
+            QString chain;
+            if (v.m == nullptr) {
+                // Clipe de texto: a fonte já é WxH transparente; só alinha o
+                // tempo (sem scale/pad, que encheriam o quadro de preto).
+                chain = QStringLiteral("[%1:v]setpts=(PTS-STARTPTS)/%2+%3/TB,"
+                                       "trim=duration=%4,fps=%5,format=rgba")
+                            .arg(inIdx).arg(num(speed)).arg(num(pos)).arg(num(dur)).arg(FPS);
+                if (v.c->hasCrop()) {
+                    // Pan/crop do texto: recorta e re-preenche o quadro.
+                    chain += QLatin1Char(',') + cropFilter(*v.c, pos);
+                    chain += QStringLiteral(
+                                 ",scale=%1:%2:force_original_aspect_ratio=increase:"
+                                 "force_divisible_by=2,crop=%1:%2")
+                                 .arg(W).arg(H);
+                }
             } else {
-                chain += QStringLiteral(
-                             ",scale=%1:%2:force_original_aspect_ratio=decrease:"
-                             "force_divisible_by=2,"
-                             "pad=%1:%2:(ow-iw)/2:(oh-ih)/2:color=black,fps=%3,format=rgba")
-                             .arg(W).arg(H).arg(FPS);
+                chain = QStringLiteral("[%1:v]setpts=(PTS-STARTPTS)/%2+%3/TB,trim=duration=%4")
+                            .arg(inIdx).arg(num(speed)).arg(num(pos)).arg(num(dur));
+                if (v.c->hasCrop()) {
+                    // Com crop, o conteúdo recortado preenche o quadro (cover).
+                    chain += QLatin1Char(',') + cropFilter(*v.c, pos);
+                    chain += QStringLiteral(
+                                 ",scale=%1:%2:force_original_aspect_ratio=increase:"
+                                 "force_divisible_by=2,crop=%1:%2,fps=%3,format=rgba")
+                                 .arg(W).arg(H).arg(FPS);
+                } else {
+                    chain += QStringLiteral(
+                                 ",scale=%1:%2:force_original_aspect_ratio=decrease:"
+                                 "force_divisible_by=2,"
+                                 "pad=%1:%2:(ow-iw)/2:(oh-ih)/2:color=black,fps=%3,format=rgba")
+                                 .arg(W).arg(H).arg(FPS);
+                }
             }
             fc << chain;
+            // Texto (do clipe de texto ou anexado ao vídeo): desenhado AQUI,
+            // antes de scale/rotate/fade/opacity, para o texto acompanhar a
+            // transformação e os fades do clipe.
+            if (!project.textStyleFor(*v.c)->isEmpty()) {
+                const TextStyle& st = *project.textStyleFor(*v.c);
+                const double sizeFrac = st.textSize > 0.0 ? st.textSize : (1.0 / 18.0);
+                const QString font = fontFileForFamily(st.fontFamily);
+                QString dt = QStringLiteral("drawtext=text='%1':fontsize=h*%2")
+                                 .arg(escText(st.text))
+                                 .arg(num(sizeFrac));
+                if (!font.isEmpty())
+                    dt.prepend(QStringLiteral("fontfile=%1:").arg(font));
+                dt += QStringLiteral(":fontcolor=%1").arg(drawColor(st.textColor));
+                if (st.textOutline > 0.0)
+                    dt += QStringLiteral(":borderw=h*%1:bordercolor=%2")
+                              .arg(num(st.textOutline))
+                              .arg(drawColor(st.textOutlineColor));
+                if (st.textBackground)
+                    dt += QStringLiteral(":box=1:boxcolor=%1:boxborderw=%2")
+                              .arg(drawColor(st.textBackgroundColor))
+                              .arg(qMax(4, (int)llround(W * 0.008)));
+                QString xExpr;
+                if (st.textAlign == 1) xExpr = QStringLiteral("w*%1").arg(num(st.textX));
+                else if (st.textAlign == 2) xExpr = QStringLiteral("w*%1-text_w").arg(num(st.textX));
+                else xExpr = QStringLiteral("w*%1-text_w/2").arg(num(st.textX));
+                const QString yExpr = QStringLiteral("h*%1-text_h/2").arg(num(st.textY));
+                dt += QStringLiteral(":x='%1':y='%2'").arg(xExpr, yExpr);
+                fc.last().append(QLatin1Char(',') + dt);
+            }
             // Transformação (zoom, movimento, rotação) — antes dos efeitos.
             if (v.c->scale != 1.0 || !v.c->kfScale.isEmpty()) {
                 if (v.c->kfScale.isEmpty())
@@ -420,19 +528,27 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                 const double sAng = std::sin(aRad);
                 const int rotW = std::max(2, (int)std::ceil(W * maxS * cAng + H * maxS * sAng));
                 const int rotH = std::max(2, (int)std::ceil(W * maxS * sAng + H * maxS * cAng));
+                // Texto tem fundo transparente: rotação preenche com transparente,
+                // não preto (senão as quinas cobrem o vídeo de baixo).
+                const QString rotFill = (v.m == nullptr) ? QStringLiteral("black@0")
+                                                         : QStringLiteral("black");
                 if (v.c->kfRotation.isEmpty())
-                    fc.last().append(QStringLiteral(",rotate=a=%1:ow=%2:oh=%3:c=black")
-                                         .arg(num(v.c->rotation * kPi / 180.0)).arg(rotW).arg(rotH));
+                    fc.last().append(QStringLiteral(",rotate=a=%1:ow=%2:oh=%3:c=%4")
+                                         .arg(num(v.c->rotation * kPi / 180.0))
+                                         .arg(rotW).arg(rotH).arg(rotFill));
                 else
-                    fc.last().append(QStringLiteral(",rotate=a='%1':ow=%2:oh=%3:c=black")
-                                         .arg(rotExpr).arg(rotW).arg(rotH));
+                    fc.last().append(QStringLiteral(",rotate=a='%1':ow=%2:oh=%3:c=%4")
+                                         .arg(rotExpr).arg(rotW).arg(rotH).arg(rotFill));
             }
+            // Texto: fade por ALPHA (não para preto), senão a camada transparente
+            // viraria um quadrado preto durante o fade.
+            const QString fadeAlpha = (v.m == nullptr) ? QStringLiteral(":alpha=1") : QString();
             if (fadeIn > 0)
-                fc.last().append(QStringLiteral(",fade=t=in:st=%1:d=%2")
-                                     .arg(num(pos)).arg(num(fadeIn)));
+                fc.last().append(QStringLiteral(",fade=t=in:st=%1:d=%2%3")
+                                     .arg(num(pos)).arg(num(fadeIn)).arg(fadeAlpha));
             if (fadeOut > 0)
-                fc.last().append(QStringLiteral(",fade=t=out:st=%1:d=%2")
-                                     .arg(num(end - fadeOut)).arg(num(fadeOut)));
+                fc.last().append(QStringLiteral(",fade=t=out:st=%1:d=%2%3")
+                                     .arg(num(end - fadeOut)).arg(num(fadeOut)).arg(fadeAlpha));
             // Transição dissolve: o clipe da frente entra com alpha 0→1 sobre
             // o anterior (que segue por baixo, cobrindo a sobreposição).
             if (hasTrans && transType == QStringLiteral("dissolve"))
@@ -455,16 +571,6 @@ QStringList ProjectExporter::buildCommand(const Project& project,
             if (v.c->blur > 0.0)
                 fc.last().append(QStringLiteral(",boxblur=luma_radius=%1:luma_power=2")
                                      .arg(num(std::clamp(v.c->blur, 0.0, 40.0))));
-            if (!v.c->text.isEmpty()) {
-                const QString font = fontFilePath();
-                QString dt = QStringLiteral("drawtext=text='%1':fontsize=h/18:fontcolor=white"
-                                            ":box=1:boxcolor=black@0.6:boxborderw=10"
-                                            ":x=(w-text_w)/2:y=(h-text_h)/2")
-                                 .arg(escText(v.c->text));
-                if (!font.isEmpty())
-                    dt.prepend(QStringLiteral("fontfile=%1:").arg(font));
-                fc.last().append(QLatin1Char(',') + dt);
-            }
             if (v.c->kfOpacity.isEmpty()) {
                 if (v.c->opacity < 1.0)
                     fc.last().append(QStringLiteral(",colorchannelmixer=aa=%1")

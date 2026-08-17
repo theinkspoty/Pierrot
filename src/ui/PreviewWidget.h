@@ -47,6 +47,7 @@ protected:
 private:
     void tick();
     void drawEmptyMonitor(QPainter& p, const QRect& canvas);
+    void drawClipText(QPainter& p, const QRect& canvas, const Clip* clip, double k);
     void updateFrame();
     void applyCrop();
     QImage applyCropTo(const QImage& img, int cL, int cR, int cT, int cB);

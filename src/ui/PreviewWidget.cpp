@@ -19,6 +19,8 @@
 #include <QVBoxLayout>
 #include <QIODevice>
 #include <QAudioFormat>
+#include <QPainterPath>
+#include <QFontMetrics>
 #if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
 #include <QAudioSink>
 #include <QMediaDevices>
@@ -545,7 +547,18 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
                        .arg(m_project->height)
                        .arg(m_project->fps));
 
-    if (m_frame.isNull()) {
+    // Texto independente ativo no playhead (desenhado mesmo sem quadro de vídeo).
+    bool anyText = false;
+    if (m_project) {
+        for (const Track& tr : m_project->videoTracks)
+            for (const Clip& c : tr.clips)
+                if (c.isText && m_playhead >= c.pos && m_playhead < c.pos + c.dur) {
+                    anyText = true;
+                    break;
+                }
+    }
+
+    if (m_frame.isNull() && !anyText) {
         drawEmptyMonitor(p, canvas);
         return;
     }
@@ -590,18 +603,128 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
     // cima com fade (dissolve) ou deslizando (wipe).
     const bool transActive = m_transAlpha >= 0.0
                              && !m_frame.isNull() && !m_underFrame.isNull();
-    if (transActive) {
-        drawFrame(m_underFrame, 1.0, 0.0, 0.0, 0.0);
-        double ox = 0.0, oy = 0.0;
-        if (m_transType == QStringLiteral("wipeleft")) ox = pw * (1.0 - m_transAlpha);
-        else if (m_transType == QStringLiteral("wiperight")) ox = -pw * (1.0 - m_transAlpha);
-        else if (m_transType == QStringLiteral("wipeup")) oy = ph * (1.0 - m_transAlpha);
-        else if (m_transType == QStringLiteral("wipedown")) oy = -ph * (1.0 - m_transAlpha);
-        const double a = (m_transType == QStringLiteral("dissolve")) ? m_transAlpha : 1.0;
-        drawFrame(m_frame, S, rot, tx, ty, a, ox, oy);
-    } else {
-        drawFrame(m_frame, S, rot, tx, ty);
+    if (!m_frame.isNull()) {
+        if (transActive) {
+            drawFrame(m_underFrame, 1.0, 0.0, 0.0, 0.0);
+            double ox = 0.0, oy = 0.0;
+            if (m_transType == QStringLiteral("wipeleft")) ox = pw * (1.0 - m_transAlpha);
+            else if (m_transType == QStringLiteral("wiperight")) ox = -pw * (1.0 - m_transAlpha);
+            else if (m_transType == QStringLiteral("wipeup")) oy = ph * (1.0 - m_transAlpha);
+            else if (m_transType == QStringLiteral("wipedown")) oy = -ph * (1.0 - m_transAlpha);
+            const double a = (m_transType == QStringLiteral("dissolve")) ? m_transAlpha : 1.0;
+            drawFrame(m_frame, S, rot, tx, ty, a, ox, oy);
+        } else {
+            drawFrame(m_frame, S, rot, tx, ty);
+        }
     }
+
+    // Clipes de texto independentes: desenha todos os ativos no playhead, da
+    // faixa de baixo para a de cima (a faixa 0 é o topo e fica por cima).
+    if (m_project) {
+        for (int tr = (int)m_project->videoTracks.size() - 1; tr >= 0; --tr) {
+            const Clip* tclip = nullptr;
+            for (const Clip& c : m_project->videoTracks[tr].clips)
+                if (c.isText && m_playhead >= c.pos && m_playhead < c.pos + c.dur)
+                    if (!tclip || c.pos > tclip->pos) tclip = &c;
+            if (tclip) drawClipText(p, canvas, tclip, k);
+        }
+    }
+    // Texto anexado a um clipe de vídeo (comportamento antigo) ainda vale.
+    if (clip && !clip->isText)
+        drawClipText(p, canvas, clip, k);
+}
+
+// Desenha o texto/título estilizado do clipe sobre o monitor (mesmo resultado
+// visual do drawtext da exportação). O desenho acontece em espaço de PROJETO
+// mapeado para o canvas (escala k), aplicando o transform animável do clipe
+// (escala, rotação, pan) e a opacidade (fades/keyframes).
+void PreviewWidget::drawClipText(QPainter& p, const QRect& canvas, const Clip* clip, double k) {
+    if (!clip || !m_project) return;
+    const TextStyle& st = *m_project->textStyleFor(*clip);
+    if (st.isEmpty()) return;
+    const double W = m_project->width;
+    const double H = m_project->height;
+    const double rel = m_playhead - clip->pos;
+    const double alpha = std::clamp(kfValue(clip->kfOpacity, clip->opacity, rel), 0.0, 1.0);
+    if (alpha <= 0.0) return;
+
+    const double sizeFrac = st.textSize > 0.0 ? st.textSize : (1.0 / 18.0);
+    const int pxSize = qMax(4, (int)qRound(sizeFrac * H)); // px de projeto
+    QFont font;
+    if (!st.fontFamily.isEmpty()) font.setFamily(st.fontFamily);
+    font.setPixelSize(pxSize);
+    font.setBold(st.textBold);
+    const QFontMetricsF fm(font);
+
+    // Quebra em linhas dentro de 90% da largura do projeto.
+    const double maxW = W * 0.9;
+    QStringList wrapped;
+    for (const QString& raw : st.text.split(QLatin1Char('\n'))) {
+        if (raw.isEmpty()) { wrapped << QString(); continue; }
+        QString cur;
+        const QStringList words = raw.split(QLatin1Char(' '));
+        for (const QString& w : words) {
+            const QString trial = cur.isEmpty() ? w : cur + QLatin1Char(' ') + w;
+            if (fm.horizontalAdvance(trial) <= maxW || cur.isEmpty())
+                cur = trial;
+            else { wrapped << cur; cur = w; }
+        }
+        wrapped << cur;
+    }
+
+    double tw = 0.0;
+    for (const QString& l : wrapped) tw = qMax(tw, fm.horizontalAdvance(l));
+    const double th = wrapped.size() * fm.height();
+    const double pad = pxSize * 0.25;
+    const double bw = tw + 2.0 * pad;
+    const double bh = th + 2.0 * pad;
+
+    // Posição do texto RELATIVA ao centro do quadro (a origem do transform é
+    // o centro + pan). textX=0.5 → x=0 → texto centralizado. Antes desenhávamos
+    // em coordenadas absolutas (0.5W) E transladávamos por W/2: o texto caía
+    // em 0.5W+0.5W = W (canto inferior direito, fora da tela).
+    double x;
+    if (st.textAlign == 1) x = st.textX * W - W / 2.0;
+    else if (st.textAlign == 2) x = st.textX * W - bw - W / 2.0;
+    else x = st.textX * W - bw / 2.0 - W / 2.0;
+    const double y = st.textY * H - bh / 2.0 - H / 2.0;
+    const QRectF box(x, y, bw, bh);
+
+    p.save();
+    p.setClipRect(canvas);
+    // Mapeia espaço de projeto (0..W x 0..H) para o canvas.
+    p.translate(canvas.topLeft());
+    p.scale(k, k);
+    // Transform animável do clipe, em torno do centro do quadro.
+    p.translate(W / 2.0 + kfValue(clip->kfTx, clip->tx, rel),
+                H / 2.0 + kfValue(clip->kfTy, clip->ty, rel));
+    p.rotate(kfValue(clip->kfRotation, clip->rotation, rel));
+    p.scale(kfValue(clip->kfScale, clip->scale, rel),
+            kfValue(clip->kfScale, clip->scale, rel));
+
+    if (st.textBackground) {
+        QColor bc = st.textBackgroundColor;
+        bc.setAlpha((int)(bc.alpha() * alpha));
+        p.fillRect(box, bc);
+    }
+
+    QPainterPath path;
+    const double baseline = box.top() + pad + fm.ascent();
+    for (int i = 0; i < wrapped.size(); ++i)
+        path.addText(QPointF(box.left() + pad, baseline + i * fm.height()), font, wrapped[i]);
+
+    if (st.textOutline > 0.0) {
+        const double ow = qMax(1.0, st.textOutline * H);
+        QColor oc = st.textOutlineColor;
+        oc.setAlpha((int)(oc.alpha() * alpha));
+        QPen pen(oc, ow, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+        p.strokePath(path, pen);
+    }
+    QColor fc = st.textColor;
+    fc.setAlpha((int)(fc.alpha() * alpha));
+    p.fillPath(path, fc);
+
+    p.restore();
 }
 
 // Tela vazia: monitor escuro com mensagem discreta (como no DaVinci/Vegas).
@@ -722,13 +845,19 @@ void PreviewWidget::tick() {
     updateMixAudio(t, false);
 }
 
+// Clipe de vídeo (com mídia) no topo em `t`. Clipes de texto independentes são
+// ignorados aqui (não têm quadro para decodificar); o texto é desenhado por
+// cima do vídeo no paintEvent.
 const Clip* PreviewWidget::clipAt(double t) const {
     if (!m_project) return nullptr;
     for (int tr = 0; tr < (int)m_project->videoTracks.size(); ++tr) {
         const Clip* best = nullptr;
-        for (const Clip& c : m_project->videoTracks[tr].clips)
-            if (t >= c.pos && t < c.pos + c.dur)
-                if (!best || c.pos > best->pos) best = &c;
+        for (const Clip& c : m_project->videoTracks[tr].clips) {
+            if (t >= c.pos && t < c.pos + c.dur && !c.isText) {
+                const MediaItem* m = m_project->findMedia(c.mediaId);
+                if (m && m->hasVideo && (!best || c.pos > best->pos)) best = &c;
+            }
+        }
         if (best) return best;
     }
     return nullptr;

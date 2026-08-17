@@ -79,6 +79,8 @@ public slots:
     void setLoopOutAtPlayhead();
     void clearLoop();
     void addMediaAtPlayhead(const QString& mediaId);
+    // Cria um clipe independente de texto (animável) numa faixa de vídeo.
+    void addTextClipAt(int row, double t);
     // Arrasto manual vindo da pool de mídia (não depende do DnD do
     // compositor, que falha em alguns ambientes/Wayland).
     void showDropHover(const QPoint& globalPos);
@@ -158,6 +160,7 @@ private:
     void stopAutoScroll();
     void autoScrollTick();
     void drawClip(QPainter& p, const QRect& r, const Clip& c, const Track& tr, bool audio);
+    void drawTextClipBody(QPainter& p, const QRect& r, const Clip& c);
     void drawAudioWaveform(QPainter& p, const QRect& r, const Clip& c, const QString& path);
     void drawVideoThumbs(QPainter& p, const QRect& r, const Clip& c, const QString& path);
     void drawFadeCorners(QPainter& p, const QRect& r, const Clip& c);
@@ -176,6 +179,7 @@ private:
     void showEffectsDialog(Clip* c);
     void showTransformDialog(Clip* c);
     void showAudioEffectsDialog(Clip* c);
+    void showTextEditorDialog(Clip* c);
     void drawTrackHeader(QPainter& p, int y, int rowH, const Track& tr, bool selected);
     int headerBtnAt(const QPoint& pos, int& row, bool& audio) const;
     bool trackLocked(const Clip* c) const;

@@ -101,6 +101,43 @@ static QVector<Keyframe> kfFromJson(const QJsonValue& val) {
     return v;
 }
 
+static QJsonObject textStyleToJson(const TextStyle& t) {
+    QJsonObject o;
+    o["text"] = t.text;
+    o["fontFamily"] = t.fontFamily;
+    o["textSize"] = t.textSize;
+    o["textBold"] = t.textBold;
+    o["textColor"] = t.textColor.name(QColor::HexArgb);
+    o["textOutline"] = t.textOutline;
+    o["textOutlineColor"] = t.textOutlineColor.name(QColor::HexArgb);
+    o["textBackground"] = t.textBackground;
+    o["textBackgroundColor"] = t.textBackgroundColor.name(QColor::HexArgb);
+    o["textX"] = t.textX;
+    o["textY"] = t.textY;
+    o["textAlign"] = t.textAlign;
+    return o;
+}
+
+static TextStyle textStyleFromJson(const QJsonObject& o) {
+    TextStyle t;
+    t.text = o["text"].toString();
+    t.fontFamily = o["fontFamily"].toString();
+    t.textSize = o["textSize"].toDouble(0.0);
+    t.textBold = o["textBold"].toBool(true);
+    const QString tc = o["textColor"].toString();
+    if (QColor::isValidColorName(tc)) t.textColor = QColor(tc);
+    t.textOutline = o["textOutline"].toDouble(0.0);
+    const QString toc = o["textOutlineColor"].toString();
+    if (QColor::isValidColorName(toc)) t.textOutlineColor = QColor(toc);
+    t.textBackground = o["textBackground"].toBool(true);
+    const QString tbc = o["textBackgroundColor"].toString();
+    if (QColor::isValidColorName(tbc)) t.textBackgroundColor = QColor(tbc);
+    t.textX = o["textX"].toDouble(0.5);
+    t.textY = o["textY"].toDouble(0.5);
+    t.textAlign = o["textAlign"].toInt(0);
+    return t;
+}
+
 static QJsonObject clipToJson(const Clip& c) {
     QJsonObject o;
     o["id"] = c.id;
@@ -117,7 +154,9 @@ static QJsonObject clipToJson(const Clip& c) {
     o["fadeIn"] = c.fadeIn;
     o["fadeOut"] = c.fadeOut;
     o["speed"] = c.speed;
-    o["text"] = c.text;
+    o["isText"] = c.isText;
+    o["textResourceId"] = c.textResourceId;
+    o["textStyle"] = textStyleToJson(c.text);
     o["brightness"] = c.brightness;
     o["contrast"] = c.contrast;
     o["saturation"] = c.saturation;
@@ -170,7 +209,15 @@ static Clip clipFromJson(const QJsonObject& o) {
     c.fadeIn = o["fadeIn"].toDouble(0.0);
     c.fadeOut = o["fadeOut"].toDouble(0.0);
     c.speed = o["speed"].toDouble(1.0);
-    c.text = o["text"].toString();
+    c.isText = o["isText"].toBool(false);
+    c.textResourceId = o["textResourceId"].toString();
+    const QJsonObject ts = o["textStyle"].toObject();
+    if (!ts.isEmpty()) {
+        c.text = textStyleFromJson(ts);
+    } else {
+        // Projeto antigo: texto simples no campo único "text".
+        c.text.text = o["text"].toString();
+    }
     c.brightness = o["brightness"].toDouble(0.0);
     c.contrast = o["contrast"].toDouble(1.0);
     c.saturation = o["saturation"].toDouble(1.0);
@@ -296,6 +343,15 @@ QJsonObject Project::toJson() const {
     }
     o["trackGroups"] = tgs;
 
+    QJsonArray trs;
+    for (const TextResource& r : textResources) {
+        QJsonObject ro;
+        ro["id"] = r.id;
+        ro["textStyle"] = textStyleToJson(r.text);
+        trs.append(ro);
+    }
+    o["textResources"] = trs;
+
     return o;
 }
 
@@ -310,6 +366,7 @@ void Project::fromJson(const QJsonObject& o) {
     videoTracks.clear();
     audioTracks.clear();
     trackGroups.clear();
+    textResources.clear();
 
     const QJsonArray ma = o["media"].toArray();
     for (const QJsonValue& v : ma) media.append(mediaFromJson(v.toObject()));
@@ -332,5 +389,14 @@ void Project::fromJson(const QJsonObject& o) {
         g.name = go["name"].toString();
         g.collapsed = go["collapsed"].toBool();
         if (!g.id.isEmpty()) trackGroups.append(g);
+    }
+
+    const QJsonArray tra = o["textResources"].toArray();
+    for (const QJsonValue& v : tra) {
+        const QJsonObject ro = v.toObject();
+        TextResource r;
+        r.id = ro["id"].toString();
+        r.text = textStyleFromJson(ro["textStyle"].toObject());
+        if (!r.id.isEmpty()) textResources.append(r);
     }
 }

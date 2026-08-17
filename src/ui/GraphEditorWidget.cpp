@@ -1842,6 +1842,8 @@ void GraphEditorWidget::refresh() {
         if (c && m_project) {
             const MediaItem* mi = m_project->findMedia(c->mediaId);
             if (mi) { hasVideo = mi->hasVideo; hasAudio = mi->hasAudio; }
+            // Clipe de texto não tem mídia, mas é animável como vídeo.
+            if (c->isText) hasVideo = true;
         }
         bool haveVideo = false, haveAudio = false;
         for (GraphProp p : m_props) {
@@ -1946,6 +1948,8 @@ void GraphEditorWidget::rebuildRows() {
     if (m_project) {
         const MediaItem* mi = m_project->findMedia(c->mediaId);
         if (mi) { hasVideo = mi->hasVideo; hasAudio = mi->hasAudio; }
+        // Clipe de texto não tem mídia, mas é animável como vídeo.
+        if (c->isText) hasVideo = true;
     }
     if (hasVideo) {
         const QVector<GraphProp> vid = { GPropOpacity, GPropScale, GPropRotation,

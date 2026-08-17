@@ -39,6 +39,7 @@ set(SOURCES
     src/ui/SettingsDialog.cpp
     src/ui/TransformDialog.cpp
     src/ui/AudioEffectsDialog.cpp
+    src/ui/TextEditorDialog.cpp
     src/ui/WelcomeWindow.cpp
     src/ui/GraphEditorWidget.cpp
     src/ui/ClickLogger.cpp
@@ -61,6 +62,7 @@ set(HEADERS
     src/ui/SettingsDialog.h
     src/ui/TransformDialog.h
     src/ui/AudioEffectsDialog.h
+    src/ui/TextEditorDialog.h
     src/ui/WelcomeWindow.h
     src/ui/GraphEditorWidget.h
     src/ui/ClickLogger.h

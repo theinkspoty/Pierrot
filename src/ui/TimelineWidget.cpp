@@ -9,6 +9,7 @@
 #include "ffmpeg/FFmpegDecoder.h"
 #include "ui/TransformDialog.h"
 #include "ui/AudioEffectsDialog.h"
+#include "ui/TextEditorDialog.h"
 #include "ui/SettingsDialog.h"
 
 #include <QPainter>
@@ -42,6 +43,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QDialogButtonBox>
+#include <QRadioButton>
 #include <QInputDialog>
 #include <QPushButton>
 #include <QCheckBox>
@@ -333,6 +335,57 @@ void TimelineWidget::addMediaAtPlayhead(const QString& mediaId) {
     updateScrollRanges();
     update();
     emit modified();
+}
+
+// Cria um clipe independente de texto na faixa de vídeo `row` (ou numa livre)
+// no instante `t`, com duração padrão, e abre o editor de texto.
+void TimelineWidget::addTextClipAt(int row, double t) {
+    if (!m_project) return;
+    constexpr double kTextDur = 3.0;
+    auto overlap = [t](const QVector<Clip>& clips) {
+        for (const Clip& o : clips)
+            if (o.pos < t + kTextDur - 1e-9 && o.pos + o.dur > t + 1e-9) return true;
+        return false;
+    };
+    int vRow = row;
+    if (vRow < 0 || vRow >= (int)m_project->videoTracks.size()
+        || m_project->videoTracks[vRow].locked || overlap(m_project->videoTracks[vRow].clips)) {
+        vRow = -1;
+        for (int i = 0; i < (int)m_project->videoTracks.size(); ++i)
+            if (!m_project->videoTracks[i].locked && !overlap(m_project->videoTracks[i].clips)) {
+                vRow = i;
+                break;
+            }
+    }
+    if (vRow < 0) {
+        m_project->addTrack(false);
+        vRow = (int)m_project->videoTracks.size() - 1;
+    }
+
+    emit editStart();
+    Clip c;
+    c.id = newId();
+    c.isText = true;
+    c.pos = t;
+    c.in = 0.0;
+    c.dur = kTextDur;
+    c.name = tr("Texto");
+    c.text.text = tr("Texto");
+    // Centralizado por padrão (0.5/0.5 no quadro, alinhamento centro).
+    c.text.textX = 0.5;
+    c.text.textY = 0.5;
+    c.text.textAlign = 0;
+    auto& clips = m_project->videoTracks[vRow].clips;
+    auto it = clips.begin();
+    while (it != clips.end() && it->pos <= c.pos) ++it;
+    clips.insert(it, c);
+    setSelection(c.id);
+    invalidateScene();
+    update();
+    emit modified();
+
+    Clip* created = findClipById(c.id);
+    if (created) showTextEditorDialog(created);
 }
 
 void TimelineWidget::resizeEvent(QResizeEvent*) {
@@ -936,6 +989,8 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
         const QRect cr(0, 0, r.width(), r.height());
         if (audio)
             drawAudioWaveform(cp, cr, c, path);
+        else if (c.isText)
+            drawTextClipBody(cp, cr, c);
         else
             drawVideoThumbs(cp, cr, c, path);
         drawFadeCorners(cp, cr, c);
@@ -995,6 +1050,29 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
     p.fillRect(rangeRect, QColor(0, 0, 0, 110));
     p.setPen(QColor(190, 195, 205));
     p.drawText(rangeRect, Qt::AlignLeft | Qt::AlignVCenter, rng);
+}
+
+// Corpo de um clipe de texto independente na timeline: "T" + prévia do texto
+// com a cor do estilo.
+void TimelineWidget::drawTextClipBody(QPainter& p, const QRect& r, const Clip& c) {
+    const TextStyle& st = *m_project->textStyleFor(c);
+    QFont f = p.font();
+    f.setPointSizeF(9.5);
+    f.setBold(true);
+    p.setFont(f);
+    p.setPen(st.textColor);
+    p.drawText(r.adjusted(5, 3, -5, -3), Qt::AlignLeft | Qt::AlignTop, tr("T"));
+    f.setPointSizeF(8.5);
+    f.setBold(false);
+    p.setFont(f);
+    p.setPen(QColor(220, 225, 235));
+    QString txt = st.text.simplified();
+    if (txt.isEmpty()) txt = tr("(texto vazio)");
+    const QFontMetrics fm(f);
+    txt = fm.elidedText(txt, Qt::ElideRight, std::max(10, r.width() - 16));
+    p.drawText(QRect(r.left() + 4, r.top() + 18, std::max(10, r.width() - 8),
+                     std::max(10, r.height() - 22)),
+               Qt::AlignLeft | Qt::AlignTop, txt);
 }
 
 void TimelineWidget::drawAudioWaveform(QPainter& p, const QRect& r, const Clip& c,
@@ -2384,6 +2462,12 @@ void TimelineWidget::mouseDoubleClickEvent(QMouseEvent* e) {
     if (rowFromY(e->pos().y(), row, audio)) {
         Clip* clip = clipAt(row, audio, xToTime(e->pos().x()));
         if (clip) {
+            // Duplo clique num clipe com texto (ou num clipe de texto) abre a
+            // mesma janela usada para criar — vira a janela de edição do clipe.
+            if (!audio && (clip->isText || !m_project->textStyleFor(*clip)->isEmpty())) {
+                showTextEditorDialog(clip);
+                return;
+            }
             toggleSelection(clip->id);
             update();
         }
@@ -2544,10 +2628,12 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         QAction* fx = nullptr;
         QAction* audioFx = nullptr;
         QAction* transform = nullptr;
+        QAction* textAction = nullptr;
         QAction* panCrop = nullptr;
         if (!audio) {
             fx = menu.addAction(tr("Efeitos de vídeo…"));
             transform = menu.addAction(tr("Transformar…"));
+            textAction = menu.addAction(tr("Texto…"));
             panCrop = menu.addAction(tr("Pancrop…"));
         } else {
             audioFx = menu.addAction(tr("Efeitos de áudio…"));
@@ -2620,6 +2706,7 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         else if (act == fx) showEffectsDialog(clip);
         else if (act == audioFx) showAudioEffectsDialog(clip);
         else if (act == transform) showTransformDialog(clip);
+        else if (act == textAction) showTextEditorDialog(clip);
         else if (act == panCrop) emit pancropRequested(clip->id);
         else if (act == transDissolve || act == transWipeL || act == transWipeR
                  || act == transWipeU || act == transWipeD) {
@@ -2664,6 +2751,7 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
     } else {
         QAction* addV = menu.addAction(tr("Adicionar faixa de vídeo"));
         QAction* addA = menu.addAction(tr("Adicionar faixa de áudio"));
+        QAction* newText = menu.addAction(tr("Novo texto…"));
         QAction* paste = nullptr;
         if (!m_clipboard.isEmpty()) paste = menu.addAction(tr("Colar"));
         QAction* act = nullptr;
@@ -2718,6 +2806,10 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         act = menu.exec(e->globalPos());
         if (act == addV) addTrack(false);
         else if (act == addA) addTrack(true);
+        else if (act == newText) {
+            const double tt = std::max(0.0, snapTime(xToTime(e->pos().x())));
+            addTextClipAt(vrow, tt);
+        }
         else if (act == paste) pasteClips();
         else if (act == trackVol) {
             bool ok = false;
@@ -3079,12 +3171,59 @@ void TimelineWidget::splitClipAt(Clip* c, double t) {
 void TimelineWidget::duplicateClip(Clip* c) {
     if (!c) return;
     const double shift = c->dur;
-    const QString gid = newId();
     // Usa ids (não ponteiros): push_back pode realocar o vetor e invalidar
     // os ponteiros ainda não processados.
     QStringList ids = c->groupId.isEmpty() ? QStringList{c->id} : QStringList();
     if (ids.isEmpty())
         for (Clip* m : groupMembers(c->groupId)) ids.append(m->id);
+
+    // Cópia unificada (estilo Vegas): se o clipe tem texto, pergunta se a
+    // cópia é independente ou compartilha o texto com o original.
+    bool hasText = false;
+    for (const QString& id : ids) {
+        Clip* s = findClipById(id);
+        if (s && !m_project->textStyleFor(*s)->isEmpty()) { hasText = true; break; }
+    }
+    enum CopyKind { Independent, Unified };
+    CopyKind kind = Independent;
+    if (hasText) {
+        QDialog dlg(this);
+        dlg.setWindowTitle(tr("Duplicar clipe"));
+        auto* rbInd = new QRadioButton(tr("Cópia independente"), &dlg);
+        rbInd->setToolTip(tr("Cada clipe tem o próprio texto e estilo."));
+        auto* rbUni = new QRadioButton(tr("Cópia unificada"), &dlg);
+        rbUni->setToolTip(tr("Os clipes compartilham o mesmo texto e estilo: "
+                             "editar um atualiza os outros."));
+        rbUni->setChecked(true);
+        auto* lay = new QVBoxLayout(&dlg);
+        lay->addWidget(new QLabel(tr("O clipe tem texto. Como criar a cópia?"), &dlg));
+        lay->addWidget(rbInd);
+        lay->addWidget(rbUni);
+        auto* btns = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+        connect(btns, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        connect(btns, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        lay->addWidget(btns);
+        if (dlg.exec() != QDialog::Accepted) return;
+        kind = rbUni->isChecked() ? Unified : Independent;
+    }
+
+    // Cópia unificada: converte o texto do original num recurso compartilhado
+    // (se ainda não for) e a cópia passa a referenciar o mesmo recurso.
+    emit editStart();
+    QString sharedRes;
+    if (kind == Unified) {
+        for (const QString& id : ids) {
+            Clip* s = findClipById(id);
+            if (s && !m_project->textStyleFor(*s)->isEmpty()) {
+                if (s->textResourceId.isEmpty())
+                    m_project->bindTextResource(*s);
+                sharedRes = s->textResourceId;
+                break;
+            }
+        }
+    }
+
+    const QString gid = newId();
     QString firstDup;
     for (const QString& id : ids) {
         Clip* src = findClipById(id);
@@ -3093,6 +3232,11 @@ void TimelineWidget::duplicateClip(Clip* c) {
         b.id = newId();
         b.groupId = gid;
         b.pos = snapTime(src->pos + shift);
+        if (kind == Unified && !sharedRes.isEmpty()
+            && !m_project->textStyleFor(*src)->isEmpty()) {
+            b.textResourceId = sharedRes;
+            b.text = TextStyle(); // o texto vem do recurso compartilhado
+        }
         Track* tr = trackOf(src);
         if (tr) {
             tr->clips.push_back(b);
@@ -3167,9 +3311,6 @@ void TimelineWidget::showProperties(Clip* c) {
     fOutRow->addWidget(fOut, 1);
     fOutRow->addWidget(fOutLabel);
 
-    auto* textEdit = new QLineEdit(c->text, &dlg);
-    textEdit->setPlaceholderText(tr("Deixe vazio para sem texto"));
-
     const bool isAudio = trackOf(c)->audio;
 
     auto* form = new QFormLayout;
@@ -3178,7 +3319,18 @@ void TimelineWidget::showProperties(Clip* c) {
     form->addRow(tr("Velocidade:"), speedRow);
     form->addRow(tr("Fade in:"), fInRow);
     form->addRow(tr("Fade out:"), fOutRow);
-    if (!isAudio) form->addRow(tr("Texto:"), textEdit);
+    if (!isAudio) {
+        // Texto/título tem editor dedicado (menu de contexto "Texto…").
+        auto* textBtn = new QPushButton(tr("Texto do clipe…"), &dlg);
+        connect(textBtn, &QPushButton::clicked, &dlg, [this, c, &dlg]() {
+            TextEditorDialog td(m_project, c, &dlg);
+            if (td.exec() == QDialog::Accepted) {
+                emit editStart();
+                emit modified();
+            }
+        });
+        form->addRow(tr("Texto:"), textBtn);
+    }
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
     connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
@@ -3196,7 +3348,6 @@ void TimelineWidget::showProperties(Clip* c) {
     c->speed = speed->value() / 100.0;
     c->fadeIn = fIn->value() / 1000.0;
     c->fadeOut = fOut->value() / 1000.0;
-    if (!isAudio) c->text = textEdit->text();
     update();
     emit modified();
 }
@@ -3941,6 +4092,16 @@ void TimelineWidget::showAudioEffectsDialog(Clip* c) {
     AudioEffectsDialog dlg(c, this);
     if (dlg.exec() != QDialog::Accepted) return;
     emit editStart();
+    update();
+    emit modified();
+}
+
+void TimelineWidget::showTextEditorDialog(Clip* c) {
+    if (!c) return;
+    TextEditorDialog dlg(m_project, c, this);
+    if (dlg.exec() != QDialog::Accepted) return;
+    emit editStart();
+    invalidateScene();
     update();
     emit modified();
 }

@@ -129,6 +129,32 @@ inline double kfValue(const QVector<Keyframe>& keys, double base, double t) {
     }
 }
 
+// Estilo do texto/título sobreposto de um clipe (usado no preview e na
+// exportação). Também é o conteúdo de um TextResource compartilhado.
+struct TextStyle {
+    QString text;
+    QString fontFamily;            // vazio = fonte padrão (DejaVu Sans)
+    double textSize = 0.0;         // fração da altura do quadro (0 = padrão ~ h/18)
+    bool textBold = true;
+    QColor textColor{255, 255, 255};
+    double textOutline = 0.0;      // largura do contorno (fração da altura; 0 = sem)
+    QColor textOutlineColor{0, 0, 0};
+    bool textBackground = true;    // caixa sob o texto
+    QColor textBackgroundColor{0, 0, 0, 150};
+    double textX = 0.5;            // posição do texto (0..1 no quadro; 0.5 = centro)
+    double textY = 0.5;
+    int textAlign = 0;             // 0 = centro, 1 = esquerda, 2 = direita
+    bool isEmpty() const { return text.trimmed().isEmpty(); }
+};
+
+// Recurso de texto compartilhado entre clipes (cópias "unificadas" do Vegas):
+// clipes que referenciam o mesmo recurso mostram/exportam o mesmo texto e
+// estilo; editar um atualiza todos.
+struct TextResource {
+    QString id;
+    TextStyle text;
+};
+
 // Tipos de transição de saída de um clipe (aplicada quando ele se sobrepõe ao
 // próximo clipe da mesma faixa de vídeo; a duração é o tamanho da sobreposição).
 //  ""/"dissolve" = crossfade; "wipeleft"/"wiperight"/"wipeup"/"wipedown" = o
@@ -149,12 +175,19 @@ struct Clip {
     // Stream de áudio que este clipe usa (0 = primeiro). Só importa para
     // clipes de áudio de arquivos com múltiplos streams (ex.: OBS/câmera).
     int audioStreamIndex = 0;
+    // Clipe independente de texto (sem mídia): desenhado/exportado como texto
+    // sobre o quadro. Animável pelas propriedades normais do clipe
+    // (transform, opacidade, fades, keyframes).
+    bool isText = false;
+    // Texto/título. textResourceId vazio => usa `text` (próprio); preenchido =>
+    // usa o TextResource compartilhado (cópia unificada).
+    TextStyle text;
+    QString textResourceId;
     double volume = 1.0;
     double opacity = 1.0;
     double fadeIn = 0.0;
     double fadeOut = 0.0;
     double speed = 1.0;
-    QString text;
     double brightness = 0.0;
     double contrast = 1.0;
     double saturation = 1.0;
@@ -253,6 +286,34 @@ public:
     QVector<Track> audioTracks;
     QVector<Marker> markers;
     QVector<TrackGroup> trackGroups;
+    // Recursos de texto compartilhados (cópias unificadas de texto).
+    QVector<TextResource> textResources;
+
+    // Estilo de texto efetivo de um clipe: recurso compartilhado se referenciado,
+    // senão o próprio. Nunca retorna nulo.
+    const TextStyle* textStyleFor(const Clip& c) const {
+        if (!c.textResourceId.isEmpty())
+            for (const TextResource& r : textResources)
+                if (r.id == c.textResourceId) return &r.text;
+        return &c.text;
+    }
+    TextStyle* textStyleFor(Clip& c) {
+        if (!c.textResourceId.isEmpty())
+            for (TextResource& r : textResources)
+                if (r.id == c.textResourceId) return &r.text;
+        return &c.text;
+    }
+
+    // Cria (ou reutiliza) um recurso de texto para o clipe e o vincula.
+    void bindTextResource(Clip& c) {
+        if (!c.textResourceId.isEmpty()) return;
+        TextResource r;
+        r.id = newId();
+        r.text = c.text;
+        textResources.append(r);
+        c.textResourceId = r.id;
+        c.text = TextStyle();
+    }
 
     TrackGroup* findGroup(const QString& id) {
         for (auto& g : trackGroups)
