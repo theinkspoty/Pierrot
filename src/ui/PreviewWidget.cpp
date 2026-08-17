@@ -813,11 +813,14 @@ QVector<AudioMixer::SourceInfo> buildMixSources(const Project* p, double t) {
 void PreviewWidget::startAudio(double t) {
     if (!m_project) return;
     stopAudio();
+    // Cria o mixer/SEMPRE, mesmo se não houver fonte de áudio em `t`: dar play
+    // num vão de silêncio (ex.: clipe de áudio movido para longe) não pode
+    // deixar o preview mudo — as fontes são adicionadas pelo updateMixAudio
+    // quando a reprodução alcançar o clipe. Antes retornávamos aqui sem criar
+    // o mixer e o áudio nunca ligava ao alcançar o trecho com som.
     const QVector<AudioMixer::SourceInfo> sources = buildMixSources(m_project, t);
-    if (sources.isEmpty()) {
-        if (audioDbg()) qDebug() << "[audio] startAudio: nenhuma fonte com áudio em t=" << t;
-        return; // nada com áudio neste instante
-    }
+    if (sources.isEmpty() && audioDbg())
+        qDebug() << "[audio] startAudio em t=" << t << "- nenhuma fonte (mixer será criado mudo)";
     if (audioDbg()) {
         qDebug() << "[audio] startAudio em t=" << t << "- fontes:" << sources.size();
         const auto outs = QMediaDevices::audioOutputs();

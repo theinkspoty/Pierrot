@@ -312,11 +312,13 @@ void TimelineWidget::addMediaAtPlayhead(const QString& mediaId) {
             push(m_project->audioTracks[aRow].clips, ac);
         }
     } else if (m->hasAudio) {
+        const QString gid = multi ? newId() : QString(); // streams juntos no Delete/mover
         for (int k = 0; k < aStreams; ++k) {
             const int aRow = findFreeTrack(true, t, dur, 0);
             Clip c;
             c.id = newId();
             c.mediaId = mediaId;
+            c.groupId = gid;
             c.audioStreamIndex = k;
             c.pos = t;
             c.in = 0.0;
@@ -2151,17 +2153,24 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
         }
     }
     if (rowFromY(e->pos().y(), row, audio)) {
-                        for (auto it = m_dragOrig.begin(); it != m_dragOrig.end(); ++it) {
-                            Clip* sc = findClipById(it.key());
-                            if (!sc) continue;
+                        // Só o clipe sob o mouse acompanha na vertical (muda de
+                        // faixa se o tipo bater). Os demais membros do grupo
+                        // mantêm suas faixas — só a posição no tempo anda junto.
+                        // Antes movíamos TODOS os membros do tipo para a linha do
+                        // mouse: as várias faixas de áudio de um arquivo multicanal
+                        // (mesmo grupo) empilhavam todas na mesma faixa e
+                        // sumiam umas sob as outras.
+                        Clip* dc = findClipById(m_dragClip);
+                        if (dc) {
                             int curRow;
                             bool curAudio;
-                            if (!clipTrackIndex(it.key(), curRow, curAudio)) continue;
-                            if (curAudio != audio || curRow == row) continue;
-                            Track& dst = curAudio ? m_project->audioTracks[row]
-                                                  : m_project->videoTracks[row];
-                            if (dst.locked) continue;
-                            moveClipToTrack(it.key(), row, curAudio);
+                            if (clipTrackIndex(m_dragClip, curRow, curAudio)
+                                && curAudio == audio && curRow != row) {
+                                Track& dst = curAudio ? m_project->audioTracks[row]
+                                                      : m_project->videoTracks[row];
+                                if (!dst.locked)
+                                    moveClipToTrack(m_dragClip, row, curAudio);
+                            }
                         }
                     }
                     const double raw = m_dragOrigPos + dt;
@@ -2925,7 +2934,9 @@ void TimelineWidget::finishDrop(const QStringList& mediaIds, const QPoint& dropP
 
         if (vRow < 0 && aStreams == 0) continue;
 
-        const QString gid = both ? newId() : QString();
+        // Grupo: vídeo+áudio vinculados OU áudio multicanal (várias faixas do
+        // mesmo arquivo) — movem e são excluídos juntos.
+        const QString gid = (both || aStreams > 1) ? newId() : QString();
         if (vRow >= 0) {
             Clip c;
             c.id = newId();
