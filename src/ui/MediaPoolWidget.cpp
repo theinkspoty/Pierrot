@@ -497,7 +497,17 @@ void MediaPoolWidget::refresh() {
         auto* item = new QListWidgetItem();
         QString tags;
         if (m.hasVideo) tags += QString("Vídeo %1x%2  ·  ").arg(m.width).arg(m.height);
-        if (m.hasAudio) tags += "Áudio  ·  ";
+        if (m.hasAudio) {
+            if (m.audioStreams > 1)
+                tags += QString("Áudio × %1  ·  ").arg(m.audioStreams);
+            else
+                tags += "Áudio  ·  ";
+            if (m.audioChannels.size() == m.audioStreams) {
+                QStringList chs;
+                for (int c : m.audioChannels) chs << QString::number(c);
+                tags += QString("%1 canais/faixa  ·  ").arg(chs.join("/"));
+            }
+        }
         if (QFileInfo(m.filePath).suffix().compare(QLatin1String("mkv"), Qt::CaseInsensitive) == 0)
             tags += QString("[MKV experimental]  ·  ");
         item->setText(QString("%1\n%2%3").arg(m.name, tags, formatDuration(m.duration)));
@@ -590,6 +600,7 @@ void MediaPoolWidget::importPaths(const QStringList& files) {
             m.hasVideo = info.hasVideo;
             m.hasAudio = info.hasAudio;
             m.audioStreams = info.audioStreams;
+            m.audioChannels = info.audioChannels;
             m_project->media.append(m);
             imported.append(r.path);
             ++added;

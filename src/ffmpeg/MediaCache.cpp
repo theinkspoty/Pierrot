@@ -47,9 +47,11 @@ double thumbKey(double seconds) {
 
 CacheWorker::CacheWorker(QObject* parent) : QObject(parent) {}
 
-void CacheWorker::generatePeaks(const QString& filePath, int bucketsPerSecond) {
-    const FFmpegAudioPeaks peaks = FFmpegDecoder::audioPeaks(filePath, bucketsPerSecond);
-    emit peaksReady(filePath, peaks);
+void CacheWorker::generatePeaks(const QString& filePath, int streamIndex,
+                                int bucketsPerSecond) {
+    const FFmpegAudioPeaks peaks = FFmpegDecoder::audioPeaks(filePath, bucketsPerSecond,
+                                                             streamIndex);
+    emit peaksReady(filePath, streamIndex, peaks);
 }
 
 void CacheWorker::generateThumb(const QString& filePath, double seconds) {
@@ -132,10 +134,10 @@ MediaCache::~MediaCache() {
     }
 }
 
-const FFmpegAudioPeaks& MediaCache::peaks(const QString& filePath) const {
-    const auto it = m_peaks.constFind(filePath);
+const FFmpegAudioPeaks& MediaCache::peaks(const QString& filePath, int streamIndex) const {
+    const auto it = m_peaks.constFind(qMakePair(filePath, streamIndex));
     if (it == m_peaks.constEnd()) return m_emptyPeaks;
-    touchPeaks(filePath);
+    touchPeaks(qMakePair(filePath, streamIndex));
     return it.value();
 }
 
@@ -147,18 +149,20 @@ QImage MediaCache::thumb(const QString& filePath, double seconds) const {
     return it.value();
 }
 
-bool MediaCache::hasPeaks(const QString& filePath) const {
-    return m_peaks.contains(filePath);
+bool MediaCache::hasPeaks(const QString& filePath, int streamIndex) const {
+    return m_peaks.contains(qMakePair(filePath, streamIndex));
 }
 
-void MediaCache::requestPeaks(const QString& filePath) {
+void MediaCache::requestPeaks(const QString& filePath, int streamIndex) {
     if (!m_peaksWorker) return;
+    const auto key = qMakePair(filePath, streamIndex);
     if (m_peaksPending.size() >= kMaxPeakPending) return;
-    if (m_peaks.contains(filePath) || m_peaksPending.contains(filePath)) return;
+    if (m_peaks.contains(key) || m_peaksPending.contains(key)) return;
     const bool wasBusy = busy();
-    m_peaksPending.insert(filePath, m_epoch);
+    m_peaksPending.insert(key, m_epoch);
     QMetaObject::invokeMethod(m_peaksWorker, "generatePeaks", Qt::QueuedConnection,
-                              Q_ARG(QString, filePath), Q_ARG(int, kPeaksPerSecond));
+                              Q_ARG(QString, filePath), Q_ARG(int, streamIndex),
+                              Q_ARG(int, kPeaksPerSecond));
     if (!wasBusy) emit busyChanged(true);
 }
 
@@ -256,19 +260,21 @@ void MediaCache::clear() {
     if (wasBusy) emit busyChanged(false);
 }
 
-void MediaCache::onPeaksReady(const QString& filePath, const FFmpegAudioPeaks& peaks) {
-    const auto it = m_peaksPending.constFind(filePath);
+void MediaCache::onPeaksReady(const QString& filePath, int streamIndex,
+                              const FFmpegAudioPeaks& peaks) {
+    const auto key = qMakePair(filePath, streamIndex);
+    const auto it = m_peaksPending.constFind(key);
     if (it == m_peaksPending.constEnd()) return;            // já limpo/descartado
     if (it.value() != m_epoch) {                            // projeto antigo
-        m_peaksPending.remove(filePath);
+        m_peaksPending.remove(key);
         return;
     }
     m_peaksPending.erase(it);
-    m_peaks[filePath] = peaks;
-    m_peaksOrder.removeOne(filePath);
-    m_peaksOrder.append(filePath);
+    m_peaks[key] = peaks;
+    m_peaksOrder.removeOne(key);
+    m_peaksOrder.append(key);
     evictPeaks();
-    emit waveformReady(filePath);
+    emit waveformReady(filePath, streamIndex);
     if (!busy()) emit busyChanged(false);
 }
 
@@ -298,8 +304,8 @@ bool MediaCache::busy() const {
     return !m_peaksPending.isEmpty() || !m_thumbsPending.isEmpty();
 }
 
-void MediaCache::touchPeaks(const QString& filePath) const {
-    const int i = m_peaksOrder.indexOf(filePath);
+void MediaCache::touchPeaks(const QPair<QString, int>& key) const {
+    const int i = m_peaksOrder.indexOf(key);
     if (i >= 0 && i < m_peaksOrder.size() - 1)
         m_peaksOrder.move(i, m_peaksOrder.size() - 1);
 }
@@ -312,7 +318,7 @@ void MediaCache::touchThumb(const QPair<QString, double>& key) const {
 
 void MediaCache::evictPeaks() {
     while (m_peaks.size() > kMaxPeakCache && !m_peaksOrder.isEmpty()) {
-        const QString oldest = m_peaksOrder.takeFirst();
+        const QPair<QString, int> oldest = m_peaksOrder.takeFirst();
         m_peaks.remove(oldest);
     }
 }

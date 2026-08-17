@@ -170,7 +170,7 @@ TimelineWidget::TimelineWidget(QWidget* parent) : QWidget(parent) {
         refreshView();
     });
     connect(&MediaCache::instance(), &MediaCache::waveformReady, this,
-            [this](const QString&) { invalidateScene(); });
+            [this](const QString&, int) { invalidateScene(); });
     connect(&MediaCache::instance(), &MediaCache::thumbnailReady, this,
             [this](const QString&, double) { invalidateScene(); });
     // Qualquer alteração estrutural do projeto invalida a cena estática
@@ -287,11 +287,15 @@ void TimelineWidget::addMediaAtPlayhead(const QString& mediaId) {
         while (it != clips.end() && it->pos <= c.pos) ++it;
         clips.insert(it, c);
     };
+    // Arquivos multicanal (OBS/câmera): um clipe de áudio POR stream, cada um
+    // na sua faixa. O número de streams pode ser 0 mesmo com hasAudio.
+    const int aStreams = m->hasAudio ? qMax(1, m->audioStreams) : 0;
+    const bool multi = aStreams > 1;
     if (m->hasVideo) {
         const int vRow = findFreeTrack(false, t, dur, 0);
         Clip c;
         c.id = newId();
-        c.groupId = m->hasAudio ? newId() : QString();
+        c.groupId = aStreams > 0 ? newId() : QString();
         c.mediaId = mediaId;
         c.pos = t;
         c.in = 0.0;
@@ -299,23 +303,29 @@ void TimelineWidget::addMediaAtPlayhead(const QString& mediaId) {
         c.name = m->name;
         push(m_project->videoTracks[vRow].clips, c);
         lastPlaced = c.id;
-        if (m->hasAudio) {
+        for (int k = 0; k < aStreams; ++k) {
             const int aRow = findFreeTrack(true, t, dur, 0);
             Clip ac = c;
             ac.id = newId();
+            ac.audioStreamIndex = k;
+            if (multi) ac.name = QString("%1 (faixa %2)").arg(m->name).arg(k + 1);
             push(m_project->audioTracks[aRow].clips, ac);
         }
     } else if (m->hasAudio) {
-        const int aRow = findFreeTrack(true, t, dur, 0);
-        Clip c;
-        c.id = newId();
-        c.mediaId = mediaId;
-        c.pos = t;
-        c.in = 0.0;
-        c.dur = dur;
-        c.name = m->name;
-        push(m_project->audioTracks[aRow].clips, c);
-        lastPlaced = c.id;
+        for (int k = 0; k < aStreams; ++k) {
+            const int aRow = findFreeTrack(true, t, dur, 0);
+            Clip c;
+            c.id = newId();
+            c.mediaId = mediaId;
+            c.audioStreamIndex = k;
+            c.pos = t;
+            c.in = 0.0;
+            c.dur = dur;
+            c.name = multi ? QString("%1 (faixa %2)").arg(m->name).arg(k + 1)
+                           : m->name;
+            push(m_project->audioTracks[aRow].clips, c);
+            lastPlaced = c.id;
+        }
     }
     if (!lastPlaced.isEmpty()) setSelection(lastPlaced);
     updateScrollRanges();
@@ -989,14 +999,14 @@ void TimelineWidget::drawAudioWaveform(QPainter& p, const QRect& r, const Clip& 
                                        const QString& path) {
     if (path.isEmpty() || r.width() < 2) return;
     MediaCache& cache = MediaCache::instance();
-    if (!cache.hasPeaks(path)) {
-        cache.requestPeaks(path);
+    if (!cache.hasPeaks(path, c.audioStreamIndex)) {
+        cache.requestPeaks(path, c.audioStreamIndex);
         p.setPen(QColor(255, 255, 255, 45));
         p.drawLine(r.left(), r.center().y(), r.right(), r.center().y());
         return;
     }
 
-    const FFmpegAudioPeaks& pk = cache.peaks(path);
+    const FFmpegAudioPeaks& pk = cache.peaks(path, c.audioStreamIndex);
     if (pk.min.isEmpty()) return;
 
     const int bps = pk.bucketsPerSecond > 0 ? pk.bucketsPerSecond : 1;
@@ -2816,6 +2826,7 @@ void TimelineWidget::dropEvent(QDropEvent* e) {
             m.hasVideo = info.hasVideo;
             m.hasAudio = info.hasAudio;
             m.audioStreams = info.audioStreams;
+            m.audioChannels = info.audioChannels;
             m_project->media.append(m);
             mediaIds.append(m.id);
             imported.append(path);
@@ -2899,6 +2910,9 @@ void TimelineWidget::finishDrop(const QStringList& mediaIds, const QPoint& dropP
         const MediaItem* m = m_project->findMedia(mid);
         if (!m) continue;
         const bool both = m->hasVideo && m->hasAudio;
+        // Arquivos multicanal (OBS/câmera): um clipe de áudio POR stream, cada
+        // um na sua faixa. O número de streams pode ser 0 mesmo com hasAudio.
+        const int aStreams = m->hasAudio ? qMax(1, m->audioStreams) : 0;
         const double dur = mediaInsertDur(*m);
 
         // Vídeo primeiro: decide a faixa de vídeo e a posição.
@@ -2908,14 +2922,8 @@ void TimelineWidget::finishDrop(const QStringList& mediaIds, const QPoint& dropP
             vRow = findFreeTrack(false, t, dur, audio ? -1 : row);
             vDur = dur;
         }
-        int aRow = -1;
-        double aDur = 0.0;
-        if (m->hasAudio) {
-            aRow = findFreeTrack(true, t, dur, audio ? row : -1);
-            aDur = dur;
-        }
 
-        if (vRow < 0 && aRow < 0) continue;
+        if (vRow < 0 && aStreams == 0) continue;
 
         const QString gid = both ? newId() : QString();
         if (vRow >= 0) {
@@ -2933,15 +2941,19 @@ void TimelineWidget::finishDrop(const QStringList& mediaIds, const QPoint& dropP
             clips.insert(it, c);
             lastPlaced = c.id;
         }
-        if (aRow >= 0) {
+        for (int k = 0; k < aStreams; ++k) {
+            const int aRow = findFreeTrack(true, t, dur, (k == 0 && audio) ? row : -1);
+            if (aRow < 0) continue;
             Clip c;
             c.id = newId();
             c.groupId = gid;
             c.mediaId = mid;
+            c.audioStreamIndex = k;
             c.pos = t;
             c.in = 0.0;
-            c.dur = aDur;
-            c.name = m->name;
+            c.dur = dur;
+            c.name = aStreams > 1 ? QString("%1 (faixa %2)").arg(m->name).arg(k + 1)
+                                  : m->name;
             auto& clips = m_project->audioTracks[aRow].clips;
             auto it = clips.begin();
             while (it != clips.end() && it->pos <= c.pos) ++it;

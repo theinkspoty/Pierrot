@@ -19,6 +19,9 @@ static QJsonObject mediaToJson(const MediaItem& m) {
     o["hasVideo"] = m.hasVideo;
     o["hasAudio"] = m.hasAudio;
     o["audioStreams"] = m.audioStreams;
+    QJsonArray ch;
+    for (int c : m.audioChannels) ch.append(c);
+    o["audioChannels"] = ch;
     return o;
 }
 
@@ -33,6 +36,8 @@ static MediaItem mediaFromJson(const QJsonObject& o) {
     m.hasVideo = o["hasVideo"].toBool();
     m.hasAudio = o["hasAudio"].toBool();
     m.audioStreams = o["audioStreams"].toInt();
+    const QJsonArray ch = o["audioChannels"].toArray();
+    for (const QJsonValue& v : ch) m.audioChannels.append(v.toInt());
     return m;
 }
 
@@ -106,6 +111,7 @@ static QJsonObject clipToJson(const Clip& c) {
     o["dur"] = c.dur;
     o["name"] = c.name;
     o["transitionType"] = c.transitionType;
+    o["audioStreamIndex"] = c.audioStreamIndex;
     o["volume"] = c.volume;
     o["opacity"] = c.opacity;
     o["fadeIn"] = c.fadeIn;
@@ -158,6 +164,7 @@ static Clip clipFromJson(const QJsonObject& o) {
     c.dur = o["dur"].toDouble();
     c.name = o["name"].toString();
     c.transitionType = o["transitionType"].toString();
+    c.audioStreamIndex = o["audioStreamIndex"].toInt(0);
     c.volume = o["volume"].toDouble(1.0);
     c.opacity = o["opacity"].toDouble(1.0);
     c.fadeIn = o["fadeIn"].toDouble(0.0);

@@ -262,6 +262,7 @@ public:
     struct SourceInfo {
         QString key;      // id do clipe (estável durante a reprodução)
         QString path;     // arquivo de mídia
+        int audioStream = 0; // stream de áudio usado por este clipe
         double mediaPos;  // posição no arquivo de mídia (em segundos)
         double vol = 1.0;
         double eqLow = 0.0;
@@ -290,14 +291,16 @@ public:
             Source* s = findLocked(w.key);
             if (!s) {
                 s = new Source;
-                if (!s->dec.open(w.path)) {
-                    if (audioDbg()) qDebug() << "[audio] updateSources: FALHOU ao abrir" << w.path;
+                if (!s->dec.open(w.path, w.audioStream)) {
+                    if (audioDbg()) qDebug() << "[audio] updateSources: FALHOU ao abrir" << w.path
+                                             << "stream=" << w.audioStream;
                     delete s; continue;
                 }
                 s->key = w.key;
                 s->dec.seekAudio(w.mediaPos);
                 m_sources.append(s);
-                if (audioDbg()) qDebug() << "[audio] updateSources: +fonte" << w.path << "mediaPos=" << w.mediaPos;
+                if (audioDbg()) qDebug() << "[audio] updateSources: +fonte" << w.path
+                                         << "stream=" << w.audioStream << "mediaPos=" << w.mediaPos;
             }
             s->vol = w.vol;
             s->fx.configure(w.eqLow, w.eqMid, w.eqHigh, w.denoise,
@@ -772,7 +775,12 @@ QVector<AudioMixer::SourceInfo> buildMixSources(const Project* p, double t) {
                 if (transIn > 1e-6) vol *= std::clamp((t - c.pos) / transIn, 0.0, 1.0);
                 if (transOut > 1e-6) vol *= std::clamp((c.pos + c.dur - t) / transOut, 0.0, 1.0);
                 vol = std::clamp(vol, 0.0, 2.0);
-                const QString key = c.groupId.isEmpty() ? c.id : c.groupId;
+                // Mesmo grupo (vídeo+áudio vinculados) compartilha a chave para
+                // não dobrar o som; o STREAM diferencia as faixas de um arquivo
+                // multicanal (cada clipe de áudio usa o seu stream). O clipe da
+                // faixa de áudio vence o da faixa de vídeo (inserido depois).
+                const QString base = c.groupId.isEmpty() ? c.id : c.groupId;
+                const QString key = QStringLiteral("%1|%2").arg(base).arg(c.audioStreamIndex);
                 reps.insert(key, {&c, vol});
             }
         }
@@ -787,6 +795,7 @@ QVector<AudioMixer::SourceInfo> buildMixSources(const Project* p, double t) {
         AudioMixer::SourceInfo si;
         si.key = c->id;
         si.path = m->filePath;
+        si.audioStream = c->audioStreamIndex;
         si.mediaPos = c->in + (t - c->pos);
         si.vol = it.value().vol;
         si.eqLow = c->eqLow;

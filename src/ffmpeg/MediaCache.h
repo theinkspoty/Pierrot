@@ -22,11 +22,11 @@ class CacheWorker : public QObject {
 public:
     explicit CacheWorker(QObject* parent = nullptr);
 public slots:
-    void generatePeaks(const QString& filePath, int bucketsPerSecond);
+    void generatePeaks(const QString& filePath, int streamIndex, int bucketsPerSecond);
     void generateThumb(const QString& filePath, double seconds);
     void generateThumbs(const QString& filePath, const QList<double>& seconds);
 signals:
-    void peaksReady(const QString& filePath, const FFmpegAudioPeaks& peaks);
+    void peaksReady(const QString& filePath, int streamIndex, const FFmpegAudioPeaks& peaks);
     void thumbReady(const QString& filePath, double seconds, const QImage& image);
 private:
     FFmpegDecoder m_decoder;
@@ -39,11 +39,12 @@ public:
     ~MediaCache();
 
     // Retorna referência para evitar cópia a cada paint da timeline.
-    const FFmpegAudioPeaks& peaks(const QString& filePath) const;
+    // O stream index distingue as faixas de áudio de um arquivo multicanal.
+    const FFmpegAudioPeaks& peaks(const QString& filePath, int streamIndex = 0) const;
     QImage thumb(const QString& filePath, double seconds) const;
-    bool hasPeaks(const QString& filePath) const;
+    bool hasPeaks(const QString& filePath, int streamIndex = 0) const;
 
-    void requestPeaks(const QString& filePath);
+    void requestPeaks(const QString& filePath, int streamIndex = 0);
     void requestThumb(const QString& filePath, double seconds);
     // Decodifica vários instantes do mesmo arquivo numa única passada
     // (reaproveita a abertura/seek entre pedidos do mesmo arquivo).
@@ -59,11 +60,11 @@ public:
     // (chamado ao trocar de projeto para não reter mídia do anterior).
     void clear();
 signals:
-    void waveformReady(const QString& filePath);
+    void waveformReady(const QString& filePath, int streamIndex);
     void thumbnailReady(const QString& filePath, double seconds);
     void busyChanged(bool busy);
 private slots:
-    void onPeaksReady(const QString& filePath, const FFmpegAudioPeaks& peaks);
+    void onPeaksReady(const QString& filePath, int streamIndex, const FFmpegAudioPeaks& peaks);
     void onThumbReady(const QString& filePath, double seconds, const QImage& image);
 private:
     MediaCache();
@@ -71,22 +72,22 @@ private:
     CacheWorker* m_peaksWorker = nullptr;
     QThread* m_thumbsThread = nullptr;
     CacheWorker* m_thumbsWorker = nullptr;
-    QHash<QString, FFmpegAudioPeaks> m_peaks;
+    QHash<QPair<QString, int>, FFmpegAudioPeaks> m_peaks;
     QHash<QPair<QString, double>, QImage> m_thumbs;
     // Chaves cuja decodificação falhou (imagem nula). Não re-pedimos por um
     // tempo: tentar de novo a cada paint apenas enfileira trabalho inútil.
     QSet<QPair<QString, double>> m_thumbsFailed;
-    mutable QList<QString> m_peaksOrder;
+    mutable QList<QPair<QString, int>> m_peaksOrder;
     mutable QList<QPair<QString, double>> m_thumbsOrder;
     mutable FFmpegAudioPeaks m_emptyPeaks;
-    QHash<QString, quint64> m_peaksPending;
+    QHash<QPair<QString, int>, quint64> m_peaksPending;
     QHash<QPair<QString, double>, quint64> m_thumbsPending;
     // Pedidos de thumb adiados durante a reprodução (sem custo na UI).
     QSet<QPair<QString, double>> m_thumbsDeferred;
     bool m_playbackActive = false;
     quint64 m_epoch = 0; // troca de projeto: descarta resultados enfileirados
 
-    void touchPeaks(const QString& filePath) const;
+    void touchPeaks(const QPair<QString, int>& key) const;
     void touchThumb(const QPair<QString, double>& key) const;
     void evictPeaks();
     void evictThumbs();

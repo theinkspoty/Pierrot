@@ -23,6 +23,9 @@ struct FFmpegMediaInfo {
     bool hasVideo = false;
     bool hasAudio = false;
     int audioStreams = 0;
+    // Canais de cada stream de áudio, na ordem dos streams (índice do array =
+    // índice do stream). Vazio se não houver áudio.
+    QVector<int> audioChannels;
     double fps = 0.0; // fps do stream de vídeo (0 se não houver)
 };
 
@@ -38,9 +41,14 @@ public:
     ~FFmpegDecoder();
 
     static FFmpegMediaInfo probe(const QString& filePath);
-    static FFmpegAudioPeaks audioPeaks(const QString& filePath, int bucketsPerSecond = 100);
+    // Picos de áudio de um stream específico (índice do stream) ou do melhor
+    // stream (streamIndex < 0).
+    static FFmpegAudioPeaks audioPeaks(const QString& filePath,
+                                       int bucketsPerSecond = 100,
+                                       int streamIndex = -1);
 
-    bool open(const QString& filePath);
+    // audioStream: índice do stream de áudio a abrir (-1 = melhor stream).
+    bool open(const QString& filePath, int audioStream = -1);
     void close();
     bool isOpen() const;
     QString source() const;

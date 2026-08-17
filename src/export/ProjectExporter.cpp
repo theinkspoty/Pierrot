@@ -552,23 +552,14 @@ QStringList ProjectExporter::buildCommand(const Project& project,
             const double fadeOut = std::min(std::max(c->fadeOut, 0.0), dur - fadeIn);
             const qint64 delayMs = (qint64)llround(c->pos * 1000.0);
 
-            QString src = QStringLiteral("[%1:a]").arg(inIdx);
-            if (m && m->audioStreams > 1) {
-                // Mixa todas as faixas de áudio do arquivo (mkv/mp4/mov multifaixa).
-                QStringList mixIn;
-                const QString mixLbl = QStringLiteral("amix%1").arg(n);
-                for (int k = 0; k < m->audioStreams; ++k) {
-                    const QString s = QStringLiteral("s%1_%2").arg(n).arg(k);
-                    fc << QStringLiteral("[%1:a:%2]aformat=sample_fmts=fltp:"
-                                        "channel_layouts=stereo,aresample=%3[%4]")
-                           .arg(inIdx).arg(k).arg((qint64)project.audioRate).arg(s);
-                    mixIn << QStringLiteral("[%1]").arg(s);
-                }
-                fc << mixIn.join(QString())
-                    + QStringLiteral("amix=inputs=%1:duration=first:dropout_transition=0[%2]")
-                          .arg(mixIn.size()).arg(mixLbl);
-                src = QStringLiteral("[%1]").arg(mixLbl);
-            }
+            QString src;
+            // Cada clipe de áudio usa UM stream específico do arquivo
+            // (ex.: OBS/câmera com várias faixas). Antes misturávamos todas as
+            // faixas; com 1 clipe por stream na timeline, cada um escolhe a dele.
+            int stream = 0;
+            if (m && m->audioStreams > 0)
+                stream = qMin(qMax(0, c->audioStreamIndex), m->audioStreams - 1);
+            src = QStringLiteral("[%1:a:%2]").arg(inIdx).arg(stream);
 
             // O input já vem com -ss in -t dur (frames começando em 0 relativo);
             // usar atrim=start=in descartaria todo o áudio dos cortes (in > 0).

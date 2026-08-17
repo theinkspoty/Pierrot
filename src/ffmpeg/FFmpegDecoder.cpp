@@ -101,6 +101,7 @@ FFmpegMediaInfo FFmpegDecoder::probe(const QString& filePath) {
         } else if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
             info.hasAudio = true;
             ++info.audioStreams;
+            info.audioChannels.append(st->codecpar->ch_layout.nb_channels);
         }
     }
     avformat_close_input(&fmt);
@@ -264,7 +265,8 @@ static void frameMinMax(const AVFrame* frame, const AVCodecContext* cc,
     }
 }
 
-FFmpegAudioPeaks FFmpegDecoder::audioPeaks(const QString& filePath, int bucketsPerSecond) {
+FFmpegAudioPeaks FFmpegDecoder::audioPeaks(const QString& filePath, int bucketsPerSecond,
+                                           int streamIndex) {
     installLogFilter();
     FFmpegAudioPeaks result;
     if (bucketsPerSecond <= 0) return result;
@@ -277,7 +279,15 @@ FFmpegAudioPeaks FFmpegDecoder::audioPeaks(const QString& filePath, int bucketsP
         return result;
     }
 
-    const int idx = av_find_best_stream(fmt, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
+    // Valida/sanitiza o índice do stream desejado (ou usa o melhor stream).
+    int idx = streamIndex;
+    if (idx < 0) {
+        idx = av_find_best_stream(fmt, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
+    } else if (idx >= (int)fmt->nb_streams
+               || fmt->streams[idx]->codecpar->codec_type != AVMEDIA_TYPE_AUDIO) {
+        avformat_close_input(&fmt);
+        return result;
+    }
     if (idx < 0) {
         avformat_close_input(&fmt);
         return result;
@@ -364,7 +374,7 @@ FFmpegAudioPeaks FFmpegDecoder::audioPeaks(const QString& filePath, int bucketsP
     return result;
 }
 
-bool FFmpegDecoder::open(const QString& filePath) {
+bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
     // Segura os DOIS mutexes: o vídeo (frameAt) e o áudio (decodeAudio/
     // seekAudio) rodam em threads diferentes e podem estar em andamento
     // quando abrimos outro arquivo. Liberar contextos sem o lock do áudio
@@ -421,8 +431,17 @@ bool FFmpegDecoder::open(const QString& filePath) {
         }
     }
 
-    // Stream de áudio: reutiliza o mesmo AVFormatContext já aberto
-    const int aidx = av_find_best_stream(fmt, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
+    // Stream de áudio: reutiliza o mesmo AVFormatContext já aberto. Se o
+    // pedido especifica um stream (múltiplas faixas de áudio), usa exatamente
+    // ele; caso contrário o "melhor" stream.
+    int aidx = audioStream;
+    if (aidx >= 0) {
+        if (aidx >= (int)fmt->nb_streams
+            || fmt->streams[aidx]->codecpar->codec_type != AVMEDIA_TYPE_AUDIO)
+            aidx = -1;
+    } else {
+        aidx = av_find_best_stream(fmt, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
+    }
     if (aidx >= 0) {
         const AVCodec* acodec = avcodec_find_decoder(fmt->streams[aidx]->codecpar->codec_id);
         if (acodec) {

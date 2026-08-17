@@ -23,6 +23,8 @@ struct MediaItem {
     bool hasVideo = false;
     bool hasAudio = false;
     int audioStreams = 0;
+    // Canais por stream de áudio (índice = stream; usado p/ exibir e validar).
+    QVector<int> audioChannels;
 };
 
 struct Marker {
@@ -144,6 +146,9 @@ struct Clip {
     double dur = 0.0;
     QString name;
     QString transitionType; // transição de saída (vazio = dissolve ao sobrepor)
+    // Stream de áudio que este clipe usa (0 = primeiro). Só importa para
+    // clipes de áudio de arquivos com múltiplos streams (ex.: OBS/câmera).
+    int audioStreamIndex = 0;
     double volume = 1.0;
     double opacity = 1.0;
     double fadeIn = 0.0;
