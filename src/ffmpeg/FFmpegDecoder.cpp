@@ -19,6 +19,8 @@ extern "C" {
 #include <cfloat>
 #include <cstring>
 #include <QDebug>
+#include <QFileInfo>
+#include <QSet>
 #include <QThread>
 
 // Diagnóstico do caminho de áudio do preview: ligue com PIERROT_AUDIO_DEBUG=1.
@@ -38,6 +40,21 @@ static void installLogFilter() {
         av_log_set_level(AV_LOG_QUIET);
         av_log_set_callback(decoderLogCallback);
     }
+}
+
+// Imagem estática por extensão (igual ao exportador). O demuxer image2 às
+// vezes reporta duração > 0 (0.04s) para um único JPEG, então depender só de
+// `fmt->duration <= 0` fazia a maioria dos JPGs cair no caminho de vídeo
+// (com seek em demuxer de frame único, frágil). Detectar pela extensão é
+// determinístico.
+static bool isImagePath(const QString& filePath) {
+    const QString ext = QFileInfo(filePath).suffix().toLower();
+    static const QSet<QString> exts = {
+        QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"),
+        QStringLiteral("bmp"), QStringLiteral("gif"), QStringLiteral("webp"),
+        QStringLiteral("tif"), QStringLiteral("tiff"), QStringLiteral("svg")
+    };
+    return exts.contains(ext);
 }
 
 FFmpegDecoder::FFmpegDecoder() {
@@ -377,14 +394,10 @@ bool FFmpegDecoder::open(const QString& filePath) {
             AVCodecContext* cc = avcodec_alloc_context3(codec);
             if (cc) {
                 avcodec_parameters_to_context(cc, fmt->streams[idx]->codecpar);
-                // Frame threading: máximo throughput para H.264 (decodifica
-                // vários frames em paralelo). Evitamos LOW_DELAY — ele conflita
-                // com a reordenação de B-frames e faz o ffmpeg cair para slice
-                // threading, que tem menos paralelismo (causava perda de fps
-                // no preview de fontes pesadas, ex. 4K).
                 cc->thread_count = qMin(4, QThread::idealThreadCount());
                 cc->thread_type = FF_THREAD_FRAME;
-                if (avcodec_open2(cc, codec, nullptr) == 0) {
+                const int openErr = avcodec_open2(cc, codec, nullptr);
+                if (openErr == 0) {
                     m_codec = cc;
                     m_stream = idx;
                     const AVStream* st = fmt->streams[idx];
@@ -392,6 +405,15 @@ bool FFmpegDecoder::open(const QString& filePath) {
                         const double r = av_q2d(st->avg_frame_rate);
                         if (r > 0.0 && r < 240.0) m_fps = r;
                     }
+                    // Imagem estática: extensão de imagem com UM único frame,
+                    // OU duração <= 0 (AV_NOPTS_VALUE ou 0). O check de frame
+                    // único evita que GIF/WebP animados (vários frames) caiam
+                    // aqui e congelem no primeiro quadro do preview.
+                    const bool singleFrame = (st->duration == AV_NOPTS_VALUE
+                                             || st->duration <= 1
+                                             || (st->nb_frames > 0 && st->nb_frames <= 1));
+                    m_isImage = (isImagePath(filePath) && singleFrame)
+                                || (fmt->duration <= 0);
                 } else {
                     avcodec_free_context(&cc);
                 }
@@ -480,6 +502,7 @@ void FFmpegDecoder::freeAllLocked() {
         m_ctx = nullptr;
     }
     m_stream = -1;
+    m_isImage = false;
     m_audioStream = -1;
     m_source.clear();
     m_lastPtsSec = -1.0;
@@ -514,7 +537,101 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
     AVCodecContext* cc = static_cast<AVCodecContext*>(m_codec);
     AVStream* st = fmt->streams[m_stream];
 
-    const double targetSec = std::max(0.0, seconds);
+    const double targetSec = m_isImage ? 0.0 : std::max(0.0, seconds);
+
+    // fsec de um quadro no tempo do stream (fallback: o próprio alvo).
+    auto frameSec = [&](const AVFrame* fr) -> double {
+        int64_t pts = fr->pts;
+        if (pts == AV_NOPTS_VALUE)
+            pts = fr->best_effort_timestamp;
+        return (pts != AV_NOPTS_VALUE) ? (pts * av_q2d(st->time_base)) : targetSec;
+    };
+    // Guarda um quadro como o candidato de exibição atual (m_lastFrame).
+    auto keepAsDisplay = [&](const AVFrame* fr, double fsec) {
+        AVFrame* lf = reinterpret_cast<AVFrame*>(m_lastFrame);
+        if (!lf) {
+            lf = av_frame_alloc();
+            m_lastFrame = lf;
+        }
+        if (lf) {
+            av_frame_unref(lf);
+            av_frame_ref(lf, fr);
+        }
+        m_lastFrameSec = fsec;
+    };
+
+    // Imagem estática (JPEG, PNG, BMP…): frame único — qualquer timestamp
+    // retorna o mesmo frame. A primeira decodificação NÃO usa seek: em demuxer
+    // de frame único (image2) o seek é frágil, e repeti-lo a cada tick do
+    // preview causava stutter e, em alguns arquivos, corrupção do estado do
+    // codec (crash). Lemos os pacotes em sequência, guardamos o primeiro
+    // quadro em m_lastFrame e os pedidos seguintes reutilizam o cache,
+    // independentemente do pts do frame (que nem sempre é 0).
+    if (m_isImage) {
+        if (!m_lastFrame || m_lastFrameSec < 0.0) {
+            av_packet_unref(m_pkt);
+            av_frame_unref(m_frame);
+            bool got = false;
+            while (!got) {
+                while (avcodec_receive_frame(cc, m_frame) == 0) {
+                    keepAsDisplay(m_frame, frameSec(m_frame));
+                    av_frame_unref(m_frame);
+                    got = true;
+                    break; // imagens têm um único quadro
+                }
+                if (got) break;
+                const int r = av_read_frame(fmt, m_pkt);
+                if (r < 0) {
+                    avcodec_send_packet(cc, nullptr); // drena o codec no fim
+                    if (avcodec_receive_frame(cc, m_frame) == 0) {
+                        keepAsDisplay(m_frame, frameSec(m_frame));
+                        av_frame_unref(m_frame);
+                        got = true;
+                    }
+                    break;
+                }
+                if (m_pkt->stream_index == m_stream)
+                    avcodec_send_packet(cc, m_pkt);
+                av_packet_unref(m_pkt);
+            }
+        }
+        AVFrame* fr = reinterpret_cast<AVFrame*>(m_lastFrame);
+        if (!fr || m_lastFrameSec < 0.0)
+            return result; // não conseguiu decodificar o frame único
+        const int sw = fr->width > 0 ? fr->width : cc->width;
+        const int sh = fr->height > 0 ? fr->height : cc->height;
+        if (sw > 0 && sh > 0) {
+            int dw = sw, dh = sh;
+            if (maxWidth > 0 && sw > maxWidth) {
+                dw = maxWidth;
+                dh = qMax(2, sh * dw / sw);
+                if (dh & 1) dh += 1;
+            }
+            SwsContext* sws = reinterpret_cast<SwsContext*>(m_sws);
+            const AVPixelFormat srcFmt = static_cast<AVPixelFormat>(fr->format);
+            if (!sws || m_swsSrcW != sw || m_swsSrcH != sh || m_swsSrcFmt != srcFmt
+                || m_swsDstW != dw || m_swsDstH != dh) {
+                if (sws) sws_freeContext(sws);
+                sws = sws_getContext(sw, sh, srcFmt, dw, dh, AV_PIX_FMT_RGB24,
+                                     SWS_FAST_BILINEAR, nullptr, nullptr, nullptr);
+                m_sws = sws;
+                m_swsSrcW = sw;
+                m_swsSrcH = sh;
+                m_swsSrcFmt = static_cast<int>(srcFmt);
+                m_swsDstW = dw;
+                m_swsDstH = dh;
+            }
+            if (sws) {
+                QImage img(dw, dh, QImage::Format_RGB888);
+                uint8_t* dst[4] = {img.bits(), nullptr, nullptr, nullptr};
+                int dstLinesize[4] = {(int)img.bytesPerLine(), 0, 0, 0};
+                sws_scale(sws, fr->data, fr->linesize, 0, sh, dst, dstLinesize);
+                return img;
+            }
+        }
+        return result;
+    }
+
     const int64_t target = av_rescale_q(
         (int64_t)(targetSec * 1000000.0),
         AVRational{1, 1000000}, st->time_base);
@@ -546,27 +663,6 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
 
     av_packet_unref(m_pkt);
     av_frame_unref(m_frame);
-
-    // fsec de um quadro no tempo do stream (fallback: o próprio alvo).
-    auto frameSec = [&](const AVFrame* fr) -> double {
-        int64_t pts = fr->pts;
-        if (pts == AV_NOPTS_VALUE)
-            pts = fr->best_effort_timestamp;
-        return (pts != AV_NOPTS_VALUE) ? (pts * av_q2d(st->time_base)) : targetSec;
-    };
-    // Guarda um quadro como o candidato de exibição atual (m_lastFrame).
-    auto keepAsDisplay = [&](const AVFrame* fr, double fsec) {
-        AVFrame* lf = reinterpret_cast<AVFrame*>(m_lastFrame);
-        if (!lf) {
-            lf = av_frame_alloc();
-            m_lastFrame = lf;
-        }
-        if (lf) {
-            av_frame_unref(lf);
-            av_frame_ref(lf, fr);
-        }
-        m_lastFrameSec = fsec;
-    };
 
     AVFrame* chosen = nullptr;
     bool atEof = false;
@@ -600,10 +696,6 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
     }
 
     while (!chosen && !atEof) {
-        // 1. Drena frames já decodificados no codec. O quadro exibido é o último
-        // que ainda não passou do alvo (m_lastFrame); quando um frame passa
-        // (fsec > alvo + tol), a exibição é o anterior e o que passou fica
-        // guardado como m_nextFrame (um à frente, para o próximo pedido).
         while (avcodec_receive_frame(cc, m_frame) == 0) {
             const double fsec = frameSec(m_frame);
 
@@ -614,16 +706,14 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
                 continue;
             }
 
-            // Passou do alvo: exibe o último que ainda estava nele.
             if (m_lastFrameSec >= 0.0 && m_lastFrame) {
                 chosen = reinterpret_cast<AVFrame*>(m_lastFrame);
             } else {
-                chosen = m_frame; // sem anterior: usa o primeiro disponível
+                chosen = m_frame;
                 m_nextFrameSec = -1.0;
             }
             m_lastPtsSec = fsec;
             if (chosen != m_frame) {
-                // Guarda o que passou como candidato do próximo pedido.
                 AVFrame* nf = reinterpret_cast<AVFrame*>(m_nextFrame);
                 if (!nf) {
                     nf = av_frame_alloc();
@@ -641,16 +731,13 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
 
         if (chosen) break;
 
-        // 2. Lê novos pacotes do demuxer se o codec precisar.
         const int r = av_read_frame(fmt, m_pkt);
         if (r < 0) {
-            // EOF: esvazia o codec; o último frame ainda dentro do alvo (ou o
-            // fim do arquivo) fica em m_lastFrame e é devolvido abaixo.
             avcodec_send_packet(cc, nullptr);
             while (avcodec_receive_frame(cc, m_frame) == 0) {
                 const double fsec = frameSec(m_frame);
                 if (fsec > targetSec + tolerance)
-                    break; // passou do alvo no fim: mantém m_lastFrame
+                    break;
                 keepAsDisplay(m_frame, fsec);
                 m_lastPtsSec = fsec;
                 av_frame_unref(m_frame);
@@ -664,8 +751,6 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
         av_packet_unref(m_pkt);
     }
 
-    // Fim do arquivo (nenhum frame passou do alvo): devolve o último frame
-    // decodificado — o que cobre o alvo, ou o último do arquivo.
     if (!chosen && m_lastFrameSec >= 0.0 && m_lastFrame)
         chosen = reinterpret_cast<AVFrame*>(m_lastFrame);
 
@@ -712,19 +797,23 @@ void FFmpegDecoder::releaseBuffers() {
     QMutexLocker locker(&m_mutex);
     if (m_codec)
         avcodec_flush_buffers(reinterpret_cast<AVCodecContext*>(m_codec));
-    if (m_lastFrame) {
-        av_frame_unref(reinterpret_cast<AVFrame*>(m_lastFrame));
-        av_frame_free(reinterpret_cast<AVFrame**>(&m_lastFrame));
-        m_lastFrame = nullptr;
+    // Imagem estática: mantém o frame cacheado — re-decodificar exigiria
+    // seek, que não funciona para arquivos de frame único (JPEG, PNG…).
+    if (!m_isImage) {
+        if (m_lastFrame) {
+            av_frame_unref(reinterpret_cast<AVFrame*>(m_lastFrame));
+            av_frame_free(reinterpret_cast<AVFrame**>(&m_lastFrame));
+            m_lastFrame = nullptr;
+        }
+        if (m_nextFrame) {
+            av_frame_unref(reinterpret_cast<AVFrame*>(m_nextFrame));
+            av_frame_free(reinterpret_cast<AVFrame**>(&m_nextFrame));
+            m_nextFrame = nullptr;
+        }
+        m_lastFrameSec = -1.0;
+        m_nextFrameSec = -1.0;
+        m_lastPtsSec = -1.0;
     }
-    if (m_nextFrame) {
-        av_frame_unref(reinterpret_cast<AVFrame*>(m_nextFrame));
-        av_frame_free(reinterpret_cast<AVFrame**>(&m_nextFrame));
-        m_nextFrame = nullptr;
-    }
-    m_lastFrameSec = -1.0;
-    m_nextFrameSec = -1.0;
-    m_lastPtsSec = -1.0;
 }
 
 bool FFmpegDecoder::hasAudio() const {

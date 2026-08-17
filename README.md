@@ -1,8 +1,8 @@
 # Pierrot
 
 Editor de vídeo simples — feito de um editor para outro editor — estilo
-**Sony Vegas Pro** para **Linux** (e Windows), escrito em **C++** com
-**Qt Widgets** e **FFmpeg** (decodificação em processo + exportação via CLI).
+**Sony Vegas Pro**, desenvolvido **exclusivamente para Linux**, escrito em
+**C++** com **Qt Widgets** e **FFmpeg** (decodificação em processo + exportação via CLI).
 
 ## Funcionalidades
 
@@ -24,7 +24,7 @@ Editor de vídeo simples — feito de um editor para outro editor — estilo
 - **Cantos de fade** (setas) desenhados nos clipes que têm fade in/out.
 - **Preview** com reprodução em tempo real e seek, incluindo **áudio** (Qt Multimedia, via `libswresample`).
 - **Undo/Redo** ilimitado (snapshots, Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y).
-- **Salvar/Abrir projetos** em `.ovp` (JSON).
+- **Salvar/Abrir projetos** em `.Blanc` (JSON). Projetos antigos `.ovp` ainda abrem.
 - **Configurações de projeto**: resolução e quadros/s.
 - **Exportação**: MP4 (H.264), MKV e WebM (VP9), com resolução/fps configuráveis,
   compondo múltiplas faixas de vídeo (overlay + blend), efeitos, chroma key, fades,
@@ -52,7 +52,7 @@ Editor de vídeo simples — feito de um editor para outro editor — estilo
 
 | Item                | Detalhe                                                     |
 |---------------------|-------------------------------------------------------------|
-| Formato de projeto  | `.ovp` (JSON)                                               |
+| Formato de projeto  | `.Blanc` (JSON); abre `.ovp` legado                              |
 | Exportação          | MP4 (H.264/AAC), MKV (H.264/AAC), WebM (VP9/Opus)           |
 | Resolução           | configurável (padrão 1920×1080)                             |
 | Quadros/s           | configurável (padrão 30)                                    |
@@ -129,38 +129,6 @@ Variáveis opcionais:
 `UPDATE_INFORMATION` para embutir a string de atualização do **AppImageUpdate**
 (ex.: `gh-releases-zsync|usuario|repo|latest|Pierrot-*-x86_64.AppImage.zsync`,
 o `.zsync` correspondente também é movido para `dist/`).
-
-## Windows (MSVC + vcpkg)
-
-Pré-requisitos: **Visual Studio 2022** (build C++), **CMake** e **vcpkg**:
-
-```bat
-git clone https://github.com/microsoft/vcpkg
-vcpkg\bootstrap-vcpkg.bat
-vcpkg install              :: instala qtbase + ffmpeg (usando o vcpkg.json)
-cmake -B build ^
-  -DCMAKE_TOOLCHAIN_FILE=<caminho>\vcpkg\scripts\buildsystems\vcpkg.cmake ^
-  -DVCPKG_TARGET_TRIPLET=x64-windows ^
-  -DCMAKE_BUILD_TYPE=Release
-cmake --build build --config Release
-```
-
-O executável sai em `build\Release\pierrot.exe` (com ícone e informações de
-versão). O FFmpeg é localizado automaticamente pelo `cmake/FindFFmpeg.cmake`
-(via vcpkg); no Linux continua usando pkg-config.
-
-Para a **exportação**, copie um `ffmpeg.exe` (ex.: essentials de
-https://www.gyan.dev/ffmpeg/builds/) para a mesma pasta do `.exe` ou adicione
-ao `PATH`.
-
-Distribuição: use **windeployqt** (vem com o Qt/vcpkg) para copiar as DLLs do
-Qt junto do executável:
-
-```bat
-windeployqt --release build\Release\pierrot.exe
-```
-
-
 
 ## Licença
 

@@ -100,6 +100,9 @@ private:
     int m_audioOutCh = 2;
     mutable QMutex m_audioMutex;
 
+    // Imagem estática (JPEG, PNG, BMP, etc.): frame único, sem seek.
+    bool m_isImage = false;
+
     // Buffers reutilizáveis para evitar alocação a cada decodificação.
     AVPacket* m_pkt = nullptr;        // frameAt()
     AVFrame* m_frame = nullptr;       // frameAt()

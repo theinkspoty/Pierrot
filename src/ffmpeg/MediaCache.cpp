@@ -8,6 +8,8 @@
 #include <QThread>
 #include <QMetaType>
 #include <QMetaObject>
+#include <QDebug>
+#include <QFileInfo>
 #include <cmath>
 #include <algorithm>
 
@@ -18,6 +20,25 @@ constexpr int kMaxPeakCache = 32;
 constexpr int kMaxThumbCache = 512;
 constexpr int kMaxThumbPending = 192;
 constexpr int kMaxPeakPending = 32;
+
+bool isImageFile(const QString& path) {
+    const QString ext = QFileInfo(path).suffix().toLower();
+    static const QStringList exts = {
+        QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"),
+        QStringLiteral("bmp"), QStringLiteral("gif"), QStringLiteral("webp"),
+        QStringLiteral("tif"), QStringLiteral("tiff"), QStringLiteral("svg")
+    };
+    return exts.contains(ext);
+}
+
+QImage loadImageThumb(const QString& path, int maxWidth) {
+    QImage img(path);
+    if (img.isNull()) return img;
+    if (maxWidth > 0 && img.width() > maxWidth) {
+        img = img.scaledToWidth(maxWidth, Qt::SmoothTransformation);
+    }
+    return img;
+}
 
 double thumbKey(double seconds) {
     return std::round(seconds * 10.0) / 10.0;
@@ -33,13 +54,17 @@ void CacheWorker::generatePeaks(const QString& filePath, int bucketsPerSecond) {
 
 void CacheWorker::generateThumb(const QString& filePath, double seconds) {
     QImage img;
-    if (!m_decoder.isOpen() || m_decoder.source() != filePath)
-        m_decoder.open(filePath);
-    if (m_decoder.isOpen()) {
-        img = m_decoder.frameAt(seconds, kThumbMaxWidth);
-        // Libera a resolução cheia do codec: thumbnails são decodificações
-        // pontuais e não precisam manter o DPB entre um pedido e outro.
-        m_decoder.releaseBuffers();
+    // Imagem estática: usa QImage direto (FFmpeg não consegue seek em frame único).
+    if (isImageFile(filePath)) {
+        img = loadImageThumb(filePath, kThumbMaxWidth);
+    } else {
+        if (!m_decoder.isOpen() || m_decoder.source() != filePath) {
+            m_decoder.open(filePath);
+        }
+        if (m_decoder.isOpen()) {
+            img = m_decoder.frameAt(seconds, kThumbMaxWidth);
+            m_decoder.releaseBuffers();
+        }
     }
     emit thumbReady(filePath, seconds, img);
 }
@@ -47,8 +72,16 @@ void CacheWorker::generateThumb(const QString& filePath, double seconds) {
 // Vários instantes do mesmo arquivo: ordena para decodificar em sequência e
 // reaproveitar o decoder aberto (sem re-abrir o arquivo a cada pedido).
 void CacheWorker::generateThumbs(const QString& filePath, const QList<double>& seconds) {
-    if (!m_decoder.isOpen() || m_decoder.source() != filePath)
+    // Imagem estática: todas as thumbnails são a mesma imagem carregada via QImage.
+    if (isImageFile(filePath)) {
+        const QImage img = loadImageThumb(filePath, kThumbMaxWidth);
+        for (double s : seconds)
+            emit thumbReady(filePath, s, img);
+        return;
+    }
+    if (!m_decoder.isOpen() || m_decoder.source() != filePath) {
         m_decoder.open(filePath);
+    }
     QList<double> sorted = seconds;
     std::sort(sorted.begin(), sorted.end());
     for (double s : sorted) {
@@ -248,8 +281,6 @@ void MediaCache::onThumbReady(const QString& filePath, double seconds, const QIm
         return;
     }
     m_thumbsPending.erase(it);
-    // Falha de decodificação: não guardamos a imagem nula no cache — ela
-    // bloquearia novas tentativas para sempre, deixando o clipe escuro.
     if (image.isNull()) {
         m_thumbsFailed.insert(key);
         if (!busy()) emit busyChanged(false);

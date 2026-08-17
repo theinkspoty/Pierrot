@@ -27,6 +27,7 @@
 #include <QAudioDeviceInfo>
 #endif
 #include <algorithm>
+#include <QDebug>
 #include <cmath>
 #include <climits>
 #include <cstring>
@@ -720,9 +721,6 @@ void PreviewWidget::tick() {
 
 const Clip* PreviewWidget::clipAt(double t) const {
     if (!m_project) return nullptr;
-    // Faixa de vídeo de índice 0 = topo da timeline = camada de cima na
-    // composição (V1 por cima), então é a primeira a ser considerada. Dentro
-    // de uma faixa, sobreposições deixam o clipe que começa depois no topo.
     for (int tr = 0; tr < (int)m_project->videoTracks.size(); ++tr) {
         const Clip* best = nullptr;
         for (const Clip& c : m_project->videoTracks[tr].clips)

@@ -28,6 +28,7 @@
 #include <QScrollBar>
 #include <QMenu>
 #include <QKeyEvent>
+#include <QDebug>
 #include <QMimeData>
 #include <QUrl>
 #include <QFileInfo>
@@ -72,11 +73,31 @@ constexpr int kFolderH = 22; // altura da faixa de cabeçalho de uma pasta
 constexpr double kMinPps = 2.0;
 constexpr double kMaxPps = 4000.0;
 constexpr double kMinDur = 0.04;
+// Duração padrão ao inserir uma imagem na timeline (imagens não têm duração
+// própria; sem isto entrariam como um clipe de ~1s, estreito demais).
+constexpr double kDefaultImageDur = 3.0;
 
 // Modos de ferramenta (índices usados pela barra de ferramentas).
 enum Tool {
     ToolSelect = 0, ToolMove = 1, ToolScissors = 2, ToolEnvelope = 3, ToolZoom = 4
 };
+
+bool isImageFile(const QString& path) {
+    const QString ext = QFileInfo(path).suffix().toLower();
+    static const QStringList exts = {
+        QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"),
+        QStringLiteral("bmp"), QStringLiteral("gif"), QStringLiteral("webp"),
+        QStringLiteral("tif"), QStringLiteral("tiff"), QStringLiteral("svg")
+    };
+    return exts.contains(ext);
+}
+
+// Duração efetiva ao inserir uma mídia na timeline: imagens usam o padrão
+// próprio; vídeo/áudio usam a duração real (ou 1s como fallback).
+double mediaInsertDur(const MediaItem& m) {
+    if (isImageFile(m.filePath)) return kDefaultImageDur;
+    return m.duration > 0 ? m.duration : 1.0;
+}
 
 QString fmtRuler(double t) {
     const int total = (int)std::floor(t);
@@ -236,9 +257,12 @@ void TimelineWidget::addMediaAtPlayhead(const QString& mediaId) {
     if (!m_project) return;
     const MediaItem* m = m_project->findMedia(mediaId);
     if (!m) return;
+    qDebug() << "[TimelineWidget::addMediaAtPlayhead]" << m->name
+             << "hasVideo=" << m->hasVideo << "hasAudio=" << m->hasAudio
+             << "dur=" << m->duration;
     emit editStart();
     const double t = snapTime(std::max(0.0, m_playhead));
-    const double dur = m->duration > 0 ? m->duration : 1.0;
+    const double dur = mediaInsertDur(*m);
 
     // Usa uma faixa livre (sem sobreposição em `t`) ou cria uma nova vazia.
     auto findFreeTrack = [this](bool audio, double t, double dur, int prefer) {
@@ -709,6 +733,7 @@ void TimelineWidget::renderScene(QPainter& p) {
             const int cx = (int)(H + (c.pos - m_viewStart) * m_pps);
             const int cw = std::max(2, (int)(c.dur * m_pps));
             QRect r(cx + 1, y + 4, cw - 2, rowH - 8);
+            if (r.width() <= 0 || r.height() <= 0) continue;
             if (r.right() < H || r.left() > width()) continue;
             drawClip(p, r, c, tr, audio);
         }
@@ -872,6 +897,7 @@ void TimelineWidget::renderOverlays(QPainter& p) {
 
 void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
                               const Track& tr, bool audio) {
+    if (r.width() <= 0 || r.height() <= 0) return;
     const bool sel = isSelected(c.id);
     QColor fill = audio ? QColor(26, 86, 66) : QColor(32, 66, 116);
     QColor border = audio ? QColor(70, 160, 120) : QColor(90, 140, 210);
@@ -907,6 +933,8 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
         const qint64 bytes = (qint64)content.width() * content.height()
                              * (content.depth() / 8);
         if (m_clipBytes + bytes > 96LL * 1024 * 1024) {
+            qDebug() << "[TimelineWidget::drawClip] CLIP PIXMAP CACHE CLEARED (budget exceeded:"
+                     << m_clipBytes << "+" << bytes << ")";
             m_clipPix.clear();
             m_clipBytes = 0;
         }
@@ -1005,7 +1033,7 @@ void TimelineWidget::drawVideoThumbs(QPainter& p, const QRect& r, const Clip& c,
                                      const QString& path) {
     if (path.isEmpty()) return;
     const int mode = SettingsDialog::thumbMode();
-    if (mode == 2) return; // nenhuma miniatura: corpo fica só com a cor base
+    if (mode == 2) return;
 
     MediaCache& cache = MediaCache::instance();
 
@@ -2871,7 +2899,7 @@ void TimelineWidget::finishDrop(const QStringList& mediaIds, const QPoint& dropP
         const MediaItem* m = m_project->findMedia(mid);
         if (!m) continue;
         const bool both = m->hasVideo && m->hasAudio;
-        const double dur = m->duration > 0 ? m->duration : 1.0;
+        const double dur = mediaInsertDur(*m);
 
         // Vídeo primeiro: decide a faixa de vídeo e a posição.
         int vRow = -1;
