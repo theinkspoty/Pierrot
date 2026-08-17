@@ -43,6 +43,8 @@ set(SOURCES
     src/ui/WelcomeWindow.cpp
     src/ui/GraphEditorWidget.cpp
     src/ui/ClickLogger.cpp
+    src/ui/EffectsWidget.cpp
+    src/ui/FileBrowserWidget.cpp
     resources.qrc
 )
 
@@ -66,6 +68,8 @@ set(HEADERS
     src/ui/WelcomeWindow.h
     src/ui/GraphEditorWidget.h
     src/ui/ClickLogger.h
+    src/ui/EffectsWidget.h
+    src/ui/FileBrowserWidget.h
 )
 
 if(WIN32)

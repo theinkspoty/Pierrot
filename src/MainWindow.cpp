@@ -11,6 +11,8 @@
 #include "ui/PreviewWidget.h"
 #include "ui/PancropWidget.h"
 #include "ui/GraphEditorWidget.h"
+#include "ui/EffectsWidget.h"
+#include "ui/FileBrowserWidget.h"
 #include "ui/ExportDialog.h"
 #include "ui/ProjectSettingsDialog.h"
 #include "ui/SettingsDialog.h"
@@ -124,6 +126,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     m_graph->setProject(&m_project);
     m_graph->setMinimumHeight(170);
 
+    m_effects = new EffectsWidget(this);
+    m_fileBrowser = new FileBrowserWidget(this);
+
     createDocks();
     createActions();
 
@@ -158,6 +163,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     connect(m_pool, &MediaPoolWidget::mediaToTimeline, m_timeline,
             &TimelineWidget::addMediaAtPlayhead);
+    // Explorador de arquivos: importar direto para o Media Pool (duplo clique /
+    // botão "Importar pasta"); arraste do explorador também funciona, pois o
+    // pool aceita arquivos locais soltos sobre ele.
+    connect(m_fileBrowser, &FileBrowserWidget::filesImportRequested, m_pool,
+            &MediaPoolWidget::importPaths);
     // Arrasto manual da pool de mídia: feedback na timeline e soltura direta.
     // Não depende do DnD do compositor (falha em alguns ambientes/Wayland).
     connect(m_pool, &MediaPoolWidget::dragHover, m_timeline, &TimelineWidget::showDropHover);
@@ -401,8 +411,29 @@ void MainWindow::createDocks() {
     splitDockWidget(m_timelineDock, m_graphDock, Qt::Vertical);
     m_graphDock->setMinimumHeight(170);
 
+    m_effectsDock = new QDockWidget(tr("Efeitos"), this);
+    m_effectsDock->setObjectName(QStringLiteral("effectsDock"));
+    m_effectsDock->setWidget(m_effects);
+    m_effectsDock->setAllowedAreas(Qt::AllDockWidgetAreas);
+    m_effectsDock->setFeatures(QDockWidget::DockWidgetMovable
+                               | QDockWidget::DockWidgetFloatable
+                               | QDockWidget::DockWidgetClosable);
+    addDockWidget(Qt::RightDockWidgetArea, m_effectsDock);
+    m_effectsDock->hide();
+
+    m_fileBrowserDock = new QDockWidget(tr("Explorador de Arquivos"), this);
+    m_fileBrowserDock->setObjectName(QStringLiteral("fileBrowserDock"));
+    m_fileBrowserDock->setWidget(m_fileBrowser);
+    m_fileBrowserDock->setAllowedAreas(Qt::AllDockWidgetAreas);
+    m_fileBrowserDock->setFeatures(QDockWidget::DockWidgetMovable
+                                   | QDockWidget::DockWidgetFloatable
+                                   | QDockWidget::DockWidgetClosable);
+    addDockWidget(Qt::LeftDockWidgetArea, m_fileBrowserDock);
+    m_fileBrowserDock->hide();
+
     // Qualquer mudança de arranjo dos painéis agenda o salvamento do layout.
-    for (QDockWidget* dock : {m_poolDock, m_timelineDock, m_pancropDock, m_graphDock}) {
+    for (QDockWidget* dock : {m_poolDock, m_timelineDock, m_pancropDock, m_graphDock,
+                              m_effectsDock, m_fileBrowserDock}) {
         connect(dock, &QDockWidget::topLevelChanged, this, &MainWindow::scheduleLayoutSave);
         connect(dock, &QDockWidget::visibilityChanged, this, &MainWindow::scheduleLayoutSave);
     }
@@ -564,6 +595,8 @@ void MainWindow::createActions() {
     viewMenu->addAction(m_timelineDock->toggleViewAction());
     viewMenu->addAction(m_pancropDock->toggleViewAction());
     viewMenu->addAction(m_graphDock->toggleViewAction());
+    viewMenu->addAction(m_effectsDock->toggleViewAction());
+    viewMenu->addAction(m_fileBrowserDock->toggleViewAction());
     viewMenu->addSeparator();
     viewMenu->addAction(m_lockAction);
 
@@ -637,7 +670,8 @@ void MainWindow::createActions() {
 }
 
 void MainWindow::setDockLocked(bool locked) {
-    for (QDockWidget* dock : {m_poolDock, m_timelineDock, m_pancropDock, m_graphDock}) {
+    for (QDockWidget* dock : {m_poolDock, m_timelineDock, m_pancropDock, m_graphDock,
+                              m_effectsDock, m_fileBrowserDock}) {
         if (locked) {
             if (!m_originalFeatures.contains(dock))
                 m_originalFeatures.insert(dock, dock->features());
