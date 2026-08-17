@@ -47,6 +47,7 @@ set(SOURCES
 
 set(HEADERS
     src/MainWindow.h
+    src/version.h
     src/models/Project.h
     src/ffmpeg/FFmpegDecoder.h
     src/ffmpeg/MediaCache.h

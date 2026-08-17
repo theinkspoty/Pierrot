@@ -4,6 +4,7 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "WelcomeWindow.h"
+#include "version.h"
 
 #include <QComboBox>
 #include <QSpinBox>
@@ -117,7 +118,7 @@ void WelcomeWindow::buildLayout() {
     credits->setStyleSheet("color: #6b7280; font-size: 11px;");
     credits->setAlignment(Qt::AlignHCenter);
 
-    auto* version = new QLabel(tr("Versão 0.2.0"), this);
+    auto* version = new QLabel(tr("Versão %1").arg(QStringLiteral(PIERROT_VERSION)), this);
     version->setStyleSheet("color: #4e5560; font-size: 10px;");
     version->setAlignment(Qt::AlignHCenter);
 

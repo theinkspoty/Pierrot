@@ -4,6 +4,7 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "MainWindow.h"
+#include "version.h"
 
 #include "ui/MediaPoolWidget.h"
 #include "ui/TimelineWidget.h"
@@ -97,7 +98,7 @@ bool saneLayoutArray(const QByteArray& state) {
 }
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle(tr("Pierrot 0.2.0 — Editor de Vídeo"));
+    setWindowTitle(tr("Pierrot %1 — Editor de Vídeo").arg(QStringLiteral(PIERROT_VERSION)));
     resize(1280, 800);
 
     for (int i = 0; i < 3; ++i) m_project.addTrack(false);
@@ -932,7 +933,8 @@ void MainWindow::updateTitle() {
     const QString name = m_currentFile.isEmpty()
         ? tr("Sem título")
         : QFileInfo(m_currentFile).fileName();
-    setWindowTitle(tr("Pierrot 0.2.0 — %1%2")
+    setWindowTitle(tr("Pierrot %1 — %2%3")
+                       .arg(QStringLiteral(PIERROT_VERSION))
                        .arg(name, m_modified ? tr(" *") : QString()));
 }
 
