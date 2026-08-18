@@ -131,13 +131,27 @@ void WelcomeWindow::buildLayout() {
     imageFrame->setPixmap(makeRounded(m_img.scaled(QSize(320, 440), Qt::KeepAspectRatio,
                                                    Qt::SmoothTransformation), 18));
 
+    // Nome + versão pequena ao lado (mesma fonte/bold, menor), centralizado.
     auto* nameLabel = new QLabel(tr("Pierrot"), this);
     QFont nf = nameLabel->font();
     nf.setPointSize(30);
     nf.setBold(true);
     nameLabel->setFont(nf);
     nameLabel->setStyleSheet("color:#f2f5fa;");
-    nameLabel->setAlignment(Qt::AlignHCenter);
+
+    auto* verLabel = new QLabel(tr("0.3.5"), this);
+    QFont vf = verLabel->font();
+    vf.setPointSize(12);
+    vf.setBold(true);
+    verLabel->setFont(vf);
+    verLabel->setStyleSheet("color:#7f92ab;");
+
+    auto* nameRow = new QHBoxLayout;
+    nameRow->setSpacing(6);
+    nameRow->addStretch(1);
+    nameRow->addWidget(nameLabel);
+    nameRow->addWidget(verLabel, 0, Qt::AlignBottom);
+    nameRow->addStretch(1);
 
     auto* slogan = new QLabel(tr("para Linux"), this);
     slogan->setStyleSheet("color:#8a93a2; font-size:13px; letter-spacing:1px;");
@@ -146,7 +160,7 @@ void WelcomeWindow::buildLayout() {
     auto* imageCol = new QVBoxLayout;
     imageCol->setSpacing(6);
     imageCol->addWidget(imageFrame, 1);
-    imageCol->addWidget(nameLabel);
+    imageCol->addLayout(nameRow);
     imageCol->addWidget(slogan);
 
     auto* credits = new QLabel(tr("by InkSpoty"), this);

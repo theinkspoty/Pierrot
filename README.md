@@ -47,6 +47,19 @@ Editor de vídeo simples — feito de um editor para outro editor — estilo
   (**Estilo**: minimizada/normal/grande) na barra de ferramentas da timeline.
 - **Media Pool**: importe arrastando arquivos do sistema para dentro do painel,
   ou arraste itens do painel para a timeline (com miniatura seguindo o cursor).
+- **Clipes de texto independentes**: animáveis (transform, opacidade, fades,
+  keyframes via editor de curvas, pan/crop) com editor dedicado (fonte, cor,
+  contorno, fundo, posição) e cópia unificada/compartilhada estilo Vegas.
+- **Múltiplas faixas de áudio**: arquivos com vários streams (OBS/câmera) geram
+  um clipe de áudio por faixa, cada um na sua faixa e com waveform própria.
+- **Velocidade do clipe**: ajuste por diálogo (0,1×–4×), respeitado no preview
+  e na exportação (estilo Vegas).
+- **Explorador de arquivos** (dock): navegue por Lugares (Início + SSDs externos)
+  e importe mídias direto para o Media Pool — por duplo clique, "Importar pasta"
+  ou arraste, com modo miniaturas opcional (thumbnails reais).
+- **Janela de boas-vindas** moderna: barra de título personalizada (botões à
+  esquerda, cantos arredondados, arrastável), imagem da marca, projetos
+  recentes e novo projeto.
 
 ## Especificações
 
@@ -186,13 +199,20 @@ Marcado com 💀 o que já foi implementado.
 - 💀 Reordenar faixas de vídeo/áudio e **pastas (grupos)** por arraste do
   cabeçalho, além de presets de tamanho (**Estilo**: minimizada/normal/grande).
 - Transições entre clipes (dissolve, wipe) com duração ajustável.
-- Imagens estáticas como clipes na timeline (PNG/JPEG, com trim e pan/crop).
+- 💀 Imagens estáticas como clipes na timeline (PNG/JPEG, com trim e pan/crop).
 - Seleção múltipla de clipes (editar, mover, duplicar, excluir em lote).
 - **Snap** de clipes a bordas de outros clipes, ao playhead e a marcadores.
 - **Ripple/roll/tipos de trim** mais elaborados (empurrar clipes adjacentes).
 - **Ripple delete** por padrão e "fechar espaço" com atalho dedicado.
-- Clipes de texto/áudio **renderizados como placeholder na timeline** (mostrar o
+- 💀 Clipes de texto/áudio **renderizados como placeholder na timeline** (mostrar o
   texto e o nome dos áudios no clipe).
+- 💀 Clipe de **texto independente** (animável: transform, opacidade, fades,
+  keyframes via editor de curvas; pan/crop) com editor de texto dedicado
+  (fonte, cor, contorno, fundo, posição) e cópia unificada estilo Vegas.
+- 💀 Múltiplas faixas de áudio: um clipe por stream (OBS/câmera), cada um na
+  sua faixa, com waveform própria e stream selecionado no preview/exportação.
+- 💀 Velocidade do clipe por diálogo (0,1×–4×), respeitada no preview e na
+  exportação (estilo Vegas).
 
 ### Preview / reprodução
 - 💀 Reprodução em frames do projeto com timecode `HH:MM:SS:FF`.
@@ -219,10 +239,20 @@ Marcado com 💀 o que já foi implementado.
   transparente na timeline.
 - **Undo mais granular** (passo a passo das operações, em vez de snapshots).
 - 💀 Importar arquivos por **arrastar do sistema** para o media pool.
-- **Importar pasta inteira** para o media pool, com subpastas.
+- **Importar pasta inteira** para o media pool, com subpastas (hoje: importa as
+  mídias da pasta atual; subpastas ainda não).
 - Suporte a **projetos 60/120 fps** (hoje o preview e os keyframes já respeitam
   o fps do projeto; validar exportação e timestamps).
 - Suporte a plugins **OFX (OpenFX)** para efeitos de terceiros.
+
+### Janelas / docks
+- 💀 **Explorador de arquivos** (dock estilo Premiere: Lugares — Início + SSDs
+  externos, importação por duplo clique / "Importar pasta" / arraste, modo
+  miniaturas).
+- 💀 **Janela de boas-vindas** moderna (barra de título personalizada, cantos
+  arredondados, imagem da marca, projetos recentes, novo projeto).
+- **Painel de Efeitos** (dock criado como placeholder; a lista/aplicação de
+  efeitos será construída aqui).
 
 ### Qualidade de vida
 - **Auto-save** com versões/backup dos projetos.
