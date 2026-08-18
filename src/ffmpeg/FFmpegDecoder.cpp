@@ -57,6 +57,22 @@ static bool isImagePath(const QString& filePath) {
     return exts.contains(ext);
 }
 
+// Resolve o ÍNDICE ABSOLUTO do k-ésimo stream de áudio do arquivo. O clipe
+// guarda `audioStreamIndex` como "k-ésima faixa de áudio" (0 = primeira), mas o
+// FFmpeg precisa do índice absoluto no arquivo (que pode ser 1 se o stream 0 é
+// vídeo, como na maioria dos MP4). Retorna -1 se não houver k-ésimo áudio.
+static int resolveAudioStream(const AVFormatContext* fmt, int k) {
+    if (k < 0) return -1;
+    int audioIdx = -1;
+    for (unsigned i = 0; i < fmt->nb_streams; ++i) {
+        if (fmt->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+            ++audioIdx;
+            if (audioIdx == k) return (int)i;
+        }
+    }
+    return -1;
+}
+
 FFmpegDecoder::FFmpegDecoder() {
     installLogFilter();
     m_pkt = av_packet_alloc();
@@ -280,13 +296,15 @@ FFmpegAudioPeaks FFmpegDecoder::audioPeaks(const QString& filePath, int bucketsP
     }
 
     // Valida/sanitiza o índice do stream desejado (ou usa o melhor stream).
-    int idx = streamIndex;
-    if (idx < 0) {
-        idx = av_find_best_stream(fmt, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
-    } else if (idx >= (int)fmt->nb_streams
-               || fmt->streams[idx]->codecpar->codec_type != AVMEDIA_TYPE_AUDIO) {
+    // streamIndex é a k-ésima FAIXA DE ÁUDIO (0 = primeira), não o índice
+    // absoluto no arquivo.
+    int idx = resolveAudioStream(fmt, streamIndex);
+    if (idx < 0 && streamIndex >= 0) {
         avformat_close_input(&fmt);
         return result;
+    }
+    if (idx < 0) {
+        idx = av_find_best_stream(fmt, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
     }
     if (idx < 0) {
         avformat_close_input(&fmt);
@@ -433,13 +451,11 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
 
     // Stream de áudio: reutiliza o mesmo AVFormatContext já aberto. Se o
     // pedido especifica um stream (múltiplas faixas de áudio), usa exatamente
-    // ele; caso contrário o "melhor" stream.
-    int aidx = audioStream;
-    if (aidx >= 0) {
-        if (aidx >= (int)fmt->nb_streams
-            || fmt->streams[aidx]->codecpar->codec_type != AVMEDIA_TYPE_AUDIO)
-            aidx = -1;
-    } else {
+    // ele (o índice é a k-ésima FAIXA DE ÁUDIO, não o índice absoluto do
+    // arquivo — na maioria dos MP4 o áudio é o stream 1); caso contrário o
+    // "melhor" stream.
+    int aidx = resolveAudioStream(fmt, audioStream);
+    if (aidx < 0 && audioStream >= 0) {
         aidx = av_find_best_stream(fmt, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
     }
     if (aidx >= 0) {

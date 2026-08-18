@@ -117,8 +117,8 @@ protected:
     void dragLeaveEvent(QDragLeaveEvent*) override;
     void dropEvent(QDropEvent*) override;
 private:
-    enum DragMode { None, MoveClip, TrimLeft, TrimRight, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, ResizeTrack, TrackVol, ClipVol, TrackDrag };
-    struct ClipOrig { double pos = 0.0, in = 0.0, dur = 0.0; };
+    enum DragMode { None, MoveClip, TrimLeft, TrimRight, ResizeSpeed, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, ResizeTrack, TrackVol, ClipVol, TrackDrag };
+    struct ClipOrig { double pos = 0.0, in = 0.0, dur = 0.0, speed = 1.0; };
     struct ClipboardEntry { Clip clip; int track = 0; bool audio = false; };
     struct TrackSel {
         int row = 0;
@@ -176,6 +176,7 @@ private:
     void applyZoomRect(double t0, double t1);
     void removeClipsByIds(const QStringList& ids);
     void showProperties(Clip* c);
+    void showSpeedDialog(Clip* c);
     void showEffectsDialog(Clip* c);
     void showTransformDialog(Clip* c);
     void showAudioEffectsDialog(Clip* c);

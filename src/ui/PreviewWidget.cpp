@@ -925,7 +925,7 @@ QVector<AudioMixer::SourceInfo> buildMixSources(const Project* p, double t) {
         si.key = c->id;
         si.path = m->filePath;
         si.audioStream = c->audioStreamIndex;
-        si.mediaPos = c->in + (t - c->pos);
+        si.mediaPos = c->in + (t - c->pos) * c->speed;
         si.vol = it.value().vol;
         si.eqLow = c->eqLow;
         si.eqMid = c->eqMid;
@@ -1056,7 +1056,7 @@ void PreviewWidget::updateFrame() {
         return;
     }
 
-    const double srcT = clip->in + (m_playhead - clip->pos);
+    const double srcT = clip->in + (m_playhead - clip->pos) * clip->speed;
     // Decodifica no tamanho de exibição: muito mais rápido que 4K/1080p.
     const int decW = qMax(320, qMin(PreviewWidget::maxDecodeWidth(), m_videoRect.width() > 0
                                     ? m_videoRect.width() : 960));
@@ -1107,7 +1107,7 @@ void PreviewWidget::updateFrame() {
             std::clamp(kfValue(under->kfCropB, under->cropB, rel), 0.0, 0.9) * 1000.0);
         const MediaItem* um = m_project->findMedia(under->mediaId);
         if (um && um->hasVideo && m_frameWorker) {
-            const double uSrcT = under->in + (m_playhead - under->pos);
+            const double uSrcT = under->in + (m_playhead - under->pos) * under->speed;
             QMutexLocker l(&m_frameMutex);
             const bool already = m_underRequested && m_underPath == um->filePath
                                  && m_underW == decW
@@ -1212,7 +1212,7 @@ void PreviewWidget::onFrameReady(const QString& path, double t, int maxW, const 
     if (!m || m->filePath != path) return;
 
     // Ignora quadros decodificados para outra posição (scrub/seek rápido muito distante).
-    const double wantT = clip->in + (m_playhead - clip->pos);
+    const double wantT = clip->in + (m_playhead - clip->pos) * clip->speed;
     if (std::fabs(wantT - t) > 1.5) return;
 
     {
