@@ -46,6 +46,12 @@ static bool audioDbg() {
     return on;
 }
 
+// Diagnóstico da composição multi-faixa do preview: ligue com PIERROT_COMPOSE_DEBUG=1.
+static bool composeDbg() {
+    static const bool on = qEnvironmentVariableIsSet("PIERROT_COMPOSE_DEBUG");
+    return on;
+}
+
 int PreviewWidget::maxDecodeWidth() {
     if (s_maxDecodeWidth < 0)
         s_maxDecodeWidth = qMax(320, SettingsDialog::maxDecodeWidth());
@@ -68,14 +74,14 @@ public:
           m_prefetchDecoder(std::make_unique<FFmpegDecoder>()) {}
 
 public slots:
-    void decodeOne(const QString& path, double t, int maxW, double dt) {
+    void decodeOne(const QString& clipId, const QString& path, double t, int maxW, double dt) {
         if (!m_mainDecoder->isOpen() || m_mainDecoder->source() != path) {
             if (m_prefetchDecoder->isOpen() && m_prefetchDecoder->source() == path) {
                 // O decodificador de prefetch já abriu e aqueceu este arquivo: swap instantâneo!
                 std::swap(m_mainDecoder, m_prefetchDecoder);
             } else {
                 if (!m_mainDecoder->open(path)) {
-                    emit frameReady(path, t, maxW, QImage());
+                    emit frameReady(clipId, path, t, maxW, QImage());
                     return;
                 }
             }
@@ -100,7 +106,7 @@ public slots:
         } else {
             img = m_mainDecoder->frameAt(t, maxW);
         }
-        emit frameReady(path, t, maxW, img);
+        emit frameReady(clipId, path, t, maxW, img);
 
         // Decodifica o próximo frame na folga para o próximo pedido (apenas se
         // o decoder ainda estiver no mesmo arquivo).
@@ -126,7 +132,7 @@ public slots:
     }
 
 signals:
-    void frameReady(const QString& path, double t, int maxW, const QImage& img);
+    void frameReady(const QString& clipId, const QString& path, double t, int maxW, const QImage& img);
     void prefetchReady(const QString& path, double t, int maxW, const QImage& img);
 
 private:
@@ -404,6 +410,23 @@ QString fmtTimecode(double t, double fps) {
 double projFps(const Project* p) {
     return (p && p->fps > 0.0) ? p->fps : 30.0;
 }
+
+// Mapeia o modo de composição da faixa (os mesmos 12 modos da exportação)
+// para o composition mode do QPainter. "subtract" não existe no Qt: cai em
+// SourceOver (aproximação razoável para o preview).
+QPainter::CompositionMode blendModeToQt(const QString& mode) {
+    if (mode == QStringLiteral("screen"))    return QPainter::CompositionMode_Screen;
+    if (mode == QStringLiteral("multiply"))  return QPainter::CompositionMode_Multiply;
+    if (mode == QStringLiteral("overlay"))   return QPainter::CompositionMode_Overlay;
+    if (mode == QStringLiteral("darken"))    return QPainter::CompositionMode_Darken;
+    if (mode == QStringLiteral("lighten"))   return QPainter::CompositionMode_Lighten;
+    if (mode == QStringLiteral("softlight")) return QPainter::CompositionMode_SoftLight;
+    if (mode == QStringLiteral("hardlight")) return QPainter::CompositionMode_HardLight;
+    if (mode == QStringLiteral("difference"))return QPainter::CompositionMode_Difference;
+    if (mode == QStringLiteral("addition"))  return QPainter::CompositionMode_Plus;
+    if (mode == QStringLiteral("exclusion")) return QPainter::CompositionMode_Exclusion;
+    return QPainter::CompositionMode_SourceOver;
+}
 }
 
 PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
@@ -486,7 +509,8 @@ void PreviewWidget::setProject(Project* p) {
     m_transType.clear();
     {
         QMutexLocker l(&m_frameMutex);
-        m_pendingReq = FrameReq();
+        m_reqQueue.clear();
+        m_layerCache.clear();
         m_prefetch = PrefetchFrame();
         m_shownPath.clear();
         m_shownT = -1.0;
@@ -558,11 +582,6 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
                 }
     }
 
-    if (m_frame.isNull() && !anyText) {
-        drawEmptyMonitor(p, canvas);
-        return;
-    }
-
     // Render unificado em "espaço de projeto": o canvas É o quadro do projeto
     // (k = pixels de tela por pixel do projeto). O vídeo é desenhado do mesmo
     // jeito com ou sem transform — sem transform, ele cabe inteiro no quadro;
@@ -570,51 +589,208 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
     // adicionar um keyframe de transform nunca muda o tamanho do vídeo.
     const Clip* clip = clipAt(m_playhead);
     const double S = clip ? kfValue(clip->kfScale, clip->scale, m_playhead - clip->pos) : 1.0;
+    const double SX = clip ? kfValue(clip->kfScaleX, clip->scaleX, m_playhead - clip->pos) : 1.0;
+    const double SY = clip ? kfValue(clip->kfScaleY, clip->scaleY, m_playhead - clip->pos) : 1.0;
     const double rot = clip ? kfValue(clip->kfRotation, clip->rotation, m_playhead - clip->pos) : 0.0;
     const double tx = clip ? kfValue(clip->kfTx, clip->tx, m_playhead - clip->pos) : 0.0;
     const double ty = clip ? kfValue(clip->kfTy, clip->ty, m_playhead - clip->pos) : 0.0;
 
-    // "Fit": o vídeo inteiro (já com crop aplicado) cabe no quadro do projeto.
-    const auto drawFrame = [&](const QImage& img, double s, double r,
-                               double x, double y, double alpha = 1.0,
+    // Desenha uma camada com transform (escala, rotação, pan), centrada no
+    // ponto (cx, cy) e na escala kk (qualquer buffer/painter). `clipRect` evita
+    // que o conteúdo vaze do monitor (rotação/zoom) para a área ao redor.
+    const auto drawLayer = [&](QPainter& qp, const QImage& img, double s, double r,
+                               double x, double y, double alpha,
+                               double sX, double sY, double kk, double cx, double cy,
+                               const QRect& clipRect,
                                double ox = 0.0, double oy = 0.0) {
         const double fit = qMin(pw / img.width(), ph / img.height());
-        p.save();
-        p.setClipRect(canvas);
-        p.translate(canvas.center().x() + x * k + ox * k,
-                    canvas.center().y() + y * k + oy * k);
-        p.rotate(r);
-        p.scale(k * fit * s, k * fit * s);
-        p.translate(-img.width() / 2.0, -img.height() / 2.0);
+        qp.save();
+        qp.setClipRect(clipRect);
+        qp.translate(cx + x * kk + ox * kk, cy + y * kk + oy * kk);
+        qp.rotate(r);
+        qp.scale(kk * fit * s * sX, kk * fit * s * sY);
+        qp.translate(-img.width() / 2.0, -img.height() / 2.0);
         if (alpha < 1.0) {
             QImage img2 = img;
             QPainter ip(&img2);
             ip.setCompositionMode(QPainter::CompositionMode_DestinationIn);
             ip.fillRect(img2.rect(), QColor(0, 0, 0, (int)(alpha * 255)));
             ip.end();
-            p.drawImage(0, 0, img2);
+            qp.drawImage(0, 0, img2);
         } else {
-            p.drawImage(0, 0, img);
+            qp.drawImage(0, 0, img);
         }
-        p.restore();
+        qp.restore();
     };
 
-    // Transição: desenha o clipe de trás (A) por baixo e o da frente (B) por
-    // cima com fade (dissolve) ou deslizando (wipe).
+    // Uma camada de vídeo pronta para desenhar (na ordem de baixo para cima).
+    struct Layer {
+        QImage frame;
+        double s = 1.0, sX = 1.0, sY = 1.0, rot = 0.0, x = 0.0, y = 0.0;
+        double alpha = 1.0, ox = 0.0, oy = 0.0;
+        QPainter::CompositionMode mode = QPainter::CompositionMode_SourceOver;
+    };
+    QVector<Layer> layers;
+
+    // Monta o empilhamento: todas as faixas de vídeo (a faixa 0 é o TOPO), de
+    // baixo para cima. Cada faixa contribui com o clipe ativo no playhead.
+    // Clipes de texto independentes entram depois (desenhados por cima).
+    {
+        const Clip* topClip = clip;
+        for (int tr = (int)m_project->videoTracks.size() - 1; tr >= 0; --tr) {
+            const Track& t = m_project->videoTracks[tr];
+            const Clip* c = nullptr;
+            for (const Clip& cl : t.clips) {
+                if (m_playhead >= cl.pos && m_playhead < cl.pos + cl.dur && !cl.isText) {
+                    const MediaItem* mm = m_project->findMedia(cl.mediaId);
+                    if (mm && mm->hasVideo && (!c || cl.pos > c->pos)) c = &cl;
+                }
+            }
+            if (!c) continue;
+            const QPainter::CompositionMode mode = blendModeToQt(t.blendMode);
+            if (topClip && c->id == topClip->id && !m_frame.isNull()) {
+                // Transição (mesma faixa): o clipe de trás por baixo, o da
+                // frente por cima com fade (dissolve) ou deslizando (wipe).
+                if (m_transAlpha >= 0.0 && !m_underFrame.isNull()) {
+                    Layer u;
+                    u.frame = m_underFrame;
+                    layers.append(u);
+                }
+                Layer L;
+                L.frame = m_frame;
+                L.s = S; L.sX = SX; L.sY = SY; L.rot = rot; L.x = tx; L.y = ty;
+                const double rel = m_playhead - topClip->pos;
+                double alpha = std::clamp(kfValue(topClip->kfOpacity, topClip->opacity, rel), 0.0, 1.0);
+                if (topClip->fadeIn > 1e-6) alpha *= std::min(1.0, rel / topClip->fadeIn);
+                if (topClip->fadeOut > 1e-6) alpha *= std::min(1.0, (topClip->dur - rel) / topClip->fadeOut);
+                if (m_transAlpha >= 0.0) {
+                    if (m_transType == QStringLiteral("dissolve")) alpha *= m_transAlpha;
+                    else if (m_transType == QStringLiteral("wipeleft")) L.ox = pw * (1.0 - m_transAlpha);
+                    else if (m_transType == QStringLiteral("wiperight")) L.ox = -pw * (1.0 - m_transAlpha);
+                    else if (m_transType == QStringLiteral("wipeup")) L.oy = ph * (1.0 - m_transAlpha);
+                    else if (m_transType == QStringLiteral("wipedown")) L.oy = -ph * (1.0 - m_transAlpha);
+                }
+                L.alpha = alpha;
+                L.mode = mode;
+                layers.append(L);
+            } else {
+                const MediaItem* mm = m_project->findMedia(c->mediaId);
+                if (!mm || !mm->hasVideo) continue;
+                QImage f;
+                if (mm->isSolid) {
+                    // Mídia gerada (cor sólida estilo Vegas): sem arquivo — o
+                    // quadro é preenchido na hora, na proporção do projeto (o
+                    // "fit" do drawLayer enche o quadro; cor uniforme não
+                    // perde qualidade ao ser ampliada).
+                    const int w = qMax(1, mm->width > 0 ? mm->width : m_project->width);
+                    const int h = qMax(1, mm->height > 0 ? mm->height : m_project->height);
+                    const int sw = 64;
+                    const int sh = qMax(1, sw * h / w);
+                    f = QImage(sw, sh, QImage::Format_ARGB32);
+                    f.fill(mm->solidColor);
+                } else {
+                    {
+                        QMutexLocker l(&m_frameMutex);
+                        f = m_layerCache.value(c->id).img;
+                    }
+                    if (f.isNull()) continue; // quadro ainda não chegou
+                }
+                const double rel = m_playhead - c->pos;
+                Layer L;
+                L.frame = f;
+                L.s = kfValue(c->kfScale, c->scale, rel);
+                L.sX = kfValue(c->kfScaleX, c->scaleX, rel);
+                L.sY = kfValue(c->kfScaleY, c->scaleY, rel);
+                L.rot = kfValue(c->kfRotation, c->rotation, rel);
+                L.x = kfValue(c->kfTx, c->tx, rel);
+                L.y = kfValue(c->kfTy, c->ty, rel);
+                double alpha = std::clamp(kfValue(c->kfOpacity, c->opacity, rel), 0.0, 1.0);
+                if (c->fadeIn > 1e-6) alpha *= std::min(1.0, rel / c->fadeIn);
+                if (c->fadeOut > 1e-6) alpha *= std::min(1.0, (c->dur - rel) / c->fadeOut);
+                L.alpha = alpha;
+                L.mode = mode;
+                layers.append(L);
+            }
+            if (composeDbg())
+                qDebug() << "[compose] tr=" << tr
+                         << "clip=" << (c->name.isEmpty() ? c->id : c->name)
+                         << "top=" << (topClip && c->id == topClip->id)
+                         << "media=" << (m_project->findMedia(c->mediaId)
+                                            ? m_project->findMedia(c->mediaId)->name : QString());
+        }
+    }
+
+    if (composeDbg()) {
+        for (const Layer& L : layers) {
+            int cornerA = -1;
+            if (!L.frame.isNull() && L.frame.width() > 2 && L.frame.height() > 2)
+                cornerA = L.frame.pixelColor(1, 1).alpha();
+            qDebug() << "  [compose] layer " << L.frame.width() << "x" << L.frame.height()
+                     << "alpha=" << L.alpha << "cornerA=" << cornerA << "mode=" << (int)L.mode;
+        }
+        qDebug() << "  [compose] total=" << layers.size() << "m_frameNull=" << m_frame.isNull();
+    }
+
+    if (m_frame.isNull() && layers.isEmpty() && !anyText) {
+        drawEmptyMonitor(p, canvas);
+        return;
+    }
+
+    // Empilhamento multi-faixa: compõe num buffer do tamanho do canvas, faixa
+    // a faixa com o modo de composição da faixa (igual ao blend da exportação),
+    // de baixo para cima — é o que permite ver transparência (PNG/WebP com
+    // alpha) e as camadas que ficam POR BAIXO do clipe do topo.
+    if (layers.size() >= 2 || (m_frame.isNull() && !layers.isEmpty())) {
+        QImage acc(canvas.size(), QImage::Format_ARGB32);
+        acc.fill(Qt::transparent);
+        QPainter ap(&acc);
+        ap.setClipRect(QRect(0, 0, acc.width(), acc.height()));
+        const double cx = acc.width() / 2.0;
+        const double cy = acc.height() / 2.0;
+        for (const Layer& L : layers) {
+            if (L.frame.isNull()) continue;
+            ap.setCompositionMode(L.mode);
+            drawLayer(ap, L.frame, L.s, L.rot, L.x, L.y, L.alpha, L.sX, L.sY, k, cx, cy,
+                      QRect(0, 0, acc.width(), acc.height()), L.ox, L.oy);
+        }
+        // Texto sempre em SourceOver (o modo de composição da última camada
+        // não pode vazar para o texto).
+        ap.setCompositionMode(QPainter::CompositionMode_SourceOver);
+        // Texto (independente e anexado) por cima das camadas.
+        if (m_project) {
+            for (int tr = (int)m_project->videoTracks.size() - 1; tr >= 0; --tr) {
+                const Clip* tclip = nullptr;
+                for (const Clip& c : m_project->videoTracks[tr].clips)
+                    if (c.isText && m_playhead >= c.pos && m_playhead < c.pos + c.dur)
+                        if (!tclip || c.pos > tclip->pos) tclip = &c;
+                if (tclip) drawClipText(ap, acc.rect(), tclip, k);
+            }
+        }
+        if (clip && !clip->isText)
+            drawClipText(ap, acc.rect(), clip, k);
+        ap.end();
+        p.drawImage(canvas.topLeft(), acc);
+        return;
+    }
+
+    // Caminho tradicional (um clipe só, com ou sem transição): desenha direto.
     const bool transActive = m_transAlpha >= 0.0
                              && !m_frame.isNull() && !m_underFrame.isNull();
     if (!m_frame.isNull()) {
         if (transActive) {
-            drawFrame(m_underFrame, 1.0, 0.0, 0.0, 0.0);
+            drawLayer(p, m_underFrame, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, k,
+                      canvas.center().x(), canvas.center().y(), canvas);
             double ox = 0.0, oy = 0.0;
             if (m_transType == QStringLiteral("wipeleft")) ox = pw * (1.0 - m_transAlpha);
             else if (m_transType == QStringLiteral("wiperight")) ox = -pw * (1.0 - m_transAlpha);
             else if (m_transType == QStringLiteral("wipeup")) oy = ph * (1.0 - m_transAlpha);
             else if (m_transType == QStringLiteral("wipedown")) oy = -ph * (1.0 - m_transAlpha);
             const double a = (m_transType == QStringLiteral("dissolve")) ? m_transAlpha : 1.0;
-            drawFrame(m_frame, S, rot, tx, ty, a, ox, oy);
+            drawLayer(p, m_frame, S, rot, tx, ty, a, SX, SY, k,
+                      canvas.center().x(), canvas.center().y(), canvas, ox, oy);
         } else {
-            drawFrame(m_frame, S, rot, tx, ty);
+            drawLayer(p, m_frame, S, rot, tx, ty, 1.0, SX, SY, k,
+                      canvas.center().x(), canvas.center().y(), canvas);
         }
     }
 
@@ -699,8 +875,10 @@ void PreviewWidget::drawClipText(QPainter& p, const QRect& canvas, const Clip* c
     p.translate(W / 2.0 + kfValue(clip->kfTx, clip->tx, rel),
                 H / 2.0 + kfValue(clip->kfTy, clip->ty, rel));
     p.rotate(kfValue(clip->kfRotation, clip->rotation, rel));
-    p.scale(kfValue(clip->kfScale, clip->scale, rel),
-            kfValue(clip->kfScale, clip->scale, rel));
+    p.scale(kfValue(clip->kfScale, clip->scale, rel)
+                * kfValue(clip->kfScaleX, clip->scaleX, rel),
+            kfValue(clip->kfScale, clip->scale, rel)
+                * kfValue(clip->kfScaleY, clip->scaleY, rel));
 
     if (st.textBackground) {
         QColor bc = st.textBackgroundColor;
@@ -769,6 +947,23 @@ void PreviewWidget::togglePlay() {
     // Dispara em metade do período do frame: o tick calcula o frame alvo pelo
     // clock de alta precisão e avança exatamente 1 frame por vez. Com timer
     // grosseiro (1x/frame), o QTimer atrasado pela UI fazia o llround pular frames.
+    m_timer->setInterval(fps > 0.0 ? qBound(8, (int)std::lround(1000.0 / fps / 2.0), 40) : 33);
+    m_timer->start();
+    m_playBtn->setText(tr("Pausar"));
+    startAudio(m_playhead);
+    emit stateChanged(true);
+}
+
+void PreviewWidget::playFrom(double t) {
+    // Enter (estilo Vegas): busca para a posição e começa a reproduzir dali,
+    // mesmo se já estivesse tocando.
+    if (!m_project || m_project->duration() <= 0) return;
+    seek(std::clamp(t, 0.0, m_project->duration()));
+    const double fps = projFps(m_project);
+    m_currentFrameIndex = std::llround(m_playhead * fps);
+    m_playStart = m_playhead;
+    m_clock.start();
+    m_playing = true;
     m_timer->setInterval(fps > 0.0 ? qBound(8, (int)std::lround(1000.0 / fps / 2.0), 40) : 33);
     m_timer->start();
     m_playBtn->setText(tr("Pausar"));
@@ -1060,6 +1255,41 @@ void PreviewWidget::updateFrame() {
     // Decodifica no tamanho de exibição: muito mais rápido que 4K/1080p.
     const int decW = qMax(320, qMin(PreviewWidget::maxDecodeWidth(), m_videoRect.width() > 0
                                     ? m_videoRect.width() : 960));
+
+    // Camadas inferiores (empilhamento multi-faixa): pede os quadros dos
+    // clipes de vídeo que estão por baixo do topo, para compor transparência
+    // e blend no preview (antes só o clipe do topo aparecia).
+    requestLowerLayers(decW);
+
+    // Cor sólida (gerador estilo Vegas): gera o quadro preenchido com a cor,
+    // sem passar pelo decoder (não há arquivo).
+    if (m->isSolid) {
+        const int w = qMax(1, m->width > 0 ? m->width
+                          : (m_project ? m_project->width : 1920));
+        const int h = qMax(1, m->height > 0 ? m->height
+                          : (m_project ? m_project->height : 1080));
+        QImage img(w, h, QImage::Format_ARGB32);
+        img.fill(m->solidColor);
+        {
+            QMutexLocker l(&m_frameMutex);
+            m_frameFull = img;
+            m_shownPath = QStringLiteral("solid:") + m->id;
+            m_shownT = srcT;
+            m_shownW = decW;
+            m_lastSrcT = srcT;
+            m_lastDecodeW = decW;
+            m_lastFile = QString();
+            m_prefetch.valid = false;
+            m_prefetch.requested = false;
+        }
+        applyCrop();
+        m_transAlpha = -1.0;
+        m_underFrame = QImage();
+        m_underRequested = false;
+        update();
+        return;
+    }
+
     const int cL = (int)std::lround(
         std::clamp(kfValue(clip->kfCropL, clip->cropL, m_playhead - clip->pos), 0.0, 0.9) * 1000.0);
     const int cR = (int)std::lround(
@@ -1168,45 +1398,100 @@ void PreviewWidget::updateFrame() {
     if (usedPrefetch) {
         // Já no tick do corte, dispara o próximo frame: o decoder trocado está
         // posicionado e decodifica adiante, evitando "segurar" o frame do corte.
-        requestFrame(m->filePath, srcT + 1.0 / projFps(m_project), decW);
+        requestFrame(clip->id, m->filePath, srcT + 1.0 / projFps(m_project), decW);
         return;
     }
-    requestFrame(m->filePath, srcT, decW);
+    requestFrame(clip->id, m->filePath, srcT, decW);
 }
 
 // Pedido "assíncrono": a decodificação acontece na thread do FrameWorker.
-// Vários pedidos seguidos mantêm apenas o mais novo (scrub não empilha).
-void PreviewWidget::requestFrame(const QString& path, double t, int maxW) {
+// Vários pedidos seguidos entram numa fila; apenas um roda por vez
+// (scrub não empilha — a fila só guarda pedidos ainda não enviados).
+void PreviewWidget::requestFrame(const QString& clipId, const QString& path, double t, int maxW) {
     QMutexLocker l(&m_frameMutex);
-    if (m_pendingReq.valid && m_pendingReq.path == path
-        && std::fabs(m_pendingReq.t - t) < 1e-6 && m_pendingReq.maxW == maxW)
-        return; // já enfileirado
-    if (m_shownPath == path && std::fabs(m_shownT - t) < 1e-6 && m_shownW == maxW)
-        return; // já exibido
-    m_pendingReq = {path, t, 1.0 / projFps(m_project), maxW, true};
+    for (const FrameReq& r : m_reqQueue)
+        if (r.clipId == clipId && r.path == path
+            && std::fabs(r.t - t) < 1e-6 && r.maxW == maxW)
+            return; // já enfileirado
+    m_reqQueue.append({clipId, path, t, 1.0 / projFps(m_project), maxW});
     kickFrameWorker();
+}
+
+// Pedidos os quadros dos clipes de vídeo ativos no playhead que ficam POR
+// BAIXO do clipe do topo (empilhamento de faixas). Quadros já em cache
+// (mesmo arquivo/tempo/tamanho) são pulados.
+void PreviewWidget::requestLowerLayers(int decW) {
+    if (!m_project) return;
+    const Clip* top = clipAt(m_playhead);
+    // Camadas que deixaram de estar ativas no playhead saem do cache (evita
+    // crescimento sem limite conforme o usuário navega pelo projeto).
+    {
+        QList<QString> active;
+        for (const Track& tr : m_project->videoTracks)
+            for (const Clip& cl : tr.clips)
+                if (!cl.isText && m_playhead >= cl.pos && m_playhead < cl.pos + cl.dur)
+                    active.append(cl.id);
+        QMutexLocker l(&m_frameMutex);
+        for (auto it = m_layerCache.begin(); it != m_layerCache.end();) {
+            if (!active.contains(it.key())) it = m_layerCache.erase(it);
+            else ++it;
+        }
+    }
+    for (const Track& tr : m_project->videoTracks) {
+        const Clip* c = nullptr;
+        for (const Clip& cl : tr.clips) {
+            if (m_playhead >= cl.pos && m_playhead < cl.pos + cl.dur && !cl.isText) {
+                const MediaItem* mm = m_project->findMedia(cl.mediaId);
+                if (mm && mm->hasVideo && (!c || cl.pos > c->pos)) c = &cl;
+            }
+        }
+        if (!c || (top && c->id == top->id)) continue;
+        const MediaItem* m = m_project->findMedia(c->mediaId);
+        if (!m || !m->hasVideo) continue;
+        // Cor sólida não tem arquivo: é gerada na pintura, não pede decode.
+        if (m->isSolid) continue;
+        const double srcT = c->in + (m_playhead - c->pos) * c->speed;
+        {
+            QMutexLocker l(&m_frameMutex);
+            const auto it = m_layerCache.constFind(c->id);
+            if (it != m_layerCache.constEnd() && it->path == m->filePath
+                && std::fabs(it->t - srcT) < 1e-6 && it->maxW == decW && !it->img.isNull())
+                continue; // já em cache
+        }
+        requestFrame(c->id, m->filePath, srcT, decW);
+    }
 }
 
 // Chamado com m_frameMutex segurado.
 void PreviewWidget::kickFrameWorker() {
-    if (m_workerBusy || !m_pendingReq.valid || !m_frameWorker) return;
+    if (m_workerBusy || m_reqQueue.isEmpty() || !m_frameWorker) return;
     m_workerBusy = true;
-    const FrameReq r = m_pendingReq;
-    m_pendingReq.valid = false;
+    const FrameReq r = m_reqQueue.takeFirst();
     QMetaObject::invokeMethod(m_frameWorker, "decodeOne", Qt::QueuedConnection,
-                              Q_ARG(QString, r.path), Q_ARG(double, r.t),
-                              Q_ARG(int, r.maxW), Q_ARG(double, r.dt));
+                              Q_ARG(QString, r.clipId), Q_ARG(QString, r.path),
+                              Q_ARG(double, r.t), Q_ARG(int, r.maxW), Q_ARG(double, r.dt));
 }
 
-void PreviewWidget::onFrameReady(const QString& path, double t, int maxW, const QImage& img) {
+// Crop (pan/crop) do clipe no instante `rel` da timeline.
+static void clipCrop(const Clip& c, double rel, int& cL, int& cR, int& cT, int& cB) {
+    cL = (int)std::lround(std::clamp(kfValue(c.kfCropL, c.cropL, rel), 0.0, 0.9) * 1000.0);
+    cR = (int)std::lround(std::clamp(kfValue(c.kfCropR, c.cropR, rel), 0.0, 0.9) * 1000.0);
+    cT = (int)std::lround(std::clamp(kfValue(c.kfCropT, c.cropT, rel), 0.0, 0.9) * 1000.0);
+    cB = (int)std::lround(std::clamp(kfValue(c.kfCropB, c.cropB, rel), 0.0, 0.9) * 1000.0);
+}
+
+void PreviewWidget::onFrameReady(const QString& clipId, const QString& path, double t, int maxW, const QImage& img) {
     {
         QMutexLocker l(&m_frameMutex);
         m_workerBusy = false;
-        kickFrameWorker(); // continua com o pedido mais novo, se houver
+        kickFrameWorker(); // continua com o próximo pedido, se houver
     }
     if (img.isNull() || !m_project) return;
 
-    const Clip* clip = clipAt(m_playhead);
+    const Clip* clip = nullptr;
+    for (const Track& tr : m_project->videoTracks)
+        for (const Clip& c : tr.clips)
+            if (c.id == clipId) { clip = &c; break; }
     if (!clip) return;
     const MediaItem* m = m_project->findMedia(clip->mediaId);
     if (!m || m->filePath != path) return;
@@ -1215,17 +1500,38 @@ void PreviewWidget::onFrameReady(const QString& path, double t, int maxW, const 
     const double wantT = clip->in + (m_playhead - clip->pos) * clip->speed;
     if (std::fabs(wantT - t) > 1.5) return;
 
+    // Quadro do clipe do TOPO: caminho atual do preview (com prefetch/pan-crop).
+    const Clip* top = clipAt(m_playhead);
+    if (composeDbg())
+        qDebug() << "[compose] frameReady clipId=" << clipId
+                 << "path=" << path << "t=" << t
+                 << "top=" << (top ? top->id : QString())
+                 << "isTop=" << (top && top->id == clipId);
+    if (top && top->id == clipId) {
+        {
+            QMutexLocker l(&m_frameMutex);
+            m_shownPath = path;
+            m_shownT = t;
+            m_shownW = maxW;
+        }
+        m_frameFull = img;
+        m_lastSrcT = t;
+        m_lastDecodeW = maxW;
+        m_lastFile = path;
+        applyCrop();
+        update();
+        return;
+    }
+
+    // Quadro de uma camada INFERIOR: guarda no cache de camadas (já cortado).
+    const double rel = m_playhead - clip->pos;
+    int cL, cR, cT, cB;
+    clipCrop(*clip, rel, cL, cR, cT, cB);
+    const QImage cropped = applyCropTo(img, cL, cR, cT, cB);
     {
         QMutexLocker l(&m_frameMutex);
-        m_shownPath = path;
-        m_shownT = t;
-        m_shownW = maxW;
+        m_layerCache[clipId] = {cropped, path, t, maxW};
     }
-    m_frameFull = img;
-    m_lastSrcT = t;
-    m_lastDecodeW = maxW;
-    m_lastFile = path;
-    applyCrop();
     update();
 }
 

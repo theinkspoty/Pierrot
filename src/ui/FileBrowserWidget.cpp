@@ -24,6 +24,7 @@
 #include <QMimeData>
 #include <QUrl>
 #include <QSet>
+#include <QWheelEvent>
 #include "ffmpeg/MediaCache.h"
 
 // Esconde diretórios do sistema (boot, dev, etc.) da lista.
@@ -66,8 +67,8 @@ class MediaThumbList : public QListWidget {
 public:
     explicit MediaThumbList(QWidget* parent = nullptr) : QListWidget(parent) {
         setViewMode(QListView::IconMode);
-        setIconSize(QSize(120, 68));
-        setGridSize(QSize(140, 92));
+        setIconSize(QSize(96, 56));
+        setGridSize(QSize(116, 80));
         setResizeMode(QListView::Adjust);
         setMovement(QListView::Static);
         setSelectionMode(QAbstractItemView::ExtendedSelection);
@@ -78,7 +79,34 @@ public:
         setTextElideMode(Qt::ElideRight);
         setWordWrap(true);
     }
+    void setThumbSize(int w, int h) {
+        m_thW = w;
+        m_thH = h;
+        setIconSize(QSize(w, h));
+        setGridSize(QSize(w + 20, h + 30));
+    }
+    int thumbWidth() const { return m_thW; }
+signals:
+    void thumbSizeChanged();
 protected:
+    void wheelEvent(QWheelEvent* e) override {
+        if (e->modifiers() & Qt::ControlModifier) {
+            const int delta = e->angleDelta().y();
+            int w = m_thW;
+            if (delta > 0) w += 24;
+            else if (delta < 0) w -= 24;
+            w = qBound(48, w, 480);
+            setThumbSize(w, w * 9 / 16);
+            emit thumbSizeChanged();
+            e->accept();
+            return;
+        }
+        QListWidget::wheelEvent(e);
+    }
+private:
+    int m_thW = 96;
+    int m_thH = 56;
+
     QMimeData* mimeData(const QList<QListWidgetItem*>& items) const override {
         auto* md = new QMimeData;
         QList<QUrl> urls;
@@ -160,6 +188,8 @@ FileBrowserWidget::FileBrowserWidget(QWidget* parent) : QWidget(parent) {
         "QListWidget{background:#1c1e23; border:1px solid #2a2d34;"
         " color:#c9cdd4; outline:0;}"));
     m_thumbList->hide();
+    connect(qobject_cast<MediaThumbList*>(m_thumbList), &MediaThumbList::thumbSizeChanged,
+            this, [this]() { populateThumbs(); });
 
     auto* body = new QHBoxLayout;
     body->setContentsMargins(4, 2, 4, 4);

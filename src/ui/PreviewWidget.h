@@ -9,6 +9,8 @@
 #include <QRect>
 #include <QMutex>
 #include <QElapsedTimer>
+#include <QHash>
+#include <QImage>
 #include "models/Project.h"
 #include "ffmpeg/FFmpegDecoder.h"
 
@@ -36,6 +38,8 @@ public:
 public slots:
     void seek(double t);
     void togglePlay();
+    // Toca a partir de uma posição (Enter: início no ponteiro da timeline).
+    void playFrom(double t);
     void setLoopRange(double in, double out);
     void setZoom(double z);
 signals:
@@ -51,9 +55,12 @@ private:
     void updateFrame();
     void applyCrop();
     QImage applyCropTo(const QImage& img, int cL, int cR, int cT, int cB);
-    void requestFrame(const QString& path, double t, int maxW);
+    // Pedidos asíncronos de quadro: primário (clipe do topo) e camadas
+    // inferiores (empilhamento multi-faixa). clipId identifica o destino.
+    void requestFrame(const QString& clipId, const QString& path, double t, int maxW);
+    void requestLowerLayers(int decW);
     void kickFrameWorker();
-    void onFrameReady(const QString& path, double t, int maxW, const QImage& img);
+    void onFrameReady(const QString& clipId, const QString& path, double t, int maxW, const QImage& img);
     void onPrefetchReady(const QString& path, double t, int maxW, const QImage& img);
     void updatePrefetch();
     void stopPlayback();
@@ -71,7 +78,7 @@ private:
     QElapsedTimer m_clock;
     double m_playStart = 0.0;
     qint64 m_currentFrameIndex = -1;
-    bool m_playing = false;
+    bool m_playing = true;
     QPushButton* m_playBtn = nullptr;
     QLabel* m_timeLabel = nullptr;
     QComboBox* m_zoomCombo = nullptr;
@@ -91,7 +98,15 @@ private:
     // Decodificação de vídeo em thread própria (não trava a UI na reprodução).
     QThread* m_frameThread = nullptr;
     FrameWorker* m_frameWorker = nullptr;
-    struct FrameReq { QString path; double t = 0.0; double dt = 1.0 / 30.0; int maxW = 0; bool valid = false; };
+    // Pedido de decodificação. clipId diz para qual clipe o quadro se destina:
+    // o clipe do topo alimenta m_frame; os demais alimentam m_layerCache.
+    struct FrameReq {
+        QString clipId;
+        QString path;
+        double t = 0.0;
+        double dt = 1.0 / 30.0;
+        int maxW = 0;
+    };
     struct PrefetchFrame {
         QString path;
         double t = 0.0;
@@ -100,8 +115,17 @@ private:
         bool valid = false;
         bool requested = false;
     };
+    // Quadro decodificado de um clipe de camada inferior (não-topo), com a
+    // chave de cache para não re-decodificar enquanto o playhead não mudou.
+    struct LayerFrame {
+        QImage img;   // já com pan/crop aplicado
+        QString path;
+        double t = 0.0;
+        int maxW = 0;
+    };
     QMutex m_frameMutex;
-    FrameReq m_pendingReq;
+    QVector<FrameReq> m_reqQueue;                       // fila de decodificações
+    QHash<QString, LayerFrame> m_layerCache;            // clipId -> quadro inferior
     PrefetchFrame m_prefetch;
     bool m_workerBusy = false;
     QString m_shownPath;

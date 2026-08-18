@@ -77,6 +77,7 @@ public:
 public slots:
     void addFiles();
     void importPaths(const QStringList& files);
+    void addSolidColor();
     void removeSelected();
     void refreshFromProject();
     void onThumbReady(const QString& filePath, double seconds);

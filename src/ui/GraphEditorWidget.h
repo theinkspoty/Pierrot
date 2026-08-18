@@ -38,7 +38,9 @@ enum GraphProp {
     GPropCropL,
     GPropCropR,
     GPropCropT,
-    GPropCropB
+    GPropCropB,
+    GPropScaleX,
+    GPropScaleY
 };
 
 // Gráfico da propriedade selecionada: curva, keyframes (com glifos por

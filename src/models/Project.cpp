@@ -22,6 +22,8 @@ static QJsonObject mediaToJson(const MediaItem& m) {
     QJsonArray ch;
     for (int c : m.audioChannels) ch.append(c);
     o["audioChannels"] = ch;
+    o["isSolid"] = m.isSolid;
+    o["solidColor"] = m.solidColor.name(QColor::HexArgb);
     return o;
 }
 
@@ -38,6 +40,9 @@ static MediaItem mediaFromJson(const QJsonObject& o) {
     m.audioStreams = o["audioStreams"].toInt();
     const QJsonArray ch = o["audioChannels"].toArray();
     for (const QJsonValue& v : ch) m.audioChannels.append(v.toInt());
+    m.isSolid = o["isSolid"].toBool();
+    const QString sc = o["solidColor"].toString();
+    if (QColor::isValidColorName(sc)) m.solidColor = QColor(sc);
     return m;
 }
 
@@ -168,6 +173,8 @@ static QJsonObject clipToJson(const Clip& c) {
     o["tx"] = c.tx;
     o["ty"] = c.ty;
     o["scale"] = c.scale;
+    o["scaleX"] = c.scaleX;
+    o["scaleY"] = c.scaleY;
     o["rotation"] = c.rotation;
     o["cropL"] = c.cropL;
     o["cropR"] = c.cropR;
@@ -185,6 +192,8 @@ static QJsonObject clipToJson(const Clip& c) {
     o["kfTx"] = kfToJson(c.kfTx);
     o["kfTy"] = kfToJson(c.kfTy);
     o["kfScale"] = kfToJson(c.kfScale);
+    o["kfScaleX"] = kfToJson(c.kfScaleX);
+    o["kfScaleY"] = kfToJson(c.kfScaleY);
     o["kfRotation"] = kfToJson(c.kfRotation);
     o["kfCropL"] = kfToJson(c.kfCropL);
     o["kfCropR"] = kfToJson(c.kfCropR);
@@ -230,6 +239,8 @@ static Clip clipFromJson(const QJsonObject& o) {
     c.tx = o["tx"].toDouble(0.0);
     c.ty = o["ty"].toDouble(0.0);
     c.scale = o["scale"].toDouble(1.0);
+    c.scaleX = o["scaleX"].toDouble(1.0);
+    c.scaleY = o["scaleY"].toDouble(1.0);
     c.rotation = o["rotation"].toDouble(0.0);
     c.cropL = o["cropL"].toDouble(0.0);
     c.cropR = o["cropR"].toDouble(0.0);
@@ -247,6 +258,8 @@ static Clip clipFromJson(const QJsonObject& o) {
     c.kfTx = kfFromJson(o["kfTx"]);
     c.kfTy = kfFromJson(o["kfTy"]);
     c.kfScale = kfFromJson(o["kfScale"]);
+    c.kfScaleX = kfFromJson(o["kfScaleX"]);
+    c.kfScaleY = kfFromJson(o["kfScaleY"]);
     c.kfRotation = kfFromJson(o["kfRotation"]);
     c.kfCropL = kfFromJson(o["kfCropL"]);
     c.kfCropR = kfFromJson(o["kfCropR"]);

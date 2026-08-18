@@ -28,7 +28,7 @@ public:
     // Propriedades de transformação do pancrop (mesmas usadas nos sliders).
     enum Prop {
         P_CropL = 0, P_CropR, P_CropT, P_CropB, P_Scale, P_PanX, P_PanY,
-        P_Rotation
+        P_Rotation, P_ScaleX, P_ScaleY
     };
 
     explicit PancropWidget(QWidget* parent = nullptr);
@@ -118,6 +118,8 @@ private:
     QSlider* m_panX = nullptr;
     QSlider* m_panY = nullptr;
     QSlider* m_rotation = nullptr;
+    QSlider* m_scaleX = nullptr;
+    QSlider* m_scaleY = nullptr;
 
     QLabel* m_cropLVal = nullptr;
     QLabel* m_cropRVal = nullptr;
@@ -127,6 +129,8 @@ private:
     QLabel* m_panXVal = nullptr;
     QLabel* m_panYVal = nullptr;
     QLabel* m_rotationVal = nullptr;
+    QLabel* m_scaleXVal = nullptr;
+    QLabel* m_scaleYVal = nullptr;
 
     QHash<int, QPushButton*> m_kfDiamonds;
     QPushButton* m_kfAuto = nullptr;

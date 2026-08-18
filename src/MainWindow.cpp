@@ -139,6 +139,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_timeline, &TimelineWidget::playheadChanged, m_preview, &PreviewWidget::seek);
     connect(m_preview, &PreviewWidget::playheadMoved, m_timeline, &TimelineWidget::setPlayhead);
     connect(m_timeline, &TimelineWidget::playPauseRequested, m_preview, &PreviewWidget::togglePlay);
+    // Enter (estilo Vegas): tocar a partir da posição da agulha/ponteiro.
+    connect(m_timeline, &TimelineWidget::playFromCursor, this, [this]() {
+        const double t = m_timeline->cursorPos() >= 0.0
+                         ? m_timeline->cursorPos()
+                         : m_timeline->playhead();
+        m_preview->playFrom(t);
+    });
     connect(m_preview, &PreviewWidget::stateChanged, this, [this](bool playing) {
         m_playAction->setText(playing ? tr("Pausar") : tr("Reproduzir"));
         m_playAction->setIcon(style()->standardIcon(

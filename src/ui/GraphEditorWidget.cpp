@@ -59,6 +59,8 @@ QString propName(GraphProp p) {
         case GPropOpacity:   return QStringLiteral("Opacity");
         case GPropVolume:    return QStringLiteral("Volume");
         case GPropScale:     return QStringLiteral("Scale");
+        case GPropScaleX:    return QStringLiteral("Flatt X");
+        case GPropScaleY:    return QStringLiteral("Flatt Y");
         case GPropRotation:  return QStringLiteral("Rotation");
         case GPropTx:        return QStringLiteral("Position X");
         case GPropTy:        return QStringLiteral("Position Y");
@@ -87,6 +89,8 @@ QVector<Keyframe>* keysFor(Clip* c, GraphProp p) {
         case GPropOpacity:  return &c->kfOpacity;
         case GPropVolume:   return &c->kfVolume;
         case GPropScale:    return &c->kfScale;
+        case GPropScaleX:   return &c->kfScaleX;
+        case GPropScaleY:   return &c->kfScaleY;
         case GPropRotation: return &c->kfRotation;
         case GPropTx:       return &c->kfTx;
         case GPropTy:       return &c->kfTy;
@@ -104,6 +108,8 @@ double baseFor(Clip* c, GraphProp p) {
         case GPropOpacity:  return c->opacity;
         case GPropVolume:   return c->volume;
         case GPropScale:    return c->scale;
+        case GPropScaleX:   return c->scaleX;
+        case GPropScaleY:   return c->scaleY;
         case GPropRotation: return c->rotation;
         case GPropTx:       return c->tx;
         case GPropTy:       return c->ty;
@@ -120,6 +126,8 @@ void rangeFor(GraphProp p, double* lo, double* hi) {
         case GPropOpacity:  *lo = 0.0; *hi = 1.0; return;
         case GPropVolume:   *lo = 0.0; *hi = 2.0; return;
         case GPropScale:    *lo = 0.0; *hi = 3.0; return;
+        case GPropScaleX: case GPropScaleY:
+            *lo = 0.2; *hi = 3.0; return;
         case GPropRotation: *lo = -360.0; *hi = 360.0; return;
         case GPropTx: *lo = -800.0; *hi = 800.0; return;
         case GPropTy: *lo = -450.0; *hi = 450.0; return;
@@ -1952,7 +1960,9 @@ void GraphEditorWidget::rebuildRows() {
         if (c->isText) hasVideo = true;
     }
     if (hasVideo) {
-        const QVector<GraphProp> vid = { GPropOpacity, GPropScale, GPropRotation,
+        const QVector<GraphProp> vid = { GPropOpacity, GPropScale, GPropScaleX,
+                                         GPropScaleY,
+                                         GPropRotation,
                                          GPropTx, GPropTy,
                                          GPropCropL, GPropCropR, GPropCropT, GPropCropB };
         for (GraphProp p : vid) m_props.append(p);

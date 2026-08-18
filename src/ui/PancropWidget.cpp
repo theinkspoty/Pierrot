@@ -9,6 +9,7 @@
 #include <QPainterPath>
 #include <QGroupBox>
 #include <QPushButton>
+#include <QToolButton>
 #include <QSlider>
 #include <QLabel>
 #include <QSignalBlocker>
@@ -28,16 +29,20 @@
 namespace {
 constexpr double kMinScale = 0.1;
 constexpr double kMaxScale = 4.0;
+constexpr int kMinStretch = 20;   // % (0.2×) do achatamento/esticamento não-uniforme
+constexpr int kMaxStretch = 300;  // % (3.0×)
 constexpr int kCropMax = 80;   // %
 constexpr int kPanMax = 100;   // % da largura/altura do projeto
 constexpr int kRotMax = 180;   // graus (±)
+constexpr double kStretchCenter = 1.0; // neutro (1.0×)
 
 // Renderiza um TextStyle sobre um frame transparente (usado no pancrop de
 // clipes de texto, que não têm quadro decodificado). Aplica o transform do
 // clipe (pan/zoom/rotação) para o texto aparecer ONDE o preview mostra —
 // antes ficava centralizado no pancrop mesmo com o clipe deslocado.
 void renderTextStyleFrame(QImage& img, const TextStyle& st,
-                          double tx, double ty, double rotDeg, double s) {
+                          double tx, double ty, double rotDeg, double s,
+                          double sX = 1.0, double sY = 1.0) {
     const double W = img.width();
     const double H = img.height();
     const double sizeFrac = st.textSize > 0.0 ? st.textSize : (1.0 / 18.0);
@@ -82,7 +87,7 @@ void renderTextStyleFrame(QImage& img, const TextStyle& st,
     QPainter p(&img);
     p.translate(W / 2.0 + tx, H / 2.0 + ty);
     p.rotate(rotDeg);
-    p.scale(s, s);
+    p.scale(s * sX, s * sY);
     if (st.textBackground) p.fillRect(box, st.textBackgroundColor);
     QPainterPath path;
     const double baseline = box.top() + pad + fm.ascent();
@@ -96,6 +101,23 @@ void renderTextStyleFrame(QImage& img, const TextStyle& st,
     p.fillPath(path, st.textColor);
 }
 constexpr int kRotStep = 5;    // graus por tick da roda (Alt+roda)
+
+// Seção recolhível estilo "Effect Controls" do Premiere: um cabeçalho com seta
+// de expansão que esconde/mostra o corpo (grade de sliders).
+struct CollapsibleSection {
+    QWidget* container = nullptr;
+    QWidget* body = nullptr;
+    QToolButton* header = nullptr;
+    QGridLayout* grid = nullptr;
+    void setCollapsed(bool c, bool animate = false) {
+        body->setVisible(!c);
+        if (header) {
+            header->setArrowType(c ? Qt::RightArrow : Qt::DownArrow);
+            header->setChecked(!c);
+        }
+        Q_UNUSED(animate);
+    }
+};
 
 // Presets de suavização "estilo Vegas" aplicados ao segmento que sai do
 // keyframe (ou, no último, ao segmento que chega).
@@ -239,9 +261,15 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     m_panX = makeSlider(-kPanMax, kPanMax);
     m_panY = makeSlider(-kPanMax, kPanMax);
     m_rotation = makeSlider(-kRotMax, kRotMax);
+    // Achatamento/esticamento não-uniforme (Flatt): 0.2×–3.0×, neutro em 1.0×.
+    m_scaleX = makeSlider(kMinStretch, kMaxStretch);
+    m_scaleX->setValue((int)std::lround(kStretchCenter * 100.0));
+    m_scaleY = makeSlider(kMinStretch, kMaxStretch);
+    m_scaleY->setValue((int)std::lround(kStretchCenter * 100.0));
     m_cropLVal = makeVal(); m_cropRVal = makeVal(); m_cropTVal = makeVal();
     m_cropBVal = makeVal(); m_scaleVal = makeVal(); m_panXVal = makeVal();
     m_panYVal = makeVal(); m_rotationVal = makeVal();
+    m_scaleXVal = makeVal(); m_scaleYVal = makeVal();
 
     auto addValRow = [&](QGridLayout* g, int r, const QString& label,
                          QSlider* s, QLabel* v, int prop) {
@@ -254,31 +282,52 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
         g->addWidget(makeDiamond(prop), r, 3);
     };
 
-    auto* cropBox = new QGroupBox(tr("Recorte"), this);
-    auto* cropGrid = new QGridLayout(cropBox);
-    cropGrid->setSpacing(3);
-    cropGrid->setContentsMargins(6, 8, 6, 6);
-    cropGrid->setColumnStretch(1, 1);
-    addValRow(cropGrid, 0, tr("Esquerda:"), m_cropL, m_cropLVal, P_CropL);
-    addValRow(cropGrid, 1, tr("Direita:"), m_cropR, m_cropRVal, P_CropR);
-    addValRow(cropGrid, 2, tr("Topo:"), m_cropT, m_cropTVal, P_CropT);
-    addValRow(cropGrid, 3, tr("Base:"), m_cropB, m_cropBVal, P_CropB);
+    // Seções recolhíveis (Effect Controls do Premiere): cabeçalho com seta que
+    // esconde/mostra a grade de controles. Retorna a seção e seu grid.
+    auto makeSection = [this](const QString& title) {
+        CollapsibleSection sec;
+        sec.container = new QWidget(this);
+        auto* v = new QVBoxLayout(sec.container);
+        v->setContentsMargins(0, 0, 0, 0);
+        v->setSpacing(1);
+        sec.header = new QToolButton(sec.container);
+        sec.header->setObjectName(QStringLiteral("sectionHeader"));
+        sec.header->setText(title);
+        sec.header->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        sec.header->setArrowType(Qt::DownArrow);
+        sec.header->setCheckable(true);
+        sec.header->setChecked(true);
+        sec.header->setAutoRaise(true);
+        sec.header->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        sec.body = new QWidget(sec.container);
+        sec.grid = new QGridLayout(sec.body);
+        sec.grid->setSpacing(3);
+        sec.grid->setContentsMargins(10, 4, 6, 6);
+        sec.grid->setColumnStretch(1, 1);
+        v->addWidget(sec.header);
+        v->addWidget(sec.body);
+        connect(sec.header, &QToolButton::toggled, this, [sec](bool on) {
+            sec.body->setVisible(on);
+            sec.header->setArrowType(on ? Qt::DownArrow : Qt::RightArrow);
+        });
+        return sec;
+    };
 
-    auto* moveBox = new QGroupBox(tr("Zoom e Posição"), this);
-    auto* moveGrid = new QGridLayout(moveBox);
-    moveGrid->setSpacing(3);
-    moveGrid->setContentsMargins(6, 8, 6, 6);
-    moveGrid->setColumnStretch(1, 1);
-    addValRow(moveGrid, 0, tr("Zoom:"), m_scale, m_scaleVal, P_Scale);
-    addValRow(moveGrid, 1, tr("Pan X:"), m_panX, m_panXVal, P_PanX);
-    addValRow(moveGrid, 2, tr("Pan Y:"), m_panY, m_panYVal, P_PanY);
+    CollapsibleSection cropSec = makeSection(tr("Recorte"));
+    addValRow(cropSec.grid, 0, tr("Esquerda:"), m_cropL, m_cropLVal, P_CropL);
+    addValRow(cropSec.grid, 1, tr("Direita:"), m_cropR, m_cropRVal, P_CropR);
+    addValRow(cropSec.grid, 2, tr("Topo:"), m_cropT, m_cropTVal, P_CropT);
+    addValRow(cropSec.grid, 3, tr("Base:"), m_cropB, m_cropBVal, P_CropB);
 
-    auto* rotBox = new QGroupBox(tr("Rotação"), this);
-    auto* rotGrid = new QGridLayout(rotBox);
-    rotGrid->setSpacing(3);
-    rotGrid->setContentsMargins(6, 8, 6, 6);
-    rotGrid->setColumnStretch(1, 1);
-    addValRow(rotGrid, 0, tr("Ângulo:"), m_rotation, m_rotationVal, P_Rotation);
+    CollapsibleSection moveSec = makeSection(tr("Zoom e Posição"));
+    addValRow(moveSec.grid, 0, tr("Zoom:"), m_scale, m_scaleVal, P_Scale);
+    addValRow(moveSec.grid, 1, tr("Pan X:"), m_panX, m_panXVal, P_PanX);
+    addValRow(moveSec.grid, 2, tr("Pan Y:"), m_panY, m_panYVal, P_PanY);
+
+    CollapsibleSection rotSec = makeSection(tr("Transformação"));
+    addValRow(rotSec.grid, 0, tr("Ângulo:"), m_rotation, m_rotationVal, P_Rotation);
+    addValRow(rotSec.grid, 1, tr("Flatt X:"), m_scaleX, m_scaleXVal, P_ScaleX);
+    addValRow(rotSec.grid, 2, tr("Flatt Y:"), m_scaleY, m_scaleYVal, P_ScaleY);
 
     auto connectSlider = [&](QSlider* s, int prop) {
         connect(s, &QSlider::sliderReleased, this, [this]() { m_undoPushed = false; });
@@ -304,6 +353,12 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
                 case P_Rotation:
                     commitSlider(prop, (double)m_rotation->value());
                     break;
+                case P_ScaleX:
+                    commitSlider(prop, m_scaleX->value() / 100.0);
+                    break;
+                case P_ScaleY:
+                    commitSlider(prop, m_scaleY->value() / 100.0);
+                    break;
             }
             updateValueLabels();
             m_view->update();
@@ -317,17 +372,23 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     connectSlider(m_panX, P_PanX);
     connectSlider(m_panY, P_PanY);
     connectSlider(m_rotation, P_Rotation);
+    connectSlider(m_scaleX, P_ScaleX);
+    connectSlider(m_scaleY, P_ScaleY);
 
     auto* resetBtn = new QPushButton(tr("Redefinir"), this);
     resetBtn->setMinimumHeight(22);
-    resetBtn->setToolTip(tr("Zera recorte, zoom, posição e rotação do clipe"));
+    resetBtn->setToolTip(tr("Zera recorte, zoom, posição, rotação e achatamento "
+                            "(flatt) do clipe"));
     connect(resetBtn, &QPushButton::clicked, this, [this]() {
         QSignalBlocker b1(m_cropL), b2(m_cropR), b3(m_cropT), b4(m_cropB),
-                       b5(m_scale), b6(m_panX), b7(m_panY), b8(m_rotation);
+                       b5(m_scale), b6(m_panX), b7(m_panY), b8(m_rotation),
+                       b9(m_scaleX), b10(m_scaleY);
         m_cropL->setValue(0); m_cropR->setValue(0);
         m_cropT->setValue(0); m_cropB->setValue(0);
         m_scale->setValue(100); m_panX->setValue(0); m_panY->setValue(0);
         m_rotation->setValue(0);
+        m_scaleX->setValue((int)std::lround(kStretchCenter * 100.0));
+        m_scaleY->setValue((int)std::lround(kStretchCenter * 100.0));
         Clip* c = activeClip();
         if (c) {
             c->kfCropL.clear(); c->kfCropR.clear();
@@ -339,6 +400,8 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
             c->tx = c->ty = 0.0;
             c->kfRotation.clear();
             c->rotation = 0.0;
+            c->kfScaleX.clear(); c->kfScaleY.clear();
+            c->scaleX = c->scaleY = 1.0;
         }
         m_undoPushed = false;
         updateValueLabels();
@@ -388,9 +451,9 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     ctlLay->setSpacing(5);
     ctlLay->addLayout(kfBar);
     ctlLay->addWidget(m_strip);
-    ctlLay->addWidget(cropBox);
-    ctlLay->addWidget(moveBox);
-    ctlLay->addWidget(rotBox);
+    ctlLay->addWidget(cropSec.container);
+    ctlLay->addWidget(moveSec.container);
+    ctlLay->addWidget(rotSec.container);
     ctlLay->addWidget(resetBtn);
     ctlLay->addWidget(hint);
     ctlLay->addStretch(1);
@@ -404,19 +467,20 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     // Visual escuro, plano e minimalista (estilo Effect Controls do Premiere).
     setStyleSheet(QStringLiteral(
         "QWidget{background:#15161a;}"
-        "QGroupBox{border:1px solid #2a2d34; border-radius:4px; margin-top:14px;"
-        " background:#1c1e23;}"
-        "QGroupBox::title{subcontrol-origin:margin; left:8px; top:2px; padding:0 4px;"
-        " color:#9db2c8; font-weight:bold; font-size:11px;}"
+        "QToolButton#sectionHeader{background:transparent; border:none;"
+        " color:#e6ebf2; font-weight:bold; font-size:12px; padding:5px 6px;"
+        " text-align:left;}"
+        "QToolButton#sectionHeader:hover{background:#20222a; color:#ffffff;}"
+        "QToolButton#sectionHeader:checked{color:#8ab8e8;}"
         "QPushButton{border:1px solid #2e3138; border-radius:3px; background:#23252b;"
         " color:#c9cdd4; padding:2px 8px;}"
         "QPushButton:hover{background:#2b2e35; border-color:#3c414b;}"
         "QPushButton:checked{background:#243447; border-color:#3f6ea5; color:#9cc4f0;}"
-        "QSlider::groove:horizontal{height:3px; background:#2e3138; border-radius:1px;}"
-        "QSlider::sub-page:horizontal{background:#3f6ea5; border-radius:1px;}"
-        "QSlider::handle:horizontal{width:11px; margin:-4px 0; border-radius:5px;"
-        " background:#7aa7d4; border:1px solid #3f6ea5;}"
-        "QSlider::handle:horizontal:hover{background:#93bde8;}"
+        "QSlider::groove:horizontal{height:4px; background:#2a2d34; border-radius:2px;}"
+        "QSlider::sub-page:horizontal{background:#3f6ea5; border-radius:2px;}"
+        "QSlider::handle:horizontal{width:12px; margin:-4px 0; border-radius:6px;"
+        " background:#8fb4dd; border:1px solid #5582b5;}"
+        "QSlider::handle:horizontal:hover{background:#a9c6ea;}"
         "QLabel{color:#c9cdd4;}"));
 
     refreshDiamonds();
@@ -487,7 +551,9 @@ void PancropWidget::loadFrame() {
         const double ty = kfValue(c->kfTy, c->ty, rel);
         const double rot = kfValue(c->kfRotation, c->rotation, rel);
         const double s = kfValue(c->kfScale, c->scale, rel);
-        renderTextStyleFrame(img, st, tx, ty, rot, s);
+        const double sX = kfValue(c->kfScaleX, c->scaleX, rel);
+        const double sY = kfValue(c->kfScaleY, c->scaleY, rel);
+        renderTextStyleFrame(img, st, tx, ty, rot, s, sX, sY);
         m_frame = img;
         m_framePath.clear();
         return;
@@ -516,9 +582,12 @@ void PancropWidget::syncFromClip() {
     const double tx = c ? kfValue(c->kfTx, c->tx, rel) : 0.0;
     const double ty = c ? kfValue(c->kfTy, c->ty, rel) : 0.0;
     const double rot = c ? kfValue(c->kfRotation, c->rotation, rel) : 0.0;
+    const double sx = c ? kfValue(c->kfScaleX, c->scaleX, rel) : 1.0;
+    const double sy = c ? kfValue(c->kfScaleY, c->scaleY, rel) : 1.0;
 
     QSignalBlocker b1(m_cropL), b2(m_cropR), b3(m_cropT), b4(m_cropB);
     QSignalBlocker b5(m_scale), b6(m_panX), b7(m_panY), b8(m_rotation);
+    QSignalBlocker b9(m_scaleX), b10(m_scaleY);
     m_cropL->setValue((int)std::lround(L * 100.0));
     m_cropR->setValue((int)std::lround(R * 100.0));
     m_cropT->setValue((int)std::lround(T * 100.0));
@@ -527,6 +596,8 @@ void PancropWidget::syncFromClip() {
     m_panX->setValue((int)std::lround(std::clamp(tx / W * 100.0, -100.0, 100.0)));
     m_panY->setValue((int)std::lround(std::clamp(ty / H * 100.0, -100.0, 100.0)));
     m_rotation->setValue((int)std::lround(std::clamp(rot, -double(kRotMax), double(kRotMax))));
+    m_scaleX->setValue((int)std::lround(std::clamp(sx, kMinStretch / 100.0, kMaxStretch / 100.0) * 100.0));
+    m_scaleY->setValue((int)std::lround(std::clamp(sy, kMinStretch / 100.0, kMaxStretch / 100.0) * 100.0));
     updateValueLabels();
     refreshDiamonds();
 }
@@ -540,6 +611,8 @@ void PancropWidget::updateValueLabels() {
     const int px = m_panX->value();
     const int py = m_panY->value();
     const int rot = m_rotation->value();
+    const int sx = m_scaleX->value();
+    const int sy = m_scaleY->value();
     auto fmt = [](int v) { return QStringLiteral("%1%").arg(v); };
     if (m_cropLVal) m_cropLVal->setText(fmt(L));
     if (m_cropRVal) m_cropRVal->setText(fmt(R));
@@ -549,6 +622,8 @@ void PancropWidget::updateValueLabels() {
     if (m_panXVal) m_panXVal->setText(fmt(px));
     if (m_panYVal) m_panYVal->setText(fmt(py));
     if (m_rotationVal) m_rotationVal->setText(QStringLiteral("%1°").arg(rot));
+    if (m_scaleXVal) m_scaleXVal->setText(fmt(sx));
+    if (m_scaleYVal) m_scaleYVal->setText(fmt(sy));
 }
 
 double PancropWidget::relPlayhead() {
@@ -569,6 +644,8 @@ QVector<Keyframe>* PancropWidget::keyframesFor(int prop) {
         case P_PanX:  return &c->kfTx;
         case P_PanY:  return &c->kfTy;
         case P_Rotation: return &c->kfRotation;
+        case P_ScaleX: return &c->kfScaleX;
+        case P_ScaleY: return &c->kfScaleY;
     }
     return nullptr;
 }
@@ -590,6 +667,10 @@ double PancropWidget::propValue(int prop) const {
         }
         case P_Rotation:
             return m_rotation->value();
+        case P_ScaleX:
+            return m_scaleX->value() / 100.0;
+        case P_ScaleY:
+            return m_scaleY->value() / 100.0;
     }
     return 0.0;
 }
@@ -648,7 +729,8 @@ void PancropWidget::gotoKeyframe(int dir) {
     Clip* c = activeClip();
     if (!c) return;
     const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
-                         P_Scale, P_PanX, P_PanY, P_Rotation};
+                         P_Scale, P_PanX, P_PanY, P_Rotation,
+                         P_ScaleX, P_ScaleY};
     QVector<double> times;
     for (int prop : props) {
         QVector<Keyframe>* kf = keyframesFor(prop);
@@ -707,6 +789,8 @@ void PancropWidget::commitSlider(int prop, double baseValue) {
         case P_PanX:  c->tx = baseValue; break;
         case P_PanY:  c->ty = baseValue; break;
         case P_Rotation: c->rotation = baseValue; break;
+        case P_ScaleX: c->scaleX = baseValue; break;
+        case P_ScaleY: c->scaleY = baseValue; break;
     }
     if (m_kfAuto && m_kfAuto->isChecked())
         writeKeyframe(prop, baseValue);
@@ -985,6 +1069,16 @@ void PancropWidget::paintViewfinder(QWidget* view) {
     p.drawRect(outDisp);
 
     p.restore();
+
+    // Safe margins (title-safe/action-safe) relativas à janela de saída,
+    // como no monitor do Premiere.
+    p.setBrush(Qt::NoBrush);
+    p.setPen(QPen(QColor(255, 255, 255, 45), 1));
+    p.drawRect(outDisp.adjusted(outDisp.width() * 0.05, outDisp.height() * 0.05,
+                                -outDisp.width() * 0.05, -outDisp.height() * 0.05));
+    p.setPen(QColor(255, 255, 255, 28));
+    p.drawRect(outDisp.adjusted(outDisp.width() * 0.10, outDisp.height() * 0.10,
+                                -outDisp.width() * 0.10, -outDisp.height() * 0.10));
 }
 
 void PancropWidget::viewportPress(QWidget* view, QMouseEvent* e) {
@@ -1210,7 +1304,8 @@ void PancropWidget::paintKeyframeStrip(QWidget* view) {
 
     // Keyframes: coleta os tempos únicos de todas as propriedades.
     const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
-                         P_Scale, P_PanX, P_PanY, P_Rotation};
+                         P_Scale, P_PanX, P_PanY, P_Rotation,
+                         P_ScaleX, P_ScaleY};
     QVector<double> times;
     for (int prop : props) {
         QVector<Keyframe>* kf = keyframesFor(prop);
@@ -1259,7 +1354,8 @@ void PancropWidget::stripPress(QWidget* view, QMouseEvent* e) {
     // losango (vertical) para não roubar o arraste da agulha quando o playhead
     // está exatamente sobre um keyframe.
     const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
-                         P_Scale, P_PanX, P_PanY, P_Rotation};
+                         P_Scale, P_PanX, P_PanY, P_Rotation,
+                         P_ScaleX, P_ScaleY};
     QVector<double> times;
     for (int prop : props) {
         QVector<Keyframe>* kf = keyframesFor(prop);
@@ -1341,7 +1437,8 @@ void PancropWidget::stripMove(QWidget* view, QMouseEvent* e) {
     // Move o tempo de TODAS as propriedades que tinham keyframe na posição
     // original (preserva o agrupamento visual no playhead).
     const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
-                         P_Scale, P_PanX, P_PanY, P_Rotation};
+                         P_Scale, P_PanX, P_PanY, P_Rotation,
+                         P_ScaleX, P_ScaleY};
     for (int prop : props) {
         QVector<Keyframe>* kf = keyframesFor(prop);
         if (!kf) continue;
@@ -1390,7 +1487,8 @@ void PancropWidget::stripDoubleClick(QWidget* view, QMouseEvent* e) {
     const double rel = frac * dur;
 
     const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
-                         P_Scale, P_PanX, P_PanY, P_Rotation};
+                         P_Scale, P_PanX, P_PanY, P_Rotation,
+                         P_ScaleX, P_ScaleY};
     // Já existe keyframe nesse instante: nada a fazer.
     for (int prop : props) {
         QVector<Keyframe>* kf = keyframesFor(prop);
@@ -1416,6 +1514,8 @@ void PancropWidget::stripDoubleClick(QWidget* view, QMouseEvent* e) {
             case P_PanX:  k.value = kfValue(c->kfTx, c->tx, rel); break;
             case P_PanY:  k.value = kfValue(c->kfTy, c->ty, rel); break;
             case P_Rotation: k.value = kfValue(c->kfRotation, c->rotation, rel); break;
+            case P_ScaleX: k.value = kfValue(c->kfScaleX, c->scaleX, rel); break;
+            case P_ScaleY: k.value = kfValue(c->kfScaleY, c->scaleY, rel); break;
         }
         kf->append(k);
         std::sort(kf->begin(), kf->end(),
@@ -1433,7 +1533,8 @@ void PancropWidget::deleteSelectedKeyframes() {
     Clip* c = activeClip();
     if (!c || m_selectedTimes.isEmpty()) return;
     const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
-                         P_Scale, P_PanX, P_PanY, P_Rotation};
+                         P_Scale, P_PanX, P_PanY, P_Rotation,
+                         P_ScaleX, P_ScaleY};
     if (!m_undoPushed) { emit editStart(); m_undoPushed = true; }
     for (double t : m_selectedTimes) {
         for (int prop : props) {
@@ -1458,7 +1559,8 @@ void PancropWidget::stripContextMenu(QWidget* view, QContextMenuEvent* e) {
     const double dur = std::max(c->dur, 1e-3);
 
     const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
-                         P_Scale, P_PanX, P_PanY, P_Rotation};
+                         P_Scale, P_PanX, P_PanY, P_Rotation,
+                         P_ScaleX, P_ScaleY};
     QVector<double> times;
     for (int prop : props) {
         QVector<Keyframe>* kf = keyframesFor(prop);

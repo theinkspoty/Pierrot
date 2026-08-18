@@ -506,6 +506,15 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                      << "-i" << QString("color=c=black@0.0:s=%1x%2:r=%3:d=%4")
                                     .arg(W).arg(H).arg(FPS).arg(num(v.c->dur * v.c->speed));
             }
+        } else if (v.m->isSolid) {
+            // Cor sólida (gerador estilo Vegas): input lavfi com a cor sólida.
+            args << "-f" << "lavfi"
+                 << "-i" << QString("color=c=%1:s=%2x%3:r=%4:d=%5")
+                                .arg(hexColor(v.m->solidColor))
+                                .arg(v.m->width > 0 ? v.m->width : W)
+                                .arg(v.m->height > 0 ? v.m->height : H)
+                                .arg(FPS)
+                                .arg(num(v.c->dur * v.c->speed));
         } else if (isImageFile(v.m->filePath)) {
             // Imagem estática: loop contínuo na taxa do projeto, limitado à
             // duração do clipe.
@@ -639,13 +648,35 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                 fc.last().append(QLatin1Char(',') + dt);
             }
             // Transformação (zoom, movimento, rotação) — antes dos efeitos.
-            if (v.c->scale != 1.0 || !v.c->kfScale.isEmpty()) {
-                if (v.c->kfScale.isEmpty())
-                    fc.last().append(QStringLiteral(",scale=w=iw*%1:h=ih*%1")
-                                         .arg(num(v.c->scale)));
+            // Escala efetiva em cada eixo = scale (uniforme) × scaleX/scaleY
+            // (achatamento não-uniforme). Sempre que houver escala não uniforme
+            // aplicamos X e Y separadamente.
+            const bool xStretch = v.c->scaleX != 1.0 || !v.c->kfScaleX.isEmpty();
+            const bool yStretch = v.c->scaleY != 1.0 || !v.c->kfScaleY.isEmpty();
+            if (v.c->scale != 1.0 || !v.c->kfScale.isEmpty() || xStretch || yStretch) {
+                const QString sxExpr =
+                    (v.c->kfScale.isEmpty()
+                         ? QStringLiteral("%1").arg(num(v.c->scale))
+                         : QStringLiteral("(%1)").arg(scaleExpr))
+                    + (v.c->kfScaleX.isEmpty()
+                           ? QStringLiteral("*%1").arg(num(v.c->scaleX))
+                           : QStringLiteral("*(%1)").arg(kfExpr(v.c->kfScaleX, v.c->scaleX, pos)));
+                const QString syExpr =
+                    (v.c->kfScale.isEmpty()
+                         ? QStringLiteral("%1").arg(num(v.c->scale))
+                         : QStringLiteral("(%1)").arg(scaleExpr))
+                    + (v.c->kfScaleY.isEmpty()
+                           ? QStringLiteral("*%1").arg(num(v.c->scaleY))
+                           : QStringLiteral("*(%1)").arg(kfExpr(v.c->kfScaleY, v.c->scaleY, pos)));
+                const bool hasAnim = !v.c->kfScale.isEmpty()
+                    || xStretch || yStretch;
+                if (hasAnim)
+                    fc.last().append(QStringLiteral(",scale=w='iw*(%1)':h='ih*(%2)':eval=frame")
+                                         .arg(sxExpr, syExpr));
                 else
-                    fc.last().append(QStringLiteral(",scale=w='iw*(%1)':h='ih*(%1)':eval=frame")
-                                         .arg(scaleExpr));
+                    fc.last().append(QStringLiteral(",scale=w=iw*%1:h=ih*%2")
+                                         .arg(num(v.c->scale * v.c->scaleX),
+                                              num(v.c->scale * v.c->scaleY)));
             }
             if (v.c->rotation != 0.0 || !v.c->kfRotation.isEmpty()) {
                 // Texto: a imagem já é W×H e o preview RECORTA a rotação ao
@@ -653,18 +684,24 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                 // centrado e rotacionando em torno do centro, igual ao preview.
                 // Para vídeo/imagem, o canvas ampliado evita cortar as quinas.
                 const int rotW = (v.m == nullptr) ? W : [&]() {
-                    const double maxS = std::max(1.0, maxAbsKf(v.c->kfScale, v.c->scale));
+                    const double maxX = std::max(1.0, maxAbsKf(v.c->kfScale, v.c->scale)
+                                                      * maxAbsKf(v.c->kfScaleX, v.c->scaleX));
+                    const double maxY = std::max(1.0, maxAbsKf(v.c->kfScale, v.c->scale)
+                                                      * maxAbsKf(v.c->kfScaleY, v.c->scaleY));
                     const double aRad = maxAbsKf(v.c->kfRotation, v.c->rotation) * kPi / 180.0;
                     const double cAng = std::fabs(std::cos(aRad));
                     const double sAng = std::fabs(std::sin(aRad));
-                    return std::max(2, (int)std::ceil(W * maxS * cAng + H * maxS * sAng));
+                    return std::max(2, (int)std::ceil(W * maxX * cAng + H * maxY * sAng));
                 }();
                 const int rotH = (v.m == nullptr) ? H : [&]() {
-                    const double maxS = std::max(1.0, maxAbsKf(v.c->kfScale, v.c->scale));
+                    const double maxX = std::max(1.0, maxAbsKf(v.c->kfScale, v.c->scale)
+                                                      * maxAbsKf(v.c->kfScaleX, v.c->scaleX));
+                    const double maxY = std::max(1.0, maxAbsKf(v.c->kfScale, v.c->scale)
+                                                      * maxAbsKf(v.c->kfScaleY, v.c->scaleY));
                     const double aRad = maxAbsKf(v.c->kfRotation, v.c->rotation) * kPi / 180.0;
                     const double cAng = std::fabs(std::cos(aRad));
                     const double sAng = std::fabs(std::sin(aRad));
-                    return std::max(2, (int)std::ceil(W * maxS * sAng + H * maxS * cAng));
+                    return std::max(2, (int)std::ceil(W * maxX * sAng + H * maxY * cAng));
                 }();
                 // Texto tem fundo transparente: rotação preenche com transparente,
                 // não preto (senão as quinas cobrem o vídeo de baixo).

@@ -25,6 +25,11 @@ struct MediaItem {
     int audioStreams = 0;
     // Canais por stream de áudio (índice = stream; usado p/ exibir e validar).
     QVector<int> audioChannels;
+    // Mídia gerada (sem arquivo): cor sólida (gerador estilo Vegas). Quando
+    // true, filePath fica vazio e o clipe é renderizado/exportado como um
+    // quadro preenchido com solidColorValue.
+    bool isSolid = false;
+    QColor solidColor{Qt::black};
 };
 
 struct Marker {
@@ -201,6 +206,10 @@ struct Clip {
     double tx = 0.0;
     double ty = 0.0;
     double scale = 1.0;
+    // Achatamento/esticamento não-uniforme (escala X e Y independentes; 1.0 =
+    // neutro, stica/encolhe em cada eixo sem afetar o outro).
+    double scaleX = 1.0;
+    double scaleY = 1.0;
     double rotation = 0.0;
 
     // Pan/Crop (fração de cada borda removida, 0..1 do quadro original).
@@ -225,6 +234,8 @@ struct Clip {
     QVector<Keyframe> kfTy;
     QVector<Keyframe> kfScale;
     QVector<Keyframe> kfRotation;
+    QVector<Keyframe> kfScaleX;
+    QVector<Keyframe> kfScaleY;
     QVector<Keyframe> kfCropL;
     QVector<Keyframe> kfCropR;
     QVector<Keyframe> kfCropT;
@@ -233,8 +244,10 @@ struct Clip {
     // True se o clipe possui qualquer transformação ativa.
     bool hasTransform() const {
         return tx != 0.0 || ty != 0.0 || scale != 1.0 || rotation != 0.0
+            || scaleX != 1.0 || scaleY != 1.0
             || !kfTx.isEmpty() || !kfTy.isEmpty()
-            || !kfScale.isEmpty() || !kfRotation.isEmpty();
+            || !kfScale.isEmpty() || !kfRotation.isEmpty()
+            || !kfScaleX.isEmpty() || !kfScaleY.isEmpty();
     }
 
     // True se algum pan/crop (estático ou animado) está ativo.

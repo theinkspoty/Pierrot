@@ -53,6 +53,8 @@ public:
 
     double playhead() const { return m_playhead; }
     void setPlayhead(double t);
+    // Posição da agulha "ponteiro" branca (=-1 se ainda não posicionada).
+    double cursorPos() const { return m_cursorT; }
     // Último clipe selecionado (ou vazio se não houver seleção).
     QString lastSelectedId() const {
         return m_selected.isEmpty() ? QString() : m_selected.last();
@@ -69,6 +71,8 @@ public slots:
     void deleteSelected();
     void deleteSelection(); // clipes selecionados, ou faixas selecionadas se não houver clipes
     void deleteSelectedLeaveGap();
+    void deleteLoopRipple();
+    void deleteLoopLeaveGap();
     void deleteClipBeforePlayhead();
     void deleteClipAfterPlayhead();
     void zoomBy(double factor, double centerT);
@@ -96,6 +100,8 @@ signals:
     void playheadChanged(double t);
     void modified();
     void playPauseRequested();
+    // Enter (estilo Vegas): tocar a partir da posição da agulha/ponteiro.
+    void playFromCursor();
     void editStart();
     void toolChanged(int tool);
     void loopChanged(double in, double out);
@@ -117,7 +123,9 @@ protected:
     void dragLeaveEvent(QDragLeaveEvent*) override;
     void dropEvent(QDropEvent*) override;
 private:
-    enum DragMode { None, MoveClip, TrimLeft, TrimRight, ResizeSpeed, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, ResizeTrack, TrackVol, ClipVol, TrackDrag };
+    enum DragMode { None, MoveClip, TrimLeft, TrimRight, ResizeSpeed, FadeIn, FadeOut, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, RulerLoopEdge, ResizeTrack, TrackVol, ClipVol, TrackDrag };
+    // Qual borda da região de loop está sendo arrastada (RulerLoopEdge).
+    enum LoopEdge { LoopEdgeNone = -1, LoopEdgeIn = 0, LoopEdgeOut = 1 };
     struct ClipOrig { double pos = 0.0, in = 0.0, dur = 0.0, speed = 1.0; };
     struct ClipboardEntry { Clip clip; int track = 0; bool audio = false; };
     struct TrackSel {
@@ -216,6 +224,9 @@ private:
 
     Project* m_project = nullptr;
     double m_playhead = 0.0;
+    // Agulha "ponteiro" branca (estilo Vegas): posição do cursor na régua,
+    // separada e independente do playhead de reprodução (m_playhead). -1 = oculta.
+    double m_cursorT = -1.0;
     double m_pps = 80.0;
     double m_viewStart = 0.0;
     int m_viewTop = 0;
@@ -237,7 +248,10 @@ private:
     double m_dragOrigPos = 0.0;
     double m_dragOrigIn = 0.0;
     double m_dragOrigDur = 0.0;
+    double m_dragOrigFade = 0.0; // valor original de fadeIn/fadeOut ao arrastar
     double m_loopPressT = 0.0;
+    int m_loopEdge = LoopEdgeNone;   // borda da região de loop sendo arrastada
+    double m_loopEdgeOther = 0.0;    // borda oposta mantida fixa durante o arraste
     double m_razorT = 0.0;
     double m_zoomT0 = 0.0;
     double m_zoomT1 = 0.0;
@@ -261,6 +275,11 @@ private:
     QString m_dragGroupId; // grupo sendo arrastado pela faixa de pasta (vazio = faixa única)
     int m_dragHoverRow = -1;
     bool m_dragHoverAudio = false;
+    // Prévia do clipe (estilo Premiere) durante o arrasto de mídia: instante e
+    // duração da mídia para desenhar a "fantasma" do tamanho certo na faixa.
+    double m_dragHoverT = 0.0;
+    double m_dragHoverDur = 0.0;
+    QString m_dragHoverName;
     int m_volRow = -1;
     double m_volOrig = 1.0;
     QString m_volClip;      // clipe cujo volume está sendo ajustado

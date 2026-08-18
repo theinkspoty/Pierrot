@@ -108,16 +108,6 @@ QString fmtRuler(double t) {
         .arg(total % 60, 2, 10, QLatin1Char('0'));
 }
 
-// fps do stream de vídeo do arquivo, com cache (o probe abre o arquivo).
-double sourceFps(const QString& path) {
-    static QHash<QString, double> cache;
-    const auto it = cache.constFind(path);
-    if (it != cache.constEnd()) return it.value();
-    const FFmpegMediaInfo info = FFmpegDecoder::probe(path);
-    cache.insert(path, info.fps);
-    return info.fps;
-}
-
 // Remove os clipes selecionados de uma faixa e desloca os que estão à
 // direita da lacuna removida para a esquerda (edição ripple).
 void rippleDeleteInTrack(Track& t, const QStringList& sel) {
@@ -238,6 +228,7 @@ void TimelineWidget::setProject(Project* p) {
     clearTrackSelection();
     m_clipPix.clear();
     m_clipBytes = 0;
+    m_cursorT = -1.0;
     emit selectionChanged(QString());
     invalidateScene();
     updateScrollRanges();
@@ -580,10 +571,14 @@ void TimelineWidget::ensurePlayheadVisible() {
     if (!m_project) return;
     const double px = timeToX(m_playhead);
     const int viewW = width() - m_vbar->sizeHint().width();
+    // Follow contínuo (estilo Vegas): durante a reprodução a rolagem acompanha
+    // a agulha mantendo-a perto de 2/3 da largura, em vez de esperar ela sair
+    // da tela e "pular". Assim a view avança suavemente a cada frame.
+    const double rightEdge = kHeaderW + (viewW - kHeaderW) * (2.0 / 3.0);
     if (px < kHeaderW) {
         m_hbar->setValue((int)((m_playhead - (viewW - kHeaderW) * 0.2) * m_pps));
-    } else if (px > viewW) {
-        m_hbar->setValue((int)((m_playhead - (viewW - kHeaderW) * 0.8) * m_pps));
+    } else if (px > rightEdge) {
+        m_hbar->setValue((int)((m_playhead - (viewW - kHeaderW) * (2.0 / 3.0)) * m_pps));
     }
     m_viewStart = m_hbar->value() / m_pps;
 }
@@ -619,6 +614,7 @@ void TimelineWidget::stopAutoScroll() {
 // cursor para que a operação continue na nova área visível.
 void TimelineWidget::autoScrollTick() {
     if (m_dragMode != PlayheadDrag && m_dragMode != RulerLoop
+        && m_dragMode != RulerLoopEdge
         && m_dragMode != MoveClip && m_dragMode != TrimLeft
         && m_dragMode != TrimRight) {
         stopAutoScroll();
@@ -632,9 +628,16 @@ void TimelineWidget::autoScrollTick() {
     m_hbar->setValue(v);
 
     // Recalcula a operação na nova posição da view.
-    QMouseEvent ev(QEvent::MouseMove, m_autoScrollMouse,
-                   mapToGlobal(m_autoScrollMouse), Qt::LeftButton,
-                   Qt::LeftButton, Qt::NoModifier);
+    const double autoT = std::max(0.0, snapTime(xToTime(m_autoScrollMouse.x())));
+    if (m_dragMode == RulerLoopEdge) {
+        if (m_loopEdge == LoopEdgeIn)
+            m_loopIn = std::min(autoT, m_loopEdgeOther - 0.02);
+        else
+            m_loopOut = std::max(autoT, m_loopEdgeOther + 0.02);
+        emit loopChanged(m_loopIn, m_loopOut);
+        update();
+        return;
+    }
     if (m_dragMode == PlayheadDrag || m_dragMode == RulerLoop) {
         const double t2 = std::max(0.0, snapTime(xToTime(m_autoScrollMouse.x())));
         setPlayhead(t2);
@@ -642,6 +645,10 @@ void TimelineWidget::autoScrollTick() {
         update();
         return;
     }
+    // MoveClip/TrimLeft/TrimRight: reposiciona a operação sob o cursor.
+    QMouseEvent ev(QEvent::MouseMove, m_autoScrollMouse,
+                   mapToGlobal(m_autoScrollMouse), Qt::LeftButton,
+                   Qt::LeftButton, Qt::NoModifier);
     mouseMoveEvent(&ev);
 }
 
@@ -879,6 +886,18 @@ void TimelineWidget::renderOverlays(QPainter& p) {
         p.setPen(QColor(255, 200, 40, 170));
         p.drawLine(lx0, R, lx0, height());
         p.drawLine(lx1, R, lx1, height());
+        // "Lapelinha" de ajuste em cada borda (estilo Vegas): aba arrastável que
+        // puxa só aquela borda da região sem recriar a seleção.
+        auto drawEdgeTab = [&](int ex) {
+            const QRect tab(ex - 4, 0, 8, R);
+            p.setPen(QPen(QColor(40, 34, 8), 1));
+            p.setBrush(QColor(255, 200, 40));
+            p.drawRect(tab);
+            p.setPen(QColor(90, 70, 10));
+            p.drawLine(ex, 3, ex, R - 3);
+        };
+        drawEdgeTab(lx0);
+        drawEdgeTab(lx1);
     }
 
     const double px = H + (m_playhead - m_viewStart) * m_pps;
@@ -893,6 +912,21 @@ void TimelineWidget::renderOverlays(QPainter& p) {
         p.setPen(Qt::NoPen);
         p.setBrush(QColor(255, 70, 70));
         p.drawPolygon(tri);
+    }
+
+    // Agulha "ponteiro" branca (estilo Vegas): posição do cursor na régua,
+    // independente do playhead de reprodução. Fica parada onde você deixou.
+    if (m_cursorT >= 0.0) {
+        const double cx = timeToX(m_cursorT);
+        if (cx >= H && cx <= width()) {
+            p.setPen(QPen(QColor(255, 255, 255, 230), 1));
+            p.drawLine((int)cx, R, (int)cx, height());
+            QPolygon ctri;
+            ctri << QPoint((int)cx - 5, 0) << QPoint((int)cx + 5, 0) << QPoint((int)cx, 8);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(255, 255, 255, 235));
+            p.drawPolygon(ctri);
+        }
     }
 
     if (m_dragMode == Razor) {
@@ -923,14 +957,29 @@ void TimelineWidget::renderOverlays(QPainter& p) {
         }
     }
 
-    // Feedback de arrasto vindo da mídia: destaca a faixa-alvo.
-    if (m_dragHoverRow >= 0) {
+    // Prévia de arrasto vindo da mídia (estilo Premiere): em vez de destacar a
+    // faixa inteira, desenha uma "fantasma" do clipe no tamanho/posição em que
+    // vai ser inserido (daí o nome + duração), com uma linha fina no instante.
+    if (m_dragHoverRow >= 0 && m_dragHoverDur > 0.0) {
         const int hy = m_dragHoverAudio ? rowY(-1, m_dragHoverRow)
                                         : rowY(m_dragHoverRow, -1);
         const int hh = trackH(m_dragHoverRow, m_dragHoverAudio);
-        p.setPen(QPen(QColor(80, 160, 255, 220), 2));
-        p.drawRect(H + 1, hy + 1, width() - H - 2, hh - 2);
-        p.fillRect(H, hy, width() - H, hh, QColor(80, 160, 255, 26));
+        const int gx0 = (int)timeToX(m_dragHoverT);
+        const int gx1 = (int)timeToX(m_dragHoverT + m_dragHoverDur);
+        // Borda do clipe fantasma (azul claro; preenchimento transparente).
+        const QRect ghost(gx0, hy + 2, qMax(1, gx1 - gx0), hh - 4);
+        p.setPen(QPen(QColor(140, 200, 255), 1));
+        p.fillRect(ghost.adjusted(1, 1, -1, -1), QColor(90, 165, 255, 95));
+        p.drawRect(ghost);
+        // Nome do clipe centralizado, como no Preview do Premiere.
+        if (!m_dragHoverName.isEmpty() && ghost.width() > 40) {
+            p.setPen(QColor(210, 235, 255));
+            p.drawText(ghost.adjusted(6, 0, -6, 0), Qt::AlignVCenter | Qt::AlignLeft,
+                       m_dragHoverName);
+        }
+        // Linha vertical fina no instante do drop.
+        p.setPen(QColor(140, 200, 255, 180));
+        p.drawLine(gx0, hy, gx0, hy + hh);
     }
 
     // Arrasto de faixa/grupo: indica onde vai entrar (linha ou pasta).
@@ -991,6 +1040,8 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
             drawAudioWaveform(cp, cr, c, path);
         else if (c.isText)
             drawTextClipBody(cp, cr, c);
+        else if (mi && mi->isSolid)
+            cp.fillRect(cr, mi->solidColor); // cor sólida (gerador estilo Vegas)
         else
             drawVideoThumbs(cp, cr, c, path);
         drawFadeCorners(cp, cr, c);
@@ -1228,26 +1279,48 @@ void TimelineWidget::drawEnvelope(QPainter& p, const QRect& r, const Clip& c, bo
 }
 
 void TimelineWidget::drawFadeCorners(QPainter& p, const QRect& r, const Clip& c) {
-    if (c.fadeIn <= 0 && c.fadeOut <= 0) return;
     const double dur = std::max(c.dur, kMinDur);
     const int fi = (int)std::round(std::min(c.fadeIn, dur) / dur * r.width());
     const int fo = (int)std::round(std::min(c.fadeOut, dur) / dur * r.width());
+    // Alça sempre visível no canto superior (estilo Vegas): um pequeno triângulo
+    // "tab" no canto indica que ali dá pra arrastar para criar/ajustar o fade.
+    auto drawCornerTab = [&](bool right, int len) {
+        const bool active = len > 0;
+        QPainterPath tab;
+        if (!right) {
+            tab.moveTo(r.left() + 1, r.top() + 2);
+            tab.lineTo(r.left() + 1, r.top() + 10);
+            tab.lineTo(r.left() + 9, r.top() + 2);
+        } else {
+            tab.moveTo(r.right() - 1, r.top() + 2);
+            tab.lineTo(r.right() - 1, r.top() + 10);
+            tab.lineTo(r.right() - 9, r.top() + 2);
+        }
+        tab.closeSubpath();
+        p.setPen(Qt::NoPen);
+        p.setBrush(active ? QColor(255, 200, 90) : QColor(255, 255, 255, 70));
+        p.drawPath(tab);
+    };
+    drawCornerTab(false, fi);
+    drawCornerTab(true, fo);
+
+    // Rampa semi-transparente cobrindo o trecho do fade (só quando > 0).
     QPainterPath path;
     if (fi > 0) {
-        path.moveTo(r.left(), r.bottom());
-        path.lineTo(r.left() + fi, r.bottom());
-        path.lineTo(r.left(), r.bottom() - fi);
+        path.moveTo(r.left(), r.top());
+        path.lineTo(r.left() + fi, r.top());
+        path.lineTo(r.left() + fi, r.top() + fi);
         path.closeSubpath();
     }
     if (fo > 0) {
-        path.moveTo(r.right(), r.bottom());
-        path.lineTo(r.right() - fo, r.bottom());
-        path.lineTo(r.right(), r.bottom() - fo);
+        path.moveTo(r.right(), r.top());
+        path.lineTo(r.right() - fo, r.top());
+        path.lineTo(r.right() - fo, r.top() + fo);
         path.closeSubpath();
     }
     if (!path.isEmpty()) {
         p.setPen(Qt::NoPen);
-        p.setBrush(QColor(0, 0, 0, 130));
+        p.setBrush(QColor(0, 0, 0, 110));
         p.drawPath(path);
     }
 }
@@ -1295,6 +1368,8 @@ void TimelineWidget::drawKeyframeDiamonds(QPainter& p, const QRect& r,
     } else {
         sets.append(KfSet{&c.kfOpacity, QColor(255, 255, 255)});
         sets.append(KfSet{&c.kfScale, QColor(90, 200, 255)});
+        sets.append(KfSet{&c.kfScaleX, QColor(80, 220, 220)});
+        sets.append(KfSet{&c.kfScaleY, QColor(80, 220, 220)});
         sets.append(KfSet{&c.kfRotation, QColor(210, 150, 255)});
         sets.append(KfSet{&c.kfTx, QColor(255, 200, 90)});
         sets.append(KfSet{&c.kfTy, QColor(255, 160, 90)});
@@ -1708,6 +1783,9 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
     m_volPending = false;
 
     if (y < kRulerH) {
+        // Marca o ponteiro branco no ponto clicado da régua.
+        m_cursorT = std::max(0.0, xToTime(x));
+        update();
         const int zx0 = 6;
         if (x >= zx0 && x < zx0 + kZoomW) {
             const bool zoomIn = x >= zx0 + kZoomW / 2;
@@ -1717,6 +1795,30 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
         if (e->modifiers() & Qt::ControlModifier) {
             toggleMarker(xToTime(x));
             return;
+        }
+        // Borda da região de loop: segurar perto da "lapelinha" permite ajustar
+        // só aquela borda sem criar uma região nova (como no Vegas/Premiere).
+        if (m_loopOut > m_loopIn) {
+            const double inPx = timeToX(m_loopIn);
+            const double outPx = timeToX(m_loopOut);
+            if (std::fabs(x - outPx) <= 7) {
+                m_dragMode = RulerLoopEdge;
+                m_loopEdge = LoopEdgeOut;
+                m_loopEdgeOther = m_loopIn;
+                m_dragStart = e->pos();
+                setCursor(Qt::SizeHorCursor);
+                update();
+                return;
+            }
+            if (std::fabs(x - inPx) <= 7) {
+                m_dragMode = RulerLoopEdge;
+                m_loopEdge = LoopEdgeIn;
+                m_loopEdgeOther = m_loopOut;
+                m_dragStart = e->pos();
+                setCursor(Qt::SizeHorCursor);
+                update();
+                return;
+            }
         }
         // Perto da agulha: arrasta o playhead. Fora dela: clique define o
         // playhead e arrasto define a região de loop.
@@ -1956,9 +2058,23 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
                 const int cx = (int)timeToX(clip->pos);
                 const int cw = (int)(clip->dur * m_pps);
                 const int dx = x - cx;
-                if (dx <= 8) m_dragMode = TrimLeft;
-                else if (cw - dx <= 8) m_dragMode = TrimRight;
-                else m_dragMode = MoveClip;
+                // Alça de fade (estilo Vegas): no CANTINHO SUPERIOR do clipe.
+                // Arrastar o canto esquerdo/certo ajusta fade-in/fade-out, sem
+                // conflitar com o trim (que fica na borda lateral).
+                const bool nearTop = (y - rowY(row, audio)) <= 12;
+                if (nearTop && dx <= 10) {
+                    m_dragMode = FadeIn;
+                    m_dragOrigFade = clip->fadeIn;
+                } else if (nearTop && cw - dx <= 10) {
+                    m_dragMode = FadeOut;
+                    m_dragOrigFade = clip->fadeOut;
+                } else if (dx <= 8) {
+                    m_dragMode = TrimLeft;
+                } else if (cw - dx <= 8) {
+                    m_dragMode = TrimRight;
+                } else {
+                    m_dragMode = MoveClip;
+                }
             }
             if (trackLocked(clip)) m_dragMode = None; // faixa travada: só seleciona
             m_dragClip = clip->id;
@@ -2008,6 +2124,16 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
 
 void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
     if (!m_project) return;
+
+    // Agulha "ponteiro" branca: segue o cursor enquanto ele está sobre a régua
+    // e fica parada na última posição (independente da agulha de reprodução).
+    if (e->pos().y() < kRulerH) {
+        const double nt = std::max(0.0, xToTime(e->pos().x()));
+        if (std::fabs(nt - m_cursorT) > 1e-9) {
+            m_cursorT = nt;
+            update();
+        }
+    }
 
     if (e->buttons() & Qt::LeftButton) {
         // Arrasto de faixa ou grupo: cruza o limiar e passa a mover/reordenar.
@@ -2153,6 +2279,18 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
             update();
             return;
         }
+        if (m_dragMode == RulerLoopEdge) {
+            const double cur = std::max(0.0, snapTime(xToTime(e->pos().x())));
+            if (m_loopEdge == LoopEdgeIn) {
+                m_loopIn = std::min(cur, m_loopEdgeOther - 0.02);
+            } else {
+                m_loopOut = std::max(cur, m_loopEdgeOther + 0.02);
+            }
+            emit loopChanged(m_loopIn, m_loopOut);
+            startAutoScroll(e);
+            update();
+            return;
+        }
         if (m_dragMode == Razor) {
             m_razorT = std::max(0.0, snapTime(xToTime(e->pos().x())));
             update();
@@ -2285,6 +2423,18 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                         Clip* sc = findClipById(it.key());
                         if (sc) sc->dur = std::max(kMinDur, it.value().dur + deltaDur);
                     }
+                } else if (m_dragMode == FadeIn || m_dragMode == FadeOut) {
+                    // Alça de fade no canto (estilo Vegas): arrastar horizontal
+                    // define a duração do fade em segundos.
+                    Clip* sc = findClipById(m_dragClip);
+                    if (sc) {
+                        const double dur = sc->dur;
+                        const double nf = std::clamp(m_dragOrigFade + dt, 0.0,
+                                                     std::max(0.0, dur - 0.1));
+                        if (m_dragMode == FadeIn) sc->fadeIn = nf;
+                        else sc->fadeOut = nf;
+                        invalidateScene();
+                    }
                 }
                 updateScrollRanges();
                 update();
@@ -2337,6 +2487,9 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
 void TimelineWidget::mouseReleaseEvent(QMouseEvent* e) {
     switch (m_dragMode) {
     case RulerLoop:
+    case RulerLoopEdge:
+        m_loopEdge = LoopEdgeNone;
+        setCursor(Qt::ArrowCursor);
         break;
     case Razor:
         razorSplitAt(m_razorT);
@@ -2497,16 +2650,38 @@ void TimelineWidget::keyPressEvent(QKeyEvent* e) {
         emit playPauseRequested();
         e->accept();
         break;
+    case Qt::Key_Enter:
+    case Qt::Key_Return:
+        // Vegas: Enter toca a partir de onde a agulha/ponteiro está. Move o
+        // playhead (vermelho) para o ponteiro branco (se houver) e reproduz.
+        {
+            const double t = std::clamp(
+                m_cursorT >= 0.0 ? m_cursorT : m_playhead, 0.0,
+                m_project ? m_project->duration() : 0.0);
+            setPlayhead(t);
+            emit playheadChanged(t);
+            emit playFromCursor();
+        }
+        e->accept();
+        break;
     case Qt::Key_S:
         cutAtPlayhead();
         e->accept();
         break;
     case Qt::Key_Delete:
     case Qt::Key_Backspace:
-        if (shift)
+        // Vegas: com uma região de loop (seleção de tempo) ativa, Delete remove
+        // o tempo dentro da região (ripple por padrão; Shift+Delete deixa gap).
+        if (m_loopOut > m_loopIn) {
+            if (shift)
+                deleteLoopLeaveGap();
+            else
+                deleteLoopRipple();
+        } else if (shift) {
             deleteSelectedLeaveGap();
-        else
+        } else {
             deleteSelection();
+        }
         e->accept();
         break;
     case Qt::Key_Plus:
@@ -2726,8 +2901,17 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         QAction* addM = menu.addAction(tr("Adicionar marcador"));
         QAction* addMN = menu.addAction(tr("Adicionar marcador nomeado…"));
         QAction* clearM = menu.addAction(tr("Limpar todos os marcadores"));
+        QAction* delLoopRip = nullptr;
+        QAction* delLoopGap = nullptr;
+        if (m_loopOut > m_loopIn) {
+            menu.addSeparator();
+            delLoopRip = menu.addAction(tr("Excluir tempo da região de loop (ripple)"));
+            delLoopGap = menu.addAction(tr("Excluir tempo da região de loop (deixa espaço)"));
+        }
         QAction* act = menu.exec(e->globalPos());
-        if (act == addM) {
+        if (act == delLoopRip) deleteLoopRipple();
+        else if (act == delLoopGap) deleteLoopLeaveGap();
+        else if (act == addM) {
             toggleMarker(t);
         } else if (act == addMN) {
             bool ok = false;
@@ -2885,6 +3069,35 @@ void TimelineWidget::dragMoveEvent(QDragMoveEvent* e) {
         } else {
             m_dragHoverRow = -1;
         }
+        // Prévia (estilo Premiere): duração representativa da mídia arrastada
+        // para desenhar a "fantasma" do clipe no tamanho certo.
+        m_dragHoverT = snapTime(std::max(0.0, xToTime(e->position().toPoint().x())));
+        m_dragHoverDur = 0.0;
+        m_dragHoverName.clear();
+        if (m_project && md->hasFormat(QLatin1String(kMimeMedia))) {
+            const QByteArray data = md->data(QLatin1String(kMimeMedia));
+            for (QByteArray line : data.split('\n')) {
+                line = line.trimmed();
+                if (line.isEmpty()) continue;
+                const MediaItem* m = m_project->findMedia(QString::fromLatin1(line));
+                if (m && (m->hasVideo || m->hasAudio)) {
+                    m_dragHoverDur = mediaInsertDur(*m);
+                    m_dragHoverName = m->name;
+                    break;
+                }
+            }
+        } else if (md->hasUrls()) {
+            for (const QUrl& u : md->urls()) {
+                if (!u.isLocalFile()) continue;
+                const FFmpegMediaInfo info = FFmpegDecoder::probe(u.toLocalFile());
+                if (info.hasVideo || info.hasAudio) {
+                    m_dragHoverDur = info.duration > 0 ? info.duration : 1.0;
+                    m_dragHoverName = QFileInfo(u.toLocalFile()).completeBaseName();
+                    break;
+                }
+            }
+        }
+        if (m_dragHoverDur <= 0.0) m_dragHoverDur = 1.0;
         update();
         e->acceptProposedAction();
         e->accept();
@@ -2893,6 +3106,8 @@ void TimelineWidget::dragMoveEvent(QDragMoveEvent* e) {
 
 void TimelineWidget::dragLeaveEvent(QDragLeaveEvent*) {
     m_dragHoverRow = -1;
+    m_dragHoverDur = 0.0;
+    m_dragHoverName.clear();
     update();
 }
 
@@ -2952,11 +3167,17 @@ void TimelineWidget::showDropHover(const QPoint& globalPos) {
     bool audio = false;
     m_dragHoverRow = rowFromY(pos.y(), row, audio) ? row : -1;
     m_dragHoverAudio = audio;
+    // Arrasto manual da pool (sem dragMoveEvent): atualiza o instante e usa a
+    // duração já conhecida (ou um padrão) para a prévia do clipe.
+    m_dragHoverT = snapTime(std::max(0.0, xToTime(pos.x())));
+    if (m_dragHoverDur <= 0.0) m_dragHoverDur = 1.0;
     update();
 }
 
 void TimelineWidget::hideDropHover() {
     m_dragHoverRow = -1;
+    m_dragHoverDur = 0.0;
+    m_dragHoverName.clear();
     update();
 }
 
@@ -2984,6 +3205,8 @@ void TimelineWidget::finishDrop(const QStringList& mediaIds, const QPoint& dropP
         row = 0;
     }
     m_dragHoverRow = -1;
+    m_dragHoverDur = 0.0;
+    m_dragHoverName.clear();
 
     emit editStart();
     double t = snapTime(std::max(0.0, xToTime(dropPos.x())));
@@ -3114,29 +3337,11 @@ void TimelineWidget::splitClipAt(Clip* c, double t) {
         ids.append(c->id);
     }
 
-    // Precisão do corte: além da grade do projeto (snapTime), desloca o corte
-    // para a grade de frames da MÍDIA de vídeo (fps do arquivo). Assim a borda
-    // cai no início exato de um frame de origem e o clipe 2 começa no frame
-    // seguinte — sem repetir o último frame do clipe 1 (o "pedaço do clipe que
-    // fica" / frame duplicado no corte). Usa o primeiro membro do grupo com
-    // vídeo como referência e aplica o MESMO t' a todos os membros, mantendo
-    // vídeo+áudio sincronizados.
-    double tCut = t;
-    for (const QString& id : ids) {
-        Clip* ref = findClipById(id);
-        if (!ref) continue;
-        const MediaItem* m = m_project->findMedia(ref->mediaId);
-        if (!m || !m->hasVideo) continue;
-        const double fps = sourceFps(m->filePath);
-        if (fps > 0.0) {
-            const double t0 = ref->in + (t - ref->pos);       // instante na mídia
-            const double t0s = std::round(t0 * fps) / fps;    // na grade do arquivo
-            tCut = std::clamp(ref->pos + (t0s - ref->in),
-                              ref->pos + 1e-6, ref->pos + ref->dur - 1e-6);
-        }
-        break; // uma única referência (vídeo) define o corte do grupo
-    }
-    t = tCut;
+    // Precisão do corte: o corte cai EXATAMENTE na posição do playhead/tesoura
+    // (t), sem re-snap para a grade de frames da mídia. Assim a borda do clipe
+    // bate 100% onde o usuário posicionou o corte, sem deslocamento visual.
+    // Todos os membros do grupo recebem o MESMO t, mantendo vídeo+áudio
+    // sincronizados.
 
     const bool grouped = ids.size() > 1;
     // Cada metade vira um grupo próprio (vídeo+áudio da frente ficam
@@ -3547,6 +3752,84 @@ void TimelineWidget::deleteSelectedLeaveGap() {
     }
     if (sel.isEmpty()) return;
     removeClipsByIds(sel);
+    m_selected.clear();
+    updateScrollRanges();
+    update();
+    emit modified();
+}
+
+// Delete (com região de loop ativa): remove o TEMPO dentro de [m_loopIn,
+// m_loopOut] de todas as faixas (estilo Vegas, ripple). Clipes que cruzam a
+// fronteira são aparados; clipes totalmente dentro são removidos; os que estão
+// depois de m_loopOut deslizam para a esquerda fechando a lacuna.
+void TimelineWidget::deleteLoopRipple() {
+    if (!m_project || m_loopOut <= m_loopIn) return;
+    emit editStart();
+    const double in = m_loopIn;
+    const double out = m_loopOut;
+    const double width = out - in;
+    auto editTrack = [&](QVector<Clip>& clips) {
+        QVector<Clip> result;
+        for (Clip& c : clips) {
+            if (trackLocked(&c)) { result.append(c); continue; }
+            const double cEnd = c.pos + c.dur;
+            if (in <= c.pos && cEnd <= out) continue;             // dentro: remove
+            if (c.pos < in && cEnd > out) {                        // engloba o loop
+                c.dur = c.dur - width;
+                result.append(c);
+            } else if (c.pos < in && cEnd > in) {                  // começa antes, termina dentro
+                c.dur = in - c.pos;
+                result.append(c);
+            } else if (c.pos < out && cEnd > out) {                // começa dentro, termina depois
+                const double shift = out - c.pos;
+                c.pos = out;
+                c.in = c.in + shift;
+                c.dur = cEnd - out;
+                result.append(c);
+            } else if (c.pos >= out) {                              // depois do loop: ripple
+                c.pos = std::max(0.0, c.pos - width);
+                result.append(c);
+            } else {
+                result.append(c);
+            }
+        }
+        clips = result;
+    };
+    for (Track& t : m_project->videoTracks) editTrack(t.clips);
+    for (Track& t : m_project->audioTracks) editTrack(t.clips);
+    m_selected.clear();
+    updateScrollRanges();
+    update();
+    emit modified();
+}
+
+// Como deleteLoopRipple, mas SEM ripple: a lacuna [in,out] fica vazia na
+// timeline (os clipes depois do loop não se movem).
+void TimelineWidget::deleteLoopLeaveGap() {
+    if (!m_project || m_loopOut <= m_loopIn) return;
+    emit editStart();
+    const double in = m_loopIn;
+    const double out = m_loopOut;
+    auto editTrack = [&](QVector<Clip>& clips) {
+        QVector<Clip> result;
+        for (Clip& c : clips) {
+            if (trackLocked(&c)) { result.append(c); continue; }
+            const double cEnd = c.pos + c.dur;
+            if (in <= c.pos && cEnd <= out) continue;             // dentro: remove
+            if (c.pos < in && cEnd > out) c.dur -= (out - in);    // engloba
+            else if (c.pos < in && cEnd > in) c.dur = in - c.pos;
+            else if (c.pos < out && cEnd > out) {                  // começa dentro, termina depois
+                const double shift = out - c.pos;
+                c.pos = out;
+                c.in += shift;
+                c.dur = cEnd - out;
+            }
+            result.append(c);
+        }
+        clips = result;
+    };
+    for (Track& t : m_project->videoTracks) editTrack(t.clips);
+    for (Track& t : m_project->audioTracks) editTrack(t.clips);
     m_selected.clear();
     updateScrollRanges();
     update();

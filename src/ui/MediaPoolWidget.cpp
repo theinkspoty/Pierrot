@@ -38,6 +38,9 @@
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
+#include <QMenu>
+#include <QColorDialog>
+#include <QCursor>
 #include <cmath>
 #include <algorithm>
 
@@ -431,10 +434,13 @@ MediaPoolWidget::MediaPoolWidget(QWidget* parent) : QWidget(parent) {
 
     m_addBtn = new QPushButton(tr("Adicionar"), this);
     m_removeBtn = new QPushButton(tr("Remover"), this);
+    auto* genBtn = new QPushButton(tr("Gerador"), this);
     m_addBtn->setToolTip(tr("Importar mídia (Ctrl+I)"));
     m_removeBtn->setToolTip(tr("Remover a mídia selecionada do projeto"));
+    genBtn->setToolTip(tr("Criar mídia gerada (cor sólida, como no Vegas)"));
     connect(m_addBtn, &QPushButton::clicked, this, &MediaPoolWidget::addFiles);
     connect(m_removeBtn, &QPushButton::clicked, this, &MediaPoolWidget::removeSelected);
+    connect(genBtn, &QPushButton::clicked, this, &MediaPoolWidget::addSolidColor);
     connect(&MediaCache::instance(), &MediaCache::thumbnailReady,
             this, &MediaPoolWidget::onThumbReady);
     // Duplo clique: adiciona a mídia na timeline no playhead (fallback para o
@@ -456,6 +462,7 @@ MediaPoolWidget::MediaPoolWidget(QWidget* parent) : QWidget(parent) {
     auto* bar = new QHBoxLayout;
     bar->setContentsMargins(0, 0, 0, 0);
     bar->addWidget(m_addBtn);
+    bar->addWidget(genBtn);
     bar->addWidget(m_removeBtn);
     bar->addStretch();
 
@@ -512,8 +519,16 @@ void MediaPoolWidget::refresh() {
             tags += QString("[MKV experimental]  ·  ");
         item->setText(QString("%1\n%2%3").arg(m.name, tags, formatDuration(m.duration)));
         item->setData(Qt::UserRole, m.id);
-        item->setToolTip(m.filePath);
-        if (m.hasVideo) {
+        item->setToolTip(m.isSolid ? tr("Cor sólida (gerador)") : m.filePath);
+        if (m.isSolid) {
+            // Gerador de cor: ícone preenchido com a cor sólida, sem thumb.
+            const int iw = qBound(16, m.width > 0 ? m.width : 96, 96);
+            const int ih = qBound(9, m.height > 0 ? m.height : 54, 54);
+            QImage ic(iw, ih, QImage::Format_ARGB32);
+            ic.fill(m.solidColor);
+            setThumb(m.id, ic);
+            item->setIcon(QIcon(QPixmap::fromImage(ic)));
+        } else if (m.hasVideo) {
             if (m_thumbs.contains(m.id)) {
                 item->setIcon(QIcon(QPixmap::fromImage(m_thumbs.value(m.id))));
             } else {
@@ -625,6 +640,55 @@ void MediaPoolWidget::importPaths(const QStringList& files) {
     m_importBar->setValue(0);
     m_importBar->show();
     watcher->setFuture(QtConcurrent::mapped(files, probeFile));
+}
+
+// Gerador de mídia (estilo Vegas): cria uma mídia de COR SÓLIDA (sem arquivo)
+// que pode ser arrastada para a timeline. Menu com cores rápidas + personalizada.
+void MediaPoolWidget::addSolidColor() {
+    if (!m_project) return;
+    QMenu menu(this);
+    struct Quick { QString name; QColor color; };
+    const QList<Quick> quicks = {
+        {tr("Vermelho"), QColor(255, 0, 0)},
+        {tr("Verde"), QColor(0, 180, 0)},
+        {tr("Azul"), QColor(0, 90, 255)},
+        {tr("Amarelo"), QColor(255, 220, 0)},
+        {tr("Branco"), QColor(255, 255, 255)},
+        {tr("Preto"), QColor(0, 0, 0)},
+        {tr("Laranja"), QColor(255, 130, 0)},
+    };
+    QAction* pick = menu.addAction(tr("Personalizada…"));
+    QHash<QAction*, QColor> actions;
+    for (const Quick& q : quicks) {
+        QAction* a = menu.addAction(q.name);
+        actions.insert(a, q.color);
+    }
+    QAction* chosen = menu.exec(QCursor::pos());
+    QColor color;
+    if (chosen == pick) {
+        color = QColorDialog::getColor(Qt::black, this, tr("Cor da mídia"));
+        if (!color.isValid()) return;
+        color.setAlpha(255);
+    } else if (actions.contains(chosen)) {
+        color = actions.value(chosen);
+    } else {
+        return;
+    }
+
+    emit editStart();
+    MediaItem m;
+    m.id = newId();
+    QString hex = color.name().toUpper();
+    m.name = tr("Cor %1").arg(hex.startsWith(QLatin1Char('#')) ? hex.mid(1) : hex);
+    m.isSolid = true;
+    m.solidColor = color;
+    m.hasVideo = true;
+    m.width = m_project->width;
+    m.height = m_project->height;
+    m.duration = m_project->duration() > 0 ? m_project->duration() : 5.0;
+    m_project->media.append(m);
+    refresh();
+    emit mediaAdded(m.id);
 }
 
 // Arrastar arquivos do sistema sobre o painel (fora da lista) também importa.
