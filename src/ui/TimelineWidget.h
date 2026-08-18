@@ -116,6 +116,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent*) override;
     void mouseDoubleClickEvent(QMouseEvent*) override;
     void wheelEvent(QWheelEvent*) override;
+    void leaveEvent(QEvent*) override;
     void keyPressEvent(QKeyEvent*) override;
     void contextMenuEvent(QContextMenuEvent*) override;
     void dragEnterEvent(QDragEnterEvent*) override;
@@ -123,7 +124,7 @@ protected:
     void dragLeaveEvent(QDragLeaveEvent*) override;
     void dropEvent(QDropEvent*) override;
 private:
-    enum DragMode { None, MoveClip, TrimLeft, TrimRight, ResizeSpeed, FadeIn, FadeOut, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, RulerLoopEdge, ResizeTrack, TrackVol, ClipVol, TrackDrag };
+    enum DragMode { None, MoveClip, TrimLeft, TrimRight, ResizeSpeed, FadeIn, FadeOut, ClipOpacity, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, RulerLoopEdge, ResizeTrack, TrackVol, ClipVol, TrackDrag };
     // Qual borda da região de loop está sendo arrastada (RulerLoopEdge).
     enum LoopEdge { LoopEdgeNone = -1, LoopEdgeIn = 0, LoopEdgeOut = 1 };
     struct ClipOrig { double pos = 0.0, in = 0.0, dur = 0.0, speed = 1.0; };
@@ -172,6 +173,7 @@ private:
     void drawAudioWaveform(QPainter& p, const QRect& r, const Clip& c, const QString& path);
     void drawVideoThumbs(QPainter& p, const QRect& r, const Clip& c, const QString& path);
     void drawFadeCorners(QPainter& p, const QRect& r, const Clip& c);
+    void drawOpacityHandle(QPainter& p, const QRect& r, const Clip& c);
     void drawTransitionIndicator(QPainter& p, const QRect& r, const QString& type);
     void drawKeyframeDiamonds(QPainter& p, const QRect& r, const Clip& c, bool audio);
     void drawEnvelope(QPainter& p, const QRect& r, const Clip& c, bool audio);
@@ -202,6 +204,10 @@ private:
     void duplicateSelected();
     void nudgeSelected(int dir);
     void selectAllClips();
+    // Vegas: U separa os clipes selecionados do grupo (groupId limpo);
+    // G agrupa os clipes selecionados num grupo novo.
+    void ungroupSelected();
+    void groupSelected();
     bool isTrackSelected(int row, bool audio) const;
     void setTrackSel(int row, bool audio);
     void toggleTrackSel(int row, bool audio);
@@ -249,6 +255,7 @@ private:
     double m_dragOrigIn = 0.0;
     double m_dragOrigDur = 0.0;
     double m_dragOrigFade = 0.0; // valor original de fadeIn/fadeOut ao arrastar
+    double m_dragOrigOpacity = 1.0; // opacidade original do clipe ao arrastar no topo
     double m_loopPressT = 0.0;
     int m_loopEdge = LoopEdgeNone;   // borda da região de loop sendo arrastada
     double m_loopEdgeOther = 0.0;    // borda oposta mantida fixa durante o arraste
@@ -256,6 +263,8 @@ private:
     double m_zoomT0 = 0.0;
     double m_zoomT1 = 0.0;
     QRect m_marqueeRect;
+    QPoint m_mousePos{-1, -1}; // posição atual do mouse (destaque das alças)
+    QString m_hoverGripClip; // clipe cuja alça de opacidade está sob o mouse
     QPixmap m_staticCache;
     bool m_staticDirty = true;
     QHash<QString, ClipOrig> m_dragOrig;

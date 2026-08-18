@@ -671,6 +671,9 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
                     else if (m_transType == QStringLiteral("wipedown")) L.oy = -ph * (1.0 - m_transAlpha);
                 }
                 L.alpha = alpha;
+                // Opacidade da faixa (estilo Vegas/FCE): a faixa inteira é
+                // composta com transparência sobre as de baixo.
+                L.alpha *= std::clamp(t.opacity, 0.0, 1.0);
                 L.mode = mode;
                 layers.append(L);
             } else {
@@ -708,6 +711,9 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
                 if (c->fadeIn > 1e-6) alpha *= std::min(1.0, rel / c->fadeIn);
                 if (c->fadeOut > 1e-6) alpha *= std::min(1.0, (c->dur - rel) / c->fadeOut);
                 L.alpha = alpha;
+                // Opacidade da faixa (estilo Vegas/FCE): a faixa inteira é
+                // composta com transparência sobre as de baixo.
+                L.alpha *= std::clamp(t.opacity, 0.0, 1.0);
                 L.mode = mode;
                 layers.append(L);
             }
@@ -740,9 +746,12 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
     // a faixa com o modo de composição da faixa (igual ao blend da exportação),
     // de baixo para cima — é o que permite ver transparência (PNG/WebP com
     // alpha) e as camadas que ficam POR BAIXO do clipe do topo.
+    // O fundo é PRETO opaco (como o ffmpeg): os modos de blend (multiply,
+    // screen…) produzem o mesmo resultado da exportação, e não dependem do
+    // fundo do monitor.
     if (layers.size() >= 2 || (m_frame.isNull() && !layers.isEmpty())) {
         QImage acc(canvas.size(), QImage::Format_ARGB32);
-        acc.fill(Qt::transparent);
+        acc.fill(Qt::black);
         QPainter ap(&acc);
         ap.setClipRect(QRect(0, 0, acc.width(), acc.height()));
         const double cx = acc.width() / 2.0;
@@ -774,6 +783,21 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
     }
 
     // Caminho tradicional (um clipe só, com ou sem transição): desenha direto.
+    // Opacidade do clipe + fades de entrada/saída + opacidade da faixa
+    // aplicados no alpha (como na exportação), para o fade aparecer mesmo com
+    // um clipe sozinho.
+    const double clipRel = clip ? (m_playhead - clip->pos) : 0.0;
+    double clipAlpha = 1.0;
+    double clipTrackOpacity = 1.0;
+    if (clip && m_project) {
+        clipAlpha = std::clamp(kfValue(clip->kfOpacity, clip->opacity, clipRel), 0.0, 1.0);
+        if (clip->fadeIn > 1e-6) clipAlpha *= std::min(1.0, clipRel / clip->fadeIn);
+        if (clip->fadeOut > 1e-6) clipAlpha *= std::min(1.0, (clip->dur - clipRel) / clip->fadeOut);
+        for (const Track& tr : m_project->videoTracks)
+            for (const Clip& c : tr.clips)
+                if (c.id == clip->id) { clipTrackOpacity = std::clamp(tr.opacity, 0.0, 1.0); break; }
+    }
+    clipAlpha *= clipTrackOpacity;
     const bool transActive = m_transAlpha >= 0.0
                              && !m_frame.isNull() && !m_underFrame.isNull();
     if (!m_frame.isNull()) {
@@ -785,11 +809,12 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
             else if (m_transType == QStringLiteral("wiperight")) ox = -pw * (1.0 - m_transAlpha);
             else if (m_transType == QStringLiteral("wipeup")) oy = ph * (1.0 - m_transAlpha);
             else if (m_transType == QStringLiteral("wipedown")) oy = -ph * (1.0 - m_transAlpha);
-            const double a = (m_transType == QStringLiteral("dissolve")) ? m_transAlpha : 1.0;
+            double a = clipAlpha;
+            if (m_transType == QStringLiteral("dissolve")) a *= m_transAlpha;
             drawLayer(p, m_frame, S, rot, tx, ty, a, SX, SY, k,
                       canvas.center().x(), canvas.center().y(), canvas, ox, oy);
         } else {
-            drawLayer(p, m_frame, S, rot, tx, ty, 1.0, SX, SY, k,
+            drawLayer(p, m_frame, S, rot, tx, ty, clipAlpha, SX, SY, k,
                       canvas.center().x(), canvas.center().y(), canvas);
         }
     }

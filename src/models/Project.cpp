@@ -293,6 +293,7 @@ static QJsonObject trackToJson(const Track& t) {
     o["audio"] = t.audio;
     o["blendMode"] = t.blendMode;
     o["volume"] = t.volume;
+    o["opacity"] = t.opacity;
     o["muted"] = t.muted;
     o["solo"] = t.solo;
     o["locked"] = t.locked;
@@ -311,6 +312,7 @@ static Track trackFromJson(const QJsonObject& o, bool audio) {
     t.audio = audio;
     t.blendMode = o["blendMode"].toString(QStringLiteral("normal"));
     t.volume = o["volume"].toDouble(1.0);
+    t.opacity = o["opacity"].toDouble(1.0);
     t.muted = o["muted"].toBool();
     t.solo = o["solo"].toBool();
     t.locked = o["locked"].toBool();

@@ -1044,6 +1044,8 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
             cp.fillRect(cr, mi->solidColor); // cor sólida (gerador estilo Vegas)
         else
             drawVideoThumbs(cp, cr, c, path);
+        if (!audio)
+            drawOpacityHandle(cp, cr, c);
         drawFadeCorners(cp, cr, c);
         if (m_tool == ToolEnvelope && (m_showVolLines || !audio))
             drawEnvelope(cp, cr, c, audio);
@@ -1090,6 +1092,21 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
         const int w = (int)(obar.width() * c.opacity);
         p.fillRect(obar, QColor(0, 0, 0, 110));
         p.fillRect(QRect(obar.x(), obar.y(), w, obar.height()), QColor(255, 255, 255, 190));
+    }
+
+    // Destaque da alça de opacidade sob o mouse (ao vivo, não cacheado): a aba
+    // cresce e acende para deixar claro que ali é onde se segura.
+    if (!audio && c.id == m_hoverGripClip) {
+        const int cx = r.center().x();
+        QPainterPath tab;
+        const int tw = 28;
+        tab.moveTo(cx - tw / 2, r.top() + 1);
+        tab.lineTo(cx + tw / 2, r.top() + 1);
+        tab.lineTo(cx, r.top() + 14);
+        tab.closeSubpath();
+        p.setPen(QPen(QColor(255, 255, 255), 2));
+        p.setBrush(QColor(180, 215, 255, 230));
+        p.drawPath(tab);
     }
 
     const QString range = fmtRuler(c.in) + " – " + fmtRuler(c.in + c.dur);
@@ -1325,6 +1342,52 @@ void TimelineWidget::drawFadeCorners(QPainter& p, const QRect& r, const Clip& c)
     }
 }
 
+// Alça e CURVA de opacidade do clipe (estilo Vegas): uma linha atravessa o
+// clipe na altura da opacidade atual (100% = topo, 0% = base). A área ACIMA da
+// linha é a parte transparente (escurecida) — assim o usuário enxerga quanta
+// transparência o clipe tem. O grip no topo central é onde se arrasta.
+void TimelineWidget::drawOpacityHandle(QPainter& p, const QRect& r, const Clip& c) {
+    if (r.width() < 16 || r.height() < 10) return;
+    const bool active = c.opacity < 1.0 - 1e-4;
+    const QColor col = active ? QColor(120, 170, 255) : QColor(255, 255, 255, 70);
+
+    // Linha da curva: fica no topo com opacidade 100% e desce conforme a
+    // opacidade cai (arrastou para baixo = linha desce = mais transparente).
+    const int lineY = r.top() + (int)std::lround((1.0 - c.opacity) * r.height());
+    const int visY = qBound(r.top() + 1, lineY, r.bottom());
+    if (active) {
+        // Região transparente (acima da linha) fica escurecida.
+        const int h = std::max(0, visY - r.top());
+        p.fillRect(r.left(), r.top(), r.width(), h, QColor(0, 0, 0, 100));
+    }
+    p.setPen(QPen(active ? QColor(120, 170, 255) : QColor(255, 255, 255, 80), 1));
+    p.drawLine(r.left(), visY, r.right(), visY);
+
+    // Grip no topo central: aba em triângulo (mais fácil de segurar e ver).
+    const int cx = r.center().x();
+    const int tw = 22;
+    QPainterPath tab;
+    tab.moveTo(cx - tw / 2, r.top() + 1);
+    tab.lineTo(cx + tw / 2, r.top() + 1);
+    tab.lineTo(cx, r.top() + 12);
+    tab.closeSubpath();
+    p.setPen(QPen(active ? QColor(150, 200, 255) : QColor(255, 255, 255, 130), 1));
+    p.setBrush(col);
+    p.drawPath(tab);
+
+    // Percentual quando não estiver 100% opaco.
+    if (active) {
+        p.save();
+        QFont f = p.font();
+        f.setPointSizeF(7.5);
+        f.setBold(true);
+        p.setFont(f);
+        p.setPen(QColor(140, 180, 255));
+        p.drawText(r.left() + 4, r.top() + 14, QString("%1%").arg((int)llround(c.opacity * 100.0)));
+        p.restore();
+    }
+}
+
 // Indicador de transição na região de sobreposição entre dois clipes.
 void TimelineWidget::drawTransitionIndicator(QPainter& p, const QRect& r,
                                              const QString& type) {
@@ -1508,6 +1571,16 @@ void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& 
         vf.setBold(true);
         p.setFont(vf);
         p.setPen(QColor(120, 190, 150));
+        p.drawText(QRect(6, y + 19, H - 12, 14), Qt::AlignRight | Qt::AlignVCenter, pct);
+        p.setFont(basef);
+    } else {
+        // Opacidade da faixa de vídeo (0–100%, estilo Vegas/FCE) no cabeçalho.
+        const QString pct = QString("%1%").arg((int)llround(tr.opacity * 100.0));
+        QFont vf = basef;
+        vf.setPointSizeF(7.5);
+        vf.setBold(true);
+        p.setFont(vf);
+        p.setPen(QColor(130, 170, 230));
         p.drawText(QRect(6, y + 19, H - 12, 14), Qt::AlignRight | Qt::AlignVCenter, pct);
         p.setFont(basef);
     }
@@ -1770,6 +1843,59 @@ void TimelineWidget::selectAllClips() {
         for (const Clip& c : t.clips) m_selected.append(c.id);
     refreshView();
     emit selectionChanged(m_selected.isEmpty() ? QString() : m_selected.last());
+}
+
+// Vegas: "U" separa os clipes selecionados do seu grupo. Quebra o grupo
+// INTEIRO (todos os membros ficam sem groupId), então dá para excluir só um
+// dos clipes que estavam unidos (vídeo sem arrastar o áudio, e vice-versa).
+void TimelineWidget::ungroupSelected() {
+    if (m_selected.isEmpty() || !m_project) return;
+    QSet<QString> gids;
+    for (const QString& id : m_selected) {
+        Clip* c = findClipById(id);
+        if (c && !c->groupId.isEmpty()) gids.insert(c->groupId);
+    }
+    if (gids.isEmpty()) return;
+    emit editStart();
+    for (const QString& gid : gids)
+        for (Clip* m : groupMembers(gid))
+            m->groupId.clear();
+    updateScrollRanges();
+    update();
+    emit modified();
+}
+
+// Vegas: "G" agrupa os clipes selecionados num grupo único (movem/apagam
+// juntos). Se todos já compartilham o mesmo grupo, não faz nada.
+void TimelineWidget::groupSelected() {
+    if (m_selected.size() < 2 || !m_project) return;
+    QString gid;
+    bool allSame = true;
+    for (const QString& id : m_selected) {
+        Clip* c = findClipById(id);
+        if (!c) { allSame = false; break; }
+        if (gid.isEmpty()) gid = c->groupId;
+        else if (gid != c->groupId) allSame = false;
+    }
+    if (allSame && !gid.isEmpty()) return; // já agrupados
+    emit editStart();
+    const QString ng = newId();
+    for (const QString& id : m_selected) {
+        Clip* c = findClipById(id);
+        if (c) c->groupId = ng;
+    }
+    updateScrollRanges();
+    update();
+    emit modified();
+}
+
+// Ao sair do widget, limpa o destaque da alça de opacidade.
+void TimelineWidget::leaveEvent(QEvent*) {
+    if (!m_hoverGripClip.isEmpty()) {
+        m_hoverGripClip.clear();
+        m_mousePos = QPoint(-1, -1);
+        update();
+    }
 }
 
 void TimelineWidget::mousePressEvent(QMouseEvent* e) {
@@ -2052,29 +2178,33 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
             if (!isSelected(clip->id))
                 setSelection(clip->id);
             m_dragMode = None;
-            if (m_tool == ToolMove) {
+            const int cx = (int)timeToX(clip->pos);
+            const int cw = (int)(clip->dur * m_pps);
+            const int dx = x - cx;
+            // Alça de fade (estilo Vegas): no CANTINHO SUPERIOR do clipe.
+            // Arrastar o canto esquerdo/certo ajusta fade-in/fade-out, sem
+            // conflitar com o trim (que fica na borda lateral). Vale nas
+            // ferramentas Selecionar (0) e Mover (M).
+            const bool nearTop = (y - rowY(row, audio)) <= 12;
+            if (nearTop && dx <= 10) {
+                m_dragMode = FadeIn;
+                m_dragOrigFade = clip->fadeIn;
+            } else if (nearTop && cw - dx <= 10) {
+                m_dragMode = FadeOut;
+                m_dragOrigFade = clip->fadeOut;
+            } else if (nearTop && !audio) {
+                // Vegas: segurar no TOPO do clipe de vídeo (centro) e arrastar
+                // para baixo reduz a opacidade do clipe; para cima aumenta.
+                m_dragMode = ClipOpacity;
+                m_dragOrigOpacity = clip->opacity;
+            } else if (m_tool == ToolMove) {
                 m_dragMode = MoveClip;
+            } else if (dx <= 8) {
+                m_dragMode = TrimLeft;
+            } else if (cw - dx <= 8) {
+                m_dragMode = TrimRight;
             } else {
-                const int cx = (int)timeToX(clip->pos);
-                const int cw = (int)(clip->dur * m_pps);
-                const int dx = x - cx;
-                // Alça de fade (estilo Vegas): no CANTINHO SUPERIOR do clipe.
-                // Arrastar o canto esquerdo/certo ajusta fade-in/fade-out, sem
-                // conflitar com o trim (que fica na borda lateral).
-                const bool nearTop = (y - rowY(row, audio)) <= 12;
-                if (nearTop && dx <= 10) {
-                    m_dragMode = FadeIn;
-                    m_dragOrigFade = clip->fadeIn;
-                } else if (nearTop && cw - dx <= 10) {
-                    m_dragMode = FadeOut;
-                    m_dragOrigFade = clip->fadeOut;
-                } else if (dx <= 8) {
-                    m_dragMode = TrimLeft;
-                } else if (cw - dx <= 8) {
-                    m_dragMode = TrimRight;
-                } else {
-                    m_dragMode = MoveClip;
-                }
+                m_dragMode = MoveClip;
             }
             if (trackLocked(clip)) m_dragMode = None; // faixa travada: só seleciona
             m_dragClip = clip->id;
@@ -2124,6 +2254,30 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
 
 void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
     if (!m_project) return;
+
+    m_mousePos = e->pos();
+
+    // Destaque da alça de opacidade ao passar o mouse sobre o topo de um
+    // clipe de vídeo (repinta só quando o alvo muda). Ignorado durante arrastos.
+    QString newHover;
+    if (m_dragMode == None && !(e->buttons() & Qt::LeftButton)
+        && e->pos().y() >= kRulerH) {
+        bool hAudio = false;
+        int hrow = -1;
+        if (rowFromY(e->pos().y(), hrow, hAudio) && !hAudio && hrow >= 0) {
+            Clip* hc = clipAt(hrow, false, std::max(0.0, xToTime(e->pos().x())));
+            if (hc && (e->pos().y() - rowY(hrow, false)) <= 12) {
+                const int hcx = (int)timeToX(hc->pos);
+                const int hcw = (int)(hc->dur * m_pps);
+                const int hdx = e->pos().x() - hcx;
+                if (hdx > 10 && hcw - hdx > 10) newHover = hc->id;
+            }
+        }
+    }
+    if (newHover != m_hoverGripClip) {
+        m_hoverGripClip = newHover;
+        update();
+    }
 
     // Agulha "ponteiro" branca: segue o cursor enquanto ele está sobre a régua
     // e fica parada na última posição (independente da agulha de reprodução).
@@ -2339,9 +2493,15 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
             Clip* clip = findClipById(m_dragClip);
             if (clip) {
                 const double dt = (e->pos().x() - m_dragStart.x()) / m_pps;
-                if (!m_dragUndoPushed && std::fabs(dt) > 1e-9) {
-                    emit editStart();
-                    m_dragUndoPushed = true;
+                if (!m_dragUndoPushed) {
+                    // Arrasto de opacidade é vertical: usa o dy (não o dt que
+                    // depende do eixo do tempo) para disparar o undo.
+                    const double dy = e->pos().y() - m_dragStart.y();
+                    if ((m_dragMode == ClipOpacity && std::fabs(dy) > 0.5)
+                        || std::fabs(dt) > 1e-9) {
+                        emit editStart();
+                        m_dragUndoPushed = true;
+                    }
                 }
                 if (m_dragMode == MoveClip) {
                     // Troca de faixa durante o arraste: cada clipe segue a
@@ -2435,6 +2595,21 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                         else sc->fadeOut = nf;
                         invalidateScene();
                     }
+                } else if (m_dragMode == ClipOpacity) {
+                    // Vegas: arrastar o topo do clipe de vídeo para baixo reduz
+                    // a opacidade (0–100%), para cima aumenta.
+                    Clip* sc = findClipById(m_dragClip);
+                    int crow;
+                    bool caudio;
+                    if (sc && clipTrackIndex(sc->id, crow, caudio) && !caudio) {
+                        const int rowH = trackH(crow, false);
+                        if (rowH > 0) {
+                            const double dy = (double)(e->pos().y() - m_dragStart.y())
+                                              / (double)rowH;
+                            sc->opacity = std::clamp(m_dragOrigOpacity - dy, 0.0, 1.0);
+                            invalidateScene();
+                        }
+                    }
                 }
                 updateScrollRanges();
                 update();
@@ -2469,7 +2644,12 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
             const int cx = (int)timeToX(clip->pos);
             const int cw = (int)(clip->dur * m_pps);
             const int dx = e->pos().x() - cx;
-            if (m_tool == ToolMove) {
+            const bool nearTop = (e->pos().y() - rowY(row, audio)) <= 12;
+            if (nearTop && (dx <= 10 || cw - dx <= 10)) {
+                setCursor(Qt::SizeVerCursor); // alças de fade (cantos superiores)
+            } else if (nearTop && !audio) {
+                setCursor(Qt::SizeVerCursor); // alça de opacidade (topo do vídeo)
+            } else if (m_tool == ToolMove) {
                 setCursor(Qt::OpenHandCursor);
             } else if (dx <= 8 || cw - dx <= 8) {
                 setCursor(Qt::SizeHorCursor);
@@ -2714,6 +2894,17 @@ void TimelineWidget::keyPressEvent(QKeyEvent* e) {
     case Qt::Key_A:
         if (ctrl) { selectAllClips(); e->accept(); break; }
         QWidget::keyPressEvent(e);
+        break;
+    case Qt::Key_U:
+        // Vegas: desagrupa os clipes selecionados (quebra o vínculo do grupo,
+        // permitindo excluir um sem arrastar o outro).
+        ungroupSelected();
+        e->accept();
+        break;
+    case Qt::Key_G:
+        // Vegas: agrupa os clipes selecionados num grupo único.
+        groupSelected();
+        e->accept();
         break;
     case Qt::Key_Left:
         nudgeSelected(-1);
@@ -2972,6 +3163,10 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         }
         QAction* trackVol = nullptr;
         if (track) trackVol = menu.addAction(tr("Volume da faixa: %1%").arg((int)llround(track->volume * 100.0)));
+        QAction* trackOp = nullptr;
+        if (track && !track->audio)
+            trackOp = menu.addAction(tr("Opacidade da faixa: %1%")
+                                         .arg((int)llround(track->opacity * 100.0)));
         QAction* groupTracks = nullptr;
         QAction* renameGroup = nullptr;
         QAction* ungroupTracks = nullptr;
@@ -3005,6 +3200,18 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
             if (ok) {
                 emit editStart();
                 track->volume = v / 100.0;
+                emit modified();
+                update();
+            }
+        }
+        else if (act == trackOp) {
+            bool ok = false;
+            const double v = QInputDialog::getDouble(
+                this, tr("Opacidade da faixa"), tr("Opacidade (0–100%):"),
+                track->opacity * 100.0, 0.0, 100.0, 0, &ok);
+            if (ok) {
+                emit editStart();
+                track->opacity = v / 100.0;
                 emit modified();
                 update();
             }

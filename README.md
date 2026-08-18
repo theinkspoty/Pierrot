@@ -24,12 +24,20 @@ focado no youtube e outras.
 - **Modos de composição por faixa de vídeo**: normal, screen, multiply, overlay,
   darken, lighten, softlight, hardlight, difference, addition, subtract e exclusion
   — refletidos **no preview** e na exportação.
+- **Opacidade de faixa** (estilo Vegas/FCE): cada faixa de vídeo tem opacidade
+  própria (0–100%, ajustável pelo menu do botão direito e visível no cabeçalho),
+  composta sobre as faixas de baixo no preview e na exportação.
 - **Mídia gerada (cor sólida, estilo Vegas)**: crie uma "Cor sólida" no Media
   Pool (botão **Gerador**); é uma mídia virtual (sem arquivo) que funciona como
   fundo/camada, com transparência visível sobre ela no preview e exportada via ffmpeg.
 - **Marcadores** na régua (Ctrl+clique para alternar; menu do botão direito).
 - **Botões de zoom** (`−`/`+`) na régua, além do Ctrl+roda.
-- **Cantos de fade** (setas) desenhados nos clipes que têm fade in/out.
+- **Cantos de fade** (setas) desenhados nos clipes que têm fade in/out: arraste
+  o canto superior esquerdo/direito para criar/ajustar fade de entrada/saída.
+- **Opacidade do clipe no topo** (estilo Vegas): segure na parte de cima do
+  clipe de vídeo e arraste para baixo para reduzir a opacidade do clipe (e para
+  cima para aumentar). Uma **linha de curva** atravessa o clipe mostrando o
+  nível atual e a parte transparente fica escurecida, com alça e percentual.
 - **Preview** com reprodução em tempo real e seek, incluindo **áudio** (Qt Multimedia, via `libswresample`).
 - **Preview compõe múltiplas faixas de vídeo**: mídia transparente (PNG/WebP com
   alpha) mostra a camada de baixo, com blend por faixa, opacidade/fades e a cor
@@ -97,7 +105,7 @@ focado no youtube e outras.
 | Quadros/s           | configurável (padrão 30)                                    |
 | Taxa de áudio       | 48 kHz (exportação)                                         |
 | Efeitos por clipe   | volume, opacidade, velocidade, fades, texto, brilho, contraste, saturação, desfoque, P&B, chroma key |
-| Blend por faixa     | 12 modos: normal, screen, multiply, overlay, darken, lighten, softlight, hardlight, difference, addition, subtract, exclusion |
+| Blend por faixa     | 12 modos: normal, screen, multiply, overlay, darken, lighten, softlight, hardlight, difference, addition, subtract, exclusion + opacidade de faixa (0–100%) |
 | Zoom da timeline    | 2 px/s – 4000 px/s                                          |
 | Fonte               | C++ (Qt Widgets) + FFmpeg (libav*)                          |
 
@@ -108,6 +116,7 @@ focado no youtube e outras.
 | `Espaço`           | Reproduzir / pausar             |
 | `S`                | Dividir clipe no playhead       |
 | `Delete`           | Excluir clipe selecionado       |
+| `U` / `G`          | Desagrupar (separar) / agrupar clipes selecionados (Vegas) |
 | `Ctrl+Z` / `Ctrl+Y`| Desfazer / Refazer              |
 | `Ctrl+S`           | Salvar projeto                  |
 | `Ctrl+O`           | Abrir projeto                   |

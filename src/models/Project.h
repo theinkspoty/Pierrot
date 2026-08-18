@@ -274,6 +274,9 @@ struct Track {
     bool audio = false;
     QString blendMode = QStringLiteral("normal");
     double volume = 1.0;
+    // Opacidade da faixa de vídeo (0..1, estilo Vegas/FCE): a faixa inteira
+    // composta com transparência sobre as de baixo.
+    double opacity = 1.0;
     bool muted = false;
     bool solo = false;
     bool locked = false;

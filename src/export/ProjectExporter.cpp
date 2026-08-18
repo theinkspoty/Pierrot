@@ -43,6 +43,7 @@ struct VideoClipRef {
     const Clip* c;
     const MediaItem* m;
     QString blend;
+    double trackOpacity = 1.0; // opacidade da faixa (0..1, estilo Vegas/FCE)
 };
 
 // Renderiza o texto estilizado num PNG transparente (fundo = transparência),
@@ -389,20 +390,22 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     // Caminho temporário do PNG gerado para cada clipe de texto (índice = mesmo
     // de vclips); vazio para clipes de mídia. Preenchido no loop de inputs.
     QVector<QString> textPngs;
-    for (int tr = (int)project.videoTracks.size() - 1; tr >= 0; --tr)
+    for (int tr = (int)project.videoTracks.size() - 1; tr >= 0; --tr) {
+        const double trOp = std::clamp(project.videoTracks[tr].opacity, 0.0, 1.0);
         for (const Clip& c : project.videoTracks[tr].clips) {
             if (c.isText) {
                 // Clipe independente de texto: vira uma camada gerada.
-                vclips.push_back({&c, nullptr, project.videoTracks[tr].blendMode});
+                vclips.push_back({&c, nullptr, project.videoTracks[tr].blendMode, trOp});
                 textPngs.push_back(QString());
                 continue;
             }
             const MediaItem* m = project.findMedia(c.mediaId);
             if (m && m->hasVideo) {
-                vclips.push_back({&c, m, project.videoTracks[tr].blendMode});
+                vclips.push_back({&c, m, project.videoTracks[tr].blendMode, trOp});
                 textPngs.push_back(QString());
             }
         }
+    }
     std::stable_sort(vclips.begin(), vclips.end(),
                      [](const VideoClipRef& a, const VideoClipRef& b) { return a.c->pos < b.c->pos; });
     // Mantém textPngs alinhado a vclips reordenado.
@@ -763,6 +766,11 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                 if (mul < 1.0)
                     fc.last().append(QStringLiteral(",colorchannelmixer=aa=%1").arg(num(mul)));
             }
+            // Opacidade da faixa (estilo Vegas/FCE): multiplica o alfa da faixa
+            // inteira sobre as de baixo. Aplicada DEPOIS do fade/opacidade do
+            // clipe (que usa rampas de fade) para não duplicar a rampa.
+            if (v.trackOpacity < 1.0)
+                fc.last().append(QStringLiteral(",colorchannelmixer=aa=%1").arg(num(v.trackOpacity)));
             fc.last().append(QStringLiteral("[%1]").arg(lbl));
             // Wipe: o clipe da frente desliza de um dos lados sobre o anterior
             // durante a sobreposição (progresso = min(1,(t-pos)/dur)).
