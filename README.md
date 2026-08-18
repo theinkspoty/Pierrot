@@ -22,11 +22,18 @@ focado no youtube e outras.
 - **Efeitos de vídeo por clipe**: brilho, contraste, saturação, desfoque,
   preto e branco e **chroma key** (cor + similaridade).
 - **Modos de composição por faixa de vídeo**: normal, screen, multiply, overlay,
-  darken, lighten, softlight, hardlight, difference, addition, subtract e exclusion.
+  darken, lighten, softlight, hardlight, difference, addition, subtract e exclusion
+  — refletidos **no preview** e na exportação.
+- **Mídia gerada (cor sólida, estilo Vegas)**: crie uma "Cor sólida" no Media
+  Pool (botão **Gerador**); é uma mídia virtual (sem arquivo) que funciona como
+  fundo/camada, com transparência visível sobre ela no preview e exportada via ffmpeg.
 - **Marcadores** na régua (Ctrl+clique para alternar; menu do botão direito).
 - **Botões de zoom** (`−`/`+`) na régua, além do Ctrl+roda.
 - **Cantos de fade** (setas) desenhados nos clipes que têm fade in/out.
 - **Preview** com reprodução em tempo real e seek, incluindo **áudio** (Qt Multimedia, via `libswresample`).
+- **Preview compõe múltiplas faixas de vídeo**: mídia transparente (PNG/WebP com
+  alpha) mostra a camada de baixo, com blend por faixa, opacidade/fades e a cor
+  sólida funcionando como fundo — coerente com a exportação.
 - **Undo/Redo** ilimitado (snapshots, Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y).
 - **Salvar/Abrir projetos** em `.Blanc` (JSON). Projetos antigos `.ovp` ainda abrem.
 - **Configurações de projeto**: resolução e quadros/s.
@@ -45,12 +52,16 @@ focado no youtube e outras.
 - **Pan/Crop** com keyframes: arrastar a agulha na faixa de tempo (scrub),
   duplo clique cria keyframe, seleção e exclusão de keyframes (Delete) — tudo
   **sincronizado** com o editor de curvas (mesmos dados, um reflete o outro).
+  Painel com seções recolhíveis (Recorte / Zoom e Posição / Rotação), escala X/Y
+  independente e **safe margins** (title-safe/action-safe) no viewfinder.
 - **Timeline**: faixas de vídeo na ordem `V1` no topo; arraste o cabeçalho de
   uma faixa para **reordenar** ou soltá-la numa **pasta (grupo)**; arraste a
   faixa da pasta para mover o grupo inteiro; presets de tamanho de faixa
-  (**Estilo**: minimizada/normal/grande) na barra de ferramentas da timeline.
+  (**Estilo**: minimizada/normal/grande) na barra de ferramentas da timeline;
+  apagar a **região de loop** com ripple ou deixando espaço.
 - **Media Pool**: importe arrastando arquivos do sistema para dentro do painel,
-  ou arraste itens do painel para a timeline (com miniatura seguindo o cursor).
+  ou arraste itens do painel para a timeline (com miniatura seguindo o cursor);
+  miniaturas com **tamanho ajustável**.
 - **Clipes de texto independentes**: animáveis (transform, opacidade, fades,
   keyframes via editor de curvas, pan/crop) com editor dedicado (fonte, cor,
   contorno, fundo, posição) e cópia unificada/compartilhada estilo Vegas.
@@ -206,7 +217,11 @@ Marcado com 💀 o que já foi implementado.
   arrastável, alças bezier, grade de referência, interpolação linear/suave/
   degrau/bezier e snap ao frame).
 - 💀 Pan/Crop com keyframes **sincronizados com o editor de curvas** (mesmos
-  dados): duplo clique cria keyframe, seleção e exclusão na faixa de tempo.
+  dados): duplo clique cria keyframe, seleção e exclusão na faixa de tempo;
+  painel com seções recolhíveis, escala X/Y independente e safe margins.
+- 💀 **Mídia gerada (cor sólida, estilo Vegas)**: gerador no Media Pool, sem
+  arquivo, funciona como fundo/camada com transparência no preview e na exportação.
+- 💀 **Deletar a região de loop** com ripple ou deixando espaço.
 - 💀 Texto/título sobreposto por clipe.
 - 💀 Reordenar faixas de vídeo/áudio e **pastas (grupos)** por arraste do
   cabeçalho, além de presets de tamanho (**Estilo**: minimizada/normal/grande).
@@ -228,6 +243,9 @@ Marcado com 💀 o que já foi implementado.
 
 ### Preview / reprodução
 - 💀 Reprodução em frames do projeto com timecode `HH:MM:SS:FF`.
+- 💀 **Composição multi-faixa no preview**: mídia transparente (PNG/WebP com
+  alpha) mostra a camada de baixo, com blend por faixa, opacidade/fades e cor
+  sólida como fundo — coerente com a exportação.
 - **Sincronização áudio/vídeo** pelo relógio do decoder (hoje o playhead usa
   relógio de parede; em reproduções longas pode dessincronizar alguns ms).
 - **Decodificação por hardware** (VAAPI/NVDEC) para preview suave de 4K.
@@ -255,6 +273,7 @@ Marcado com 💀 o que já foi implementado.
   transparente na timeline.
 - **Undo mais granular** (passo a passo das operações, em vez de snapshots).
 - 💀 Importar arquivos por **arrastar do sistema** para o media pool.
+- 💀 **Miniaturas com tamanho ajustável** no media pool.
 - **Importar pasta inteira** para o media pool, com subpastas (hoje: importa as
   mídias da pasta atual; subpastas ainda não).
 - Suporte a **projetos 60/120 fps** (hoje o preview e os keyframes já respeitam
