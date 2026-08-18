@@ -1,8 +1,12 @@
 # Pierrot
 
-Editor de vídeo simples — feito de um editor para outro editor — estilo
-**Sony Vegas Pro**, desenvolvido **exclusivamente para Linux**, escrito em
+Editor de vídeo simples — O estilo vem do **Sony Vegas Pro** e **Final Cut Express (2003)**,
+desenvolvido **exclusivamente para Linux**, escrito em
 **C++** com **Qt Widgets** e **FFmpeg** (decodificação em processo + exportação via CLI).
+
+A ideia do editor é: ser otimizado e ter um fluxo de trabalho rápido.
+pra videos sem complexidade
+focado no youtube e outras.
 
 ## Funcionalidades
 
