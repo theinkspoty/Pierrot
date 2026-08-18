@@ -78,8 +78,10 @@ focado no youtube e outras.
 - **Texto renderizado como mídia transparente**: na exportação, cada clipe de
   texto é gerado como PNG com fundo transparente (igual às imagens) — sem o
   "quadro preto" tampando a camada de baixo, e com cor/fonte/contorno/fundo
---------------
   consistentes com o preview.
+
+------
+
 - **Relatório de crash**: se o programa fechar de repente (SIGSEGV/SIGABRT/etc.),
   um relatório com backtrace e informações do sistema é salvo em
   `~/Pierrot-crash-*.txt`; na próxima abertura é exibido um aviso com opção de
