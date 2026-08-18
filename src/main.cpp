@@ -11,8 +11,18 @@
 #include "MainWindow.h"
 #include "ui/WelcomeWindow.h"
 #include "ui/ClickLogger.h"
+#include "CrashReporter.h"
+#include <QMessageBox>
+#include <QFileInfo>
+#include <QTextStream>
+#include <QPushButton>
+#include <QProcess>
+#include <QFile>
 
 int main(int argc, char** argv) {
+    // Instala o relatório de crash O MAIS CEDO possível: se o app fechar de
+    // repente (SIGSEGV/SIGABRT/etc.), grava backtrace e infos em ~/Pierrot-crash-*.txt.
+    CrashReporter::install();
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     QApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
 #endif
@@ -26,6 +36,29 @@ int main(int argc, char** argv) {
     app.setQuitOnLastWindowClosed(false);
 
     ClickLogger::install();
+
+    // Se houve um crash na última execução, avisa o usuário e mostra onde está
+    // o relatório (com opção de abrir o arquivo e de remover os antigos).
+    const QStringList reports = CrashReporter::existingReports();
+    if (!reports.isEmpty()) {
+        QMessageBox box(QMessageBox::Warning,
+                        QObject::tr("Pierrot fechou inesperadamente"),
+                        QObject::tr("Na última execução o Pierrot fechou de repente "
+                                    "(possível falha).\n\nUm relatório de crash foi "
+                                    "gerado com detalhes técnicos:\n%1")
+                            .arg(reports.join(QLatin1Char('\n'))),
+                        QMessageBox::Ok, nullptr);
+        QPushButton* openBtn = box.addButton(QObject::tr("Abrir relatório"),
+                                             QMessageBox::ActionRole);
+        box.addButton(QObject::tr("Limpar relatórios"), QMessageBox::ActionRole);
+        box.exec();
+        if (box.clickedButton() == openBtn && !reports.isEmpty()) {
+            const QString p = reports.last();
+            QProcess::startDetached(QStringLiteral("xdg-open"), QStringList{p});
+        } else if (box.clickedButton() && box.clickedButton() != openBtn) {
+            for (const QString& p : reports) QFile::remove(p);
+        }
+    }
 
     app.setStyle(QStyleFactory::create("Fusion"));
 

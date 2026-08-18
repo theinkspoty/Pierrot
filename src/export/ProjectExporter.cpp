@@ -12,6 +12,14 @@
 #include <QDir>
 #include <QSet>
 #include <QRegularExpression>
+#include <QDebug>
+#include <QImage>
+#include <QPainter>
+#include <QPainterPath>
+#include <QFont>
+#include <QFontMetrics>
+#include <QTextStream>
+#include <QTemporaryFile>
 
 #include <algorithm>
 #include <cmath>
@@ -37,17 +45,81 @@ struct VideoClipRef {
     QString blend;
 };
 
+// Renderiza o texto estilizado num PNG transparente (fundo = transparência),
+// aplicando a posição textX/textY do estilo SEM o transform do clipe — o
+// transform (pan/zoom/rotação) é aplicado adiante pelo filter_complex na
+// camada de imagem, exatamente como nas imagens estáticas. Isso substitui o
+// drawtext, eliminando caixa preta/alfa incorreto e ficando consistente com o
+// preview.
+QImage renderTextImage(const TextStyle& st, int W, int H) {
+    QImage img(W, H, QImage::Format_ARGB32);
+    img.fill(Qt::transparent);
+    if (st.text.trimmed().isEmpty()) return img;
+    const double sizeFrac = st.textSize > 0.0 ? st.textSize : (1.0 / 18.0);
+    const int pxSize = qMax(4, (int)qRound(sizeFrac * H));
+    QFont font;
+    if (!st.fontFamily.isEmpty()) font.setFamily(st.fontFamily);
+    font.setPixelSize(pxSize);
+    font.setBold(st.textBold);
+    const QFontMetricsF fm(font);
+
+    // Quebra em linhas dentro de 90% da largura.
+    const double maxW = W * 0.9;
+    QStringList wrapped;
+    for (const QString& raw : st.text.split(QLatin1Char('\n'))) {
+        if (raw.isEmpty()) { wrapped << QString(); continue; }
+        QString cur;
+        const QStringList words = raw.split(QLatin1Char(' '));
+        for (const QString& w : words) {
+            const QString trial = cur.isEmpty() ? w : cur + QLatin1Char(' ') + w;
+            if (fm.horizontalAdvance(trial) <= maxW || cur.isEmpty())
+                cur = trial;
+            else { wrapped << cur; cur = w; }
+        }
+        wrapped << cur;
+    }
+    double tw = 0.0;
+    for (const QString& l : wrapped) tw = qMax(tw, fm.horizontalAdvance(l));
+    const double th = wrapped.size() * fm.height();
+    const double pad = pxSize * 0.25;
+    const double bw = tw + 2.0 * pad;
+    const double bh = th + 2.0 * pad;
+    double x;
+    if (st.textAlign == 1) x = st.textX * W;
+    else if (st.textAlign == 2) x = st.textX * W - bw;
+    else x = st.textX * W - bw / 2.0;
+    const double y = st.textY * H - bh / 2.0;
+    const QRectF box(x, y, bw, bh);
+
+    QPainter p(&img);
+    p.setRenderHint(QPainter::Antialiasing);
+    if (st.textBackground) p.fillRect(box, st.textBackgroundColor);
+    QPainterPath path;
+    const double baseline = box.top() + pad + fm.ascent();
+    for (int i = 0; i < wrapped.size(); ++i)
+        path.addText(QPointF(box.left() + pad, baseline + i * fm.height()), font, wrapped[i]);
+    if (st.textOutline > 0.0) {
+        QPen pen(st.textOutlineColor, qMax(1.0, st.textOutline * H),
+                 Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+        p.strokePath(path, pen);
+    }
+    p.fillPath(path, st.textColor);
+    return img;
+}
+
 struct AudioClipRef {
     const Clip* c;
     double trackVol = 1.0;
 };
 
 QString hexColor(const QColor& col) {
+    // O ffmpeg exige o prefixo "0x" (minúsculo) + dígitos hexadecimais. O
+    // .toUpper() anterior deixava "0XFFFFFF", que o parser de cor rejeita
+    // ("Cannot find color '0XFFFFFF'").
     return QStringLiteral("0x%1%2%3")
         .arg(col.red(), 2, 16, QLatin1Char('0'))
         .arg(col.green(), 2, 16, QLatin1Char('0'))
-        .arg(col.blue(), 2, 16, QLatin1Char('0'))
-        .toUpper();
+        .arg(col.blue(), 2, 16, QLatin1Char('0'));
 }
 
 QString codecFor(ExportSettings::Format f, bool video) {
@@ -301,6 +373,12 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     if (project.duration() <= 0)
         return fail(QStringLiteral("Timeline vazia — nada para exportar."));
 
+    // Limpa PNGs de texto temporários de exportações anteriores.
+    const QDir tmp(QDir::tempPath());
+    for (const QFileInfo& fi : tmp.entryInfoList(QStringList{QStringLiteral("pierrot-text-*.png")},
+                                                 QDir::Files))
+        QFile::remove(fi.absoluteFilePath());
+
     const double total = std::max(project.duration(), 0.5);
     const int W = s.width;
     const int H = s.height;
@@ -308,19 +386,35 @@ QStringList ProjectExporter::buildCommand(const Project& project,
 
     // Video clips bottom -> top, so the topmost track is composited last (on top).
     QVector<VideoClipRef> vclips;
+    // Caminho temporário do PNG gerado para cada clipe de texto (índice = mesmo
+    // de vclips); vazio para clipes de mídia. Preenchido no loop de inputs.
+    QVector<QString> textPngs;
     for (int tr = (int)project.videoTracks.size() - 1; tr >= 0; --tr)
         for (const Clip& c : project.videoTracks[tr].clips) {
             if (c.isText) {
                 // Clipe independente de texto: vira uma camada gerada.
                 vclips.push_back({&c, nullptr, project.videoTracks[tr].blendMode});
+                textPngs.push_back(QString());
                 continue;
             }
             const MediaItem* m = project.findMedia(c.mediaId);
-            if (m && m->hasVideo)
+            if (m && m->hasVideo) {
                 vclips.push_back({&c, m, project.videoTracks[tr].blendMode});
+                textPngs.push_back(QString());
+            }
         }
     std::stable_sort(vclips.begin(), vclips.end(),
                      [](const VideoClipRef& a, const VideoClipRef& b) { return a.c->pos < b.c->pos; });
+    // Mantém textPngs alinhado a vclips reordenado.
+    {
+        QVector<QString> reordered(textPngs.size());
+        QVector<int> order(vclips.size());
+        for (int i = 0; i < order.size(); ++i) order[i] = i;
+        std::stable_sort(order.begin(), order.end(),
+                         [&](int a, int b) { return vclips[a].c->pos < vclips[b].c->pos; });
+        for (int i = 0; i < (int)vclips.size(); ++i) reordered[i] = textPngs[order[i]];
+        textPngs = reordered;
+    }
 
     // Transições: para cada clipe de vídeo, verifica se ele se sobrepõe ao
     // clipe anterior da MESMA faixa. A duração é o tamanho da sobreposição e o
@@ -389,13 +483,29 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     args << "-f" << "lavfi"
          << "-i" << QString("color=c=black:s=%1x%2:r=%3:d=%4").arg(W).arg(H).arg(FPS).arg(num(total));
 
-    for (const VideoClipRef& v : vclips) {
+    for (int i = 0; i < (int)vclips.size(); ++i) {
+        const VideoClipRef& v = vclips[i];
         if (v.m == nullptr) {
-            // Clipe de texto: fonte gerada transparente (a drawtext desenha o
-            // texto por cima), com a duração do clipe.
-            args << "-f" << "lavfi"
-                 << "-i" << QString("color=c=black@0.0:s=%1x%2:r=%3:d=%4")
-                                .arg(W).arg(H).arg(FPS).arg(num(v.c->dur * v.c->speed));
+            // Clipe de texto: gera um PNG transparente com o texto estilizado
+            // (como mídia), eliminando o drawtext — fonte/caixa/alfa ficam
+            // consistentes com o preview e com as imagens estáticas (que não
+            // têm o problema de fundo).
+            const TextStyle& st = *project.textStyleFor(*v.c);
+            QImage img = renderTextImage(st, W, H);
+            QTemporaryFile tmp;
+            tmp.setAutoRemove(false);
+            tmp.setFileTemplate(QDir::tempPath() + "/pierrot-text-XXXXXX.png");
+            if (tmp.open()) {
+                img.save(tmp.fileName(), "PNG");
+                textPngs[i] = tmp.fileName();
+                args << "-loop" << "1" << "-framerate" << num(FPS)
+                     << "-t" << num(v.c->dur * v.c->speed) << "-i" << textPngs[i];
+            } else {
+                // Fallback: fonte transparente vazia (nunca deve ocorrer).
+                args << "-f" << "lavfi"
+                     << "-i" << QString("color=c=black@0.0:s=%1x%2:r=%3:d=%4")
+                                    .arg(W).arg(H).arg(FPS).arg(num(v.c->dur * v.c->speed));
+            }
         } else if (isImageFile(v.m->filePath)) {
             // Imagem estática: loop contínuo na taxa do projeto, limitado à
             // duração do clipe.
@@ -451,50 +561,66 @@ QStringList ProjectExporter::buildCommand(const Project& project,
             const double transDur = hasTrans ? trIt->second : 0.0;
             QString chain;
             if (v.m == nullptr) {
-                // Clipe de texto: a fonte já é WxH transparente; só alinha o
-                // tempo (sem scale/pad, que encheriam o quadro de preto).
-                chain = QStringLiteral("[%1:v]setpts=(PTS-STARTPTS)/%2+%3/TB,"
-                                       "trim=duration=%4,fps=%5,format=rgba")
-                            .arg(inIdx).arg(num(speed)).arg(num(pos)).arg(num(dur)).arg(FPS);
-                if (v.c->hasCrop()) {
-                    // Pan/crop do texto: recorta e re-preenche o quadro.
-                    chain += QLatin1Char(',') + cropFilter(*v.c, pos);
-                    chain += QStringLiteral(
-                                 ",scale=%1:%2:force_original_aspect_ratio=increase:"
-                                 "force_divisible_by=2,crop=%1:%2")
-                                 .arg(W).arg(H);
-                }
+                // Clipe de texto (PNG transparente gerado): força cadência fixa
+                // e timebase antes de reposicionar. O PNG via -loop gerava PTS
+                // com passo > 1/30, fazendo o `t` avançar rápido e a animação
+                // ficar ~N× mais rápida no render (so texto, onde há keyframes).
+                chain = QStringLiteral("[%1:v]fps=%2,settb=AVTB,setpts=(PTS-STARTPTS)/%3+%4/TB,"
+                                       "trim=duration=%5,format=rgba")
+                            .arg(inIdx).arg(FPS).arg(num(speed)).arg(num(pos)).arg(num(dur));
             } else {
                 chain = QStringLiteral("[%1:v]setpts=(PTS-STARTPTS)/%2+%3/TB,trim=duration=%4")
                             .arg(inIdx).arg(num(speed)).arg(num(pos)).arg(num(dur));
+                // Mídia sem fundo (PNG/WebP com alpha): o letterbox usa
+                // TRANSPARENTE para não cobrir o que está por baixo. Vídeos/
+                // imagens opacas usam preto (letterbox clássico).
+                const bool alphaMedia = v.m && isImageFile(v.m->filePath);
+                const QString padColor = alphaMedia ? QStringLiteral("black@0")
+                                                    : QStringLiteral("black");
                 if (v.c->hasCrop()) {
-                    // Com crop, o conteúdo recortado preenche o quadro (cover).
+                    // Com crop, o conteúdo recortado é encaixado no quadro com
+                    // CONTAIN (letterbox), igual ao preview. Antes usávamos
+                    // cover (increase + crop), que RECORTAVA imagens não-16:9
+                    // (quadradas/retrato) — o render cortava o que o preview
+                    // mostrava inteiro.
                     chain += QLatin1Char(',') + cropFilter(*v.c, pos);
                     chain += QStringLiteral(
-                                 ",scale=%1:%2:force_original_aspect_ratio=increase:"
-                                 "force_divisible_by=2,crop=%1:%2,fps=%3,format=rgba")
-                                 .arg(W).arg(H).arg(FPS);
+                                 ",scale=%1:%2:force_original_aspect_ratio=decrease:"
+                                 "force_divisible_by=2,"
+                                 "pad=%1:%2:(ow-iw)/2:(oh-ih)/2:color=%3,fps=%4,format=rgba")
+                                 .arg(W).arg(H).arg(padColor).arg(FPS);
                 } else {
                     chain += QStringLiteral(
                                  ",scale=%1:%2:force_original_aspect_ratio=decrease:"
                                  "force_divisible_by=2,"
-                                 "pad=%1:%2:(ow-iw)/2:(oh-ih)/2:color=black,fps=%3,format=rgba")
-                                 .arg(W).arg(H).arg(FPS);
+                                 "pad=%1:%2:(ow-iw)/2:(oh-ih)/2:color=%3,fps=%4,format=rgba")
+                                 .arg(W).arg(H).arg(padColor).arg(FPS);
                 }
             }
             fc << chain;
             // Texto (do clipe de texto ou anexado ao vídeo): desenhado AQUI,
             // antes de scale/rotate/fade/opacity, para o texto acompanhar a
             // transformação e os fades do clipe.
-            if (!project.textStyleFor(*v.c)->isEmpty()) {
+            // Apenas clipes de MÍDIA com texto anexado (não clipes de texto
+            // independentes — esses já vêm renderizados no PNG gerado acima).
+            if (v.m != nullptr && !project.textStyleFor(*v.c)->isEmpty()) {
                 const TextStyle& st = *project.textStyleFor(*v.c);
                 const double sizeFrac = st.textSize > 0.0 ? st.textSize : (1.0 / 18.0);
                 const QString font = fontFileForFamily(st.fontFamily);
-                QString dt = QStringLiteral("drawtext=text='%1':fontsize=h*%2")
-                                 .arg(escText(st.text))
-                                 .arg(num(sizeFrac));
-                if (!font.isEmpty())
-                    dt.prepend(QStringLiteral("fontfile=%1:").arg(font));
+                // O fontfile precisa ser a PRIMEIRA opção dentro do filtro
+                // drawtext (drawtext=fontfile=...:text=...): colocar fora,
+                // como "fontfile=...:drawtext=...", quebra o parser do ffmpeg.
+                QString dt = QStringLiteral("drawtext=");
+                if (!font.isEmpty()) {
+                    // Escapa ':' e ',' no caminho (separadores do formato).
+                    QString fpath = font;
+                    fpath.replace(QLatin1Char(':'), QLatin1String("\\:"));
+                    fpath.replace(QLatin1Char(','), QLatin1String("\\,"));
+                    dt += QStringLiteral("fontfile=%1:").arg(fpath);
+                }
+                dt += QStringLiteral("text='%1':fontsize=h*%2")
+                          .arg(escText(st.text))
+                          .arg(num(sizeFrac));
                 dt += QStringLiteral(":fontcolor=%1").arg(drawColor(st.textColor));
                 if (st.textOutline > 0.0)
                     dt += QStringLiteral(":borderw=h*%1:bordercolor=%2")
@@ -522,12 +648,24 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                                          .arg(scaleExpr));
             }
             if (v.c->rotation != 0.0 || !v.c->kfRotation.isEmpty()) {
-                const double maxS = std::max(1.0, maxAbsKf(v.c->kfScale, v.c->scale));
-                const double aRad = maxAbsKf(v.c->kfRotation, v.c->rotation) * kPi / 180.0;
-                const double cAng = std::cos(aRad);
-                const double sAng = std::sin(aRad);
-                const int rotW = std::max(2, (int)std::ceil(W * maxS * cAng + H * maxS * sAng));
-                const int rotH = std::max(2, (int)std::ceil(W * maxS * sAng + H * maxS * cAng));
+                // Texto: a imagem já é W×H e o preview RECORTA a rotação ao
+                // quadro do projeto (clipe). Usar ow=W:oh=H mantém o texto
+                // centrado e rotacionando em torno do centro, igual ao preview.
+                // Para vídeo/imagem, o canvas ampliado evita cortar as quinas.
+                const int rotW = (v.m == nullptr) ? W : [&]() {
+                    const double maxS = std::max(1.0, maxAbsKf(v.c->kfScale, v.c->scale));
+                    const double aRad = maxAbsKf(v.c->kfRotation, v.c->rotation) * kPi / 180.0;
+                    const double cAng = std::fabs(std::cos(aRad));
+                    const double sAng = std::fabs(std::sin(aRad));
+                    return std::max(2, (int)std::ceil(W * maxS * cAng + H * maxS * sAng));
+                }();
+                const int rotH = (v.m == nullptr) ? H : [&]() {
+                    const double maxS = std::max(1.0, maxAbsKf(v.c->kfScale, v.c->scale));
+                    const double aRad = maxAbsKf(v.c->kfRotation, v.c->rotation) * kPi / 180.0;
+                    const double cAng = std::fabs(std::cos(aRad));
+                    const double sAng = std::fabs(std::sin(aRad));
+                    return std::max(2, (int)std::ceil(W * maxS * sAng + H * maxS * cAng));
+                }();
                 // Texto tem fundo transparente: rotação preenche com transparente,
                 // não preto (senão as quinas cobrem o vídeo de baixo).
                 const QString rotFill = (v.m == nullptr) ? QStringLiteral("black@0")
@@ -537,8 +675,13 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                                          .arg(num(v.c->rotation * kPi / 180.0))
                                          .arg(rotW).arg(rotH).arg(rotFill));
                 else
-                    fc.last().append(QStringLiteral(",rotate=a='%1':ow=%2:oh=%3:c=%4")
-                                         .arg(rotExpr).arg(rotW).arg(rotH).arg(rotFill));
+                    // rotExpr está em GRAUS; o ffmpeg espera radianos no
+                    // rotate. Sem essa conversão a rotação animada gira ~14×
+                    // (90° vira 90 rad) e fica "maluca".
+                    fc.last().append(QStringLiteral(",rotate=a='(%1)*%2':ow=%3:oh=%4:c=%5")
+                                         .arg(rotExpr)
+                                         .arg(num(kPi / 180.0))
+                                         .arg(rotW).arg(rotH).arg(rotFill));
             }
             // Texto: fade por ALPHA (não para preto), senão a camada transparente
             // viraria um quadrado preto durante o fade.

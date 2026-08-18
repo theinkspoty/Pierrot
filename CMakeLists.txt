@@ -25,6 +25,7 @@ find_package(FFmpeg REQUIRED)
 
 set(SOURCES
     src/main.cpp
+    src/CrashReporter.cpp
     src/MainWindow.cpp
     src/models/Project.cpp
     src/ffmpeg/FFmpegDecoder.cpp
@@ -51,6 +52,7 @@ set(SOURCES
 
 set(HEADERS
     src/MainWindow.h
+    src/CrashReporter.h
     src/version.h
     src/models/Project.h
     src/ffmpeg/FFmpegDecoder.h

@@ -139,7 +139,7 @@ void WelcomeWindow::buildLayout() {
     nameLabel->setFont(nf);
     nameLabel->setStyleSheet("color:#f2f5fa;");
 
-    auto* verLabel = new QLabel(tr("0.3.5"), this);
+    auto* verLabel = new QLabel(tr("0.3"), this);
     QFont vf = verLabel->font();
     vf.setPointSize(12);
     vf.setBold(true);
@@ -150,7 +150,8 @@ void WelcomeWindow::buildLayout() {
     nameRow->setSpacing(6);
     nameRow->addStretch(1);
     nameRow->addWidget(nameLabel);
-    nameRow->addWidget(verLabel, 0, Qt::AlignBottom);
+    verLabel->setContentsMargins(0, -6, 0, 6); // sobe alguns pixels
+    nameRow->addWidget(verLabel, 0, Qt::AlignVCenter);
     nameRow->addStretch(1);
 
     auto* slogan = new QLabel(tr("para Linux"), this);

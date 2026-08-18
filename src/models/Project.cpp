@@ -129,7 +129,7 @@ static TextStyle textStyleFromJson(const QJsonObject& o) {
     t.textOutline = o["textOutline"].toDouble(0.0);
     const QString toc = o["textOutlineColor"].toString();
     if (QColor::isValidColorName(toc)) t.textOutlineColor = QColor(toc);
-    t.textBackground = o["textBackground"].toBool(true);
+    t.textBackground = o["textBackground"].toBool(false);
     const QString tbc = o["textBackgroundColor"].toString();
     if (QColor::isValidColorName(tbc)) t.textBackgroundColor = QColor(tbc);
     t.textX = o["textX"].toDouble(0.5);

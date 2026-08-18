@@ -139,7 +139,7 @@ struct TextStyle {
     QColor textColor{255, 255, 255};
     double textOutline = 0.0;      // largura do contorno (fração da altura; 0 = sem)
     QColor textOutlineColor{0, 0, 0};
-    bool textBackground = true;    // caixa sob o texto
+    bool textBackground = false;   // caixa sob o texto (default: sem fundo)
     QColor textBackgroundColor{0, 0, 0, 150};
     double textX = 0.5;            // posição do texto (0..1 no quadro; 0.5 = centro)
     double textY = 0.5;

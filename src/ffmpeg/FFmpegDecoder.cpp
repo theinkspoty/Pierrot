@@ -647,7 +647,7 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
             if (!sws || m_swsSrcW != sw || m_swsSrcH != sh || m_swsSrcFmt != srcFmt
                 || m_swsDstW != dw || m_swsDstH != dh) {
                 if (sws) sws_freeContext(sws);
-                sws = sws_getContext(sw, sh, srcFmt, dw, dh, AV_PIX_FMT_RGB24,
+                sws = sws_getContext(sw, sh, srcFmt, dw, dh, AV_PIX_FMT_RGBA,
                                      SWS_FAST_BILINEAR, nullptr, nullptr, nullptr);
                 m_sws = sws;
                 m_swsSrcW = sw;
@@ -657,7 +657,7 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
                 m_swsDstH = dh;
             }
             if (sws) {
-                QImage img(dw, dh, QImage::Format_RGB888);
+                QImage img(dw, dh, QImage::Format_RGBA8888);
                 uint8_t* dst[4] = {img.bits(), nullptr, nullptr, nullptr};
                 int dstLinesize[4] = {(int)img.bytesPerLine(), 0, 0, 0};
                 sws_scale(sws, fr->data, fr->linesize, 0, sh, dst, dstLinesize);
@@ -804,7 +804,7 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
             if (!sws || m_swsSrcW != sw || m_swsSrcH != sh || m_swsSrcFmt != srcFmt
                 || m_swsDstW != dw || m_swsDstH != dh) {
                 if (sws) sws_freeContext(sws);
-                sws = sws_getContext(sw, sh, srcFmt, dw, dh, AV_PIX_FMT_RGB24,
+                sws = sws_getContext(sw, sh, srcFmt, dw, dh, AV_PIX_FMT_RGBA,
                                      SWS_FAST_BILINEAR, nullptr, nullptr, nullptr);
                 m_sws = sws;
                 m_swsSrcW = sw;
@@ -814,7 +814,7 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
                 m_swsDstH = dh;
             }
             if (sws) {
-                QImage img(dw, dh, QImage::Format_RGB888);
+                QImage img(dw, dh, QImage::Format_RGBA8888);
                 uint8_t* dst[4] = {img.bits(), nullptr, nullptr, nullptr};
                 int dstLinesize[4] = {(int)img.bytesPerLine(), 0, 0, 0};
                 sws_scale(sws, chosen->data, chosen->linesize, 0, sh, dst, dstLinesize);

@@ -762,21 +762,23 @@ void PancropWidget::computeView(double s, double tx, double ty, int w0, int h0,
     const double kh = std::max(1.0, h0 * (1.0 - T - B));
     const double W = m_project ? m_project->width : 1920.0;
     const double H = m_project ? m_project->height : 1080.0;
-    const double k = std::max(W / kw, H / kh);
+    // Modelo CONTAIN (letterbox), igual ao preview/exportação: o recorte é
+    // encaixado inteiro no quadro, sem cortar imagens não-16:9. Antes usava
+    // "cover" (max) e a janela de saída recortava a imagem — caixa de recorte
+    // "desalinhada" em relação ao resultado renderizado.
+    const double k = std::min(W / kw, H / kh);
     const double ks = std::max(k * s, 1e-6);
-    const double w = W / ks;
-    const double h = H / ks;
+    // Janela de saída em px do source: pode ser maior que o recorte quando há
+    // barras (contain); limita ao recorte para a caixa ficar sobre a imagem.
+    const double w = std::min(kw, W / ks);
+    const double h = std::min(kh, H / ks);
     *cropS = QRectF(kx, ky, kw, kh);
-    // Janela de saída: a região do source que o export mostra. k é a escala
-    // "cover" do recorte no quadro do projeto (W×H); o centro sem pan é a
-    // origem do cover, kx + W/(2k) (igual ao centro do recorte quando as
-    // proporções coincidem). O zoom s encolhe a janela; o pan desloca o
-    // centro por -tx/ks, -ty/ks.
-    const double ox = kx + W / (2.0 * k);
-    const double oy = ky + H / (2.0 * k);
-    *outS = QRectF(ox - w / 2.0 - tx / ks,
-                   oy - h / 2.0 - ty / ks,
-                   w, h);
+    // Centro da janela dentro do recorte (centro do recorte - pan/escala).
+    const double cx = kx + kw / 2.0 - tx / ks;
+    const double cy = ky + kh / 2.0 - ty / ks;
+    const double lx = std::clamp(cx - w / 2.0, kx, kx + kw - w);
+    const double ly = std::clamp(cy - h / 2.0, ky, ky + kh - h);
+    *outS = QRectF(lx, ly, w, h);
 }
 
 // Rotaciona um ponto da tela de volta para o espaço não-rotacionado do
@@ -857,14 +859,15 @@ void PancropWidget::applyPan(double sx, double sy) {
     const double kh = std::max(1.0, h0 * (1.0 - T - B));
     const double W = m_project ? m_project->width : 1920.0;
     const double H = m_project ? m_project->height : 1080.0;
-    const double k = std::max(W / kw, H / kh);
+    // Modelo CONTAIN, igual ao computeView/preview/exportação.
+    const double k = std::min(W / kw, H / kh);
     const double s = std::clamp(m_scale->value() / 100.0, kMinScale, kMaxScale);
-    const double ks = k * s;
-    const double w = W / ks;
-    const double h = H / ks;
+    const double ks = std::max(k * s, 1e-6);
+    const double w = std::min(kw, W / ks);
+    const double h = std::min(kh, H / ks);
 
-    const double ox = kx + W / (2.0 * k);
-    const double oy = ky + H / (2.0 * k);
+    const double ox = kx + kw / 2.0;
+    const double oy = ky + kh / 2.0;
     double cx = sx;
     double cy = sy;
     if (w >= kw) cx = ox;
@@ -1166,10 +1169,10 @@ void PancropWidget::viewportWheel(QWidget* view, QWheelEvent* e) {
     const double ky = T * h0;
     const double kw = std::max(1.0, w0 * (1.0 - L - R));
     const double kh = std::max(1.0, h0 * (1.0 - T - B));
-    const double k = std::max(W / kw, H / kh);
+    const double k = std::min(W / kw, H / kh);
     const double ks = k * sNew;
-    const double ntx = (kx + W / (2.0 * k) - center.x()) * ks;
-    const double nty = (ky + H / (2.0 * k) - center.y()) * ks;
+    const double ntx = (kx + kw / 2.0 - center.x()) * ks;
+    const double nty = (ky + kh / 2.0 - center.y()) * ks;
 
     QSignalBlocker b5(m_scale), b6(m_panX), b7(m_panY);
     m_scale->setValue((int)std::lround(sNew * 100.0));
