@@ -39,11 +39,12 @@ private:
     void loadRecentProjects();
     int autosaveMinutes() const;
     void saveAutoSettings() const;
+    void paintEvent(QPaintEvent* e) override;
     void resizeEvent(QResizeEvent* e) override;
 
-    QLabel* m_imageLabel = nullptr;
-    QPixmap m_img; // imagem carregada (escalada dinamicamente no resize)
     QListWidget* m_recent = nullptr;
+    QPixmap m_img;                  // imagem da marca (cortada arredondada)
+    QLabel* m_imageFrame = nullptr; // moldura com a imagem (redimensionável)
     QLineEdit* m_name = nullptr;
     QComboBox* m_resolution = nullptr;
     QWidget* m_customWidget = nullptr;

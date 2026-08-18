@@ -5,6 +5,7 @@
 
 #include "WelcomeWindow.h"
 #include "version.h"
+#include "ui/TitleBar.h"
 
 #include <QComboBox>
 #include <QSpinBox>
@@ -26,18 +27,45 @@
 #include <QCoreApplication>
 #include <QPixmap>
 #include <QStyle>
+#include <QPainter>
+#include <QPainterPath>
 #include <QResizeEvent>
+#include <QColor>
+#include <QFont>
+#include <QFontMetrics>
 
 namespace {
 QStringList loadRecentList() {
     return QSettings().value("recentProjects").toStringList();
 }
+
+// Recorta uma imagem com os cantos arredondados (moldura).
+QPixmap makeRounded(const QPixmap& src, int radius) {
+    if (src.isNull()) return src;
+    QPixmap out(src.size());
+    out.fill(Qt::transparent);
+    QPainterPath path;
+    path.addRoundedRect(QRectF(0, 0, src.width(), src.height()), radius, radius);
+    QPainter p(&out);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setClipPath(path);
+    p.drawPixmap(0, 0, src);
+    return out;
+}
+
+// Região de cantos arredondados para recortar a janela (borda arredondada).
 }
 
 WelcomeWindow::WelcomeWindow(QWidget* parent) : QDialog(parent) {
+    // Janela sem as bordas do sistema: a barra de título é personalizada.
+    setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);
+    // Transparência com cantos arredondados: o paintEvent pinta o fundo opaco
+    // (gradiente) dentro de um retângulo arredondado; fora do raio é
+    // transparente, dando os cantos arredondados à janela.
+    setAttribute(Qt::WA_TranslucentBackground);
     setWindowTitle(tr("Bem-vindo ao Pierrot"));
-    setMinimumSize(800, 460);
-    resize(1020, 600);
+    setMinimumSize(820, 560);
+    resize(1000, 660);
 
     buildLayout();
     loadRecentProjects();
@@ -81,38 +109,45 @@ WelcomeWindow::WelcomeWindow(QWidget* parent) : QDialog(parent) {
 }
 
 void WelcomeWindow::buildLayout() {
-    // Imagem à esquerda, adaptável ao tamanho da janela.
-    m_imageLabel = new QLabel(this);
-    m_imageLabel->setAlignment(Qt::AlignCenter);
-    m_imageLabel->setMinimumSize(180, 240);
-    m_imageLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    // Imagem da marca com bordas arredondadas (moldura), no lado esquerdo.
     QPixmap pm;
     if (pm.load(":/pierrot.jpg")
         || pm.load("imagens/pierrot.jpg")
         || pm.load(QCoreApplication::applicationDirPath() + "/imagens/pierrot.jpg")) {
         m_img = pm;
-        QSize disp = pm.size();
-        disp.scale(QSize(360, 520), Qt::KeepAspectRatio);
-        m_imageLabel->setPixmap(pm.scaled(disp, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     } else {
-        m_imageLabel->setText(tr("Pierrot"));
-        QFont pf = m_imageLabel->font();
-        pf.setPointSize(30);
-        pf.setBold(true);
-        m_imageLabel->setFont(pf);
-        m_imageLabel->setStyleSheet("color:#9db2c8;");
+        m_img = QPixmap(360, 480);
+        m_img.fill(QColor(30, 32, 38));
+        QPainter pt(&m_img);
+        pt.setPen(Qt::NoPen);
+        pt.setBrush(QColor(60, 90, 130));
+        pt.drawEllipse(m_img.rect().center(), 80, 80);
     }
+    auto* imageFrame = new QLabel(this);
+    m_imageFrame = imageFrame;
+    imageFrame->setAlignment(Qt::AlignCenter);
+    imageFrame->setMinimumSize(300, 400);
+    imageFrame->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::MinimumExpanding);
+    imageFrame->setPixmap(makeRounded(m_img.scaled(QSize(320, 440), Qt::KeepAspectRatio,
+                                                   Qt::SmoothTransformation), 18));
 
-    // Título central
-    auto* title = new QLabel(tr("Pierrot"), this);
-    QFont tf = title->font();
-    tf.setPointSize(34);
-    tf.setBold(true);
-    title->setFont(tf);
-    title->setStyleSheet("color:#e8ebf0;");
+    auto* nameLabel = new QLabel(tr("Pierrot"), this);
+    QFont nf = nameLabel->font();
+    nf.setPointSize(30);
+    nf.setBold(true);
+    nameLabel->setFont(nf);
+    nameLabel->setStyleSheet("color:#f2f5fa;");
+    nameLabel->setAlignment(Qt::AlignHCenter);
 
-    auto* subtitle = new QLabel(tr("Editor de vídeo"), this);
-    subtitle->setStyleSheet("color: #9a9a9a;");
+    auto* slogan = new QLabel(tr("para Linux"), this);
+    slogan->setStyleSheet("color:#8a93a2; font-size:13px; letter-spacing:1px;");
+    slogan->setAlignment(Qt::AlignHCenter);
+
+    auto* imageCol = new QVBoxLayout;
+    imageCol->setSpacing(6);
+    imageCol->addWidget(imageFrame, 1);
+    imageCol->addWidget(nameLabel);
+    imageCol->addWidget(slogan);
 
     auto* credits = new QLabel(tr("by InkSpoty"), this);
     credits->setStyleSheet("color: #6b7280; font-size: 11px;");
@@ -124,8 +159,9 @@ void WelcomeWindow::buildLayout() {
 
     // Projetos recentes
     auto* recentBox = new QGroupBox(tr("Projetos recentes"), this);
+    recentBox->setMinimumHeight(320);
     m_recent = new QListWidget(recentBox);
-    m_recent->setMinimumHeight(190);
+    m_recent->setMinimumHeight(260);
     connect(m_recent, &QListWidget::itemDoubleClicked, this,
             &WelcomeWindow::openSelected);
 
@@ -134,6 +170,7 @@ void WelcomeWindow::buildLayout() {
     connect(delShort, &QShortcut::activated, this, &WelcomeWindow::removeSelected);
 
     auto* openBtn = new QPushButton(tr("Abrir"), recentBox);
+    openBtn->setToolTip(tr("Abrir o projeto selecionado"));
     connect(openBtn, &QPushButton::clicked, this, &WelcomeWindow::openSelected);
 
     auto* delBtn = new QPushButton(tr("Excluir"), recentBox);
@@ -151,6 +188,7 @@ void WelcomeWindow::buildLayout() {
 
     // Novo projeto
     auto* newBox = new QGroupBox(tr("Novo projeto"), this);
+    newBox->setMinimumHeight(320);
 
     m_name = new QLineEdit(newBox);
     m_name->setPlaceholderText(tr("Nome do projeto"));
@@ -198,11 +236,16 @@ void WelcomeWindow::buildLayout() {
 
     auto* createBtn = new QPushButton(tr("Criar projeto"), newBox);
     createBtn->setDefault(true);
+    createBtn->setCursor(Qt::PointingHandCursor);
+    createBtn->setMinimumHeight(40);
     createBtn->setStyleSheet(
-        "QPushButton{background:#2c3d57; border:1px solid #4a6a94; border-radius:6px;"
-        " color:#dce8f5; padding:9px 24px; font-weight:bold;}"
-        "QPushButton:hover{background:#36506f;}"
-        "QPushButton:pressed{background:#253550;}");
+        "QPushButton{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+        " stop:0 #2f6fb3, stop:1 #3d8fd4);"
+        " border:none; border-radius:8px;"
+        " color:#ffffff; padding:10px 28px; font-weight:bold; font-size:14px;}"
+        "QPushButton:hover{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+        " stop:0 #3780c5, stop:1 #4a9adf);}"
+        "QPushButton:pressed{background:#2a5f96;}");
     connect(createBtn, &QPushButton::clicked, this, &WelcomeWindow::requestNewProject);
 
     auto* newLay = new QVBoxLayout(newBox);
@@ -266,31 +309,37 @@ void WelcomeWindow::buildLayout() {
         "border-radius: 4px; font-weight: bold;");
     m_devWarn->setVisible(false);
 
-    // Montagem geral
-    auto* leftCol = new QVBoxLayout;
-    leftCol->addWidget(m_imageLabel);
-    leftCol->addStretch(1);
-
-    auto* centerCol = new QVBoxLayout;
-    centerCol->addWidget(title);
-    centerCol->addWidget(subtitle);
-    centerCol->addSpacing(14);
-    centerCol->addWidget(recentBox);
-    centerCol->addWidget(newBox);
-    centerCol->addStretch(1);
+    // Montagem geral: imagem (moldura) à esquerda, recentes ao centro,
+    // "Novo projeto" + auto-save à direita.
+    auto* midCol = new QVBoxLayout;
+    midCol->addStretch(1);
+    midCol->addWidget(recentBox);
+    midCol->addStretch(1);
 
     auto* rightCol = new QVBoxLayout;
+    rightCol->addWidget(newBox);
+    rightCol->addSpacing(12);
     rightCol->addWidget(autoBox);
     rightCol->addStretch(1);
 
-    auto* topRow = new QHBoxLayout;
-    topRow->addLayout(leftCol);
-    topRow->addLayout(centerCol, 1);
-    topRow->addLayout(rightCol);
+    auto* body = new QHBoxLayout;
+    body->setSpacing(24);
+    body->addLayout(imageCol, 0);
+    body->addLayout(midCol, 1);
+    body->addLayout(rightCol, 1);
 
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(28, 22, 28, 12);
-    root->addLayout(topRow, 1);
+    root->setContentsMargins(0, 0, 0, 0);
+    root->setSpacing(0);
+    // Barra de título personalizada (sem as bordas do sistema).
+    auto* titleBar = new TitleBar(tr("Bem-vindo ao Pierrot"), this);
+    root->addWidget(titleBar);
+
+    auto* content = new QWidget(this);
+    auto* contentLay = new QVBoxLayout(content);
+    contentLay->setContentsMargins(28, 20, 28, 12);
+    contentLay->setSpacing(8);
+    contentLay->addLayout(body, 1);
     // Rodapé: aviso à esquerda; créditos e versão no canto inferior direito.
     auto* footer = new QHBoxLayout;
     footer->addWidget(betaWarn);
@@ -300,9 +349,10 @@ void WelcomeWindow::buildLayout() {
     footer->addWidget(credits);
     footer->addSpacing(12);
     footer->addWidget(version);
-    root->addLayout(footer);
-    root->addWidget(m_devWarn);
-    root->addSpacing(8);
+    contentLay->addLayout(footer);
+    contentLay->addWidget(m_devWarn);
+    contentLay->addSpacing(8);
+    root->addWidget(content, 1);
 
 #if defined(QT_NO_DEBUG)
     m_devWarn->setVisible(false);
@@ -310,30 +360,33 @@ void WelcomeWindow::buildLayout() {
     m_devWarn->setVisible(true);
 #endif
 
-    // Tema escuro, elegante e consistente com o restante do app.
+    // Tema escuro, elegante e consistente com o restante do app. O fundo é
+    // pintado no paintEvent (com cantos arredondados), então não colocamos
+    // background aqui.
     setStyleSheet(QStringLiteral(
-        "QDialog{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-        " stop:0 #24262c, stop:1 #16171a);}"
-        "QGroupBox{border:1px solid #2b2e36; border-radius:9px; margin-top:15px;"
-        " background:rgba(255,255,255,0.018);}"
-        "QGroupBox::title{subcontrol-origin:margin; left:13px; top:0; padding:0 8px;"
-        " color:#8fa3bc; font-weight:bold; font-size:11px;}"
-        "QListWidget{background:rgba(0,0,0,0.20); border:1px solid #2b2e36;"
-        " border-radius:6px; padding:4px; outline:none;}"
-        "QListWidget::item{padding:10px 12px; border-radius:5px; margin:2px; color:#d5d9e0;}"
-        "QListWidget::item:hover{background:rgba(120,160,220,0.10);}"
-        "QListWidget::item:selected{background:rgba(80,130,200,0.26); color:#ffffff;}"
-        "QPushButton{border:1px solid #30343c; border-radius:5px; background:#26282e;"
-        " color:#d5d9e0; padding:6px 15px;}"
-        "QPushButton:hover{background:#2d3037; border-color:#454a55;}"
-        "QLineEdit,QComboBox,QSpinBox{background:rgba(0,0,0,0.20);"
-        " border:1px solid #30343c; border-radius:5px; padding:5px 9px;"
-        " color:#d5d9e0; selection-background-color:#2c3c52;}"
-        "QComboBox::drop-down{border:none; width:20px;}"
-        "QComboBox QAbstractItemView{background:#1e2026; border:1px solid #30343c;"
-        " selection-background-color:#2c3c52; border-radius:4px;}"
-        "QCheckBox{color:#c9cdd4;}"
-        "QLabel{color:#c9cdd4;}"));
+        "QGroupBox{border:1px solid #343945; border-radius:12px; margin-top:18px;"
+        " background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+        "  stop:0 #2a2d34, stop:1 #202228);}"
+        "QGroupBox::title{subcontrol-origin:margin; left:15px; top:3px; padding:0 9px;"
+        " color:#a7b8cf; font-weight:bold; font-size:12px; letter-spacing:0.6px;}"
+        "QListWidget{background:#1b1d22; border:1px solid #383e4b;"
+        " border-radius:8px; padding:5px; outline:none;}"
+        "QListWidget::item{padding:13px 14px; border-radius:6px; margin:3px; color:#d8dce3;}"
+        "QListWidget::item:hover{background:rgba(110,160,230,0.12);}"
+        "QListWidget::item:selected{background:rgba(70,130,210,0.32); color:#ffffff;}"
+        "QPushButton{border:1px solid #3a404c; border-radius:7px; background:#2b2e36;"
+        " color:#dde2ea; padding:8px 18px; font-weight:bold;}"
+        "QPushButton:hover{background:#333843; border-color:#4d5462;}"
+        "QPushButton:pressed{background:#25282f;}"
+        "QLineEdit,QComboBox,QSpinBox{background:#1b1d22;"
+        " border:1px solid #383e4b; border-radius:7px; padding:7px 11px;"
+        " color:#e4e8ee; selection-background-color:#2c4a6e;}"
+        "QLineEdit:focus,QComboBox:focus,QSpinBox:focus{border-color:#4a6a94;}"
+        "QComboBox::drop-down{border:none; width:24px;}"
+        "QComboBox QAbstractItemView{background:#1e2026; border:1px solid #383e4b;"
+        " selection-background-color:#2c4a6e; border-radius:5px;}"
+        "QCheckBox{color:#cdd2da; spacing:6px;}"
+        "QLabel{color:#cdd2da;}"));
 }
 
 void WelcomeWindow::loadRecentProjects() {
@@ -438,14 +491,30 @@ void WelcomeWindow::saveAutoSettings() const {
     s.setValue("autosaveMinutes", autosaveMinutes());
 }
 
-// Escala a imagem da esquerda para acompanhar o tamanho da janela (mantendo a
-// proporção), sem loop de redimensionamento.
-void WelcomeWindow::resizeEvent(QResizeEvent*) {
-    if (m_img.isNull()) return;
-    const QSize ls = m_imageLabel->size();
-    if (ls.width() <= 20 || ls.height() <= 20) return;
-    const QPixmap scaled = m_img.scaled(ls, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-    const QPixmap cur = m_imageLabel->pixmap();
+// Pinta o fundo da janela com cantos arredondados (gradiente escuro). Fora do
+// raio fica transparente (WA_TranslucentBackground), dando a borda arredonda.
+void WelcomeWindow::paintEvent(QPaintEvent*) {
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    QPainterPath path;
+    path.addRoundedRect(QRectF(rect()), 18, 18);
+    QLinearGradient g(0, 0, 0, height());
+    g.setColorAt(0, QColor(38, 40, 46));
+    g.setColorAt(1, QColor(21, 22, 26));
+    p.fillPath(path, g);
+}
+
+void WelcomeWindow::resizeEvent(QResizeEvent* ev) {
+    update(); // repinta com o novo tamanho (cantos arredondados)
+    if (m_img.isNull() || !m_imageFrame) { QDialog::resizeEvent(ev); return; }
+    const QSize ls = m_imageFrame->size();
+    const int w = qMax(200, ls.width() - 8);
+    const int h = qMax(240, ls.height() - 8);
+    const int radius = 16;
+    const QPixmap scaled = m_img.scaled(QSize(qMin(w, 480), qMin(h, 640)),
+                                        Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    const QPixmap cur = m_imageFrame->pixmap();
     if (cur.isNull() || cur.size() != scaled.size())
-        m_imageLabel->setPixmap(scaled);
+        m_imageFrame->setPixmap(makeRounded(scaled, radius));
+    QDialog::resizeEvent(ev);
 }

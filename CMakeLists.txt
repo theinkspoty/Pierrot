@@ -45,6 +45,7 @@ set(SOURCES
     src/ui/ClickLogger.cpp
     src/ui/EffectsWidget.cpp
     src/ui/FileBrowserWidget.cpp
+    src/ui/TitleBar.cpp
     resources.qrc
 )
 
@@ -70,6 +71,7 @@ set(HEADERS
     src/ui/ClickLogger.h
     src/ui/EffectsWidget.h
     src/ui/FileBrowserWidget.h
+    src/ui/TitleBar.h
 )
 
 if(WIN32)
