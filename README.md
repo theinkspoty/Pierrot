@@ -60,6 +60,14 @@ Editor de vídeo simples — feito de um editor para outro editor — estilo
 - **Janela de boas-vindas** moderna: barra de título personalizada (botões à
   esquerda, cantos arredondados, arrastável), imagem da marca, projetos
   recentes e novo projeto.
+- **Texto renderizado como mídia transparente**: na exportação, cada clipe de
+  texto é gerado como PNG com fundo transparente (igual às imagens) — sem o
+  "quadro preto" tampando a camada de baixo, e com cor/fonte/contorno/fundo
+  consistentes com o preview.
+- **Relatório de crash**: se o programa fechar de repente (SIGSEGV/SIGABRT/etc.),
+  um relatório com backtrace e informações do sistema é salvo em
+  `~/Pierrot-crash-*.txt`; na próxima abertura é exibido um aviso com opção de
+  abrir o relatório ou limpá-lo.
 
 ## Especificações
 
@@ -226,6 +234,10 @@ Marcado com 💀 o que já foi implementado.
 ### Exportação
 - 💀 Exportar MP4 (H.264), MKV e WebM (VP9) com blend de faixas, efeitos,
   chroma key, fades, velocidade e mix de áudio.
+- 💀 Texto exportado como mídia PNG transparente (fim do fundo preto; cor/
+  fonte/contorno/fundo coerentes com o preview).
+- 💀 Animações de transform/rotação coerentes com o preview (rotação em
+  radianos, contain/letterbox, timebase fixo do texto).
 - **Exportar apenas a região de loop** ou o clipe selecionado.
 - **Cancelamento** do export a qualquer momento (hoje o processo roda até o fim).
 - **Encode em segundo plano** (continua editando enquanto exporta).
@@ -244,6 +256,8 @@ Marcado com 💀 o que já foi implementado.
 - Suporte a **projetos 60/120 fps** (hoje o preview e os keyframes já respeitam
   o fps do projeto; validar exportação e timestamps).
 - Suporte a plugins **OFX (OpenFX)** para efeitos de terceiros.
+- 💀 **Relatório de crash**: handler de sinais que salva backtrace e infos em
+  `~/Pierrot-crash-*.txt` e avisa o usuário na próxima abertura.
 
 ### Janelas / docks
 - 💀 **Explorador de arquivos** (dock estilo Premiere: Lugares — Início + SSDs
