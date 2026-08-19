@@ -11,11 +11,21 @@
 #include <QSpinBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QFormLayout>
 #include <QMessageBox>
 #include <QSettings>
 #include <QFileInfo>
+#include <QListWidget>
+#include <QStackedWidget>
+#include <QTreeWidget>
+#include <QTreeWidgetItem>
+#include <QHeaderView>
+#include <QPushButton>
+#include <QKeyEvent>
+#include <QMouseEvent>
+#include <QKeySequence>
 
 // Presets de qualidade do preview: rótulo amigável + largura máxima de
 // decodificação. Menor = menos RAM/CPU no preview.
@@ -30,6 +40,33 @@ int nearestPresetIndex(int w) {
 }
 int presetWidth(int index) {
     return kPreviewPresets[qBound(0, index, 3)];
+}
+
+// Registro dos atalhos remapeáveis (id, rótulo, padrão, categoria).
+struct ShortcutDef { const char* id; const char* label; const char* def; const char* cat; };
+const ShortcutDef kShortcutDefs[] = {
+    { "new",     "Novo projeto",        "Ctrl+N",            "Projeto" },
+    { "open",    "Abrir projeto",       "Ctrl+O",            "Projeto" },
+    { "save",    "Salvar projeto",      "Ctrl+S",            "Projeto" },
+    { "saveas",  "Salvar como",         "Ctrl+Shift+S",      "Projeto" },
+    { "import",  "Importar mídia",      "Ctrl+I",            "Projeto" },
+    { "export",  "Exportar vídeo",      "Ctrl+E",            "Projeto" },
+    { "undo",    "Desfazer",            "Ctrl+Z",            "Edição" },
+    { "redo",    "Refazer",             "Ctrl+Shift+Z",      "Edição" },
+    { "delete",  "Excluir",             "Del",               "Edição" },
+    { "cut",     "Dividir no playhead", "S",                 "Edição" },
+    { "tool0",   "Selecionar",          "0",                 "Ferramentas" },
+    { "tool1",   "Mover",               "M",                 "Ferramentas" },
+    { "tool2",   "Tesoura",             "R",                 "Ferramentas" },
+    { "tool3",   "Envelope",            "E",                 "Ferramentas" },
+    { "tool4",   "Lupa (Zoom)",         "Z",                 "Ferramentas" },
+    { "play",    "Reproduzir/Pausar",   "Space",             "Reprodução" },
+};
+constexpr int kShortcutCount = (int)(sizeof(kShortcutDefs) / sizeof(kShortcutDefs[0]));
+
+static QString shortcutText(const ShortcutDef& sd) {
+    const QString v = QSettings().value(QString("shortcuts/%1").arg(QLatin1String(sd.id))).toString();
+    return v.isEmpty() ? QKeySequence(QString::fromLatin1(sd.def)).toString() : v;
 }
 }
 
@@ -51,7 +88,7 @@ bool SettingsDialog::rippleDeleteEnabled() {
 
 SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
     setWindowTitle(tr("Configurações"));
-    setMinimumWidth(440);
+    setMinimumSize(860, 600);
 
     QSettings s;
 
@@ -83,52 +120,188 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
     m_rippleDelete = new QCheckBox(tr("Fechar o vão automaticamente ao excluir (ripple)"), this);
     m_rippleDelete->setChecked(s.value("timelineRippleDelete", true).toBool());
 
-    auto* mkvBox = new QGroupBox(tr("Avisos"), this);
-    auto* mkvLay = new QVBoxLayout(mkvBox);
-    mkvLay->addWidget(m_mkvWarn);
-    auto* mkvHint = new QLabel(tr("MKV é experimental: alguns arquivos podem não abrir "
-                                  "ou apresentar problemas de áudio/vídeo."), mkvBox);
-    mkvHint->setStyleSheet("color: #9a9a9a;");
-    mkvHint->setWordWrap(true);
-    mkvLay->addWidget(mkvHint);
+    // Navegação por categorias (sidebar vertical estilo DaVinci Resolve).
+    m_catList = new QListWidget(this);
+    m_catList->setFixedWidth(170);
+    m_catList->addItem(tr("Geral"));
+    m_catList->addItem(tr("Qualidade e Timeline"));
+    m_catList->addItem(tr("Atalhos do teclado"));
+    m_catList->setToolTip(tr("Escolha uma categoria"));
 
-    auto* autoBox = new QGroupBox(tr("Salvamento automático"), this);
-    auto* autoLay = new QFormLayout(autoBox);
-    autoLay->addRow(m_autoSave);
-    autoLay->addRow(tr("Intervalo:"), m_autoInterval);
+    m_stack = new QStackedWidget(this);
 
-    auto* perfBox = new QGroupBox(tr("Qualidade do preview"), this);
-    auto* perfLay = new QFormLayout(perfBox);
-    perfLay->addRow(tr("Qualidade:"), m_decodeWidth);
-    auto* perfHint = new QLabel(tr("Qualidades mais baixas usam menos RAM/CPU no "
-                                   "preview e no scrub. Recomendado em projetos "
-                                   "grandes com muitos cortes."), perfBox);
-    perfHint->setStyleSheet("color: #9a9a9a;");
-    perfHint->setWordWrap(true);
-    perfLay->addRow(perfHint);
+    // Página: Geral (avisos + salvamento automático).
+    {
+        auto* page = new QWidget;
+        auto* v = new QVBoxLayout(page);
+        v->setContentsMargins(4, 4, 4, 4);
+        auto* mkvBox = new QGroupBox(tr("Avisos"), page);
+        auto* mkvLay = new QVBoxLayout(mkvBox);
+        mkvLay->addWidget(m_mkvWarn);
+        auto* mkvHint = new QLabel(tr("MKV é experimental: alguns arquivos podem não abrir "
+                                      "ou apresentar problemas de áudio/vídeo."), mkvBox);
+        mkvHint->setStyleSheet("color: #9a9a9a;");
+        mkvHint->setWordWrap(true);
+        mkvLay->addWidget(mkvHint);
+        auto* autoBox = new QGroupBox(tr("Salvamento automático"), page);
+        auto* autoLay = new QFormLayout(autoBox);
+        autoLay->addRow(m_autoSave);
+        autoLay->addRow(tr("Intervalo:"), m_autoInterval);
+        v->addWidget(mkvBox);
+        v->addWidget(autoBox);
+        v->addStretch(1);
+        m_stack->addWidget(page);
+    }
 
-    auto* tlBox = new QGroupBox(tr("Timeline"), this);
-    auto* tlLay = new QFormLayout(tlBox);
-    tlLay->addRow(tr("Miniaturas nos clipes:"), m_thumbMode);
-    tlLay->addRow(m_rippleDelete);
-    auto* tlHint = new QLabel(tr("Como os quadros são exibidos no corpo dos "
-                                 "clipes de vídeo. \"Todas\" mostra fatias "
-                                 "contínuas; \"Início e fim\" só nos extremos; "
-                                 "\"Nenhuma\" deixa os clipes sem miniatura."), tlBox);
-    tlHint->setStyleSheet("color: #9a9a9a;");
-    tlHint->setWordWrap(true);
-    tlLay->addRow(tlHint);
+    // Página: Qualidade e Timeline.
+    {
+        auto* page = new QWidget;
+        auto* v = new QVBoxLayout(page);
+        v->setContentsMargins(4, 4, 4, 4);
+        auto* perfBox = new QGroupBox(tr("Qualidade do preview"), page);
+        auto* perfLay = new QFormLayout(perfBox);
+        perfLay->addRow(tr("Qualidade:"), m_decodeWidth);
+        auto* perfHint = new QLabel(tr("Qualidades mais baixas usam menos RAM/CPU no "
+                                       "preview e no scrub. Recomendado em projetos "
+                                       "grandes com muitos cortes."), perfBox);
+        perfHint->setStyleSheet("color: #9a9a9a;");
+        perfHint->setWordWrap(true);
+        perfLay->addRow(perfHint);
+        auto* tlBox = new QGroupBox(tr("Timeline"), page);
+        auto* tlLay = new QFormLayout(tlBox);
+        tlLay->addRow(tr("Miniaturas nos clipes:"), m_thumbMode);
+        tlLay->addRow(m_rippleDelete);
+        auto* tlHint = new QLabel(tr("Como os quadros são exibidos no corpo dos "
+                                     "clipes de vídeo. \"Todas\" mostra fatias "
+                                     "contínuas; \"Início e fim\" só nos extremos; "
+                                     "\"Nenhuma\" deixa os clipes sem miniatura."), tlBox);
+        tlHint->setStyleSheet("color: #9a9a9a;");
+        tlHint->setWordWrap(true);
+        tlLay->addRow(tlHint);
+        v->addWidget(perfBox);
+        v->addWidget(tlBox);
+        v->addStretch(1);
+        m_stack->addWidget(page);
+    }
+
+    // Página: Atalhos do teclado.
+    buildShortcutsPage();
+
+    // Corpo: barra lateral + painel da categoria selecionada.
+    auto* body = new QHBoxLayout;
+    body->setSpacing(10);
+    body->setContentsMargins(10, 10, 10, 0);
+    body->addWidget(m_catList, 0, Qt::AlignTop);
+    body->addWidget(m_stack, 1);
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
+    m_catList->setCurrentRow(0);
+    m_stack->setCurrentIndex(0);
+    connect(m_catList, &QListWidget::currentRowChanged, m_stack, &QStackedWidget::setCurrentIndex);
+
     auto* lay = new QVBoxLayout(this);
-    lay->addWidget(mkvBox);
-    lay->addWidget(autoBox);
-    lay->addWidget(perfBox);
-    lay->addWidget(tlBox);
+    lay->setContentsMargins(0, 0, 0, 8);
+    lay->addLayout(body, 1);
     lay->addWidget(buttons);
+}
+
+void SettingsDialog::buildShortcutsPage() {
+    auto* page = new QWidget;
+    auto* v = new QVBoxLayout(page);
+    v->setContentsMargins(4, 4, 4, 4);
+
+    m_shortcuts = new QTreeWidget(page);
+    m_shortcuts->setColumnCount(2);
+    m_shortcuts->setHeaderLabels({tr("Ação"), tr("Atalho")});
+    m_shortcuts->setRootIsDecorated(true);
+    m_shortcuts->setUniformRowHeights(true);
+    m_shortcuts->setAlternatingRowColors(true);
+    m_shortcuts->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    m_shortcuts->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    m_shortcuts->installEventFilter(this);
+
+    QMap<QString, QTreeWidgetItem*> cats;
+    for (int i = 0; i < kShortcutCount; ++i) {
+        const ShortcutDef& sd = kShortcutDefs[i];
+        const QString cat = tr(sd.cat);
+        QTreeWidgetItem* parent = cats.value(cat);
+        if (!parent) {
+            parent = new QTreeWidgetItem(m_shortcuts);
+            parent->setText(0, cat);
+            parent->setExpanded(true);
+            parent->setFlags(parent->flags() & ~Qt::ItemIsSelectable);
+            cats.insert(cat, parent);
+        }
+        auto* it = new QTreeWidgetItem(parent);
+        it->setText(0, tr(sd.label));
+        it->setText(1, shortcutText(sd));
+        it->setData(0, Qt::UserRole, QString::fromLatin1(sd.id));
+    }
+
+    auto* hint = new QLabel(tr("Clique num atalho e, em seguida, pressione a nova "
+                               "combinação de teclas para alterá-lo. Esc cancela."), page);
+    hint->setStyleSheet("color:#9a9a9a;");
+    hint->setWordWrap(true);
+
+    QPushButton* reset = new QPushButton(tr("Restaurar padrão do atalho selecionado"), page);
+    connect(reset, &QPushButton::clicked, this, [this]() {
+        QTreeWidgetItem* it = m_shortcuts->currentItem();
+        if (!it) return;
+        m_shortcutMap.remove(it->data(0, Qt::UserRole).toString());
+        refreshShortcutRow();
+    });
+
+    v->addWidget(m_shortcuts, 1);
+    v->addWidget(hint);
+    v->addWidget(reset, 0, Qt::AlignLeft);
+    m_stack->addWidget(page);
+
+    m_shortcuts->setFocus();
+    if (m_shortcuts->topLevelItemCount() > 0)
+        m_shortcuts->setCurrentItem(m_shortcuts->topLevelItem(0)->child(0));
+}
+
+void SettingsDialog::refreshShortcutRow() {
+    QTreeWidgetItem* it = m_shortcuts->currentItem();
+    if (!it) return;
+    const QString id = it->data(0, Qt::UserRole).toString();
+    for (int i = 0; i < kShortcutCount; ++i)
+        if (QString::fromLatin1(kShortcutDefs[i].id) == id) {
+            const QString v = m_shortcutMap.value(id);
+            it->setText(1, v.isEmpty()
+                            ? QKeySequence(QString::fromLatin1(kShortcutDefs[i].def)).toString()
+                            : v);
+            break;
+        }
+}
+
+bool SettingsDialog::eventFilter(QObject* o, QEvent* e) {
+    if (o == m_shortcuts && e->type() == QEvent::MouseButtonRelease) {
+        QTreeWidgetItem* it = m_shortcuts->itemAt(static_cast<QMouseEvent*>(e)->pos());
+        if (it) m_recordId = it->data(0, Qt::UserRole).toString();
+        return false;
+    }
+    if (o == m_shortcuts && e->type() == QEvent::KeyPress) {
+        auto* ke = static_cast<QKeyEvent*>(e);
+        const int key = ke->key();
+        if (key == Qt::Key_Escape) { m_recordId.clear(); return true; }
+        if (key == Qt::Key_Control || key == Qt::Key_Shift || key == Qt::Key_Alt
+            || key == Qt::Key_Meta || key == Qt::Key_unknown
+            || key == Qt::Key_Backtab || key == Qt::Key_Tab) {
+            return false; // precisa da tecla principal da combinação
+        }
+        QKeySequence seq(key | int(ke->modifiers()));
+        if (!seq.isEmpty() && !m_recordId.isEmpty()) {
+            m_shortcutMap[m_recordId] = seq.toString();
+            refreshShortcutRow();
+            m_recordId.clear();
+            return true;
+        }
+    }
+    return QDialog::eventFilter(o, e);
 }
 
 bool SettingsDialog::autoSaveEnabled() const { return m_autoSave->isChecked(); }
@@ -144,6 +317,8 @@ void SettingsDialog::accept() {
     s.setValue("maxDecodeWidth", presetWidth(m_decodeWidth->currentIndex()));
     s.setValue("timelineThumbMode", m_thumbMode->currentIndex());
     s.setValue("timelineRippleDelete", m_rippleDelete->isChecked());
+    for (auto it = m_shortcutMap.constBegin(); it != m_shortcutMap.constEnd(); ++it)
+        s.setValue(QString("shortcuts/%1").arg(it.key()), it.value());
     QDialog::accept();
 }
 

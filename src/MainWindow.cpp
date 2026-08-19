@@ -16,6 +16,13 @@
 #include "ui/ExportDialog.h"
 #include "ui/ProjectSettingsDialog.h"
 #include "ui/SettingsDialog.h"
+
+#include <QSettings>
+// Devolve o atalho salvo pelo usuário (Configurações → Atalhos) ou o padrão.
+static QKeySequence appKey(const char* id, const QKeySequence& fallback) {
+    const QString v = QSettings().value(QStringLiteral("shortcuts/") + QLatin1String(id)).toString();
+    return v.isEmpty() ? fallback : QKeySequence(v);
+}
 #include "ui/WelcomeWindow.h"
 #include "ffmpeg/MediaCache.h"
 
@@ -478,13 +485,13 @@ void MainWindow::createActions() {
     };
 
     QAction* addMedia = new QAction(tr("Importar mídia…"), this);
-    addMedia->setShortcut(QKeySequence("Ctrl+I"));
+    addMedia->setShortcut(appKey("import", QKeySequence("Ctrl+I")));
     addMedia->setIcon(iconImport());
     addMedia->setToolTip(tr("Importar mídia… (Ctrl+I)"));
     connect(addMedia, &QAction::triggered, m_pool, &MediaPoolWidget::addFiles);
 
     QAction* exportAct = new QAction(tr("Exportar…"), this);
-    exportAct->setShortcut(QKeySequence("Ctrl+E"));
+    exportAct->setShortcut(appKey("export", QKeySequence("Ctrl+E")));
     exportAct->setIcon(iconExport());
     exportAct->setToolTip(tr("Exportar vídeo… (Ctrl+E)"));
     connect(exportAct, &QAction::triggered, this, &MainWindow::exportVideo);
@@ -494,31 +501,31 @@ void MainWindow::createActions() {
     connect(quit, &QAction::triggered, this, &MainWindow::close);
 
     m_playAction = new QAction(tr("Reproduzir"), this);
-    m_playAction->setShortcut(QKeySequence(Qt::Key_Space));
+    m_playAction->setShortcut(appKey("play", QKeySequence(Qt::Key_Space)));
     m_playAction->setIcon(stdIcon(QStyle::SP_MediaPlay));
     m_playAction->setToolTip(tr("Reproduzir/Pausar (Espaço)"));
     connect(m_playAction, &QAction::triggered, m_preview, &PreviewWidget::togglePlay);
 
     QAction* cutAction = new QAction(tr("Dividir no playhead"), this);
-    cutAction->setShortcut(QKeySequence(Qt::Key_S));
+    cutAction->setShortcut(appKey("cut", QKeySequence(Qt::Key_S)));
     cutAction->setIcon(iconScissors());
     cutAction->setToolTip(tr("Dividir clipe no playhead (S)"));
     connect(cutAction, &QAction::triggered, m_timeline, &TimelineWidget::cutAtPlayhead);
 
     QAction* deleteAction = new QAction(tr("Excluir clipe"), this);
-    deleteAction->setShortcut(QKeySequence(Qt::Key_Delete));
+    deleteAction->setShortcut(appKey("delete", QKeySequence(Qt::Key_Delete)));
     deleteAction->setIcon(stdIcon(QStyle::SP_TrashIcon));
     deleteAction->setToolTip(tr("Excluir faixas selecionadas ou, se não houver, os clipes selecionados (Delete)"));
     connect(deleteAction, &QAction::triggered, m_timeline, &TimelineWidget::deleteSelection);
 
     m_undoAction = new QAction(tr("Desfazer"), this);
-    m_undoAction->setShortcut(QKeySequence::Undo);
+    m_undoAction->setShortcut(appKey("undo", QKeySequence::Undo));
     m_undoAction->setIcon(stdIcon(QStyle::SP_ArrowBack));
     m_undoAction->setToolTip(tr("Desfazer (Ctrl+Z)"));
     connect(m_undoAction, &QAction::triggered, this, &MainWindow::undo);
 
     m_redoAction = new QAction(tr("Refazer"), this);
-    m_redoAction->setShortcut(QKeySequence("Ctrl+Shift+Z"));
+    m_redoAction->setShortcut(appKey("redo", QKeySequence("Ctrl+Shift+Z")));
     m_redoAction->setIcon(stdIcon(QStyle::SP_ArrowForward));
     m_redoAction->setToolTip(tr("Refazer (Ctrl+Shift+Z)"));
     connect(m_redoAction, &QAction::triggered, this, &MainWindow::redo);
@@ -530,25 +537,25 @@ void MainWindow::createActions() {
     }
 
     QAction* newAction = new QAction(tr("Novo"), this);
-    newAction->setShortcut(QKeySequence::New);
+    newAction->setShortcut(appKey("new", QKeySequence::New));
     newAction->setIcon(stdIcon(QStyle::SP_FileIcon));
     newAction->setToolTip(tr("Novo projeto (Ctrl+N)"));
     connect(newAction, &QAction::triggered, this, &MainWindow::newProject);
 
     QAction* openAction = new QAction(tr("Abrir…"), this);
-    openAction->setShortcut(QKeySequence::Open);
+    openAction->setShortcut(appKey("open", QKeySequence::Open));
     openAction->setIcon(stdIcon(QStyle::SP_DirOpenIcon));
     openAction->setToolTip(tr("Abrir projeto… (Ctrl+O)"));
     connect(openAction, &QAction::triggered, this, &MainWindow::openProject);
 
     m_saveAction = new QAction(tr("Salvar"), this);
-    m_saveAction->setShortcut(QKeySequence::Save);
+    m_saveAction->setShortcut(appKey("save", QKeySequence::Save));
     m_saveAction->setIcon(stdIcon(QStyle::SP_DialogSaveButton));
     m_saveAction->setToolTip(tr("Salvar projeto (Ctrl+S)"));
     connect(m_saveAction, &QAction::triggered, this, &MainWindow::saveProject);
 
     m_saveAsAction = new QAction(tr("Salvar como…"), this);
-    m_saveAsAction->setShortcut(QKeySequence("Ctrl+Shift+S"));
+    m_saveAsAction->setShortcut(appKey("saveas", QKeySequence("Ctrl+Shift+S")));
     connect(m_saveAsAction, &QAction::triggered, this, &MainWindow::saveProjectAs);
 
     QAction* settingsAction = new QAction(tr("Configurações do projeto…"), this);
@@ -687,7 +694,7 @@ void MainWindow::createActions() {
     for (int i = 0; i < toolNames.size(); ++i) {
         QAction* a = new QAction(toolIcons[i], toolNames[i], this);
         a->setCheckable(true);
-        a->setShortcut(toolKeys[i]);
+        a->setShortcut(appKey(("tool" + QString::number(i)).toLatin1().constData(), toolKeys[i]));
         a->setToolTip(toolNames[i]);
         a->setChecked(i == 0);
         toolGroup->addAction(a);
@@ -713,6 +720,16 @@ void MainWindow::createActions() {
     clearLoopTb->setToolTip(tr("Limpar região de loop"));
     connect(clearLoopTb, &QAction::triggered, m_timeline, &TimelineWidget::clearLoop);
     toolTb->addAction(clearLoopTb);
+    QAction* rippleTb = new QAction(tr("Ripple"), this);
+    rippleTb->setCheckable(true);
+    rippleTb->setChecked(SettingsDialog::rippleDeleteEnabled());
+    rippleTb->setToolTip(tr("Fechar o vão automaticamente ao excluir (ripple). "
+                            "Desligue para deixar o espaço vazio."));
+    connect(rippleTb, &QAction::toggled, this, [](bool on) {
+        QSettings s;
+        s.setValue("timelineRippleDelete", on);
+    });
+    toolTb->addAction(rippleTb);
     QAction* styleAct = new QAction(tr("Estilo"), this);
     styleAct->setToolTip(tr("Estilo das faixas: minimizada, normal ou grande (experimental)"));
     connect(styleAct, &QAction::triggered, m_timeline, &TimelineWidget::showTrackPresetMenu);

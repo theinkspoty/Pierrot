@@ -7,10 +7,14 @@
 
 #include <QDialog>
 #include <QStringList>
+#include <QMap>
 
 class QCheckBox;
 class QSpinBox;
 class QComboBox;
+class QListWidget;
+class QStackedWidget;
+class QTreeWidget;
 
 class SettingsDialog : public QDialog {
     Q_OBJECT
@@ -36,11 +40,21 @@ public:
     static void warnMkvIfNeeded(QWidget* parent, const QStringList& files);
 protected:
     void accept() override;
+    bool eventFilter(QObject* o, QEvent* e) override;
 private:
+    void buildShortcutsPage();
+    void refreshShortcutRow();
     QCheckBox* m_mkvWarn = nullptr;
     QCheckBox* m_autoSave = nullptr;
     QSpinBox*  m_autoInterval = nullptr;
     QComboBox* m_decodeWidth = nullptr;
     QComboBox* m_thumbMode = nullptr;
     QCheckBox* m_rippleDelete = nullptr;
+    // Navegação por categorias (sidebar estilo DaVinci).
+    QListWidget*   m_catList = nullptr;
+    QStackedWidget* m_stack = nullptr;
+    // Editor de atalhos do teclado.
+    QTreeWidget* m_shortcuts = nullptr;
+    QMap<QString, QString> m_shortcutMap;
+    QString m_recordId; // atalho sendo regravado
 };
