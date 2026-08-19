@@ -43,6 +43,8 @@ static QKeySequence appKey(const char* id, const QKeySequence& fallback) {
 #include <QJsonDocument>
 #include <QJsonParseError>
 #include <QMessageBox>
+#include <QPushButton>
+#include <QAbstractButton>
 #include <QPainter>
 #include <QPixmap>
 #include <QSettings>
@@ -365,6 +367,24 @@ void MainWindow::restoreSettings() {
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
+    // Se houver alterações não salvas, pergunta antes de sair.
+    if (m_modified) {
+        QMessageBox box(this);
+        box.setWindowTitle(tr("Salvar projeto?"));
+        box.setIcon(QMessageBox::Question);
+        box.setText(tr("O projeto tem alterações não salvas. Deseja salvá-las antes de sair?"));
+        QPushButton* saveBtn = box.addButton(tr("Salvar"), QMessageBox::AcceptRole);
+        QPushButton* discardBtn = box.addButton(tr("Descartar"), QMessageBox::DestructiveRole);
+        QPushButton* cancelBtn = box.addButton(tr("Cancelar"), QMessageBox::RejectRole);
+        box.setDefaultButton(saveBtn);
+        box.exec();
+        QAbstractButton* b = box.clickedButton();
+        // Cancelar (ou fechar a caixa) mantém o app aberto.
+        if (!b || b == cancelBtn) { event->ignore(); return; }
+        // Salvar: se o usuário cancelar a caixa de salvar, também não fecha.
+        if (b == saveBtn && !saveProject()) { event->ignore(); return; }
+        // Descartar segue direto para fechar.
+    }
     saveSettings();
     QMainWindow::closeEvent(event);
     QApplication::quit();
@@ -1038,9 +1058,7 @@ void MainWindow::updateTitle() {
     const QString name = m_currentFile.isEmpty()
         ? tr("Sem título")
         : QFileInfo(m_currentFile).fileName();
-    setWindowTitle(tr("Pierrot %1 — %2%3")
-                       .arg(QStringLiteral(PIERROT_VERSION))
-                       .arg(name, m_modified ? tr(" *") : QString()));
+    setWindowTitle(m_modified ? tr("%1 *").arg(name) : name);
 }
 
 void MainWindow::newProject() {

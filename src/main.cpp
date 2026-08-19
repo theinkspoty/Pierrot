@@ -29,7 +29,7 @@ int main(int argc, char** argv) {
     QApplication app(argc, argv);
     app.setOrganizationName("Pierrot");
     app.setApplicationName("Pierrot");
-    app.setApplicationDisplayName("Pierrot");
+    app.setApplicationDisplayName(QString()); // QApplication anexaria " - Pierrot" a toda janela
     app.setWindowIcon(QIcon(QStringLiteral(":/pierrot.ico")));
     // Fechar a janela de boas-vindas (única janela no início) não pode
     // encerrar o app; o editor deve assumir em seguida.

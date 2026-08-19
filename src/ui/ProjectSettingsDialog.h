@@ -9,6 +9,7 @@
 
 class QSpinBox;
 class QComboBox;
+class QLabel;
 
 class ProjectSettingsDialog : public QDialog {
     Q_OBJECT
@@ -19,7 +20,11 @@ public:
     int height() const;
     int fps() const;
 private:
+    void updateAspect();
     QSpinBox* m_w = nullptr;
     QSpinBox* m_h = nullptr;
     QComboBox* m_fps = nullptr;
+    QComboBox* m_preset = nullptr;
+    QLabel* m_aspect = nullptr;
+    bool m_applyingPreset = false;
 };
