@@ -504,17 +504,9 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     connect(m_frameThread, &QThread::finished, m_frameWorker, &QObject::deleteLater);
     connect(m_frameWorker, &FrameWorker::frameReady,
             this, &PreviewWidget::onFrameReady, Qt::QueuedConnection);
-    m_frameThread->start();
-
-    // Thread dedicada para prefetch: roda em paralelo com o worker principal
-    // para que o primeiro frame do próximo clipe esteja pronto antes do corte.
-    m_prefetchThread = new QThread(this);
-    m_prefetchWorker = new FrameWorker;
-    m_prefetchWorker->moveToThread(m_prefetchThread);
-    connect(m_prefetchThread, &QThread::finished, m_prefetchWorker, &QObject::deleteLater);
-    connect(m_prefetchWorker, &FrameWorker::prefetchReady,
+    connect(m_frameWorker, &FrameWorker::prefetchReady,
             this, &PreviewWidget::onPrefetchReady, Qt::QueuedConnection);
-    m_prefetchThread->start();
+    m_frameThread->start();
 
     setMinimumSize(320, 200);
 }
@@ -524,10 +516,6 @@ PreviewWidget::~PreviewWidget() {
     if (m_frameThread) {
         m_frameThread->quit();
         m_frameThread->wait(2000);
-    }
-    if (m_prefetchThread) {
-        m_prefetchThread->quit();
-        m_prefetchThread->wait(2000);
     }
 }
 
@@ -1169,7 +1157,16 @@ QVector<AudioMixer::SourceInfo> buildMixSources(const Project* p, double t) {
         for (const Track& tr : tracks) {
             for (const Clip& c : tr.clips) {
                 if (!(t >= c.pos && t < c.pos + c.dur)) continue;
-                if (tr.muted || (anySolo && !tr.solo)) continue;
+                if (tr.muted || (anySolo && !tr.solo)) {
+                    // Remove a entrada vinculada (mesmo groupId) de outra
+                    // faixa: se o clipe de vídeo está na faixa de vídeo e o
+                    // de áudio está mutado na faixa de áudio, a chave do
+                    // vídeo permaneceria em `reps` e o áudio continuaria.
+                    const QString base = c.groupId.isEmpty() ? c.id : c.groupId;
+                    const QString key = QStringLiteral("%1|%2").arg(base).arg(c.audioStreamIndex);
+                    reps.remove(key);
+                    continue;
+                }
                 const MediaItem* m = p->findMedia(c.mediaId);
                 if (!m || !m->hasAudio) continue;
                 const double rel = t - c.pos;
@@ -1430,7 +1427,7 @@ void PreviewWidget::updateFrame() {
         m_underCropB = (int)std::lround(
             std::clamp(kfValue(under->kfCropB, under->cropB, rel), 0.0, 0.9) * 1000.0);
         const MediaItem* um = m_project->findMedia(under->mediaId);
-        if (um && um->hasVideo && m_prefetchWorker) {
+        if (um && um->hasVideo && m_frameWorker) {
             const double uSrcT = under->in + (m_playhead - under->pos) * under->speed;
             QMutexLocker l(&m_frameMutex);
             const bool already = m_underRequested && m_underPath == um->filePath
@@ -1443,7 +1440,7 @@ void PreviewWidget::updateFrame() {
                 m_underW = decW;
                 m_underRequested = true;
                 m_underFrame = QImage();
-                QMetaObject::invokeMethod(m_prefetchWorker, "decodePrefetch", Qt::QueuedConnection,
+                QMetaObject::invokeMethod(m_frameWorker, "decodePrefetch", Qt::QueuedConnection,
                                           Q_ARG(QString, um->filePath),
                                           Q_ARG(double, uSrcT),
                                           Q_ARG(int, decW));
@@ -1559,6 +1556,12 @@ void PreviewWidget::requestLowerLayers(int decW) {
 // Chamado com m_frameMutex segurado.
 void PreviewWidget::kickFrameWorker() {
     if (m_workerBusy || m_reqQueue.isEmpty() || !m_frameWorker) return;
+    // Prioriza o prefetch: se há um decodePrefetch pendente (o decoder de
+    // prefetch precisa abrir e aquecer o próximo arquivo ANTES do corte), não
+    // enfileira o próximo decodeOne para que o event loop processe o prefetch
+    // primeiro. Sem isso, decodeOne's enfileirados bloqueiam o prefetch e o
+    // swap no corte falha, causando travamento.
+    if (m_prefetch.requested && !m_prefetch.valid) return;
     m_workerBusy = true;
     const FrameReq r = m_reqQueue.takeFirst();
     QMetaObject::invokeMethod(m_frameWorker, "decodeOne", Qt::QueuedConnection,
@@ -1642,10 +1645,12 @@ void PreviewWidget::onPrefetchReady(const QString& path, double t, int maxW, con
         m_prefetch.img = img;
         m_prefetch.valid = !img.isNull();
     }
+    // O prefetch liberou o caminho — retoma os decodeOne's que estavam esperando.
+    kickFrameWorker();
 }
 
 void PreviewWidget::updatePrefetch() {
-    if (!m_project || !m_prefetchWorker || !m_playing) return;
+    if (!m_project || !m_frameWorker || !m_playing) return;
     // Durante uma transição o canal de prefetch decodifica o clipe de trás.
     if (m_transAlpha >= 0.0) return;
     const Clip* clip = clipAt(m_playhead);
@@ -1656,7 +1661,9 @@ void PreviewWidget::updatePrefetch() {
         return;
     }
     const double remain = (clip->pos + clip->dur) - m_playhead;
-    if (remain > 2.5 || remain <= 0.0) return;
+    // Janela dinâmica: 5s para clipes longos, no mínimo 2s para curtos.
+    const double window = qMin(5.0, qMax(2.0, clip->dur * 0.8));
+    if (remain > window || remain <= 0.0) return;
 
     // Procura o próximo clipe que será exibido no fim do clipe atual
     const Clip* nextClip = nullptr;
@@ -1696,7 +1703,7 @@ void PreviewWidget::updatePrefetch() {
         m_prefetch.requested = true;
     }
 
-    QMetaObject::invokeMethod(m_prefetchWorker, "decodePrefetch", Qt::QueuedConnection,
+    QMetaObject::invokeMethod(m_frameWorker, "decodePrefetch", Qt::QueuedConnection,
                               Q_ARG(QString, nextMedia->filePath),
                               Q_ARG(double, srcT),
                               Q_ARG(int, decW));

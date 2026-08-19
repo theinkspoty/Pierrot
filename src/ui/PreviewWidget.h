@@ -107,10 +107,6 @@ private:
     // Decodificação de vídeo em thread própria (não trava a UI na reprodução).
     QThread* m_frameThread = nullptr;
     FrameWorker* m_frameWorker = nullptr;
-    // Thread dedicada para prefetch: evita que decodePrefetch fique bloqueado
-    // quando o worker principal está ocupado decodificando frames.
-    QThread* m_prefetchThread = nullptr;
-    FrameWorker* m_prefetchWorker = nullptr;
     // Pedido de decodificação. clipId diz para qual clipe o quadro se destina:
     // o clipe do topo alimenta m_frame; os demais alimentam m_layerCache.
     struct FrameReq {
