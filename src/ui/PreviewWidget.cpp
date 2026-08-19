@@ -504,9 +504,17 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     connect(m_frameThread, &QThread::finished, m_frameWorker, &QObject::deleteLater);
     connect(m_frameWorker, &FrameWorker::frameReady,
             this, &PreviewWidget::onFrameReady, Qt::QueuedConnection);
-    connect(m_frameWorker, &FrameWorker::prefetchReady,
-            this, &PreviewWidget::onPrefetchReady, Qt::QueuedConnection);
     m_frameThread->start();
+
+    // Thread dedicada para prefetch: roda em paralelo com o worker principal
+    // para que o primeiro frame do próximo clipe esteja pronto antes do corte.
+    m_prefetchThread = new QThread(this);
+    m_prefetchWorker = new FrameWorker;
+    m_prefetchWorker->moveToThread(m_prefetchThread);
+    connect(m_prefetchThread, &QThread::finished, m_prefetchWorker, &QObject::deleteLater);
+    connect(m_prefetchWorker, &FrameWorker::prefetchReady,
+            this, &PreviewWidget::onPrefetchReady, Qt::QueuedConnection);
+    m_prefetchThread->start();
 
     setMinimumSize(320, 200);
 }
@@ -516,6 +524,10 @@ PreviewWidget::~PreviewWidget() {
     if (m_frameThread) {
         m_frameThread->quit();
         m_frameThread->wait(2000);
+    }
+    if (m_prefetchThread) {
+        m_prefetchThread->quit();
+        m_prefetchThread->wait(2000);
     }
 }
 
@@ -1418,7 +1430,7 @@ void PreviewWidget::updateFrame() {
         m_underCropB = (int)std::lround(
             std::clamp(kfValue(under->kfCropB, under->cropB, rel), 0.0, 0.9) * 1000.0);
         const MediaItem* um = m_project->findMedia(under->mediaId);
-        if (um && um->hasVideo && m_frameWorker) {
+        if (um && um->hasVideo && m_prefetchWorker) {
             const double uSrcT = under->in + (m_playhead - under->pos) * under->speed;
             QMutexLocker l(&m_frameMutex);
             const bool already = m_underRequested && m_underPath == um->filePath
@@ -1431,7 +1443,7 @@ void PreviewWidget::updateFrame() {
                 m_underW = decW;
                 m_underRequested = true;
                 m_underFrame = QImage();
-                QMetaObject::invokeMethod(m_frameWorker, "decodePrefetch", Qt::QueuedConnection,
+                QMetaObject::invokeMethod(m_prefetchWorker, "decodePrefetch", Qt::QueuedConnection,
                                           Q_ARG(QString, um->filePath),
                                           Q_ARG(double, uSrcT),
                                           Q_ARG(int, decW));
@@ -1633,7 +1645,7 @@ void PreviewWidget::onPrefetchReady(const QString& path, double t, int maxW, con
 }
 
 void PreviewWidget::updatePrefetch() {
-    if (!m_project || !m_frameWorker || !m_playing) return;
+    if (!m_project || !m_prefetchWorker || !m_playing) return;
     // Durante uma transição o canal de prefetch decodifica o clipe de trás.
     if (m_transAlpha >= 0.0) return;
     const Clip* clip = clipAt(m_playhead);
@@ -1644,7 +1656,7 @@ void PreviewWidget::updatePrefetch() {
         return;
     }
     const double remain = (clip->pos + clip->dur) - m_playhead;
-    if (remain > 1.0 || remain <= 0.0) return;
+    if (remain > 2.5 || remain <= 0.0) return;
 
     // Procura o próximo clipe que será exibido no fim do clipe atual
     const Clip* nextClip = nullptr;
@@ -1684,7 +1696,7 @@ void PreviewWidget::updatePrefetch() {
         m_prefetch.requested = true;
     }
 
-    QMetaObject::invokeMethod(m_frameWorker, "decodePrefetch", Qt::QueuedConnection,
+    QMetaObject::invokeMethod(m_prefetchWorker, "decodePrefetch", Qt::QueuedConnection,
                               Q_ARG(QString, nextMedia->filePath),
                               Q_ARG(double, srcT),
                               Q_ARG(int, decW));
