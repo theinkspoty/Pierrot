@@ -4,6 +4,7 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "GraphEditorWidget.h"
+#include "SettingsDialog.h"
 
 #include <QPainter>
 #include <QPainterPath>
@@ -610,7 +611,10 @@ void GraphCanvas::moveSelected(double dT, double dV, bool snap) {
         nt = std::clamp(nt, leftB + 0.001, rightB - 0.001);
         k.time = nt;
         // Movimento vertical restaurado: o valor acompanha o arraste.
-        k.value = std::clamp(o.value + dV, m_loProp, m_hiProp);
+        // A sensibilidade (Configurações → Editor de curvas) amplifica o
+        // deslocamento vertical para permitir curvas mais exageradas.
+        k.value = std::clamp(o.value + dV * SettingsDialog::graphSensitivity(),
+                             m_loProp, m_hiProp);
     }
 }
 

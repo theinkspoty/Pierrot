@@ -9,6 +9,7 @@
 #include <QGroupBox>
 #include <QLabel>
 #include <QSpinBox>
+#include <QDoubleSpinBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QHBoxLayout>
@@ -84,6 +85,10 @@ int SettingsDialog::thumbMode() {
 
 bool SettingsDialog::rippleDeleteEnabled() {
     return QSettings().value("timelineRippleDelete", true).toBool();
+}
+
+double SettingsDialog::graphSensitivity() {
+    return QSettings().value("graphSensitivity", 1.0).toDouble();
 }
 
 SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
@@ -171,6 +176,15 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
         auto* tlLay = new QFormLayout(tlBox);
         tlLay->addRow(tr("Miniaturas nos clipes:"), m_thumbMode);
         tlLay->addRow(m_rippleDelete);
+        m_graphSens = new QDoubleSpinBox(page);
+        m_graphSens->setRange(0.5, 5.0);
+        m_graphSens->setSingleStep(0.1);
+        m_graphSens->setDecimals(1);
+        m_graphSens->setSuffix(" ×");
+        m_graphSens->setValue(s.value("graphSensitivity", 1.0).toDouble());
+        m_graphSens->setToolTip(tr("Sensibilidade do arraste vertical no editor de "
+                                   "curvas. Acima de 1× deixa as curvas mais exageradas."));
+        tlLay->addRow(tr("Sensibilidade das curvas:"), m_graphSens);
         auto* tlHint = new QLabel(tr("Como os quadros são exibidos no corpo dos "
                                      "clipes de vídeo. \"Todas\" mostra fatias "
                                      "contínuas; \"Início e fim\" só nos extremos; "
@@ -317,6 +331,7 @@ void SettingsDialog::accept() {
     s.setValue("maxDecodeWidth", presetWidth(m_decodeWidth->currentIndex()));
     s.setValue("timelineThumbMode", m_thumbMode->currentIndex());
     s.setValue("timelineRippleDelete", m_rippleDelete->isChecked());
+    s.setValue("graphSensitivity", m_graphSens->value());
     for (auto it = m_shortcutMap.constBegin(); it != m_shortcutMap.constEnd(); ++it)
         s.setValue(QString("shortcuts/%1").arg(it.key()), it.value());
     QDialog::accept();

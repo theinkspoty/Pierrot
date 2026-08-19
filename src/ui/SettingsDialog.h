@@ -11,6 +11,7 @@
 
 class QCheckBox;
 class QSpinBox;
+class QDoubleSpinBox;
 class QComboBox;
 class QListWidget;
 class QStackedWidget;
@@ -29,6 +30,8 @@ public:
     static int  thumbMode();
     // Ao excluir, fecha o vão automaticamente (ripple). Desativável.
     static bool rippleDeleteEnabled();
+    // Sensibilidade do arraste vertical no editor de curvas (1.0 = padrão).
+    static double graphSensitivity();
 
     // Valores escolhidos no diálogo (aplicar depois do OK).
     bool autoSaveEnabled() const;
@@ -50,6 +53,7 @@ private:
     QComboBox* m_decodeWidth = nullptr;
     QComboBox* m_thumbMode = nullptr;
     QCheckBox* m_rippleDelete = nullptr;
+    QDoubleSpinBox* m_graphSens = nullptr;
     // Navegação por categorias (sidebar estilo DaVinci).
     QListWidget*   m_catList = nullptr;
     QStackedWidget* m_stack = nullptr;
