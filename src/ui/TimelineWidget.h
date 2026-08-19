@@ -203,6 +203,7 @@ private:
     void copySelected();
     void cutSelected();
     void pasteClips();
+    void pasteAttributes();
     void duplicateSelected();
     void nudgeSelected(int dir);
     void selectAllClips();

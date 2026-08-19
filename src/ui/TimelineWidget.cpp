@@ -1878,6 +1878,101 @@ void TimelineWidget::pasteClips() {
     emit selectionChanged(m_selected.last());
 }
 
+void TimelineWidget::pasteAttributes() {
+    if (m_clipboard.isEmpty() || m_selected.isEmpty() || !m_project) return;
+    const Clip& src = m_clipboard.first().clip;
+
+    // Diálogo de seleção de atributos (estilo Vegas: Colar Propriedades).
+    QDialog dlg(this);
+    dlg.setWindowTitle(tr("Colar Atributos"));
+    auto* lay = new QVBoxLayout(&dlg);
+
+    auto* chkVideoFx = new QCheckBox(tr("Efeitos de vídeo (brilho, contraste, saturação, blur, grayscale, chroma key)"));
+    auto* chkTransform = new QCheckBox(tr("Transformar (posição, escala, rotação)"));
+    auto* chkCrop = new QCheckBox(tr("Pan/Crop"));
+    auto* chkAudioFx = new QCheckBox(tr("Efeitos de áudio (EQ, denoise, normalizar, fase)"));
+    auto* chkProperties = new QCheckBox(tr("Propriedades (volume, opacidade, velocidade, fades)"));
+    auto* chkKeyframes = new QCheckBox(tr("Keyframes"));
+    chkVideoFx->setChecked(true);
+    chkTransform->setChecked(true);
+    chkCrop->setChecked(true);
+    chkAudioFx->setChecked(true);
+    chkProperties->setChecked(true);
+    chkKeyframes->setChecked(true);
+    lay->addWidget(chkVideoFx);
+    lay->addWidget(chkTransform);
+    lay->addWidget(chkCrop);
+    lay->addWidget(chkAudioFx);
+    lay->addWidget(chkProperties);
+    lay->addWidget(chkKeyframes);
+    auto* btnAll = new QCheckBox(tr("Selecionar tudo"));
+    btnAll->setChecked(true);
+    lay->addWidget(btnAll);
+    connect(btnAll, &QCheckBox::toggled, [&](bool on) {
+        chkVideoFx->setChecked(on); chkTransform->setChecked(on);
+        chkCrop->setChecked(on); chkAudioFx->setChecked(on);
+        chkProperties->setChecked(on); chkKeyframes->setChecked(on);
+    });
+    auto* btns = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    lay->addWidget(btns);
+    connect(btns, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(btns, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    if (dlg.exec() != QDialog::Accepted) return;
+
+    emit editStart();
+
+    // Copia atributos para cada clipe selecionado.
+    for (const QString& id : expandToGroups(m_selected)) {
+        Clip* dst = findClipById(id);
+        if (!dst || trackLocked(dst)) continue;
+
+        if (chkVideoFx->isChecked()) {
+            dst->brightness = src.brightness;
+            dst->contrast = src.contrast;
+            dst->saturation = src.saturation;
+            dst->blur = src.blur;
+            dst->grayscale = src.grayscale;
+            dst->chromaKey = src.chromaKey;
+            dst->chromaKeyColor = src.chromaKeyColor;
+            dst->chromaKeySimilarity = src.chromaKeySimilarity;
+        }
+        if (chkTransform->isChecked()) {
+            dst->tx = src.tx; dst->ty = src.ty;
+            dst->scale = src.scale;
+            dst->scaleX = src.scaleX; dst->scaleY = src.scaleY;
+            dst->rotation = src.rotation;
+        }
+        if (chkCrop->isChecked()) {
+            dst->cropL = src.cropL; dst->cropR = src.cropR;
+            dst->cropT = src.cropT; dst->cropB = src.cropB;
+        }
+        if (chkAudioFx->isChecked()) {
+            dst->eqLow = src.eqLow; dst->eqMid = src.eqMid; dst->eqHigh = src.eqHigh;
+            dst->denoise = src.denoise; dst->denoiseAmount = src.denoiseAmount;
+            dst->normalize = src.normalize;
+            dst->invertPhase = src.invertPhase;
+        }
+        if (chkProperties->isChecked()) {
+            dst->volume = src.volume;
+            dst->opacity = src.opacity;
+            dst->speed = src.speed;
+            dst->fadeIn = src.fadeIn; dst->fadeOut = src.fadeOut;
+        }
+        if (chkKeyframes->isChecked()) {
+            dst->kfOpacity = src.kfOpacity;
+            dst->kfVolume = src.kfVolume;
+            dst->kfTx = src.kfTx; dst->kfTy = src.kfTy;
+            dst->kfScale = src.kfScale; dst->kfRotation = src.kfRotation;
+            dst->kfScaleX = src.kfScaleX; dst->kfScaleY = src.kfScaleY;
+            dst->kfCropL = src.kfCropL; dst->kfCropR = src.kfCropR;
+            dst->kfCropT = src.kfCropT; dst->kfCropB = src.kfCropB;
+        }
+    }
+    invalidateScene();
+    update();
+    emit modified();
+}
+
 void TimelineWidget::duplicateSelected() {
     if (m_selected.isEmpty() || !m_project) return;
     QStringList reps;
@@ -2986,6 +3081,7 @@ void TimelineWidget::keyPressEvent(QKeyEvent* e) {
         QWidget::keyPressEvent(e);
         break;
     case Qt::Key_V:
+        if (ctrl && shift) { pasteAttributes(); e->accept(); break; }
         if (ctrl) { pasteClips(); e->accept(); break; }
         m_showVolLines = !m_showVolLines; // V: oculta/mostra as linhas de volume
         invalidateScene();
@@ -3097,6 +3193,8 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         QAction* copy = menu.addAction(tr("Copiar"));
         QAction* ccut = menu.addAction(tr("Recortar"));
         QAction* paste = menu.addAction(tr("Colar"));
+        QAction* pasteAttr = menu.addAction(tr("Colar Atributos…"));
+        pasteAttr->setEnabled(!m_clipboard.isEmpty());
         menu.addSeparator();
         QAction* props = menu.addAction(tr("Propriedades…"));
         QAction* speedAct = menu.addAction(tr("Velocidade…"));
@@ -3173,6 +3271,7 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         else if (act == copy) copySelected();
         else if (act == ccut) cutSelected();
         else if (act == paste) pasteClips();
+        else if (act == pasteAttr) pasteAttributes();
         else if (act == props) showProperties(clip);
         else if (act == speedAct) showSpeedDialog(clip);
         else if (act == unlink) {

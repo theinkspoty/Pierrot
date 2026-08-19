@@ -7,4 +7,4 @@
 
 // Versão exibida no app. Mantenha em sincronia com a variável VERSION do
 // packaging/build-appimage.sh (usada no nome do AppImage).
-#define PIERROT_VERSION "0.3.6"
+#define PIERROT_VERSION "0.3.7"
