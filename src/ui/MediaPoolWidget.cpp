@@ -449,16 +449,6 @@ MediaPoolWidget::MediaPoolWidget(QWidget* parent) : QWidget(parent) {
         if (it) emit mediaToTimeline(it->data(Qt::UserRole).toString());
     });
 
-    m_search = new QLineEdit(this);
-    m_search->setPlaceholderText(tr("Filtrar mídias…"));
-    m_search->setClearButtonEnabled(true);
-    connect(m_search, &QLineEdit::textChanged, this, [this](const QString& text) {
-        for (int i = 0; i < m_list->count(); ++i) {
-            QListWidgetItem* it = m_list->item(i);
-            if (it) it->setHidden(!it->text().contains(text, Qt::CaseInsensitive));
-        }
-    });
-
     auto* bar = new QHBoxLayout;
     bar->setContentsMargins(0, 0, 0, 0);
     bar->addWidget(m_addBtn);
@@ -478,7 +468,6 @@ MediaPoolWidget::MediaPoolWidget(QWidget* parent) : QWidget(parent) {
     lay->setContentsMargins(6, 6, 6, 6);
     lay->setSpacing(4);
     lay->addLayout(bar);
-    lay->addWidget(m_search);
     lay->addWidget(m_importBar);
     lay->addWidget(m_list, 1);
 }

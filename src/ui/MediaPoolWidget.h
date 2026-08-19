@@ -104,7 +104,8 @@ private:
     PoolList* m_list = nullptr;
     QPushButton* m_addBtn = nullptr;
     QPushButton* m_removeBtn = nullptr;
-    QLineEdit* m_search = nullptr;
+    QLineEdit* m_search = nullptr; // REMOVIDO: campo de busca foi tirado
+
     QProgressBar* m_importBar = nullptr;
     QHash<QString, QImage> m_thumbs; // mediaId -> thumb (independente do item)
     QImage m_audioIcon;

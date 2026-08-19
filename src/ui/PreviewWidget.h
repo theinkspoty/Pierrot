@@ -25,6 +25,9 @@ class FrameWorker; // decodifica quadros de vídeo fora da thread da UI
 class QAudioSink;
 class QAudioOutput;
 
+class QToolButton;
+class QMenu;
+
 class PreviewWidget : public QWidget {
     Q_OBJECT
 public:
@@ -41,7 +44,9 @@ public slots:
     // Toca a partir de uma posição (Enter: início no ponteiro da timeline).
     void playFrom(double t);
     void setLoopRange(double in, double out);
+    void setLoopEnabled(bool enabled); // "Q": liga/desliga o loop de reprodução
     void setZoom(double z);
+    void setPreviewQuality(double q); // qualidade de decodificação do preview
 signals:
     void playheadMoved(double t);
     void stateChanged(bool playing);
@@ -72,6 +77,7 @@ private:
     double m_playhead = 0.0;
     double m_loopIn = -1.0;
     double m_loopOut = -1.0;
+    bool m_loopEnabled = false; // loop de reprodução só quando ativado ("Q")
     QImage m_frame;
     QImage m_frameFull;
     QTimer* m_timer = nullptr;
@@ -84,6 +90,9 @@ private:
     QComboBox* m_zoomCombo = nullptr;
     QWidget* m_topBar = nullptr;
     double m_zoom = 0.0; // 0 = ajustar à área; senão fração (1.0 = 100%)
+    double m_previewQuality = 1.0; // fator de resolução de decodificação (0..1)
+    QToolButton* m_qualityBtn = nullptr;
+    QMenu* m_qualityMenu = nullptr;
     QRect m_videoRect;
     double m_lastSrcT = -1.0;
     int m_lastDecodeW = -1;

@@ -45,6 +45,10 @@ int SettingsDialog::thumbMode() {
     return QSettings().value("timelineThumbMode", 0).toInt();
 }
 
+bool SettingsDialog::rippleDeleteEnabled() {
+    return QSettings().value("timelineRippleDelete", true).toBool();
+}
+
 SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
     setWindowTitle(tr("Configurações"));
     setMinimumWidth(440);
@@ -76,6 +80,9 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
     m_thumbMode->addItem(tr("Nenhuma"));
     m_thumbMode->setCurrentIndex(s.value("timelineThumbMode", 0).toInt());
 
+    m_rippleDelete = new QCheckBox(tr("Fechar o vão automaticamente ao excluir (ripple)"), this);
+    m_rippleDelete->setChecked(s.value("timelineRippleDelete", true).toBool());
+
     auto* mkvBox = new QGroupBox(tr("Avisos"), this);
     auto* mkvLay = new QVBoxLayout(mkvBox);
     mkvLay->addWidget(m_mkvWarn);
@@ -103,6 +110,7 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
     auto* tlBox = new QGroupBox(tr("Timeline"), this);
     auto* tlLay = new QFormLayout(tlBox);
     tlLay->addRow(tr("Miniaturas nos clipes:"), m_thumbMode);
+    tlLay->addRow(m_rippleDelete);
     auto* tlHint = new QLabel(tr("Como os quadros são exibidos no corpo dos "
                                  "clipes de vídeo. \"Todas\" mostra fatias "
                                  "contínuas; \"Início e fim\" só nos extremos; "
@@ -135,6 +143,7 @@ void SettingsDialog::accept() {
     s.setValue("autosaveMinutes", m_autoInterval->value());
     s.setValue("maxDecodeWidth", presetWidth(m_decodeWidth->currentIndex()));
     s.setValue("timelineThumbMode", m_thumbMode->currentIndex());
+    s.setValue("timelineRippleDelete", m_rippleDelete->isChecked());
     QDialog::accept();
 }
 

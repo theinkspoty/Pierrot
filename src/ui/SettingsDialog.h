@@ -23,6 +23,8 @@ public:
     // Modo de exibição das miniaturas nos clipes da timeline:
     // 0 = todas (fatias contínuas), 1 = início e fim, 2 = nenhuma.
     static int  thumbMode();
+    // Ao excluir, fecha o vão automaticamente (ripple). Desativável.
+    static bool rippleDeleteEnabled();
 
     // Valores escolhidos no diálogo (aplicar depois do OK).
     bool autoSaveEnabled() const;
@@ -40,4 +42,5 @@ private:
     QSpinBox*  m_autoInterval = nullptr;
     QComboBox* m_decodeWidth = nullptr;
     QComboBox* m_thumbMode = nullptr;
+    QCheckBox* m_rippleDelete = nullptr;
 };

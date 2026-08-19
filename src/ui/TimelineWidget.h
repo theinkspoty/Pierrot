@@ -79,6 +79,7 @@ public slots:
     void toggleMarker(double t);
     void setTool(int tool);
     void setSnap(bool on);
+    void setPlaying(bool p); // sincroniza a agulha branca com a vermelha
     void setLoopInAtPlayhead();
     void setLoopOutAtPlayhead();
     void clearLoop();
@@ -105,6 +106,7 @@ signals:
     void editStart();
     void toolChanged(int tool);
     void loopChanged(double in, double out);
+    void loopEnabledChanged(bool enabled); // "Q" liga/desliga o loop de reprodução
     void selectionChanged(const QString& id);
     void pancropRequested(const QString& id);
     void mediaImported();
@@ -233,6 +235,8 @@ private:
     // Agulha "ponteiro" branca (estilo Vegas): posição do cursor na régua,
     // separada e independente do playhead de reprodução (m_playhead). -1 = oculta.
     double m_cursorT = -1.0;
+    bool m_playing = false;       // reprodução em andamento
+    bool m_mouseOnRuler = false;  // mouse parado sobre a régua
     double m_pps = 80.0;
     double m_viewStart = 0.0;
     int m_viewTop = 0;
@@ -247,6 +251,7 @@ private:
     bool m_showVolLines = false;
     double m_loopIn = -1.0;
     double m_loopOut = -1.0;
+    bool m_loopEnabled = false; // região desenhada mas loop só com "Q"
     DragMode m_dragMode = None;
     QString m_dragClip;
     bool m_dragUndoPushed = false;
@@ -265,6 +270,8 @@ private:
     QRect m_marqueeRect;
     QPoint m_mousePos{-1, -1}; // posição atual do mouse (destaque das alças)
     QString m_hoverGripClip; // clipe cuja alça de opacidade está sob o mouse
+    QString m_hoverCornerClip; // clipe cujo canto de fade está sob o mouse
+    int m_hoverCornerSide = 0; // -1 esquerdo, +1 direito, 0 nenhum
     QPixmap m_staticCache;
     bool m_staticDirty = true;
     QHash<QString, ClipOrig> m_dragOrig;

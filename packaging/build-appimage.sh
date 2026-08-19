@@ -12,7 +12,7 @@
 #   packaging/build-appimage.sh
 #
 # Variáveis de ambiente:
-#   VERSION         versão usada no nome do AppImage (padrão: 0.3.5)
+#   VERSION         versão usada no nome do AppImage (padrão: 0.3.6)
 #   OUT_DIR         pasta de saída (padrão: dist/)
 #   BUNDLE_FFMPEG   0 desabilita embutir o binário ffmpeg (padrão: 1)
 #   UPDATE_INFORMATION  string de atualização embutida no AppImage (AppImageUpdate).
@@ -26,7 +26,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ARCH="$(uname -m)"
 TOOLS="$ROOT/packaging/.tools"
-VERSION="${VERSION:-0.3.5}"
+VERSION="${VERSION:-0.3.6}"
 OUT_DIR="${OUT_DIR:-$ROOT/dist}"
 BUNDLE_FFMPEG="${BUNDLE_FFMPEG:-1}"
 

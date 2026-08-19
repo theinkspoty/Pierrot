@@ -12,6 +12,10 @@
 #include <QThread>
 #include <QElapsedTimer>
 #include <QPushButton>
+#include <QToolButton>
+#include <QMenu>
+#include <QAction>
+#include <QLabel>
 #include <QLabel>
 #include <QComboBox>
 #include <QSignalBlocker>
@@ -429,6 +433,14 @@ QPainter::CompositionMode blendModeToQt(const QString& mode) {
 }
 }
 
+struct PreviewQOpt { double q; const char* label; const char* code; };
+static const PreviewQOpt kPreviewQualities[] = {
+    {1.0,   "Completa (100%)", "100%"},
+    {0.5,   "Metade (50%)",    "50%"},
+    {0.25,  "Quarto (25%)",    "25%"},
+    {0.125, "Rascunho (12%)",  "12%"},
+};
+
 PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     m_playBtn = new QPushButton(tr("Reproduzir"), this);
     m_timeLabel = new QLabel(tr("00:00:00:00"), this);
@@ -440,6 +452,23 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     bar->setContentsMargins(6, 6, 6, 0);
     bar->setSpacing(6);
     bar->addWidget(m_playBtn);
+
+    // Qualidade do preview (estilo Vegas/FCP): botão com menu ao lado do play.
+    m_qualityBtn = new QToolButton(this);
+    m_qualityBtn->setPopupMode(QToolButton::InstantPopup);
+    m_qualityBtn->setToolTip(tr("Qualidade do preview (resolução de decodificação)"));
+    m_qualityMenu = new QMenu(this);
+    for (const PreviewQOpt& o : kPreviewQualities) {
+        QAction* a = m_qualityMenu->addAction(QString::fromUtf8(o.label));
+        a->setCheckable(true);
+        a->setData(o.q);
+        if (std::fabs(o.q - m_previewQuality) < 1e-6) a->setChecked(true);
+        connect(a, &QAction::triggered, this, [this, o]() { setPreviewQuality(o.q); });
+    }
+    m_qualityBtn->setMenu(m_qualityMenu);
+    m_qualityBtn->setText(QString::fromUtf8(kPreviewQualities[0].code));
+    bar->addWidget(m_qualityBtn);
+
     bar->addWidget(m_timeLabel, 1);
 
     m_zoomCombo = new QComboBox(this);
@@ -960,7 +989,7 @@ void PreviewWidget::togglePlay() {
     }
     if (!m_project || m_project->duration() <= 0) return;
     if (m_playhead >= m_project->duration() - 1e-6) m_playhead = 0.0;
-    if (m_loopOut > m_loopIn) {
+    if (m_loopEnabled && m_loopOut > m_loopIn) {
         if (m_playhead < m_loopIn || m_playhead >= m_loopOut)
             m_playhead = m_loopIn;
     }
@@ -1001,6 +1030,10 @@ void PreviewWidget::setLoopRange(double in, double out) {
     m_loopOut = out;
 }
 
+void PreviewWidget::setLoopEnabled(bool enabled) {
+    m_loopEnabled = enabled;
+}
+
 void PreviewWidget::setZoom(double z) {
     m_zoom = z;
     if (m_zoomCombo) {
@@ -1013,6 +1046,26 @@ void PreviewWidget::setZoom(double z) {
         m_zoomCombo->setCurrentIndex(idx);
     }
     update();
+}
+
+void PreviewWidget::setPreviewQuality(double q) {
+    m_previewQuality = q;
+    // Invalida o quadro atual e força a reconversão na nova resolução.
+    {
+        QMutexLocker l(&m_frameMutex);
+        if (!m_frame.isNull()) m_frame = QImage();
+    }
+    m_shownW = -1;
+    m_lastDecodeW = -1;
+    for (QAction* a : m_qualityMenu->actions())
+        a->setChecked(std::fabs(a->data().toDouble() - q) < 1e-6);
+    for (const PreviewQOpt& o : kPreviewQualities)
+        if (std::fabs(o.q - q) < 1e-6) {
+            if (m_qualityBtn) m_qualityBtn->setText(QString::fromUtf8(o.code));
+            break;
+        }
+    update();
+    updateFrame();
 }
 
 void PreviewWidget::stopPlayback() {
@@ -1045,7 +1098,7 @@ void PreviewWidget::tick() {
     m_currentFrameIndex = targetFrame;
     const double t = (fps > 0.0) ? (targetFrame / fps) : (m_playStart + elapsed);
 
-    if (m_loopOut > m_loopIn && t >= m_loopOut - 1e-9) {
+    if (m_loopEnabled && m_loopOut > m_loopIn && t >= m_loopOut - 1e-9) {
         m_playStart = m_loopIn;
         m_currentFrameIndex = std::llround(m_loopIn * fps);
         m_clock.restart();
@@ -1278,8 +1331,12 @@ void PreviewWidget::updateFrame() {
 
     const double srcT = clip->in + (m_playhead - clip->pos) * clip->speed;
     // Decodifica no tamanho de exibição: muito mais rápido que 4K/1080p.
-    const int decW = qMax(320, qMin(PreviewWidget::maxDecodeWidth(), m_videoRect.width() > 0
-                                    ? m_videoRect.width() : 960));
+    // Qualidade do preview (estilo Vegas/FCP): quanto menor o fator, menor a
+    // resolução decodificada (mais rápido, mais suave). A exibição mantém o
+    // tamanho — só a nitidez muda.
+    const int pdBase = qMin(PreviewWidget::maxDecodeWidth(),
+                            m_videoRect.width() > 0 ? m_videoRect.width() : 960);
+    const int decW = qMax(160, (int)std::lround(pdBase * m_previewQuality));
 
     // Camadas inferiores (empilhamento multi-faixa): pede os quadros dos
     // clipes de vídeo que estão por baixo do topo, para compor transparência
@@ -1606,8 +1663,12 @@ void PreviewWidget::updatePrefetch() {
     if (!nextMedia || !nextMedia->hasVideo) return;
 
     const double srcT = nextClip->in;
-    const int decW = qMax(320, qMin(PreviewWidget::maxDecodeWidth(), m_videoRect.width() > 0
-                                    ? m_videoRect.width() : 960));
+    // Qualidade do preview (estilo Vegas/FCP): quanto menor o fator, menor a
+    // resolução decodificada (mais rápido, mais suave). A exibição mantém o
+    // tamanho — só a nitidez muda.
+    const int pdBase = qMin(PreviewWidget::maxDecodeWidth(),
+                            m_videoRect.width() > 0 ? m_videoRect.width() : 960);
+    const int decW = qMax(160, (int)std::lround(pdBase * m_previewQuality));
 
     {
         QMutexLocker l(&m_frameMutex);

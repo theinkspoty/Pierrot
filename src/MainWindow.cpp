@@ -138,6 +138,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     connect(m_timeline, &TimelineWidget::playheadChanged, m_preview, &PreviewWidget::seek);
     connect(m_preview, &PreviewWidget::playheadMoved, m_timeline, &TimelineWidget::setPlayhead);
+    connect(m_preview, &PreviewWidget::stateChanged, m_timeline, &TimelineWidget::setPlaying);
     connect(m_timeline, &TimelineWidget::playPauseRequested, m_preview, &PreviewWidget::togglePlay);
     // Enter (estilo Vegas): tocar a partir da posição da agulha/ponteiro.
     connect(m_timeline, &TimelineWidget::playFromCursor, this, [this]() {
@@ -187,7 +188,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     connect(m_timeline, &TimelineWidget::editStart, this, &MainWindow::pushUndo);
     connect(m_timeline, &TimelineWidget::loopChanged, m_preview, &PreviewWidget::setLoopRange);
-    connect(m_pool, &MediaPoolWidget::editStart, this, &MainWindow::pushUndo);
+    connect(m_timeline, &TimelineWidget::loopEnabledChanged, m_preview, &PreviewWidget::setLoopEnabled);    connect(m_pool, &MediaPoolWidget::editStart, this, &MainWindow::pushUndo);
     connect(m_pool, &MediaPoolWidget::importStarted, this, [this]() {
         statusBar()->showMessage(tr("Importando mídia…"));
     });
@@ -438,6 +439,31 @@ void MainWindow::createDocks() {
     addDockWidget(Qt::LeftDockWidgetArea, m_fileBrowserDock);
     m_fileBrowserDock->hide();
 
+    // Visual das barras de título dos painéis dockáveis (estilo Adobe Premiere:
+    // barra escura retangular, sem gradiente, texto claro e controles discretos).
+    setStyleSheet(QStringLiteral(R"(
+        QDockWidget {
+            color: #cfd3d9;
+        }
+        QDockWidget::title {
+            background-color: #282a2f;
+            border-bottom: 1px solid #17191c;
+            border-top: 1px solid #31343a;
+            padding: 4px 5px 4px 10px;
+            spacing: 4px;
+        }
+        QDockWidget::title:hover { background-color: #2e3137; }
+        QDockWidget::float-button,
+        QDockWidget::close-button {
+            background: transparent;
+            border: none;
+            margin: 1px;
+            padding: 2px;
+        }
+        QDockWidget::float-button:hover { background-color: #3a3f45; }
+        QDockWidget::close-button:hover { background-color: #5a1c1c; }
+    )"));
+
     // Qualquer mudança de arranjo dos painéis agenda o salvamento do layout.
     for (QDockWidget* dock : {m_poolDock, m_timelineDock, m_pancropDock, m_graphDock,
                               m_effectsDock, m_fileBrowserDock}) {
@@ -613,6 +639,27 @@ void MainWindow::createActions() {
     connect(appSettingsAction, &QAction::triggered, this, &MainWindow::openSettings);
 
     QMenu* cfgMenu = menuBar()->addMenu(tr("&Configurações"));
+    QMenu* helpMenu = menuBar()->addMenu(tr("&Ajuda"));
+    QAction* aboutAction = helpMenu->addAction(tr("Sobre o Pierrot…"));
+    connect(aboutAction, &QAction::triggered, this, [this]() {
+        QMessageBox box(this);
+        box.setWindowTitle(tr("Sobre o Pierrot"));
+        box.setIcon(QMessageBox::Information);
+        box.setTextFormat(Qt::RichText);
+        box.setText(
+            tr("<b>Pierrot</b> — editor de vídeo de código aberto<br>"
+               "Versão ") +
+            QString::fromLatin1(PIERROT_VERSION) +
+            tr("<br><br>"
+               "sempre quis migrar para o linux, mas a falta de editor sempre me "
+               "fazia voltar ao windows... 0s editores que existiam nas lojas não "
+               "respondiam o estilo de edição que eu fazia. comecei esse projeto para "
+               "ser um programa útil para mim, mas deve ter outros editores como eu, "
+               "então deixei ele de código aberto para que todos possam usar.<br><br>"
+               "<a href='https://github.com/theinkspoty/Pierrot'>github.com/theinkspoty/Pierrot</a>"));
+        box.setTextInteractionFlags(Qt::TextBrowserInteraction);
+        box.exec();
+    });
     cfgMenu->addAction(appSettingsAction);
 
     // As ferramentas da timeline ficam ancoradas acima da própria timeline,

@@ -69,6 +69,7 @@ constexpr int kPresetMaxV = 100, kPresetMaxA = 78;
 constexpr int kVideoRowH = 56;
 constexpr int kAudioRowH = 44;
 constexpr int kMinRowH = 24;
+constexpr int kMinDragH = 40; // piso ao arrastar a borda (não deixa a faixa minúscula)
 constexpr int kMaxRowH = 400;
 constexpr int kResizeHandleH = 5;
 constexpr int kFolderH = 22; // altura da faixa de cabeçalho de uma pasta
@@ -563,7 +564,18 @@ double TimelineWidget::snapTime(double t) const {
 
 void TimelineWidget::setPlayhead(double t) {
     m_playhead = std::max(0.0, t);
+    // Simbiose das agulhas: durante a reprodução a agulha branca acompanha a
+    // vermelha, a não ser que o mouse esteja sobre a régua (aí ela vira prévia
+    // da posição do cursor). Assim elas nunca ficam "descoladas" à toa.
+    if (m_playing && !m_mouseOnRuler)
+        m_cursorT = m_playhead;
     ensurePlayheadVisible();
+    update();
+}
+
+void TimelineWidget::setPlaying(bool p) {
+    m_playing = p;
+    if (p) m_cursorT = m_playhead; // ao começar, alinha a branca na vermelha
     update();
 }
 
@@ -695,16 +707,38 @@ void TimelineWidget::renderScene(QPainter& p) {
     const int gridBottom = std::min(height(), rowsBottom);
     double step = 1.0;
     while (step * m_pps < 70.0) step *= 2.0;
+    // Subdivisões (risquinhos finos) entre os passos principais, estilo Vegas /
+    // Final Cut: vão sumindo quando o zoom não deixa espaço para eles.
+    int subdiv = 5;
+    while (subdiv > 1 && (step / subdiv) * m_pps < 9.0) {
+        if (subdiv == 5) subdiv = 4;
+        else if (subdiv == 4) subdiv = 2;
+        else subdiv = 1;
+    }
+    const double mstep = step / subdiv;
     const double last = m_viewStart + (width() - H) / m_pps;
-    for (double t = std::ceil(m_viewStart / step) * step; t <= last; t += step) {
+    const long long k0 = (long long)std::ceil(m_viewStart / mstep);
+    QFont f = p.font();
+    f.setPointSizeF(8);
+    p.setFont(f);
+    for (long long k = k0; k * mstep <= last + 1e-9; ++k) {
+        const double t = k * mstep;
         const int x = (int)(H + (t - m_viewStart) * m_pps);
-        p.setPen(QColor(52, 52, 58));
-        p.drawLine(x, R, x, gridBottom);
-        p.setPen(QColor(180, 180, 190));
-        QFont f = p.font();
-        f.setPointSizeF(8);
-        p.setFont(f);
-        p.drawText(x + 3, R - 7, fmtRuler(t));
+        if (x < H - 1) continue;
+        const bool major = (k % subdiv) == 0;
+        if (major) {
+            // Traço principal: do alto até a linha de baixo + grid nas faixas.
+            p.setPen(QPen(QColor(140, 140, 150), 1));
+            p.drawLine(x, 1, x, R - 1);
+            p.setPen(QColor(52, 52, 58));
+            p.drawLine(x, R, x, gridBottom);
+            p.setPen(QColor(215, 215, 225));
+            p.drawText(x + 4, R - 6, fmtRuler(t));
+        } else {
+            // Risquinho fino entre as unidades (sem número).
+            p.setPen(QColor(105, 105, 115));
+            p.drawLine(x, R - 12, x, R - 2);
+        }
     }
 
     for (const Marker& mk : m_project->markers) {
@@ -877,27 +911,51 @@ void TimelineWidget::renderOverlays(QPainter& p) {
     const int H = kHeaderW;
     const int R = kRulerH;
 
-    // Região de loop (in/out).
+    // Região de loop (in/out): azul clarinho transparente, sempre visível quando
+    // definida. O loop de reprodução só ativa com "Q" (estilo Vegas).
     if (m_loopOut > m_loopIn) {
         const int lx0 = (int)timeToX(m_loopIn);
         const int lx1 = (int)timeToX(m_loopOut);
-        p.fillRect(QRect(lx0, 0, lx1 - lx0, R), QColor(255, 200, 40, 70));
-        p.fillRect(QRect(lx0, R, lx1 - lx0, height() - R), QColor(255, 200, 40, 18));
-        p.setPen(QColor(255, 200, 40, 170));
+        p.fillRect(QRect(lx0, 0, lx1 - lx0, R), QColor(140, 195, 255, 90));
+        p.fillRect(QRect(lx0, R, lx1 - lx0, height() - R), QColor(140, 195, 255, 16));
+        // Com o loop ativado ("Q"), o corpo da região ganha um amarelinho bem
+        // fraquinho para deixar claro que está em reprodução em loop.
+        if (m_loopEnabled) {
+            p.fillRect(QRect(lx0, 0, lx1 - lx0, R), QColor(255, 220, 90, 46));
+            p.fillRect(QRect(lx0, R, lx1 - lx0, height() - R), QColor(255, 220, 90, 22));
+        }
+        p.setPen(QPen(QColor(110, 175, 245, m_loopEnabled ? 255 : 160), m_loopEnabled ? 2 : 1));
         p.drawLine(lx0, R, lx0, height());
         p.drawLine(lx1, R, lx1, height());
         // "Lapelinha" de ajuste em cada borda (estilo Vegas): aba arrastável que
         // puxa só aquela borda da região sem recriar a seleção.
         auto drawEdgeTab = [&](int ex) {
             const QRect tab(ex - 4, 0, 8, R);
-            p.setPen(QPen(QColor(40, 34, 8), 1));
-            p.setBrush(QColor(255, 200, 40));
+            p.setPen(QPen(QColor(20, 48, 90), 1));
+            p.setBrush(QColor(120, 185, 255));
             p.drawRect(tab);
-            p.setPen(QColor(90, 70, 10));
+            p.setPen(QColor(30, 70, 120));
             p.drawLine(ex, 3, ex, R - 3);
         };
         drawEdgeTab(lx0);
         drawEdgeTab(lx1);
+        // Selo "loop" quando a reprodução em loop está ativa ("Q").
+        if (m_loopEnabled) {
+            const QString tag = QStringLiteral("loop");
+            QFont tf = p.font();
+            tf.setPointSizeF(7);
+            tf.setBold(true);
+            p.setFont(tf);
+            QFontMetrics tfm(tf);
+            const int tw = tfm.horizontalAdvance(tag) + 6;
+            const QRect badge(lx0 + 2, 7, tw, 11);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(50, 140, 220));
+            p.drawRoundedRect(badge, 2, 2);
+            p.setPen(Qt::white);
+            p.drawText(badge, Qt::AlignCenter, tag);
+            p.setFont(p.font());
+        }
     }
 
     const double px = H + (m_playhead - m_viewStart) * m_pps;
@@ -1109,6 +1167,26 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
         p.drawPath(tab);
     }
 
+    // Destaque da alça de FADE no canto sob o mouse (ao vivo). Funciona em
+    // clipes de vídeo e áudio; o canto fica maior e aceso ao passar por cima.
+    if (c.id == m_hoverCornerClip && m_hoverCornerSide != 0) {
+        const int s = 17;
+        QPainterPath tab;
+        if (m_hoverCornerSide < 0) {
+            tab.moveTo(r.left() + 1, r.top() + 1);
+            tab.lineTo(r.left() + 1, r.top() + s);
+            tab.lineTo(r.left() + s, r.top() + 1);
+        } else {
+            tab.moveTo(r.right() - 1, r.top() + 1);
+            tab.lineTo(r.right() - 1, r.top() + s);
+            tab.lineTo(r.right() - s, r.top() + 1);
+        }
+        tab.closeSubpath();
+        p.setPen(QPen(QColor(255, 255, 255), 2));
+        p.setBrush(QColor(255, 220, 130, 240));
+        p.drawPath(tab);
+    }
+
     const QString range = fmtRuler(c.in) + " – " + fmtRuler(c.in + c.dur);
     f.setPointSizeF(7.5);
     p.setFont(f);
@@ -1299,23 +1377,26 @@ void TimelineWidget::drawFadeCorners(QPainter& p, const QRect& r, const Clip& c)
     const double dur = std::max(c.dur, kMinDur);
     const int fi = (int)std::round(std::min(c.fadeIn, dur) / dur * r.width());
     const int fo = (int)std::round(std::min(c.fadeOut, dur) / dur * r.width());
-    // Alça sempre visível no canto superior (estilo Vegas): um pequeno triângulo
-    // "tab" no canto indica que ali dá pra arrastar para criar/ajustar o fade.
+    // Alça sempre visível no canto superior (estilo Vegas): um triângulo "tab"
+    // maior e com contorno no canto indica que ali dá pra arrastar para
+    // criar/ajustar o fade.
     auto drawCornerTab = [&](bool right, int len) {
         const bool active = len > 0;
+        const QColor fill = active ? QColor(255, 195, 70) : QColor(255, 255, 255, 120);
+        const int s = 13; // tamanho da aba (maior, mais fácil de ver/pegar)
         QPainterPath tab;
         if (!right) {
-            tab.moveTo(r.left() + 1, r.top() + 2);
-            tab.lineTo(r.left() + 1, r.top() + 10);
-            tab.lineTo(r.left() + 9, r.top() + 2);
+            tab.moveTo(r.left() + 1, r.top() + 1);
+            tab.lineTo(r.left() + 1, r.top() + s);
+            tab.lineTo(r.left() + s, r.top() + 1);
         } else {
-            tab.moveTo(r.right() - 1, r.top() + 2);
-            tab.lineTo(r.right() - 1, r.top() + 10);
-            tab.lineTo(r.right() - 9, r.top() + 2);
+            tab.moveTo(r.right() - 1, r.top() + 1);
+            tab.lineTo(r.right() - 1, r.top() + s);
+            tab.lineTo(r.right() - s, r.top() + 1);
         }
         tab.closeSubpath();
-        p.setPen(Qt::NoPen);
-        p.setBrush(active ? QColor(255, 200, 90) : QColor(255, 255, 255, 70));
+        p.setPen(QPen(QColor(255, 245, 210, 190), 1));
+        p.setBrush(fill);
         p.drawPath(tab);
     };
     drawCornerTab(false, fi);
@@ -1889,11 +1970,14 @@ void TimelineWidget::groupSelected() {
     emit modified();
 }
 
-// Ao sair do widget, limpa o destaque da alça de opacidade.
+// Ao sair do widget, limpa os destaques de alças.
 void TimelineWidget::leaveEvent(QEvent*) {
-    if (!m_hoverGripClip.isEmpty()) {
+    if (!m_hoverGripClip.isEmpty() || !m_hoverCornerClip.isEmpty() || m_hoverCornerSide != 0) {
         m_hoverGripClip.clear();
+        m_hoverCornerClip.clear();
+        m_hoverCornerSide = 0;
         m_mousePos = QPoint(-1, -1);
+        m_mouseOnRuler = false;
         update();
     }
 }
@@ -2185,7 +2269,8 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
             // Arrastar o canto esquerdo/certo ajusta fade-in/fade-out, sem
             // conflitar com o trim (que fica na borda lateral). Vale nas
             // ferramentas Selecionar (0) e Mover (M).
-            const bool nearTop = (y - rowY(row, audio)) <= 12;
+            const int topY = audio ? rowY(-1, row) : rowY(row, -1);
+            const bool nearTop = (y - topY) <= 14;
             if (nearTop && dx <= 10) {
                 m_dragMode = FadeIn;
                 m_dragOrigFade = clip->fadeIn;
@@ -2256,26 +2341,37 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
     if (!m_project) return;
 
     m_mousePos = e->pos();
+    m_mouseOnRuler = (e->pos().y() < kRulerH);
 
-    // Destaque da alça de opacidade ao passar o mouse sobre o topo de um
-    // clipe de vídeo (repinta só quando o alvo muda). Ignorado durante arrastos.
-    QString newHover;
+    // Destaque das alças (opacidade no centro, fades nos cantos) ao passar o
+    // mouse sobre o topo de um clipe de vídeo. Repinta só quando o alvo muda.
+    // Ignorado durante arrastos.
+    QString newGrip, newCorner;
+    int newSide = 0;
     if (m_dragMode == None && !(e->buttons() & Qt::LeftButton)
         && e->pos().y() >= kRulerH) {
         bool hAudio = false;
         int hrow = -1;
-        if (rowFromY(e->pos().y(), hrow, hAudio) && !hAudio && hrow >= 0) {
-            Clip* hc = clipAt(hrow, false, std::max(0.0, xToTime(e->pos().x())));
-            if (hc && (e->pos().y() - rowY(hrow, false)) <= 12) {
-                const int hcx = (int)timeToX(hc->pos);
-                const int hcw = (int)(hc->dur * m_pps);
-                const int hdx = e->pos().x() - hcx;
-                if (hdx > 10 && hcw - hdx > 10) newHover = hc->id;
+        if (rowFromY(e->pos().y(), hrow, hAudio) && hrow >= 0) {
+            Clip* hc = clipAt(hrow, hAudio, std::max(0.0, xToTime(e->pos().x())));
+            if (hc) {
+                const int topY = hAudio ? rowY(-1, hrow) : rowY(hrow, -1);
+                if (e->pos().y() - topY <= 14) {
+                    const int hcx = (int)timeToX(hc->pos);
+                    const int hcw = (int)(hc->dur * m_pps);
+                    const int hdx = e->pos().x() - hcx;
+                    if (hdx <= 12) { newCorner = hc->id; newSide = -1; }
+                    else if (hcw - hdx <= 12) { newCorner = hc->id; newSide = 1; }
+                    else if (!hAudio) newGrip = hc->id;
+                }
             }
         }
     }
-    if (newHover != m_hoverGripClip) {
-        m_hoverGripClip = newHover;
+    if (newGrip != m_hoverGripClip || newCorner != m_hoverCornerClip
+        || newSide != m_hoverCornerSide) {
+        m_hoverGripClip = newGrip;
+        m_hoverCornerClip = newCorner;
+        m_hoverCornerSide = newSide;
         update();
     }
 
@@ -2351,7 +2447,7 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                     if (!tt) continue;
                     // Usa a altura ORIGINAL capturada no início do arraste (e
                     // não a atual), senão o delta total acumula a cada movimento.
-                    const int nh = std::clamp(origH + dy, kMinRowH, kMaxRowH);
+                    const int nh = std::clamp(origH + dy, kMinDragH, kMaxRowH);
                     if (tt->height != nh) {
                         tt->height = nh;
                         any = true;
@@ -2366,7 +2462,7 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
             } else {
                 Track& t = m_resizeAudio ? m_project->audioTracks[m_resizeRow]
                                          : m_project->videoTracks[m_resizeRow];
-                const int newH = std::clamp(m_resizeOrigH + dy, kMinRowH, kMaxRowH);
+                const int newH = std::clamp(m_resizeOrigH + dy, kMinDragH, kMaxRowH);
                 if (t.height != newH) {
                     t.height = newH;
                     updateScrollRanges();
@@ -2585,11 +2681,14 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                     }
                 } else if (m_dragMode == FadeIn || m_dragMode == FadeOut) {
                     // Alça de fade no canto (estilo Vegas): arrastar horizontal
-                    // define a duração do fade em segundos.
+                    // define a duração do fade em segundos. Arrastar o canto
+                    // PARA DENTRO do clipe estende o fade — por isso o sinal
+                    // do canto direito é invertido (dt fica negativo ao ir p/ esq).
                     Clip* sc = findClipById(m_dragClip);
                     if (sc) {
                         const double dur = sc->dur;
-                        const double nf = std::clamp(m_dragOrigFade + dt, 0.0,
+                        const double d = m_dragMode == FadeIn ? dt : -dt;
+                        const double nf = std::clamp(m_dragOrigFade + d, 0.0,
                                                      std::max(0.0, dur - 0.1));
                         if (m_dragMode == FadeIn) sc->fadeIn = nf;
                         else sc->fadeOut = nf;
@@ -2860,7 +2959,12 @@ void TimelineWidget::keyPressEvent(QKeyEvent* e) {
         } else if (shift) {
             deleteSelectedLeaveGap();
         } else {
-            deleteSelection();
+            // "Fechar o vão automaticamente (ripple)" é configurável: com a
+            // opção desativada, excluir deixa o espaço vazio.
+            if (SettingsDialog::rippleDeleteEnabled())
+                deleteSelection();
+            else
+                deleteSelectedLeaveGap();
         }
         e->accept();
         break;
@@ -2924,6 +3028,13 @@ void TimelineWidget::keyPressEvent(QKeyEvent* e) {
             setPlayhead(m_project->duration());
             emit playheadChanged(m_project->duration());
         }
+        e->accept();
+        break;
+    case Qt::Key_Q:
+        // Vegas: "Q" liga/desliga o loop de reprodução da região de loop.
+        m_loopEnabled = !m_loopEnabled;
+        emit loopEnabledChanged(m_loopEnabled);
+        update();
         e->accept();
         break;
     default:
