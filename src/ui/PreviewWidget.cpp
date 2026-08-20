@@ -6,6 +6,8 @@
 #include "PreviewWidget.h"
 
 #include "ui/SettingsDialog.h"
+#include "ofx/OfxRenderer.h"
+#include "ofx/OfxPluginManager.h"
 
 #include <QPainter>
 #include <QTimer>
@@ -598,7 +600,6 @@ static QImage lainkaApplyFx(const QImage& src, const QString& clipId, double t,
         onionSkin < 1e-6)
         return src;
 
-    const uint h0 = lainkaHash(clipId, t);
     const int sw = src.width(), sh = src.height();
     double tScaled = t * (flickerSpeed / 50.0);
 
@@ -654,44 +655,104 @@ static QImage lainkaApplyFx(const QImage& src, const QString& clipId, double t,
         }
     }
 
-    // 4) Flicker (variação de brilho)
+    // 4) Flicker (variação de brilho real via pixel)
     if (flicker > 1e-6) {
         const double n = ((lainkaHashN(clipId, tScaled, 4) & 0xFF) / 255.0);
         const double factor = 1.0 + (n * 2.0 - 1.0) * (flicker / 100.0);
-        QPainter p(&out);
-        p.setCompositionMode(QPainter::CompositionMode_SourceOver);
-        p.fillRect(out.rect(), QColor(0, 0, 0, (int)std::lround((1.0 - factor) * 128)));
+        for (int y = 0; y < out.height(); ++y) {
+            uchar* line = out.scanLine(y);
+            for (int x = 0; x < out.width(); ++x) {
+                const int si = x * 4;
+                line[si + 2] = (uchar)std::clamp((int)(line[si + 2] * factor), 0, 255);
+                line[si + 1] = (uchar)std::clamp((int)(line[si + 1] * factor), 0, 255);
+                line[si + 0] = (uchar)std::clamp((int)(line[si + 0] * factor), 0, 255);
+            }
+        }
     }
 
-    // 5) Warp distortion (grid-based bulge)
+    // 5) Warp distortion orgânico (estilo papel amassado)
     if (warpAmount > 1e-6 && warpGrid >= 2) {
         const double warpT = t * (warpSpeed / 50.0);
-        const double amp = warpAmount * 0.1;
-        const int cols = warpGrid, rows = warpGrid;
-        const double cellW = (double)sw / cols;
-        const double cellH = (double)sh / rows;
+        const double amp = warpAmount * 0.5;
+        const int cols = warpGrid + 1, rows = warpGrid + 1;
+        const double cellW = (double)sw / (cols - 1);
+        const double cellH = (double)sh / (rows - 1);
+
+        // Gerar campo de deslocamento com interpolação bilinear
+        QVector<double> gridDx(cols * rows);
+        QVector<double> gridDy(cols * rows);
+        for (int gy = 0; gy < rows; ++gy) {
+            for (int gx = 0; gx < cols; ++gx) {
+                const uint wh = lainkaHashN(clipId, warpT, gx * 1000 + gy);
+                gridDx[gy * cols + gx] = ((wh & 0xFF) / 255.0 - 0.5) * amp;
+                gridDy[gy * cols + gx] = (((wh >> 8) & 0xFF) / 255.0 - 0.5) * amp;
+            }
+        }
 
         QImage warped(sw, sh, QImage::Format_ARGB32_Premultiplied);
         warped.fill(Qt::transparent);
-        QPainter wp(&warped);
-        wp.setRenderHint(QPainter::SmoothPixmapTransform, true);
 
-        for (int gy = 0; gy < rows; ++gy) {
-            for (int gx = 0; gx < cols; ++gx) {
-                const double cx = (gx + 0.5) * cellW;
-                const double cy = (gy + 0.5) * cellH;
-                const uint wh = lainkaHashN(clipId, warpT, gx * 1000 + gy);
-                const double dx = ((wh & 0xFF) / 255.0 - 0.5) * amp * cellW;
-                const double dy = (((wh >> 8) & 0xFF) / 255.0 - 0.5) * amp * cellH;
-                const int sx = (int)std::lround(gx * cellW + dx);
-                const int sy = (int)std::lround(gy * cellH + dy);
-                const int sw2 = (int)std::lround(cellW) + 2;
-                const int sh2 = (int)std::lround(cellH) + 2;
-                wp.drawImage(sx, sy, src, (int)std::lround(gx * cellW),
-                             (int)std::lround(gy * cellH), sw2, sh2);
+        for (int y = 0; y < sh; ++y) {
+            const double fy = (double)y / cellH;
+            const int gy0 = std::clamp((int)fy, 0, rows - 2);
+            const double ty = fy - gy0;
+            for (int x = 0; x < sw; ++x) {
+                const double fx = (double)x / cellW;
+                const int gx0 = std::clamp((int)fx, 0, cols - 2);
+                const double tx = fx - gx0;
+                // Bilinear interpolation do campo de deslocamento
+                const double d00x = gridDx[gy0 * cols + gx0];
+                const double d10x = gridDx[gy0 * cols + gx0 + 1];
+                const double d01x = gridDx[(gy0 + 1) * cols + gx0];
+                const double d11x = gridDx[(gy0 + 1) * cols + gx0 + 1];
+                const double dx = (1 - ty) * ((1 - tx) * d00x + tx * d10x)
+                                + ty * ((1 - tx) * d01x + tx * d11x);
+                const double d00y = gridDy[gy0 * cols + gx0];
+                const double d10y = gridDy[gy0 * cols + gx0 + 1];
+                const double d01y = gridDy[(gy0 + 1) * cols + gx0];
+                const double d11y = gridDy[(gy0 + 1) * cols + gx0 + 1];
+                const double dy = (1 - ty) * ((1 - tx) * d00y + tx * d10y)
+                                + ty * ((1 - tx) * d01y + tx * d11y);
+                // Mapear pixel de origem com deslocamento
+                const int sx = std::clamp((int)std::lround(x + dx * cellW), 0, sw - 1);
+                const int sy = std::clamp((int)std::lround(y + dy * cellH), 0, sh - 1);
+                const QRgb px = src.pixel(sx, sy);
+                warped.setPixel(x, y, px);
             }
         }
         out = warped;
+
+        // Sombras de dobra (paper creases)
+        const int numFolds = 2 + (int)(warpAmount / 25.0);
+        {
+            QImage creaseImg(sw, sh, QImage::Format_ARGB32_Premultiplied);
+            creaseImg.fill(Qt::transparent);
+            QPainter cp(&creaseImg);
+            for (int i = 0; i < numFolds; ++i) {
+                const uint fh = lainkaHashN(clipId, warpT, 5000 + i);
+                // Linha de dobra: de uma borda a outra
+                const double angle = ((fh & 0xFF) / 255.0) * M_PI;
+                const double cx = ((fh >> 8) & 0xFF) / 255.0 * sw;
+                const double cy = ((fh >> 16) & 0xFF) / 255.0 * sh;
+                const double len = sw * 0.8;
+                const double nx = std::cos(angle), ny = std::sin(angle);
+                const double x1 = cx - nx * len, y1 = cy - ny * len;
+                const double x2 = cx + nx * len, y2 = cy + ny * len;
+                // Sombra (lado escuro)
+                cp.setPen(QPen(QColor(0, 0, 0, 50), 3));
+                cp.drawLine(QPointF(x1 + ny * 2, y1 - nx * 2),
+                            QPointF(x2 + ny * 2, y2 - nx * 2));
+                // Realce (lado claro)
+                cp.setPen(QPen(QColor(255, 255, 255, 35), 2));
+                cp.drawLine(QPointF(x1 - ny * 2, y1 + nx * 2),
+                            QPointF(x2 - ny * 2, y2 + nx * 2));
+            }
+            cp.end();
+            // Compor sombras sobre a imagem
+            QPainter op(&out);
+            op.setCompositionMode(QPainter::CompositionMode_Multiply);
+            op.drawImage(0, 0, creaseImg);
+        }
     }
 
     // 6) Dust & dirt (pó e sujeira)
@@ -930,6 +991,7 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
                                           c->lainkaMotionBlur, c->lainkaOpacity,
                                           c->lainkaTargetFps);
                     }
+                    applyBasicEffectsOn(f, *c);
                 } else {
                     {
                         QMutexLocker l(&m_frameMutex);
@@ -1559,6 +1621,7 @@ void PreviewWidget::updateFrame() {
         m_transAlpha = -1.0;
         m_underFrame = QImage();
         m_clipLainkaEnabled = false;
+        m_clipOfxFx.clear();
         update();
         return;
     }
@@ -1569,6 +1632,7 @@ void PreviewWidget::updateFrame() {
         m_transAlpha = -1.0;
         m_underFrame = QImage();
         m_clipLainkaEnabled = false;
+        m_clipOfxFx.clear();
         update();
         return;
     }
@@ -1596,6 +1660,15 @@ void PreviewWidget::updateFrame() {
     m_clipMotionAmount = clip->motionAmount;
     m_clipMotionAngle = clip->motionAngle;
     m_clipMotionSamples = clip->motionSamples;
+    m_clipBrightness = clip->brightness;
+    m_clipContrast = clip->contrast;
+    m_clipSaturation = clip->saturation;
+    m_clipBlur = clip->blur;
+    m_clipGrayscale = clip->grayscale;
+    m_clipChromaKey = clip->chromaKey;
+    m_clipChromaKeyColor = clip->chromaKeyColor;
+    m_clipChromaKeySimilarity = clip->chromaKeySimilarity;
+    m_clipOfxFx = clip->ofxFx;
 
     double srcT = clip->in + (m_playhead - clip->pos) * clip->speed;
     // LAINKA: quantiza o tempo para simular pulo de frame.
@@ -1902,6 +1975,8 @@ void PreviewWidget::onFrameReady(const QString& clipId, const QString& path, dou
                                 clip->lainkaMotionBlur, clip->lainkaOpacity,
                                 clip->lainkaTargetFps);
     }
+    // Aplica efeitos básicos também em camadas inferiores.
+    applyBasicEffectsOn(cropped, *clip);
     {
         QMutexLocker l(&m_frameMutex);
         m_layerCache[clipId] = {cropped, path, t, maxW};
@@ -2000,6 +2075,129 @@ QImage PreviewWidget::applyCropTo(const QImage& img, int cL, int cR, int cT, int
                           qMin(ch, (int)h - std::clamp(y, 0, (int)h - 1))));
 }
 
+// Aplica efeitos básicos (brilho, contraste, saturação, desfoque, preto e branco, chroma key)
+// sobre o quadro do clipe ativo. Chamado após o crop em applyCrop().
+void PreviewWidget::applyBasicEffects(QImage& img) {
+    if (img.isNull()) return;
+    Clip c;
+    c.brightness = m_clipBrightness;
+    c.contrast = m_clipContrast;
+    c.saturation = m_clipSaturation;
+    c.blur = m_clipBlur;
+    c.grayscale = m_clipGrayscale;
+    c.chromaKey = m_clipChromaKey;
+    c.chromaKeyColor = m_clipChromaKeyColor;
+    c.chromaKeySimilarity = m_clipChromaKeySimilarity;
+    applyBasicEffectsOn(img, c);
+}
+
+void PreviewWidget::applyBasicEffectsOn(QImage& img, const Clip& c) {
+    if (img.isNull()) return;
+
+    // Chroma Key: remove cor específica.
+    if (c.chromaKey) {
+        QImage result(img.size(), QImage::Format_ARGB32);
+        result.fill(Qt::transparent);
+        const int w = img.width();
+        const int h = img.height();
+        const QColor key = c.chromaKeyColor;
+        const double sim = std::clamp(c.chromaKeySimilarity, 0.0, 1.0);
+        const double range = sim * 255.0;
+        const int kr = key.red(), kg = key.green(), kb = key.blue();
+        for (int y = 0; y < h; ++y) {
+            const uchar* src = img.constScanLine(y);
+            uchar* dst = result.scanLine(y);
+            for (int x = 0; x < w; ++x) {
+                const int si = x * 4;
+                const double dr = src[si + 0] - kr;
+                const double dg = src[si + 1] - kg;
+                const double db = src[si + 2] - kb;
+                const double dist = std::sqrt(dr * dr + dg * dg + db * db);
+                if (dist < range) {
+                    dst[si + 0] = src[si + 0];
+                    dst[si + 1] = src[si + 1];
+                    dst[si + 2] = src[si + 2];
+                    dst[si + 3] = (uchar)std::clamp((int)(dist / range * 255.0), 0, 255);
+                } else {
+                    dst[si + 0] = src[si + 0];
+                    dst[si + 1] = src[si + 1];
+                    dst[si + 2] = src[si + 2];
+                    dst[si + 3] = 255;
+                }
+            }
+        }
+        img = result;
+    }
+
+    // Desfoque: box blur simples.
+    if (c.blur > 0.5) {
+        const int radius = std::clamp((int)std::lround(c.blur * 0.5), 1, 30);
+        QImage blurred(img.size(), img.format());
+        const int w = img.width();
+        const int h = img.height();
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                int r = 0, g = 0, b = 0, a = 0, cnt = 0;
+                for (int dy = -radius; dy <= radius; ++dy) {
+                    const int sy = std::clamp(y + dy, 0, h - 1);
+                    for (int dx = -radius; dx <= radius; ++dx) {
+                        const int sx = std::clamp(x + dx, 0, w - 1);
+                        const QRgb px = img.pixel(sx, sy);
+                        r += qRed(px); g += qGreen(px); b += qBlue(px); a += qAlpha(px);
+                        ++cnt;
+                    }
+                }
+                blurred.setPixel(x, y, qRgba(r / cnt, g / cnt, b / cnt, a / cnt));
+            }
+        }
+        img = blurred;
+    }
+
+    // Preto e branco.
+    if (c.grayscale) {
+        for (int y = 0; y < img.height(); ++y) {
+            uchar* line = img.scanLine(y);
+            for (int x = 0; x < img.width(); ++x) {
+                const int si = x * 4;
+                const int gray = (int)std::lround(0.299 * line[si + 2] + 0.587 * line[si + 1] + 0.114 * line[si]);
+                line[si + 0] = line[si + 1] = line[si + 2] = (uchar)std::clamp(gray, 0, 255);
+            }
+        }
+    }
+
+    // Brilho, contraste, saturação.
+    const bool needEq = (c.brightness != 0.0 || c.contrast != 1.0 || c.saturation != 1.0);
+    if (needEq) {
+        const double br = std::clamp(c.brightness, -1.0, 1.0) * 255.0;
+        const double ct = std::clamp(c.contrast, 0.0, 2.0);
+        const double factor = (ct == 1.0) ? 1.0 : (259.0 * (ct * 255.0 + 255.0)) / (255.0 * (259.0 - ct * 255.0));
+        const double sa = std::clamp(c.saturation, 0.0, 2.0);
+        for (int y = 0; y < img.height(); ++y) {
+            uchar* line = img.scanLine(y);
+            for (int x = 0; x < img.width(); ++x) {
+                const int si = x * 4;
+                double r = line[si + 2], g = line[si + 1], b = line[si + 0];
+                // Brilho
+                r += br; g += br; b += br;
+                // Contraste
+                r = factor * (r - 128.0) + 128.0;
+                g = factor * (g - 128.0) + 128.0;
+                b = factor * (b - 128.0) + 128.0;
+                // Saturação
+                if (sa != 1.0) {
+                    const double gray = 0.299 * r + 0.587 * g + 0.114 * b;
+                    r = gray + sa * (r - gray);
+                    g = gray + sa * (g - gray);
+                    b = gray + sa * (b - gray);
+                }
+                line[si + 2] = (uchar)std::clamp((int)std::lround(r), 0, 255);
+                line[si + 1] = (uchar)std::clamp((int)std::lround(g), 0, 255);
+                line[si + 0] = (uchar)std::clamp((int)std::lround(b), 0, 255);
+            }
+        }
+    }
+}
+
 // Aplica pan/crop sobre o quadro cheio (m_frameFull) e guarda em m_frame.
 void PreviewWidget::applyCrop() {
     m_frame = applyCropTo(m_frameFull, m_lastCropL, m_lastCropR, m_lastCropT, m_lastCropB);
@@ -2031,6 +2229,14 @@ void PreviewWidget::applyCrop() {
         }
         p.end();
         m_frame = result;
+    }
+    // Aplica efeitos básicos (brilho, contraste, saturação, etc.)
+    applyBasicEffects(m_frame);
+
+    // Aplica efeitos OFX do clipe.
+    if (!m_clipOfxFx.isEmpty() && m_ofxManager && !m_frame.isNull()) {
+        m_frame = OfxRenderer::applyOfxEffects(m_frame, m_clipOfxFx, m_ofxManager,
+                                                m_playhead);
     }
 }
 

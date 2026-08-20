@@ -32,6 +32,8 @@ set(SOURCES
     src/ffmpeg/MediaCache.cpp
     src/export/ProjectExporter.cpp
     src/ofx/OfxPluginManager.cpp
+    src/ofx/OfxHost.cpp
+    src/ofx/OfxRenderer.cpp
     src/ui/MediaPoolWidget.cpp
     src/ui/TimelineWidget.cpp
     src/ui/PreviewWidget.cpp
@@ -61,6 +63,8 @@ set(HEADERS
     src/ffmpeg/MediaCache.h
     src/export/ProjectExporter.h
     src/ofx/OfxPluginManager.h
+    src/ofx/OfxHost.h
+    src/ofx/OfxRenderer.h
     src/ui/MediaPoolWidget.h
     src/ui/TimelineWidget.h
     src/ui/PreviewWidget.h
@@ -86,7 +90,7 @@ else()
     add_executable(pierrot ${SOURCES} ${HEADERS})
 endif()
 
-target_include_directories(pierrot PRIVATE src)
+target_include_directories(pierrot PRIVATE src src/ofx/sdk)
 
 target_link_libraries(pierrot PRIVATE
     ${PIERROT_QT_LIB}
@@ -97,6 +101,11 @@ target_link_libraries(pierrot PRIVATE
     FFmpeg::avutil
     FFmpeg::swscale
 )
+
+# dlopen/dlsym para carregar plugins OFX em runtime
+if(NOT WIN32)
+    target_link_libraries(pierrot PRIVATE dl)
+endif()
 
 if(TARGET FFmpeg::swresample)
     target_link_libraries(pierrot PRIVATE FFmpeg::swresample)

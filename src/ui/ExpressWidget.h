@@ -28,6 +28,10 @@ public:
     void setProject(Project* p) { m_project = p; }
     void setOfxPlugins(const QVector<OfxPluginInfo>& plugins);
 
+    // Registra parâmetros descobertos pelo describe (chamado pelo manager).
+    void setOfxParamDefs(const QString& pluginId,
+                         const QVector<QPair<QString,QPair<QString,QString>>>& params);
+
     // Chamado quando a seleção de clipes muda na timeline.
     void setSelectedClip(Clip* clip);
 
@@ -66,4 +70,10 @@ private:
     QHash<QString, QWidget*> m_tabPages;
     // Efeitos nativos que já foram aplicados ao clipe (para não duplicar).
     QSet<QString> m_appliedBuiltIn;
+
+    // Parâmetros OFX descobertos (pluginId -> lista de {name, {type, label}}).
+    QHash<QString, QVector<QPair<QString,QPair<QString,QString>>>> m_ofxParamDefs;
+
+    // Widgets de parâmetros OFX (para leitura dos valores).
+    QHash<QString, QWidget*> m_ofxParamWidgets;
 };

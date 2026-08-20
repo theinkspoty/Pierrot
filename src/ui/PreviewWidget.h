@@ -28,12 +28,15 @@ class QAudioOutput;
 class QToolButton;
 class QMenu;
 
+class OfxPluginManager;
+
 class PreviewWidget : public QWidget {
     Q_OBJECT
 public:
     explicit PreviewWidget(QWidget* parent = nullptr);
     ~PreviewWidget() override;
     void setProject(Project* p);
+    void setOfxManager(OfxPluginManager* m) { m_ofxManager = m; }
     void refreshView();
     double playhead() const { return m_playhead; }
     static int maxDecodeWidth();
@@ -59,6 +62,8 @@ private:
     void drawClipText(QPainter& p, const QRect& canvas, const Clip* clip, double k);
     void updateFrame();
     void applyCrop();
+    void applyBasicEffects(QImage& img);
+    static void applyBasicEffectsOn(QImage& img, const Clip& c);
     QImage applyCropTo(const QImage& img, int cL, int cR, int cT, int cB);
     // Pedidos asíncronos de quadro: primário (clipe do topo) e camadas
     // inferiores (empilhamento multi-faixa). clipId identifica o destino.
@@ -125,6 +130,16 @@ private:
     double m_clipMotionAngle = 0.0;
     int m_clipMotionSamples = 8;
 
+    // ── Efeitos básicos cached state ─────────────────────────────────
+    double m_clipBrightness = 0.0;
+    double m_clipContrast = 1.0;
+    double m_clipSaturation = 1.0;
+    double m_clipBlur = 0.0;
+    bool m_clipGrayscale = false;
+    bool m_clipChromaKey = false;
+    QColor m_clipChromaKeyColor{Qt::green};
+    double m_clipChromaKeySimilarity = 0.15;
+
     // Áudio do preview (mixer com um decoder por clipe ativo).
     AudioMixer* m_audioFeed = nullptr;
     QAudioSink* m_audioSink = nullptr;
@@ -177,4 +192,8 @@ private:
     int m_underCropL = 0, m_underCropR = 0, m_underCropT = 0, m_underCropB = 0;
     double m_transAlpha = -1.0;
     QString m_transType;
+
+    // ── OFX plugin manager ────────────────────────────────────────────
+    OfxPluginManager* m_ofxManager = nullptr;
+    QVector<OfxPluginInstance> m_clipOfxFx; // efeitos OFX do clipe ativo
 };

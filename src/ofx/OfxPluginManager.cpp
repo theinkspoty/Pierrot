@@ -4,6 +4,7 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "OfxPluginManager.h"
+#include "OfxHost.h"
 
 #include <QDir>
 #include <QStandardPaths>
@@ -12,11 +13,59 @@
 #include <QDebug>
 #include <QCoreApplication>
 #include <QSettings>
+#include <QDirIterator>
+#include <cstring>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
+
+// ── Helpers para dlopen/dlsym ────────────────────────────────────────────
+
+static void* ofxLoadLibrary(const QString& path) {
+#ifdef Q_OS_WIN
+    return (void*)LoadLibraryW(reinterpret_cast<const wchar_t*>(path.utf16()));
+#else
+    return dlopen(path.toLocal8Bit().constData(), RTLD_NOW | RTLD_LOCAL);
+#endif
+}
+
+static void* ofxGetSymbol(void* lib, const char* name) {
+#ifdef Q_OS_WIN
+    return (void*)GetProcAddress((HMODULE)lib, name);
+#else
+    return dlsym(lib, name);
+#endif
+}
+
+static QString ofxLoadError() {
+#ifdef Q_OS_WIN
+    return QString::number(GetLastError());
+#else
+    const char* err = dlerror();
+    return err ? QString::fromLatin1(err) : QStringLiteral("unknown");
+#endif
+}
 
 // ── Construtor / Destrutor ───────────────────────────────────────────────
 
 OfxPluginManager::OfxPluginManager(QObject* parent) : QObject(parent) {}
-OfxPluginManager::~OfxPluginManager() = default;
+OfxPluginManager::~OfxPluginManager() { cleanupLibs(); }
+
+void OfxPluginManager::cleanupLibs() {
+    for (auto it = m_libs.begin(); it != m_libs.end(); ++it) {
+        if (it.value().handle) {
+#ifdef Q_OS_WIN
+            FreeLibrary((HMODULE)it.value().handle);
+#else
+            dlclose(it.value().handle);
+#endif
+        }
+    }
+    m_libs.clear();
+}
 
 // ── Caminhos de busca padrão ────────────────────────────────────────────
 
@@ -24,36 +73,33 @@ QStringList OfxPluginManager::searchPaths() const
 {
     QStringList paths;
 
-    // Diretórios do sistema (Linux / macOS)
 #ifdef Q_OS_UNIX
     paths << QStringLiteral("/usr/lib/ofx")
           << QStringLiteral("/usr/share/ofx")
-          << QStringLiteral("/usr/local/lib/ofx");
+          << QStringLiteral("/usr/local/lib/ofx")
+          << QStringLiteral("/usr/lib64/ofx");
 #endif
 #ifdef Q_OS_WIN
-    // Windows: Program Files / Application Data
     const QString progFiles = QCoreApplication::applicationDirPath();
-    paths << progFiles + QStringLiteral("/../lib/ofx");
+    paths << progFiles + QStringLiteral("/../lib/ofx")
+          << QStringLiteral("C:/Program Files/OFX/Plugins")
+          << QStringLiteral("C:/Program Files (x86)/OFX/Plugins");
 #endif
 
-    // Diretório do usuário (~/.config/pierrot/ofx ou XDG)
     const QString userDir =
         QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)
         + QStringLiteral("/ofx");
     paths << userDir;
 
-    // Variável de ambiente PIERROT_OFX_PATH
     const QString envPath = qgetenv("PIERROT_OFX_PATH");
     if (!envPath.isEmpty()) {
         for (const QString& ep : envPath.split(QLatin1Char(':'), Qt::SkipEmptyParts))
             paths << ep;
     }
 
-    // Caminhos extras adicionados pelo usuário (via代码).
     for (const QString& extra : m_extraPaths)
         paths << extra;
 
-    // Caminhos salvos nas configurações (Configurações → Plugins OFX).
     const QStringList savedPaths = QSettings().value("ofxSearchPaths").toStringList();
     for (const QString& sp : savedPaths)
         if (!paths.contains(sp))
@@ -72,6 +118,7 @@ void OfxPluginManager::addSearchPath(const QString& path)
 
 int OfxPluginManager::scanPlugins()
 {
+    cleanupLibs();
     m_plugins.clear();
 
     const QStringList dirs = searchPaths();
@@ -87,49 +134,210 @@ int OfxPluginManager::scanPlugins()
 
 void OfxPluginManager::scanDirectory(const QString& dir)
 {
-    const QDir d(dir);
-    const QFileInfoList entries = d.entryInfoList(
-        QDir::Dirs | QDir::NoDotAndDotDot);
+    // Busca recursiva por diretórios .ofx e por arquivos .of/.ofx.bundle
+    QDirIterator it(dir, QStringList() << "*.ofx" << "*.so" << "*.dylib" << "*.dll",
+                    QDir::Files | QDir::Dirs, QDirIterator::Subdirectories);
 
-    for (const QFileInfo& entry : entries) {
-        const QString path = entry.absoluteFilePath();
+    while (it.hasNext()) {
+        it.next();
+        const QFileInfo fi = it.fileInfo();
 
-        // Bundle OFX: diretório terminando em .ofx (padrão OFX 1.4+)
-        if (entry.isDir() && entry.fileName().endsWith(".ofx")) {
-            loadPluginBundle(path);
-            continue;
+        if (fi.isDir() && fi.fileName().endsWith(".ofx")) {
+            // Bundle OFX: procurar binário dentro
+            loadPluginBundle(fi.absoluteFilePath());
+        } else if (fi.isFile()) {
+            // Arquivo compartilhado direto (.of, .so, .dylib, .dll)
+            loadOfxLibrary(fi.absoluteFilePath(),
+                           fi.completeBaseName());
         }
+    }
 
-        // Também procura recursivamente (1 nível)
-        QDir sub(path);
-        const QFileInfoList subs = sub.entryInfoList(
-            QStringList() << "*.ofx", QDir::Dirs);
-        for (const QFileInfo& subEntry : subs)
-            loadPluginBundle(subEntry.absoluteFilePath());
+    // Também procura por estrutura .ofx/bin/ ou .ofx/Contents/
+    QDir d(dir);
+    const QFileInfoList entries = d.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const QFileInfo& entry : entries) {
+        if (!entry.fileName().endsWith(".ofx")) continue;
+        const QString bundlePath = entry.absoluteFilePath();
+        // Procura binário em subdiretórios
+        for (const QString& subDir : {"bin", "lib", "Contents", "Contents/MacOS", "Contents/Linux-x86-64"}) {
+            QDir sub(bundlePath + "/" + subDir);
+            if (!sub.exists()) continue;
+            const QFileInfoList bins = sub.entryInfoList(
+                QStringList() << "*.so" << "*.dylib" << "*.dll" << "*.of",
+                QDir::Files);
+            for (const QFileInfo& bin : bins) {
+                loadOfxLibrary(bin.absoluteFilePath(),
+                               QFileInfo(bundlePath).completeBaseName());
+            }
+        }
     }
 }
 
 bool OfxPluginManager::loadPluginBundle(const QString& bundlePath)
 {
-    // TODO(OFX): Implementar dlopen/dlsym no bundle para chamar OfxGetPlugin
-    //   e extrair metadados (id, name, grouping, versão).
-    //
-    // Por enquanto, registra o bundle como plugin "genérico" para
-    // validar a infraestrutura de scan. A integração real com a API OFX
-    // será feita quando o host OFX (ofxHost.h/.cpp) estiver pronto.
+    // Procura o binário compartilhado dentro do bundle
+    static const QStringList searchSubDirs = {
+        "", "bin", "lib",
+        "Contents", "Contents/MacOS", "Contents/Linux-x86-64",
+        "Contents/Win64"
+    };
+    static const QStringList libPatterns = {
+#ifdef Q_OS_WIN
+        "*.dll"
+#elif defined(Q_OS_MAC)
+        "*.dylib", "*.bundle"
+#else
+        "*.so"
+#endif
+    };
 
-    OfxPluginInfo info;
-    info.id = QFileInfo(bundlePath).completeBaseName();
-    info.name = info.id;
-    info.pluginPath = bundlePath;
+    for (const QString& sub : searchSubDirs) {
+        QDir d(bundlePath + (sub.isEmpty() ? "" : "/" + sub));
+        if (!d.exists()) continue;
+        const QFileInfoList files = d.entryInfoList(libPatterns, QDir::Files);
+        for (const QFileInfo& fi : files) {
+            return loadOfxLibrary(fi.absoluteFilePath(),
+                                  QFileInfo(bundlePath).completeBaseName());
+        }
+    }
 
-    // Evita duplicatas
-    if (findPlugin(info.id))
+    qWarning() << "[OFX] Bundle sem binário:" << bundlePath;
+    return false;
+}
+
+bool OfxPluginManager::loadOfxLibrary(const QString& libPath, const QString& fallbackId)
+{
+    qInfo() << "[OFX] Tentando carregar:" << libPath;
+
+    void* lib = ofxLoadLibrary(libPath);
+    if (!lib) {
+        const QString err = ofxLoadError();
+        qWarning() << "[OFX] Falha ao carregar" << libPath << ":" << err;
+        emit pluginError(fallbackId, err);
         return false;
+    }
 
-    m_plugins.append(info);
-    qInfo() << "[OFX] Plugin registrado:" << info.id << "em" << bundlePath;
-    return true;
+    // Procura a função de entrada: OfxGetPlugin (plugin único) ou OfxGetNumberOfPlugins + OfxGetPlugin
+    auto* getPlugin = reinterpret_cast<OfxPlugin*(*)(int)>(
+        ofxGetSymbol(lib, "OfxGetPlugin"));
+    auto* getNumPlugins = reinterpret_cast<int(*)()>(
+        ofxGetSymbol(lib, "OfxGetNumberOfPlugins"));
+
+    int numPlugins = 1;
+    if (getNumPlugins) {
+        numPlugins = getNumPlugins();
+        if (numPlugins <= 0) {
+            qWarning() << "[OFX] Plugin relata 0 plugins:" << libPath;
+#ifdef Q_OS_WIN
+            FreeLibrary((HMODULE)lib);
+#else
+            dlclose(lib);
+#endif
+            return false;
+        }
+    }
+
+    if (!getPlugin) {
+        qWarning() << "[OFX] Não encontrou OfxGetPlugin:" << libPath;
+#ifdef Q_OS_WIN
+        FreeLibrary((HMODULE)lib);
+#else
+        dlclose(lib);
+#endif
+        return false;
+    }
+
+    bool anyLoaded = false;
+    for (int i = 0; i < numPlugins; ++i) {
+        OfxPlugin* plugin = getPlugin(i);
+        if (!plugin) continue;
+
+        // Verifica API
+        if (std::strcmp(plugin->pluginApi, kOfxImageEffectPluginApi) != 0) {
+            qInfo() << "[OFX] Plugin" << i << "não é ImageEffect, ignorando (api:" << plugin->pluginApi << ")";
+            continue;
+        }
+
+        // Extrai metadados básicos do OfxPlugin struct
+        OfxPluginInfo info;
+        info.id = plugin->pluginIdentifier
+                  ? QString::fromLatin1(plugin->pluginIdentifier) : fallbackId;
+        info.name = info.id; // será refinado no describe
+        info.pluginPath = libPath;
+        info.versionMajor = plugin->pluginVersionMajor;
+        info.versionMinor = plugin->pluginVersionMinor;
+
+        if (findPlugin(info.id)) {
+            qInfo() << "[OFX] Plugin duplicado, ignorando:" << info.id;
+            continue;
+        }
+
+        // Chama setHost
+        OfxHostImpl& host = OfxHostImpl::instance();
+        if (plugin->setHost)
+            plugin->setHost(host.cHost());
+
+        // Armazena runtime info
+        OfxPluginLib libInfo;
+        libInfo.handle = lib;
+        libInfo.entry = plugin->mainEntry;
+        libInfo.pluginCount = numPlugins;
+
+        // Describe para extrair nome, grouping, descrição e parâmetros
+        OfxEffectInstance tempInst;
+        tempInst.pluginId = info.id;
+        host.initPlugin(tempInst, lib, plugin->mainEntry, info.id);
+        if (host.describe(tempInst)) {
+            // Extrai dados do describe — label e grouping são propriedades padrão OFX
+            char* plabel = nullptr;
+            char* pgrouping = nullptr;
+            tempInst.imageEffectProps.getString(kOfxPropLabel, 0,
+                                                (const char*&)plabel);
+            tempInst.imageEffectProps.getString(kOfxImageEffectPluginPropGrouping, 0,
+                                                (const char*&)pgrouping);
+
+            if (plabel && std::strlen(plabel) > 0)
+                info.name = QString::fromLatin1(plabel);
+            if (pgrouping && std::strlen(pgrouping) > 0)
+                info.grouping = QString::fromLatin1(pgrouping);
+
+            // Coleta parâmetros com tipo e label
+            QVector<QPair<QString,QPair<QString,QString>>> paramList;
+            for (const auto& pd : tempInst.paramDefs) {
+                QString label = pd.props.getStringQt(kOfxPropLabel, 0, pd.name);
+                paramList.append({pd.name, {pd.type, label}});
+            }
+
+            // Notifica callback
+            if (m_describeCb)
+                m_describeCb(info.id, info.name, info.grouping, info.description,
+                             info.versionMajor, info.versionMinor, paramList);
+        }
+
+        m_libs[info.id] = libInfo;
+        m_plugins.append(info);
+        anyLoaded = true;
+
+        qInfo() << "[OFX] Plugin carregado:" << info.id
+                << "v" << info.versionMajor << "." << info.versionMinor
+                << (info.name != info.id ? ("(" + info.name + ")") : "");
+        emit pluginLoaded(info.id);
+    }
+
+    if (!anyLoaded) {
+#ifdef Q_OS_WIN
+        FreeLibrary((HMODULE)lib);
+#else
+        dlclose(lib);
+#endif
+    }
+
+    return anyLoaded;
+}
+
+void OfxPluginManager::describePlugin(OfxPluginInfo& info) {
+    // Chamado pelo loadOfxLibrary — já integrado acima
+    Q_UNUSED(info);
 }
 
 // ── Busca por id ─────────────────────────────────────────────────────────
@@ -139,6 +347,16 @@ const OfxPluginInfo* OfxPluginManager::findPlugin(const QString& id) const
     for (const OfxPluginInfo& p : m_plugins)
         if (p.id == id) return &p;
     return nullptr;
+}
+
+const OfxPluginLib* OfxPluginManager::pluginLib(const QString& pluginId) const {
+    auto it = m_libs.find(pluginId);
+    return (it != m_libs.end()) ? &it.value() : nullptr;
+}
+
+void* OfxPluginManager::libraryHandle(const QString& pluginId) const {
+    const auto* lib = pluginLib(pluginId);
+    return lib ? lib->handle : nullptr;
 }
 
 // ── Serialização ─────────────────────────────────────────────────────────

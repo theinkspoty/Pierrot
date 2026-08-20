@@ -1,4 +1,4 @@
-# Pierrot
+# Pierrot v0.4
 
 Editor de vídeo simples — O estilo vem do **Sony Vegas Pro** e **Final Cut Express (2003)**,
 desenvolvido **exclusivamente para Linux**, escrito em
@@ -87,6 +87,9 @@ focado no youtube e outras.
   texto é gerado como PNG com fundo transparente (igual às imagens) — sem o
   "quadro preto" tampando a camada de baixo, e com cor/fonte/contorno/fundo
   consistentes com o preview.
+- **Suporte a plugins OFX (OpenFX)**: host OFX mínimo com suites Property,
+  Parameter, ImageEffect, Memory, MultiThread, Message e Progress. Carrega
+  plugins `.ofx` do sistema, descreve parâmetros e aplica efeitos de terceiros.
 
 ------
 
@@ -104,7 +107,7 @@ focado no youtube e outras.
 | Resolução           | configurável (padrão 1920×1080)                             |
 | Quadros/s           | configurável (padrão 30)                                    |
 | Taxa de áudio       | 48 kHz (exportação)                                         |
-| Efeitos por clipe   | volume, opacidade, velocidade, fades, texto, brilho, contraste, saturação, desfoque, P&B, chroma key |
+| Efeitos por clipe   | volume, opacidade, velocidade, fades, texto, brilho, contraste, saturação, desfoque, P&B, chroma key + **plugins OFX** |
 | Blend por faixa     | 12 modos: normal, screen, multiply, overlay, darken, lighten, softlight, hardlight, difference, addition, subtract, exclusion + opacidade de faixa (0–100%) |
 | Zoom da timeline    | 2 px/s – 4000 px/s                                          |
 | Fonte               | C++ (Qt Widgets) + FFmpeg (libav*)                          |
@@ -216,6 +219,11 @@ src/
   ui/PreviewWidget           Preview + reprodução
   ui/ExportDialog            Diálogo de exportação com progresso
   ui/ProjectSettingsDialog   Resolução e fps do projeto
+  ui/EffectsWidget           Painel de efeitos (内置 + OFX)
+  ui/ExpressWidget           Expressões e atalhos
+  ofx/OfxHost                Host OFX (Property/Parameter/ImageEffect/Memory/MultiThread/Message/Progress suites)
+  ofx/OfxPluginManager       Scanner e loader de plugins .ofx
+  ofx/OfxRenderer            Renderização via plugins OFX
   MainWindow                 Janela principal + undo/redo + salvar/abrir + persistência de geometria/layout
 ```
 
@@ -290,7 +298,7 @@ Marcado com 💀 o que já foi implementado.
   mídias da pasta atual; subpastas ainda não).
 - Suporte a **projetos 60/120 fps** (hoje o preview e os keyframes já respeitam
   o fps do projeto; validar exportação e timestamps).
-- Suporte a plugins **OFX (OpenFX)** para efeitos de terceiros.
+- 💀 Suporte a plugins **OFX (OpenFX)** para efeitos de terceiros.
 - 💀 **Relatório de crash**: handler de sinais que salva backtrace e infos em
   `~/Pierrot-crash-*.txt` e avisa o usuário na próxima abertura.
 

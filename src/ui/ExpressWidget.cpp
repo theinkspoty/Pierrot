@@ -7,6 +7,8 @@
 #include "EffectsWidget.h"
 #include "models/Project.h"
 
+#include <ofxParam.h>
+
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QTabWidget>
@@ -24,6 +26,9 @@
 #include <QMimeData>
 #include <cmath>
 #include <functional>
+#include <QSpinBox>
+#include <QDoubleSpinBox>
+#include <QLineEdit>
 
 // ── Construtor ───────────────────────────────────────────────────────────
 
@@ -66,6 +71,12 @@ ExpressWidget::ExpressWidget(QWidget* parent) : QWidget(parent)
 void ExpressWidget::setOfxPlugins(const QVector<OfxPluginInfo>& plugins)
 {
     m_ofxPlugins = plugins;
+}
+
+void ExpressWidget::setOfxParamDefs(const QString& pluginId,
+                                     const QVector<QPair<QString,QPair<QString,QString>>>& params)
+{
+    m_ofxParamDefs[pluginId] = params;
 }
 
 // ── Seleção de clipe ─────────────────────────────────────────────────────
@@ -490,10 +501,178 @@ void ExpressWidget::createOfxTab(const QString& pluginId)
         pageLay->addWidget(desc);
     }
 
-    auto* note = new QLabel(tr("Parâmetros do plugin aparecerão aqui\napós a integração completa do host OFX."));
-    note->setAlignment(Qt::AlignCenter);
-    note->setStyleSheet(QStringLiteral("color:#5f6772; font-size:11px; padding:20px; background:#2b2d31;"));
-    pageLay->addWidget(note);
+    // Gera controles para os parâmetros descobertos.
+    auto* paramsWidget = new QWidget;
+    auto* paramsLayout = new QFormLayout(paramsWidget);
+    paramsLayout->setContentsMargins(16, 8, 16, 8);
+    paramsLayout->setSpacing(6);
+
+    const auto& paramDefs = m_ofxParamDefs.value(pluginId);
+    bool hasParams = false;
+
+    for (const auto& pd : paramDefs) {
+        const QString& paramName = pd.first;
+        const QString& paramType = pd.second.first;
+        const QString& paramLabel = pd.second.second.isEmpty() ? paramName : pd.second.second;
+
+        // Encontra o índice do parâmetro no clipe (OfxPluginInstance).
+        int paramIndex = -1;
+        if (m_currentClip) {
+            for (int i = 0; i < m_currentClip->ofxFx.size(); ++i) {
+                if (m_currentClip->ofxFx[i].pluginId == pluginId) {
+                    // Procura ou cria o parâmetro no instance
+                    OfxPluginInstance& fx = m_currentClip->ofxFx[i];
+                    bool found = false;
+                    for (int j = 0; j < fx.params.size(); ++j) {
+                        if (fx.params[j].key == paramName) { found = true; break; }
+                    }
+                    if (!found) {
+                        OfxParam p;
+                        p.key = paramName;
+                        p.value = 0.0;
+                        fx.params.append(p);
+                    }
+                    paramIndex = fx.params.size() - 1;
+                    break;
+                }
+            }
+        }
+
+        if (paramType == kOfxParamTypeDouble || paramType == kOfxParamTypeInteger) {
+            auto* spin = new QDoubleSpinBox;
+            spin->setRange(-99999, 99999);
+            spin->setDecimals(paramType == kOfxParamTypeInteger ? 0 : 3);
+            spin->setValue(0);
+            spin->setStyleSheet(QStringLiteral(
+                "QDoubleSpinBox { background:#36393f; color:#dcddde; border:1px solid #4f545c; "
+                "border-radius:3px; padding:3px 6px; }"));
+            if (paramIndex >= 0 && m_currentClip) {
+                spin->setValue(m_currentClip->ofxFx[0].params[paramIndex].value.toDouble());
+            }
+            connect(spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
+                [this, pluginId, paramName](double val) {
+                    if (!m_currentClip) return;
+                    for (auto& fx : m_currentClip->ofxFx) {
+                        if (fx.pluginId == pluginId) {
+                            for (auto& p : fx.params) {
+                                if (p.key == paramName) { p.value = val; break; }
+                            }
+                            break;
+                        }
+                    }
+                    emit modified();
+                });
+            paramsLayout->addRow(paramLabel, spin);
+            hasParams = true;
+        }
+        else if (paramType == kOfxParamTypeBoolean) {
+            auto* check = new QCheckBox;
+            check->setChecked(false);
+            check->setStyleSheet(QStringLiteral(
+                "QCheckBox { color:#dcddde; } QCheckBox::indicator { width:16px; height:16px; }"));
+            if (paramIndex >= 0 && m_currentClip) {
+                check->setChecked(m_currentClip->ofxFx[0].params[paramIndex].value.toBool());
+            }
+            connect(check, &QCheckBox::toggled, this,
+                [this, pluginId, paramName](bool val) {
+                    if (!m_currentClip) return;
+                    for (auto& fx : m_currentClip->ofxFx) {
+                        if (fx.pluginId == pluginId) {
+                            for (auto& p : fx.params) {
+                                if (p.key == paramName) { p.value = val; break; }
+                            }
+                            break;
+                        }
+                    }
+                    emit modified();
+                });
+            paramsLayout->addRow(paramLabel, check);
+            hasParams = true;
+        }
+        else if (paramType == kOfxParamTypeChoice) {
+            auto* combo = new QComboBox;
+            combo->setStyleSheet(QStringLiteral(
+                "QComboBox { background:#36393f; color:#dcddde; border:1px solid #4f545c; "
+                "border-radius:3px; padding:3px 6px; }"));
+            combo->addItem(QStringLiteral("0"));
+            connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+                [this, pluginId, paramName](int val) {
+                    if (!m_currentClip) return;
+                    for (auto& fx : m_currentClip->ofxFx) {
+                        if (fx.pluginId == pluginId) {
+                            for (auto& p : fx.params) {
+                                if (p.key == paramName) { p.value = val; break; }
+                            }
+                            break;
+                        }
+                    }
+                    emit modified();
+                });
+            paramsLayout->addRow(paramLabel, combo);
+            hasParams = true;
+        }
+        else if (paramType == kOfxParamTypeRGB || paramType == kOfxParamTypeRGBA) {
+            auto* colorBtn = new QPushButton;
+            colorBtn->setFixedSize(60, 24);
+            colorBtn->setStyleSheet(QStringLiteral(
+                "QPushButton { background:#00ff00; border:1px solid #4f545c; border-radius:3px; }"));
+                connect(colorBtn, &QPushButton::clicked, this,
+                    [this, colorBtn, pluginId, paramName, paramLabel]() {
+                    QColor c = QColorDialog::getColor(Qt::green, this, paramLabel);
+                    if (c.isValid()) {
+                        colorBtn->setStyleSheet(QStringLiteral(
+                            "QPushButton { background:%1; border:1px solid #4f545c; border-radius:3px; }")
+                            .arg(c.name()));
+                        if (!m_currentClip) return;
+                        for (auto& fx : m_currentClip->ofxFx) {
+                            if (fx.pluginId == pluginId) {
+                                for (auto& p : fx.params) {
+                                    if (p.key == paramName) { p.value = c; break; }
+                                }
+                                break;
+                            }
+                        }
+                        emit modified();
+                    }
+                });
+            paramsLayout->addRow(paramLabel, colorBtn);
+            hasParams = true;
+        }
+        else if (paramType == kOfxParamTypeString) {
+            auto* edit = new QLineEdit;
+            edit->setStyleSheet(QStringLiteral(
+                "QLineEdit { background:#36393f; color:#dcddde; border:1px solid #4f545c; "
+                "border-radius:3px; padding:3px 6px; }"));
+            connect(edit, &QLineEdit::textChanged, this,
+                [this, pluginId, paramName](const QString& val) {
+                    if (!m_currentClip) return;
+                    for (auto& fx : m_currentClip->ofxFx) {
+                        if (fx.pluginId == pluginId) {
+                            for (auto& p : fx.params) {
+                                if (p.key == paramName) { p.value = val; break; }
+                            }
+                            break;
+                        }
+                    }
+                    emit modified();
+                });
+            paramsLayout->addRow(paramLabel, edit);
+            hasParams = true;
+        }
+    }
+
+    if (!hasParams) {
+        auto* note = new QLabel(tr("Nenhum parâmetro descoberto.\nO plugin pode não expor parâmetros editáveis."));
+        note->setAlignment(Qt::AlignCenter);
+        note->setStyleSheet(QStringLiteral("color:#5f6772; font-size:11px; padding:20px; background:#2b2d31;"));
+        pageLay->addWidget(note);
+    } else {
+        auto* scroll = new QScrollArea;
+        scroll->setWidgetResizable(true);
+        scroll->setWidget(paramsWidget);
+        scroll->setStyleSheet(QStringLiteral("QScrollArea { background:#2b2d31; border:none; }"));
+        pageLay->addWidget(scroll);
+    }
     pageLay->addStretch(1);
 
     m_tabPages[pluginId] = page;
