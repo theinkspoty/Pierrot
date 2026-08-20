@@ -12,10 +12,12 @@
 #include "ui/PancropWidget.h"
 #include "ui/GraphEditorWidget.h"
 #include "ui/EffectsWidget.h"
+#include "ui/ExpressWidget.h"
 #include "ui/FileBrowserWidget.h"
 #include "ui/ExportDialog.h"
 #include "ui/ProjectSettingsDialog.h"
 #include "ui/SettingsDialog.h"
+#include "ofx/OfxPluginManager.h"
 
 #include <QSettings>
 // Devolve o atalho salvo pelo usuário (Configurações → Atalhos) ou o padrão.
@@ -136,7 +138,41 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     m_graph->setMinimumHeight(170);
 
     m_effects = new EffectsWidget(this);
+    m_express = new ExpressWidget(this);
     m_fileBrowser = new FileBrowserWidget(this);
+
+    // Gerenciador de plugins OFX — escaneia diretórios conhecidos.
+    m_ofxManager = new OfxPluginManager(this);
+    m_ofxManager->scanPlugins();
+
+    // Inicializa o painel de efeitos.
+    m_effects->setProject(&m_project);
+    m_effects->setOfxPlugins(m_ofxManager->plugins());
+
+    // Inicializa o Express (editor de efeitos do clipe).
+    m_express->setProject(&m_project);
+    m_express->setOfxPlugins(m_ofxManager->plugins());
+    connect(m_express, &ExpressWidget::modified, this, &MainWindow::setModified);
+    connect(m_express, &ExpressWidget::modified, this, [this]() { m_preview->refreshView(); });
+
+    // Clique/arrasto de efeito no painel → Express.
+    connect(m_effects, &EffectsWidget::effectSelected, m_express, &ExpressWidget::addEffect);
+
+    // Conecta seleção de clipes na timeline ao painel de efeitos e ao Express.
+    connect(m_timeline, &TimelineWidget::selectionChanged, this, [this](const QString& id) {
+        Clip* clip = nullptr;
+        if (!id.isEmpty()) {
+            for (Track& t : m_project.videoTracks)
+                for (Clip& c : t.clips)
+                    if (c.id == id) { clip = &c; break; }
+            if (!clip)
+                for (Track& t : m_project.audioTracks)
+                    for (Clip& c : t.clips)
+                        if (c.id == id) { clip = &c; break; }
+        }
+        m_effects->setSelectedClip(clip);
+        m_express->setSelectedClip(clip);
+    });
 
     createDocks();
     createActions();
@@ -456,6 +492,17 @@ void MainWindow::createDocks() {
     addDockWidget(Qt::RightDockWidgetArea, m_effectsDock);
     m_effectsDock->hide();
 
+    m_expressDock = new QDockWidget(tr("Express"), this);
+    m_expressDock->setObjectName(QStringLiteral("expressDock"));
+    m_expressDock->setWidget(m_express);
+    m_expressDock->setAllowedAreas(Qt::AllDockWidgetAreas);
+    m_expressDock->setFeatures(QDockWidget::DockWidgetMovable
+                               | QDockWidget::DockWidgetFloatable
+                               | QDockWidget::DockWidgetClosable);
+    addDockWidget(Qt::RightDockWidgetArea, m_expressDock);
+    tabifyDockWidget(m_effectsDock, m_expressDock);
+    m_expressDock->hide();
+
     m_fileBrowserDock = new QDockWidget(tr("Explorador de Arquivos"), this);
     m_fileBrowserDock->setObjectName(QStringLiteral("fileBrowserDock"));
     m_fileBrowserDock->setWidget(m_fileBrowser);
@@ -493,7 +540,7 @@ void MainWindow::createDocks() {
 
     // Qualquer mudança de arranjo dos painéis agenda o salvamento do layout.
     for (QDockWidget* dock : {m_poolDock, m_timelineDock, m_pancropDock, m_graphDock,
-                              m_effectsDock, m_fileBrowserDock}) {
+                              m_effectsDock, m_expressDock, m_fileBrowserDock}) {
         connect(dock, &QDockWidget::topLevelChanged, this, &MainWindow::scheduleLayoutSave);
         connect(dock, &QDockWidget::visibilityChanged, this, &MainWindow::scheduleLayoutSave);
     }
@@ -656,6 +703,7 @@ void MainWindow::createActions() {
     viewMenu->addAction(m_pancropDock->toggleViewAction());
     viewMenu->addAction(m_graphDock->toggleViewAction());
     viewMenu->addAction(m_effectsDock->toggleViewAction());
+    viewMenu->addAction(m_expressDock->toggleViewAction());
     viewMenu->addAction(m_fileBrowserDock->toggleViewAction());
     viewMenu->addSeparator();
     viewMenu->addAction(m_lockAction);
@@ -762,7 +810,7 @@ void MainWindow::createActions() {
 
 void MainWindow::setDockLocked(bool locked) {
     for (QDockWidget* dock : {m_poolDock, m_timelineDock, m_pancropDock, m_graphDock,
-                              m_effectsDock, m_fileBrowserDock}) {
+                              m_effectsDock, m_expressDock, m_fileBrowserDock}) {
         if (locked) {
             if (!m_originalFeatures.contains(dock))
                 m_originalFeatures.insert(dock, dock->features());

@@ -416,8 +416,8 @@ double projFps(const Project* p) {
 }
 
 // Mapeia o modo de composição da faixa (os mesmos 12 modos da exportação)
-// para o composition mode do QPainter. "subtract" não existe no Qt: cai em
-// SourceOver (aproximação razoável para o preview).
+// para o composition mode do QPainter. "subtract" usa SourceOut como
+// aproximação (Dst × (1 - Src)), que é o mais próximo do subtract no Qt.
 QPainter::CompositionMode blendModeToQt(const QString& mode) {
     if (mode == QStringLiteral("screen"))    return QPainter::CompositionMode_Screen;
     if (mode == QStringLiteral("multiply"))  return QPainter::CompositionMode_Multiply;
@@ -428,6 +428,7 @@ QPainter::CompositionMode blendModeToQt(const QString& mode) {
     if (mode == QStringLiteral("hardlight")) return QPainter::CompositionMode_HardLight;
     if (mode == QStringLiteral("difference"))return QPainter::CompositionMode_Difference;
     if (mode == QStringLiteral("addition"))  return QPainter::CompositionMode_Plus;
+    if (mode == QStringLiteral("subtract")) return QPainter::CompositionMode_SourceOut;
     if (mode == QStringLiteral("exclusion")) return QPainter::CompositionMode_Exclusion;
     return QPainter::CompositionMode_SourceOver;
 }
@@ -557,6 +558,202 @@ void PreviewWidget::refreshView() {
 void PreviewWidget::resizeEvent(QResizeEvent*) {
     const int top = m_topBar ? m_topBar->height() + 4 : 40;
     m_videoRect = QRect(0, top, width(), std::max(0, height() - top));
+}
+
+// ── LAINKA: stop motion (pulo de frame + tremida + flicker + warp + ...) ──
+// Deterministic hash para pseudo-aleatório consistente por frame.
+static inline uint lainkaHash(const QString& clipId, double t) {
+    uint h = qHash(clipId);
+    const auto* p = reinterpret_cast<const uint*>(&t);
+    h ^= qHash(*p) * 2654435761u;
+    return h;
+}
+
+// Múltiplos hashes distintos para cada efeito (rotaciona bits).
+static inline uint lainkaHashN(const QString& clipId, double t, uint n) {
+    uint h = lainkaHash(clipId, t) ^ (n * 0x9E3779B9u);
+    h ^= h >> 16;
+    return h;
+}
+
+// Quantiza o tempo de origem para simular pulo de frame.
+static inline double lainkaQuantizeTime(double srcT, int skip, double fps) {
+    if (skip <= 1) return srcT;
+    const double interval = skip / fps;
+    const double q = std::floor(srcT / interval) * interval;
+    return q + interval * 0.5; // centro do intervalo (evita flicker na borda)
+}
+
+// Aplica todos os efeitos LAINKA a um quadro.
+static QImage lainkaApplyFx(const QImage& src, const QString& clipId, double t,
+                            int skip, double jitterPos, double jitterRot,
+                            double jitterScale, double flicker, double flickerSpeed,
+                            double warpAmount, double warpSpeed, int warpGrid,
+                            double onionSkin, double dustAmount, double scratchAmount,
+                            double motionBlur, double opacity, int targetFps) {
+    if (src.isNull() || src.width() < 2 || src.height() < 2) return src;
+    if (jitterPos < 1e-6 && jitterRot < 1e-6 && jitterScale < 1e-6 &&
+        flicker < 1e-6 && warpAmount < 1e-6 && dustAmount < 1e-6 &&
+        scratchAmount < 1e-6 && motionBlur < 1e-6 && opacity > 99.9 &&
+        onionSkin < 1e-6)
+        return src;
+
+    const uint h0 = lainkaHash(clipId, t);
+    const int sw = src.width(), sh = src.height();
+    double tScaled = t * (flickerSpeed / 50.0);
+
+    // 1) Position jitter
+    QImage out = src;
+    if (jitterPos > 1e-6) {
+        const double nx = ((lainkaHashN(clipId, t, 0) & 0xFFFF) / 65535.0) * 2.0 - 1.0;
+        const double ny = ((lainkaHashN(clipId, t, 1) & 0xFFFF) / 65535.0) * 2.0 - 1.0;
+        const int maxPx = qMax(1, (int)std::lround(jitterPos * 20.0));
+        const int dx = (int)std::lround(nx * maxPx);
+        const int dy = (int)std::lround(ny * maxPx);
+        if (dx != 0 || dy != 0) {
+            QPainter p(&out);
+            p.setRenderHint(QPainter::SmoothPixmapTransform, false);
+            p.fillRect(out.rect(), Qt::transparent);
+            p.drawImage(dx, dy, src);
+        }
+    }
+
+    // 2) Rotation jitter
+    if (jitterRot > 1e-6) {
+        const double n = ((lainkaHashN(clipId, tScaled, 2) & 0xFFFF) / 65535.0) * 2.0 - 1.0;
+        const double angle = n * jitterRot * 0.5;
+        if (std::abs(angle) > 0.01) {
+            QTransform tf;
+            tf.translate(sw / 2.0, sh / 2.0);
+            tf.rotate(angle);
+            tf.translate(-sw / 2.0, -sh / 2.0);
+            QImage rotated = out.transformed(tf, Qt::SmoothTransformation);
+            QImage padded(sw, sh, QImage::Format_ARGB32_Premultiplied);
+            padded.fill(Qt::transparent);
+            QPainter pp(&padded);
+            pp.drawImage((sw - rotated.width()) / 2,
+                         (sh - rotated.height()) / 2, rotated);
+            out = padded;
+        }
+    }
+
+    // 3) Scale jitter
+    if (jitterScale > 1e-6) {
+        const double n = ((lainkaHashN(clipId, tScaled, 3) & 0xFFFF) / 65535.0) * 2.0 - 1.0;
+        const double factor = 1.0 + n * jitterScale * 0.02;
+        if (std::abs(factor - 1.0) > 1e-6) {
+            const int nw = qMax(1, (int)std::lround(sw * factor));
+            const int nh = qMax(1, (int)std::lround(sh * factor));
+            QImage scaled = out.scaled(nw, nh, Qt::IgnoreAspectRatio,
+                                       Qt::SmoothTransformation);
+            QImage padded(sw, sh, QImage::Format_ARGB32_Premultiplied);
+            padded.fill(Qt::transparent);
+            QPainter pp(&padded);
+            pp.drawImage((sw - nw) / 2, (sh - nh) / 2, scaled);
+            out = padded;
+        }
+    }
+
+    // 4) Flicker (variação de brilho)
+    if (flicker > 1e-6) {
+        const double n = ((lainkaHashN(clipId, tScaled, 4) & 0xFF) / 255.0);
+        const double factor = 1.0 + (n * 2.0 - 1.0) * (flicker / 100.0);
+        QPainter p(&out);
+        p.setCompositionMode(QPainter::CompositionMode_SourceOver);
+        p.fillRect(out.rect(), QColor(0, 0, 0, (int)std::lround((1.0 - factor) * 128)));
+    }
+
+    // 5) Warp distortion (grid-based bulge)
+    if (warpAmount > 1e-6 && warpGrid >= 2) {
+        const double warpT = t * (warpSpeed / 50.0);
+        const double amp = warpAmount * 0.1;
+        const int cols = warpGrid, rows = warpGrid;
+        const double cellW = (double)sw / cols;
+        const double cellH = (double)sh / rows;
+
+        QImage warped(sw, sh, QImage::Format_ARGB32_Premultiplied);
+        warped.fill(Qt::transparent);
+        QPainter wp(&warped);
+        wp.setRenderHint(QPainter::SmoothPixmapTransform, true);
+
+        for (int gy = 0; gy < rows; ++gy) {
+            for (int gx = 0; gx < cols; ++gx) {
+                const double cx = (gx + 0.5) * cellW;
+                const double cy = (gy + 0.5) * cellH;
+                const uint wh = lainkaHashN(clipId, warpT, gx * 1000 + gy);
+                const double dx = ((wh & 0xFF) / 255.0 - 0.5) * amp * cellW;
+                const double dy = (((wh >> 8) & 0xFF) / 255.0 - 0.5) * amp * cellH;
+                const int sx = (int)std::lround(gx * cellW + dx);
+                const int sy = (int)std::lround(gy * cellH + dy);
+                const int sw2 = (int)std::lround(cellW) + 2;
+                const int sh2 = (int)std::lround(cellH) + 2;
+                wp.drawImage(sx, sy, src, (int)std::lround(gx * cellW),
+                             (int)std::lround(gy * cellH), sw2, sh2);
+            }
+        }
+        out = warped;
+    }
+
+    // 6) Dust & dirt (pó e sujeira)
+    if (dustAmount > 1e-6) {
+        QPainter p(&out);
+        p.setRenderHint(QPainter::Antialiasing, false);
+        const int count = (int)std::lround(dustAmount * 0.5);
+        for (int i = 0; i < count; ++i) {
+            const uint dh = lainkaHashN(clipId, t, 100 + i);
+            const int px = (int)((dh & 0x7FFF) * (double)sw / 0x7FFF);
+            const int py = (int)((((dh >> 15) & 0x7FFF) * (double)sh) / 0x7FFF);
+            const int sz = 1 + (dh >> 30);
+            const int alpha = 40 + (int)((dh >> 24) & 0x3F);
+            p.fillRect(px, py, sz, sz, QColor(0, 0, 0, alpha));
+        }
+    }
+
+    // 7) Scratches (arranhões verticais)
+    if (scratchAmount > 1e-6) {
+        QPainter p(&out);
+        p.setRenderHint(QPainter::Antialiasing, false);
+        const int count = (int)std::lround(scratchAmount * 0.2);
+        for (int i = 0; i < count; ++i) {
+            const uint sh2 = lainkaHashN(clipId, t, 200 + i);
+            const int sx = (int)((sh2 & 0x7FFF) * (double)sw / 0x7FFF);
+            const int y1 = (int)((sh2 >> 15) % sh);
+            const int len = 20 + (int)((sh2 >> 20) & 0x3FF);
+            const int alpha = 30 + (int)((sh2 >> 24) & 0x1F);
+            p.setPen(QPen(QColor(255, 255, 255, alpha), 1));
+            p.drawLine(sx, y1, sx, qMin(y1 + len, sh - 1));
+        }
+    }
+
+    // 8) Motion blur (blur direcional leve)
+    if (motionBlur > 1e-6) {
+        const double blurR = motionBlur * 0.3;
+        if (blurR > 0.5) {
+            const double n = ((lainkaHashN(clipId, tScaled, 5) & 0xFF) / 255.0) * 2.0 - 1.0;
+            const int dx = (int)std::lround(n * blurR);
+            const int dy = (int)std::lround(((lainkaHashN(clipId, tScaled, 6) & 0xFF) / 255.0) * blurR * 0.5);
+            QImage blurred(sw, sh, QImage::Format_ARGB32_Premultiplied);
+            blurred.fill(Qt::transparent);
+            QPainter bp(&blurred);
+            bp.setOpacity(0.5);
+            bp.drawImage(dx, dy, out);
+            bp.setOpacity(0.5);
+            bp.drawImage(0, 0, out);
+            out = blurred;
+        }
+    }
+
+    // 9) Opacidade global
+    if (opacity < 99.9) {
+        QImage blended(src.size(), QImage::Format_ARGB32_Premultiplied);
+        blended.fill(Qt::transparent);
+        QPainter bp(&blended);
+        bp.setOpacity(opacity / 100.0);
+        bp.drawImage(0, 0, out);
+        out = blended;
+    }
+
+    return out;
 }
 
 void PreviewWidget::paintEvent(QPaintEvent*) {
@@ -720,6 +917,19 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
                     const int sh = qMax(1, sw * h / w);
                     f = QImage(sw, sh, QImage::Format_ARGB32);
                     f.fill(mm->solidColor);
+                    // Aplica LAINKA também a cores sólidas.
+                    if (c->lainkaEnabled) {
+                        const double srcT = c->in + (m_playhead - c->pos) * c->speed;
+                        f = lainkaApplyFx(f, c->id, srcT,
+                                          c->lainkaSkip, c->lainkaJitterPos,
+                                          c->lainkaJitterRot, c->lainkaJitterScale,
+                                          c->lainkaFlicker, c->lainkaFlickerSpeed,
+                                          c->lainkaWarpAmount, c->lainkaWarpSpeed,
+                                          c->lainkaWarpGrid, c->lainkaOnionSkin,
+                                          c->lainkaDustAmount, c->lainkaScratchAmount,
+                                          c->lainkaMotionBlur, c->lainkaOpacity,
+                                          c->lainkaTargetFps);
+                    }
                 } else {
                     {
                         QMutexLocker l(&m_frameMutex);
@@ -875,8 +1085,34 @@ void PreviewWidget::drawClipText(QPainter& p, const QRect& canvas, const Clip* c
     const double W = m_project->width;
     const double H = m_project->height;
     const double rel = m_playhead - clip->pos;
-    const double alpha = std::clamp(kfValue(clip->kfOpacity, clip->opacity, rel), 0.0, 1.0);
+    double alpha = std::clamp(kfValue(clip->kfOpacity, clip->opacity, rel), 0.0, 1.0);
     if (alpha <= 0.0) return;
+
+    // LAINKA no texto: jitter de posição, rotação, escala e flicker.
+    double jtX = 0.0, jtY = 0.0, jtRot = 0.0, jtScale = 1.0;
+    if (clip->lainkaEnabled) {
+        const uint h = lainkaHash(clip->id, m_playhead);
+        if (clip->lainkaJitterPos > 1e-6) {
+            const double nx = ((h & 0xFFFF) / 65535.0) * 2.0 - 1.0;
+            const double ny = (((h >> 16) & 0xFFFF) / 65535.0) * 2.0 - 1.0;
+            const double maxPx = clip->lainkaJitterPos * 0.5; // escala para texto
+            jtX = nx * maxPx;
+            jtY = ny * maxPx;
+        }
+        if (clip->lainkaJitterRot > 1e-6) {
+            const double n = ((lainkaHashN(clip->id, m_playhead, 11) & 0xFFFF) / 65535.0) * 2.0 - 1.0;
+            jtRot = n * clip->lainkaJitterRot * 0.3;
+        }
+        if (clip->lainkaJitterScale > 1e-6) {
+            const double n = ((lainkaHashN(clip->id, m_playhead, 12) & 0xFFFF) / 65535.0) * 2.0 - 1.0;
+            jtScale = 1.0 + n * clip->lainkaJitterScale * 0.01;
+        }
+        if (clip->lainkaFlicker > 1e-6) {
+            const double n = ((lainkaHashN(clip->id, m_playhead * (clip->lainkaFlickerSpeed / 50.0), 13) & 0xFF) / 255.0);
+            alpha *= (1.0 + (n * 2.0 - 1.0) * (clip->lainkaFlicker / 100.0));
+            alpha = std::clamp(alpha, 0.0, 1.0);
+        }
+    }
 
     const double sizeFrac = st.textSize > 0.0 ? st.textSize : (1.0 / 18.0);
     const int pxSize = qMax(4, (int)qRound(sizeFrac * H)); // px de projeto
@@ -926,12 +1162,12 @@ void PreviewWidget::drawClipText(QPainter& p, const QRect& canvas, const Clip* c
     p.translate(canvas.topLeft());
     p.scale(k, k);
     // Transform animável do clipe, em torno do centro do quadro.
-    p.translate(W / 2.0 + kfValue(clip->kfTx, clip->tx, rel),
-                H / 2.0 + kfValue(clip->kfTy, clip->ty, rel));
-    p.rotate(kfValue(clip->kfRotation, clip->rotation, rel));
-    p.scale(kfValue(clip->kfScale, clip->scale, rel)
+    p.translate(W / 2.0 + kfValue(clip->kfTx, clip->tx, rel) + jtX,
+                H / 2.0 + kfValue(clip->kfTy, clip->ty, rel) + jtY);
+    p.rotate(kfValue(clip->kfRotation, clip->rotation, rel) + jtRot);
+    p.scale(kfValue(clip->kfScale, clip->scale, rel) * jtScale
                 * kfValue(clip->kfScaleX, clip->scaleX, rel),
-            kfValue(clip->kfScale, clip->scale, rel)
+            kfValue(clip->kfScale, clip->scale, rel) * jtScale
                 * kfValue(clip->kfScaleY, clip->scaleY, rel));
 
     if (st.textBackground) {
@@ -1325,6 +1561,7 @@ void PreviewWidget::updateFrame() {
         m_frame = QImage();
         m_transAlpha = -1.0;
         m_underFrame = QImage();
+        m_clipLainkaEnabled = false;
         update();
         return;
     }
@@ -1334,11 +1571,39 @@ void PreviewWidget::updateFrame() {
         m_frame = QImage();
         m_transAlpha = -1.0;
         m_underFrame = QImage();
+        m_clipLainkaEnabled = false;
         update();
         return;
     }
 
-    const double srcT = clip->in + (m_playhead - clip->pos) * clip->speed;
+    // Captura estado do LAINKA para uso em applyCrop().
+    m_clipLainkaEnabled = clip->lainkaEnabled;
+    m_clipLainkaSkip = clip->lainkaSkip;
+    m_clipLainkaJitterPos = clip->lainkaJitterPos;
+    m_clipLainkaJitterRot = clip->lainkaJitterRot;
+    m_clipLainkaJitterScale = clip->lainkaJitterScale;
+    m_clipLainkaFlicker = clip->lainkaFlicker;
+    m_clipLainkaFlickerSpeed = clip->lainkaFlickerSpeed;
+    m_clipLainkaWarpAmount = clip->lainkaWarpAmount;
+    m_clipLainkaWarpSpeed = clip->lainkaWarpSpeed;
+    m_clipLainkaWarpGrid = clip->lainkaWarpGrid;
+    m_clipLainkaOnionSkin = clip->lainkaOnionSkin;
+    m_clipLainkaDustAmount = clip->lainkaDustAmount;
+    m_clipLainkaScratchAmount = clip->lainkaScratchAmount;
+    m_clipLainkaTargetFps = clip->lainkaTargetFps;
+    m_clipLainkaMotionBlur = clip->lainkaMotionBlur;
+    m_clipLainkaOpacity = clip->lainkaOpacity;
+    m_clipLainkaAntialias = clip->lainkaAntialias;
+    m_clipLainkaId = clip->id;
+    m_clipMotionEnabled = clip->motionEnabled;
+    m_clipMotionAmount = clip->motionAmount;
+    m_clipMotionAngle = clip->motionAngle;
+    m_clipMotionSamples = clip->motionSamples;
+
+    double srcT = clip->in + (m_playhead - clip->pos) * clip->speed;
+    // LAINKA: quantiza o tempo para simular pulo de frame.
+    if (clip->lainkaEnabled && clip->lainkaSkip > 1)
+        srcT = lainkaQuantizeTime(srcT, clip->lainkaSkip, projFps(m_project));
     // Decodifica no tamanho de exibição: muito mais rápido que 4K/1080p.
     // Qualidade do preview (estilo Vegas/FCP): quanto menor o fator, menor a
     // resolução decodificada (mais rápido, mais suave). A exibição mantém o
@@ -1620,11 +1885,26 @@ void PreviewWidget::onFrameReady(const QString& clipId, const QString& path, dou
         return;
     }
 
-    // Quadro de uma camada INFERIOR: guarda no cache de camadas (já cortado).
+    // Quadro de uma camada INFERIOR: guarda no cache de camadas (cortado + LAINKA).
     const double rel = m_playhead - clip->pos;
     int cL, cR, cT, cB;
     clipCrop(*clip, rel, cL, cR, cT, cB);
-    const QImage cropped = applyCropTo(img, cL, cR, cT, cB);
+    QImage cropped = applyCropTo(img, cL, cR, cT, cB);
+    // Aplica LAINKA também em camadas inferiores.
+    if (clip->lainkaEnabled) {
+        double srcT = clip->in + (m_playhead - clip->pos) * clip->speed;
+        if (clip->lainkaSkip > 1)
+            srcT = lainkaQuantizeTime(srcT, clip->lainkaSkip, projFps(m_project));
+        cropped = lainkaApplyFx(cropped, clip->id, srcT,
+                                clip->lainkaSkip, clip->lainkaJitterPos,
+                                clip->lainkaJitterRot, clip->lainkaJitterScale,
+                                clip->lainkaFlicker, clip->lainkaFlickerSpeed,
+                                clip->lainkaWarpAmount, clip->lainkaWarpSpeed,
+                                clip->lainkaWarpGrid, clip->lainkaOnionSkin,
+                                clip->lainkaDustAmount, clip->lainkaScratchAmount,
+                                clip->lainkaMotionBlur, clip->lainkaOpacity,
+                                clip->lainkaTargetFps);
+    }
     {
         QMutexLocker l(&m_frameMutex);
         m_layerCache[clipId] = {cropped, path, t, maxW};
@@ -1726,6 +2006,35 @@ QImage PreviewWidget::applyCropTo(const QImage& img, int cL, int cR, int cT, int
 // Aplica pan/crop sobre o quadro cheio (m_frameFull) e guarda em m_frame.
 void PreviewWidget::applyCrop() {
     m_frame = applyCropTo(m_frameFull, m_lastCropL, m_lastCropR, m_lastCropT, m_lastCropB);
+    // Aplica efeito LAINKA (stop motion) após o crop.
+    if (m_clipLainkaEnabled) {
+        m_frame = lainkaApplyFx(m_frame, m_clipLainkaId, m_playhead,
+                                m_clipLainkaSkip, m_clipLainkaJitterPos,
+                                m_clipLainkaJitterRot, m_clipLainkaJitterScale,
+                                m_clipLainkaFlicker, m_clipLainkaFlickerSpeed,
+                                m_clipLainkaWarpAmount, m_clipLainkaWarpSpeed,
+                                m_clipLainkaWarpGrid, m_clipLainkaOnionSkin,
+                                m_clipLainkaDustAmount, m_clipLainkaScratchAmount,
+                                m_clipLainkaMotionBlur, m_clipLainkaOpacity,
+                                m_clipLainkaTargetFps);
+    }
+    if (m_clipMotionEnabled && m_clipMotionAmount > 0.0 && !m_frame.isNull()) {
+        const double rad = m_clipMotionAngle * M_PI / 180.0;
+        const double dist = m_clipMotionAmount * 0.4;
+        const int sx = (int)std::lround(std::cos(rad) * dist);
+        const int sy = (int)std::lround(std::sin(rad) * dist);
+        const int ns = std::clamp(m_clipMotionSamples, 1, 32);
+        QImage result = m_frame.copy();
+        QPainter p(&result);
+        p.setRenderHint(QPainter::SmoothPixmapTransform);
+        for (int i = 1; i < ns; ++i) {
+            const double alpha = 1.0 - (double)i / ns;
+            p.setOpacity(alpha / ns);
+            p.drawImage(sx * i, sy * i, m_frame);
+        }
+        p.end();
+        m_frame = result;
+    }
 }
 
 #include "PreviewWidget.moc"

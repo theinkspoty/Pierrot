@@ -99,6 +99,32 @@ private:
     QString m_lastFile;
     int m_lastCropL = -1, m_lastCropR = -1, m_lastCropT = -1, m_lastCropB = -1;
 
+    // Estado do efeito LAINKA (stop motion) do clipe ativo.
+    bool m_clipLainkaEnabled = false;
+    int m_clipLainkaSkip = 1;
+    double m_clipLainkaJitterPos = 0.0;
+    double m_clipLainkaJitterRot = 0.0;
+    double m_clipLainkaJitterScale = 0.0;
+    double m_clipLainkaFlicker = 0.0;
+    double m_clipLainkaFlickerSpeed = 50.0;
+    double m_clipLainkaWarpAmount = 0.0;
+    double m_clipLainkaWarpSpeed = 50.0;
+    int m_clipLainkaWarpGrid = 8;
+    double m_clipLainkaOnionSkin = 0.0;
+    double m_clipLainkaDustAmount = 0.0;
+    double m_clipLainkaScratchAmount = 0.0;
+    int m_clipLainkaTargetFps = 8;
+    double m_clipLainkaMotionBlur = 0.0;
+    double m_clipLainkaOpacity = 100.0;
+    int m_clipLainkaAntialias = 1;
+    QString m_clipLainkaId;
+
+    // ── MotiOn cached state ───────────────────────────────────────────
+    bool m_clipMotionEnabled = false;
+    double m_clipMotionAmount = 0.0;
+    double m_clipMotionAngle = 0.0;
+    int m_clipMotionSamples = 8;
+
     // Áudio do preview (mixer com um decoder por clipe ativo).
     AudioMixer* m_audioFeed = nullptr;
     QAudioSink* m_audioSink = nullptr;

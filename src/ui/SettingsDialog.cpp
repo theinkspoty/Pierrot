@@ -27,6 +27,7 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QKeySequence>
+#include <QFileDialog>
 
 // Presets de qualidade do preview: rótulo amigável + largura máxima de
 // decodificação. Menor = menos RAM/CPU no preview.
@@ -91,6 +92,10 @@ double SettingsDialog::graphSensitivity() {
     return QSettings().value("graphSensitivity", 1.0).toDouble();
 }
 
+QStringList SettingsDialog::ofxSearchPaths() {
+    return QSettings().value("ofxSearchPaths").toStringList();
+}
+
 SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
     setWindowTitle(tr("Configurações"));
     setMinimumSize(860, 600);
@@ -130,6 +135,7 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
     m_catList->setFixedWidth(170);
     m_catList->addItem(tr("Geral"));
     m_catList->addItem(tr("Qualidade e Timeline"));
+    m_catList->addItem(tr("Plugins OFX"));
     m_catList->addItem(tr("Atalhos do teclado"));
     m_catList->setToolTip(tr("Escolha uma categoria"));
 
@@ -194,6 +200,52 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
         tlLay->addRow(tlHint);
         v->addWidget(perfBox);
         v->addWidget(tlBox);
+        v->addStretch(1);
+        m_stack->addWidget(page);
+    }
+
+    // Página: Plugins OFX (caminhos de busca de plugins de terceiros).
+    {
+        auto* page = new QWidget;
+        auto* v = new QVBoxLayout(page);
+        v->setContentsMargins(4, 4, 4, 4);
+
+        auto* ofxBox = new QGroupBox(tr("Caminhos de plugins OFX"), page);
+        auto* ofxLay = new QVBoxLayout(ofxBox);
+
+        m_ofxPaths = new QListWidget(ofxBox);
+        m_ofxPaths->setMinimumHeight(120);
+        const QStringList saved = QSettings().value("ofxSearchPaths").toStringList();
+        for (const QString& p : saved)
+            m_ofxPaths->addItem(p);
+        ofxLay->addWidget(m_ofxPaths);
+
+        auto* btnRow = new QHBoxLayout;
+        auto* addBtn = new QPushButton(tr("Adicionar…"), ofxBox);
+        auto* remBtn = new QPushButton(tr("Remover"), ofxBox);
+        btnRow->addWidget(addBtn);
+        btnRow->addWidget(remBtn);
+        btnRow->addStretch(1);
+        ofxLay->addLayout(btnRow);
+
+        connect(addBtn, &QPushButton::clicked, this, [this, ofxBox]() {
+            const QString dir = QFileDialog::getExistingDirectory(
+                ofxBox, tr("Selecionar pasta de plugins OFX"));
+            if (!dir.isEmpty() && !m_ofxPaths->findItems(dir, Qt::MatchExactly).isEmpty() == false)
+                m_ofxPaths->addItem(dir);
+        });
+        connect(remBtn, &QPushButton::clicked, this, [this]() {
+            delete m_ofxPaths->takeItem(m_ofxPaths->currentRow());
+        });
+
+        auto* hint = new QLabel(tr("Adicione pastas onde seus plugins OFX (.ofx) estão "
+                                    "instalados. O Pierrot já procura em "
+                                    "~/.config/pierrot/ofx e /usr/lib/ofx por padrão."), ofxBox);
+        hint->setStyleSheet("color: #9a9a9a;");
+        hint->setWordWrap(true);
+        ofxLay->addWidget(hint);
+
+        v->addWidget(ofxBox);
         v->addStretch(1);
         m_stack->addWidget(page);
     }
@@ -332,6 +384,10 @@ void SettingsDialog::accept() {
     s.setValue("timelineThumbMode", m_thumbMode->currentIndex());
     s.setValue("timelineRippleDelete", m_rippleDelete->isChecked());
     s.setValue("graphSensitivity", m_graphSens->value());
+    QStringList ofxPaths;
+    for (int i = 0; i < m_ofxPaths->count(); ++i)
+        ofxPaths.append(m_ofxPaths->item(i)->text());
+    s.setValue("ofxSearchPaths", ofxPaths);
     for (auto it = m_shortcutMap.constBegin(); it != m_shortcutMap.constEnd(); ++it)
         s.setValue(QString("shortcuts/%1").arg(it.key()), it.value());
     QDialog::accept();

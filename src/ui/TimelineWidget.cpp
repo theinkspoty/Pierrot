@@ -1664,6 +1664,17 @@ void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& 
         p.setPen(QColor(130, 170, 230));
         p.drawText(QRect(6, y + 19, H - 12, 14), Qt::AlignRight | Qt::AlignVCenter, pct);
         p.setFont(basef);
+        // Barra visual de opacidade (arrastável).
+        const int barY = y + 34;
+        const int barH = 4;
+        const int barX0 = 6;
+        const int barW = H - 12;
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(50, 52, 58));
+        p.drawRoundedRect(QRectF(barX0, barY, barW, barH), 2, 2);
+        const int fillW = qMax(2, (int)std::lround(barW * std::clamp(tr.opacity, 0.0, 1.0)));
+        p.setBrush(QColor(90, 140, 210));
+        p.drawRoundedRect(QRectF(barX0, barY, fillW, barH), 2, 2);
     }
 
     // Botões M/S/L achatados (estilo Fusion do app). Geometria igual à do
@@ -1888,18 +1899,21 @@ void TimelineWidget::pasteAttributes() {
     auto* lay = new QVBoxLayout(&dlg);
 
     auto* chkVideoFx = new QCheckBox(tr("Efeitos de vídeo (brilho, contraste, saturação, blur, grayscale, chroma key)"));
+    auto* chkOfxFx = new QCheckBox(tr("Efeitos OFX (plugins de terceiros)"));
     auto* chkTransform = new QCheckBox(tr("Transformar (posição, escala, rotação)"));
     auto* chkCrop = new QCheckBox(tr("Pan/Crop"));
     auto* chkAudioFx = new QCheckBox(tr("Efeitos de áudio (EQ, denoise, normalizar, fase)"));
     auto* chkProperties = new QCheckBox(tr("Propriedades (volume, opacidade, velocidade, fades)"));
     auto* chkKeyframes = new QCheckBox(tr("Keyframes"));
     chkVideoFx->setChecked(true);
+    chkOfxFx->setChecked(true);
     chkTransform->setChecked(true);
     chkCrop->setChecked(true);
     chkAudioFx->setChecked(true);
     chkProperties->setChecked(true);
     chkKeyframes->setChecked(true);
     lay->addWidget(chkVideoFx);
+    lay->addWidget(chkOfxFx);
     lay->addWidget(chkTransform);
     lay->addWidget(chkCrop);
     lay->addWidget(chkAudioFx);
@@ -1909,9 +1923,10 @@ void TimelineWidget::pasteAttributes() {
     btnAll->setChecked(true);
     lay->addWidget(btnAll);
     connect(btnAll, &QCheckBox::toggled, [&](bool on) {
-        chkVideoFx->setChecked(on); chkTransform->setChecked(on);
-        chkCrop->setChecked(on); chkAudioFx->setChecked(on);
-        chkProperties->setChecked(on); chkKeyframes->setChecked(on);
+        chkVideoFx->setChecked(on); chkOfxFx->setChecked(on);
+        chkTransform->setChecked(on); chkCrop->setChecked(on);
+        chkAudioFx->setChecked(on); chkProperties->setChecked(on);
+        chkKeyframes->setChecked(on);
     });
     auto* btns = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     lay->addWidget(btns);
@@ -1935,6 +1950,9 @@ void TimelineWidget::pasteAttributes() {
             dst->chromaKey = src.chromaKey;
             dst->chromaKeyColor = src.chromaKeyColor;
             dst->chromaKeySimilarity = src.chromaKeySimilarity;
+        }
+        if (chkOfxFx->isChecked()) {
+            dst->ofxFx = src.ofxFx;
         }
         if (chkTransform->isChecked()) {
             dst->tx = src.tx; dst->ty = src.ty;
@@ -2214,6 +2232,27 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
                 m_volPending = true;
                 m_volRow = vrow;
                 m_volOrig = m_project->audioTracks[vrow].volume;
+            }
+        }
+    }
+
+    // Barra de opacidade da faixa de vídeo no cabeçalho: arrastar ajusta opacidade.
+    if (x < kHeaderW) {
+        int orow;
+        bool oaudio;
+        if (rowFromY(y, orow, oaudio) && !oaudio && orow >= 0) {
+            const int oy = rowY(orow, -1);
+            const int barY = oy + 34;
+            const int barH = 4;
+            if (y >= barY && y < barY + barH && x >= 6 && x < kHeaderW - 6) {
+                emit editStart();
+                m_dragMode = TrackOp;
+                m_volRow = orow;
+                m_volOrig = m_project->videoTracks[orow].opacity;
+                m_dragStart = e->pos();
+                setCursor(Qt::SizeHorCursor);
+                update();
+                return;
             }
         }
     }
@@ -2603,6 +2642,21 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
             }
             return;
         }
+        if (m_dragMode == TrackOp) {
+            if (m_volRow < 0 || m_volRow >= (int)m_project->videoTracks.size()) return;
+            Track& t = m_project->videoTracks[m_volRow];
+            // Arrasto horizontal: esquerda = 0%, direita = 100%.
+            const int barX0 = 6;
+            const int barW = kHeaderW - 12;
+            const double frac = std::clamp(
+                (double)(e->pos().x() - barX0) / barW, 0.0, 1.0);
+            if (std::fabs(t.opacity - frac) > 1e-4) {
+                t.opacity = frac;
+                update();
+                emit modified();
+            }
+            return;
+        }
         if (m_dragMode == PlayheadDrag) {
             const double t2 = std::max(0.0, snapTime(xToTime(e->pos().x())));
             setPlayhead(t2);
@@ -2889,6 +2943,9 @@ void TimelineWidget::mouseReleaseEvent(QMouseEvent* e) {
         break;
     case TrackDrag:
         finishTrackDrag();
+        break;
+    case TrackOp:
+        setCursor(Qt::ArrowCursor);
         break;
     default:
         break;
@@ -3466,7 +3523,9 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
 }
 void TimelineWidget::dragEnterEvent(QDragEnterEvent* e) {
     const QMimeData* md = e->mimeData();
-    if (md->hasFormat(QLatin1String(kMimeMedia)) || md->hasUrls()) {
+    if (md->hasFormat(QLatin1String(kMimeMedia))
+        || md->hasFormat(QLatin1String(kMimeEffect))
+        || md->hasUrls()) {
         e->acceptProposedAction();
         e->accept();
     }
@@ -3474,7 +3533,9 @@ void TimelineWidget::dragEnterEvent(QDragEnterEvent* e) {
 
 void TimelineWidget::dragMoveEvent(QDragMoveEvent* e) {
     const QMimeData* md = e->mimeData();
-    if (md->hasFormat(QLatin1String(kMimeMedia)) || md->hasUrls()) {
+    if (md->hasFormat(QLatin1String(kMimeMedia))
+        || md->hasFormat(QLatin1String(kMimeEffect))
+        || md->hasUrls()) {
         int row = -1;
         bool audio = false;
         QString gid;
@@ -3532,6 +3593,64 @@ void TimelineWidget::dropEvent(QDropEvent* e) {
     if (!m_project) return;
     const QMimeData* md = e->mimeData();
 
+    // ── Arrasto de efeito (do painel de efeitos) ─────────────────────────
+    if (md->hasFormat(QLatin1String(kMimeEffect))) {
+        const QByteArray effectData = md->data(QLatin1String(kMimeEffect));
+        const QString effectId = QString::fromUtf8(effectData);
+        if (effectId.isEmpty()) { e->ignore(); return; }
+
+        // Encontra o clipe sob o cursor.
+        int row = -1;
+        bool audio = false;
+        if (!rowFromY(e->position().toPoint().y(), row, audio) || audio) {
+            e->ignore();
+            return;
+        }
+        const double t = xToTime(e->position().toPoint().x());
+        Clip* target = clipAt(row, false, t);
+        if (!target) { e->ignore(); return; }
+
+        emit editStart();
+
+        if (effectId == "pierrot_lainka") {
+            target->lainkaEnabled = true;
+        } else if (effectId == "pierrot_motion") {
+            target->motionEnabled = true;
+            target->motionAmount = 25.0;
+        } else if (effectId == "pierrot_brightness") {
+            target->brightness = 0.2; // valor inicial ao arrastar
+        } else if (effectId == "pierrot_contrast") {
+            target->contrast = 1.2;
+        } else if (effectId == "pierrot_saturation") {
+            target->saturation = 1.2;
+        } else if (effectId == "pierrot_blur") {
+            target->blur = 5.0;
+        } else if (effectId == "pierrot_grayscale") {
+            target->grayscale = true;
+        } else if (effectId == "pierrot_chromakey") {
+            target->chromaKey = true;
+        } else {
+            // Efeito OFX: adiciona ao stack ofxFx do clipe.
+            bool already = false;
+            for (const OfxPluginInstance& fx : target->ofxFx)
+                if (fx.pluginId == effectId) { already = true; break; }
+            if (!already) {
+                OfxPluginInstance fx;
+                fx.pluginId = effectId;
+                fx.enabled = true;
+                target->ofxFx.append(fx);
+            }
+        }
+
+        invalidateScene();
+        update();
+        emit modified();
+        e->acceptProposedAction();
+        e->accept();
+        return;
+    }
+
+    // ── Arrasto de mídia (existente) ─────────────────────────────────────
     QStringList mediaIds;
     if (md->hasFormat(QLatin1String(kMimeMedia))) {
         // Arrasto vindo da lista de mídia do aplicativo (caminho clássico de

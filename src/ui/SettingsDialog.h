@@ -32,6 +32,8 @@ public:
     static bool rippleDeleteEnabled();
     // Sensibilidade do arraste vertical no editor de curvas (1.0 = padrão).
     static double graphSensitivity();
+    // Caminhos extras de plugins OFX configurados pelo usuário.
+    static QStringList ofxSearchPaths();
 
     // Valores escolhidos no diálogo (aplicar depois do OK).
     bool autoSaveEnabled() const;
@@ -61,4 +63,6 @@ private:
     QTreeWidget* m_shortcuts = nullptr;
     QMap<QString, QString> m_shortcutMap;
     QString m_recordId; // atalho sendo regravado
+    // Configuração de caminhos OFX.
+    QListWidget* m_ofxPaths = nullptr;
 };

@@ -170,6 +170,27 @@ static QJsonObject clipToJson(const Clip& c) {
     o["chromaKey"] = c.chromaKey;
     o["chromaKeyColor"] = c.chromaKeyColor.name();
     o["chromaKeySimilarity"] = c.chromaKeySimilarity;
+    o["lainkaEnabled"] = c.lainkaEnabled;
+    o["lainkaSkip"] = c.lainkaSkip;
+    o["lainkaJitterPos"] = c.lainkaJitterPos;
+    o["lainkaJitterRot"] = c.lainkaJitterRot;
+    o["lainkaJitterScale"] = c.lainkaJitterScale;
+    o["lainkaFlicker"] = c.lainkaFlicker;
+    o["lainkaFlickerSpeed"] = c.lainkaFlickerSpeed;
+    o["lainkaWarpAmount"] = c.lainkaWarpAmount;
+    o["lainkaWarpSpeed"] = c.lainkaWarpSpeed;
+    o["lainkaWarpGrid"] = c.lainkaWarpGrid;
+    o["lainkaOnionSkin"] = c.lainkaOnionSkin;
+    o["lainkaDustAmount"] = c.lainkaDustAmount;
+    o["lainkaScratchAmount"] = c.lainkaScratchAmount;
+    o["lainkaTargetFps"] = c.lainkaTargetFps;
+    o["lainkaMotionBlur"] = c.lainkaMotionBlur;
+    o["lainkaOpacity"] = c.lainkaOpacity;
+    o["lainkaAntialias"] = c.lainkaAntialias;
+    o["motionEnabled"] = c.motionEnabled;
+    o["motionAmount"] = c.motionAmount;
+    o["motionAngle"] = c.motionAngle;
+    o["motionSamples"] = c.motionSamples;
     o["tx"] = c.tx;
     o["ty"] = c.ty;
     o["scale"] = c.scale;
@@ -199,6 +220,26 @@ static QJsonObject clipToJson(const Clip& c) {
     o["kfCropR"] = kfToJson(c.kfCropR);
     o["kfCropT"] = kfToJson(c.kfCropT);
     o["kfCropB"] = kfToJson(c.kfCropB);
+    // ── Efeitos OFX ─────────────────────────────────────────────────────
+    QJsonArray ofxArr;
+    for (const OfxPluginInstance& fx : c.ofxFx) {
+        QJsonObject fxo;
+        fxo["pluginId"] = fx.pluginId;
+        fxo["enabled"] = fx.enabled;
+        QJsonArray pArr;
+        for (const OfxParam& p : fx.params) {
+            QJsonObject po;
+            po["key"] = p.key;
+                if (p.value.metaType().id() == QMetaType::QColor)
+                po["value"] = p.value.value<QColor>().name(QColor::HexArgb);
+            else
+                po["value"] = QJsonValue::fromVariant(p.value);
+            pArr.append(po);
+        }
+        fxo["params"] = pArr;
+        ofxArr.append(fxo);
+    }
+    o["ofxFx"] = ofxArr;
     return o;
 }
 
@@ -236,6 +277,27 @@ static Clip clipFromJson(const QJsonObject& o) {
     const QString ckc = o["chromaKeyColor"].toString();
     if (QColor::isValidColorName(ckc)) c.chromaKeyColor = QColor(ckc);
     c.chromaKeySimilarity = o["chromaKeySimilarity"].toDouble(0.15);
+    c.lainkaEnabled = o["lainkaEnabled"].toBool(false);
+    c.lainkaSkip = o["lainkaSkip"].toInt(2);
+    c.lainkaJitterPos = o["lainkaJitterPos"].toDouble(0.0);
+    c.lainkaJitterRot = o["lainkaJitterRot"].toDouble(0.0);
+    c.lainkaJitterScale = o["lainkaJitterScale"].toDouble(0.0);
+    c.lainkaFlicker = o["lainkaFlicker"].toDouble(0.0);
+    c.lainkaFlickerSpeed = o["lainkaFlickerSpeed"].toDouble(50.0);
+    c.lainkaWarpAmount = o["lainkaWarpAmount"].toDouble(0.0);
+    c.lainkaWarpSpeed = o["lainkaWarpSpeed"].toDouble(50.0);
+    c.lainkaWarpGrid = o["lainkaWarpGrid"].toInt(8);
+    c.lainkaOnionSkin = o["lainkaOnionSkin"].toDouble(0.0);
+    c.lainkaDustAmount = o["lainkaDustAmount"].toDouble(0.0);
+    c.lainkaScratchAmount = o["lainkaScratchAmount"].toDouble(0.0);
+    c.lainkaTargetFps = o["lainkaTargetFps"].toInt(8);
+    c.lainkaMotionBlur = o["lainkaMotionBlur"].toDouble(0.0);
+    c.lainkaOpacity = o["lainkaOpacity"].toDouble(100.0);
+    c.lainkaAntialias = o["lainkaAntialias"].toInt(1);
+    c.motionEnabled = o["motionEnabled"].toBool(false);
+    c.motionAmount = o["motionAmount"].toDouble(0.0);
+    c.motionAngle = o["motionAngle"].toDouble(0.0);
+    c.motionSamples = o["motionSamples"].toInt(8);
     c.tx = o["tx"].toDouble(0.0);
     c.ty = o["ty"].toDouble(0.0);
     c.scale = o["scale"].toDouble(1.0);
@@ -265,6 +327,34 @@ static Clip clipFromJson(const QJsonObject& o) {
     c.kfCropR = kfFromJson(o["kfCropR"]);
     c.kfCropT = kfFromJson(o["kfCropT"]);
     c.kfCropB = kfFromJson(o["kfCropB"]);
+    // ── Efeitos OFX ─────────────────────────────────────────────────────
+    const QJsonArray ofxArr = o["ofxFx"].toArray();
+    for (const QJsonValue& v : ofxArr) {
+        const QJsonObject fxo = v.toObject();
+        OfxPluginInstance fx;
+        fx.pluginId = fxo["pluginId"].toString();
+        fx.enabled = fxo["enabled"].toBool(true);
+        const QJsonArray pArr = fxo["params"].toArray();
+        for (const QJsonValue& pv : pArr) {
+            const QJsonObject po = pv.toObject();
+            OfxParam p;
+            p.key = po["key"].toString();
+            const QJsonValue val = po["value"];
+            if (val.isString()) {
+                const QString s = val.toString();
+                if (QColor::isValidColorName(s) && s.startsWith('#') && s.length() == 9)
+                    p.value = QColor(s);  // HexArgb
+                else
+                    p.value = s;
+            } else if (val.isDouble()) {
+                p.value = val.toDouble();
+            } else if (val.isBool()) {
+                p.value = val.toBool();
+            }
+            fx.params.append(p);
+        }
+        c.ofxFx.append(fx);
+    }
     return c;
 }
 

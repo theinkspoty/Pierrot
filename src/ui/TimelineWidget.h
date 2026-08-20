@@ -45,6 +45,7 @@ class TimelineWidget : public QWidget {
     Q_OBJECT
 public:
     static inline const char* const kMimeMedia = "application/x-pierrot-media";
+    static inline const char* const kMimeEffect = "application/x-pierrot-effect";
 
     explicit TimelineWidget(QWidget* parent = nullptr);
 
@@ -126,7 +127,7 @@ protected:
     void dragLeaveEvent(QDragLeaveEvent*) override;
     void dropEvent(QDropEvent*) override;
 private:
-    enum DragMode { None, MoveClip, TrimLeft, TrimRight, ResizeSpeed, FadeIn, FadeOut, ClipOpacity, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, RulerLoopEdge, ResizeTrack, TrackVol, ClipVol, TrackDrag };
+    enum DragMode { None, MoveClip, TrimLeft, TrimRight, ResizeSpeed, FadeIn, FadeOut, ClipOpacity, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, RulerLoopEdge, ResizeTrack, TrackVol, TrackOp, ClipVol, TrackDrag };
     // Qual borda da região de loop está sendo arrastada (RulerLoopEdge).
     enum LoopEdge { LoopEdgeNone = -1, LoopEdgeIn = 0, LoopEdgeOut = 1 };
     struct ClipOrig { double pos = 0.0, in = 0.0, dur = 0.0, speed = 1.0; };

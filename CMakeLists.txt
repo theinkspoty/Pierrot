@@ -31,6 +31,7 @@ set(SOURCES
     src/ffmpeg/FFmpegDecoder.cpp
     src/ffmpeg/MediaCache.cpp
     src/export/ProjectExporter.cpp
+    src/ofx/OfxPluginManager.cpp
     src/ui/MediaPoolWidget.cpp
     src/ui/TimelineWidget.cpp
     src/ui/PreviewWidget.cpp
@@ -45,6 +46,7 @@ set(SOURCES
     src/ui/GraphEditorWidget.cpp
     src/ui/ClickLogger.cpp
     src/ui/EffectsWidget.cpp
+    src/ui/ExpressWidget.cpp
     src/ui/FileBrowserWidget.cpp
     src/ui/TitleBar.cpp
     resources.qrc
@@ -58,6 +60,7 @@ set(HEADERS
     src/ffmpeg/FFmpegDecoder.h
     src/ffmpeg/MediaCache.h
     src/export/ProjectExporter.h
+    src/ofx/OfxPluginManager.h
     src/ui/MediaPoolWidget.h
     src/ui/TimelineWidget.h
     src/ui/PreviewWidget.h
@@ -72,6 +75,7 @@ set(HEADERS
     src/ui/GraphEditorWidget.h
     src/ui/ClickLogger.h
     src/ui/EffectsWidget.h
+    src/ui/ExpressWidget.h
     src/ui/FileBrowserWidget.h
     src/ui/TitleBar.h
 )

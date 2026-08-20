@@ -231,27 +231,73 @@ QStringList opacityFades(const QVector<Keyframe>& keys, double base, double pos,
                          double* baseMul) {
     QStringList out;
     double mul = 1.0;
-    double prevT = pos;
-    double prevV = std::clamp(base, 0.0, 1.0);
+    if (keys.isEmpty()) { *baseMul = std::clamp(base, 0.0, 1.0); return out; }
+
     QVector<Keyframe> sorted = keys;
     std::stable_sort(sorted.begin(), sorted.end(),
                      [](const Keyframe& a, const Keyframe& b) { return a.time < b.time; });
+
+    // Verifica se todos os keyframes são lineares.
+    bool allLinear = true;
     for (const Keyframe& k : sorted) {
-        const double t = pos + k.time;
-        const double v = std::clamp(k.value, 0.0, 1.0);
-        mul = std::max(mul, v);
-        const double span = t - prevT;
-        if (span > 0.001 && std::fabs(v - prevV) > 0.001) {
-            if (v > prevV)
-                out << QStringLiteral("fade=t=in:st=%1:d=%2:alpha=1")
-                          .arg(num(prevT)).arg(num(span));
-            else
-                out << QStringLiteral("fade=t=out:st=%1:d=%2:alpha=1")
-                          .arg(num(prevT)).arg(num(span));
-        }
-        prevT = t;
-        prevV = v;
+        if (k.interp != KfLinear) { allLinear = false; break; }
     }
+
+    if (allLinear) {
+        // Abordagem original: fade=t=in/out para cada segmento linear.
+        double prevT = pos;
+        double prevV = std::clamp(base, 0.0, 1.0);
+        for (const Keyframe& k : sorted) {
+            const double t = pos + k.time;
+            const double v = std::clamp(k.value, 0.0, 1.0);
+            mul = std::max(mul, v);
+            const double span = t - prevT;
+            if (span > 0.001 && std::fabs(v - prevV) > 0.001) {
+                if (v > prevV)
+                    out << QStringLiteral("fade=t=in:st=%1:d=%2:alpha=1")
+                              .arg(num(prevT)).arg(num(span));
+                else
+                    out << QStringLiteral("fade=t=out:st=%1:d=%2:alpha=1")
+                              .arg(num(prevT)).arg(num(span));
+            }
+            prevT = t;
+            prevV = v;
+        }
+    } else {
+        // Interpolação não-linear: amostra a curva usando kfValue e gera
+        // uma expressão ffmpeg if-chain piecewise.
+        // Adiciona valor base antes do primeiro keyframe e depois do último.
+        const double tStart = pos;
+        const double tEnd = pos + sorted.last().time;
+        const double baseV = std::clamp(base, 0.0, 1.0);
+
+        // Amostra a cada ~2 frames para suavidade (mínimo 8 amostras).
+        const double fps = 30.0;
+        const int samples = qMax(8, (int)std::lround((tEnd - tStart) * fps / 2.0));
+        const double dt = (samples > 1) ? (tEnd - tStart) / (samples - 1) : 0.0;
+
+        // Constroi expressão if-chain: if(lt(t,T1),V1, if(lt(t,T2),V2, ... DEFAULT))
+        QStringList parts;
+        for (int i = 0; i < samples; ++i) {
+            const double t = tStart + i * dt;
+            const double rel = t - pos; // tempo relativo ao clipe
+            const double v = std::clamp(kfValue(sorted, base, rel), 0.0, 1.0);
+            mul = std::max(mul, v);
+            if (i < samples - 1) {
+                const double nextT = tStart + (i + 1) * dt;
+                parts << QStringLiteral("if(lt(t,%1),%2").arg(num(nextT)).arg(num(v));
+            } else {
+                parts << num(v);
+            }
+        }
+        // Fecha os parênteses e usa como expressão de eq=brightness.
+        QString expr = parts.join(QLatin1Char(','));
+        for (int i = 0; i < samples - 1; ++i) expr += QLatin1Char(')');
+        // Converte opacidade (0..1) para eq brightness (-1..1): b = v - 1.
+        const QString bExpr = QStringLiteral("(%1)-1").arg(expr);
+        out << QStringLiteral(",eq=brightness='%1'").arg(bExpr);
+    }
+
     *baseMul = mul;
     return out;
 }
@@ -724,8 +770,10 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                                          .arg(rotW).arg(rotH).arg(rotFill));
             }
             // Texto: fade por ALPHA (não para preto), senão a camada transparente
-            // viraria um quadrado preto durante o fade.
-            const QString fadeAlpha = (v.m == nullptr) ? QStringLiteral(":alpha=1") : QString();
+            // viraria um quadrado preto durante o fade. Imagens (PNG/WebP) também
+            // podem ter alpha — aplicar :alpha=1 para preservar transparência.
+            const bool hasAlphaMedia = (v.m == nullptr) || (v.m && isImageFile(v.m->filePath));
+            const QString fadeAlpha = hasAlphaMedia ? QStringLiteral(":alpha=1") : QString();
             if (fadeIn > 0)
                 fc.last().append(QStringLiteral(",fade=t=in:st=%1:d=%2%3")
                                      .arg(num(pos)).arg(num(fadeIn)).arg(fadeAlpha));
@@ -754,6 +802,32 @@ QStringList ProjectExporter::buildCommand(const Project& project,
             if (v.c->blur > 0.0)
                 fc.last().append(QStringLiteral(",boxblur=luma_radius=%1:luma_power=2")
                                      .arg(num(std::clamp(v.c->blur, 0.0, 40.0))));
+            // ── LAINKA: stop motion na exportação ──────────────────────────
+            if (v.c->lainkaEnabled) {
+                // Frame skip: reduz FPS para simular stop motion.
+                if (v.c->lainkaSkip > 1) {
+                    const double targetFps = (project.fps > 0.0 ? project.fps : 30.0) / v.c->lainkaSkip;
+                    fc.last().append(QStringLiteral(",fps=fps=%1").arg(num(targetFps)));
+                }
+                // Flicker: variação de brilho pseudo-aleatória.
+                if (v.c->lainkaFlicker > 1e-6) {
+                    const double flickAmp = std::clamp(v.c->lainkaFlicker / 100.0, 0.0, 1.0) * 0.15;
+                    fc.last().append(QStringLiteral(",eq=brightness='random(1)*%1-%2'")
+                                         .arg(num(flickAmp * 2.0))
+                                         .arg(num(flickAmp)));
+                }
+                // Opacidade global LAINKA (multiplica com a existente).
+                if (v.c->lainkaOpacity < 99.9) {
+                    fc.last().append(QStringLiteral(",colorchannelmixer=aa=%1")
+                                         .arg(num(std::clamp(v.c->lainkaOpacity / 100.0, 0.0, 1.0))));
+                }
+            }
+            if (v.c->motionEnabled && v.c->motionAmount > 0.0) {
+                const int r = std::clamp((int)std::lround(v.c->motionAmount * 0.4), 1, 40);
+                const int p = std::clamp(v.c->motionSamples / 4, 1, 8);
+                fc.last().append(QStringLiteral(",boxblur=luma_radius=%1:luma_power=%2")
+                                     .arg(num(r)).arg(num(p)));
+            }
             if (v.c->kfOpacity.isEmpty()) {
                 if (v.c->opacity < 1.0)
                     fc.last().append(QStringLiteral(",colorchannelmixer=aa=%1")

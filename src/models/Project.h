@@ -13,6 +13,57 @@
 #include <algorithm>
 #include <cmath>
 
+// ── Estruturas de plugins OFX ────────────────────────────────────────────
+
+// Metadados de um efeito OFX (preenchidos durante o scan do plugin).
+struct OfxPluginInfo {
+    QString id;                 // identificador único (ex.: "org.openfx.invert")
+    QString name;               // nome legível ("Invert")
+    QString grouping;           // categoria/grouping do efeito
+    QString description;        // curta descrição
+    QString pluginPath;         // caminho para o bundle .ofx no disco
+    int versionMajor = 1;
+    int versionMinor = 0;
+};
+
+// Parâmetro serializado de um efeito OFX (chave → valor).
+struct OfxParam {
+    QString key;
+    QVariant value;
+};
+
+// Uma instância de efeito OFX aplicada a um clipe.
+struct OfxPluginInstance {
+    QString pluginId;           // referência a OfxPluginInfo::id
+    bool enabled = true;
+    QVector<OfxParam> params;
+
+    double paramDouble(const QString& key, double fallback = 0.0) const {
+        for (const OfxParam& p : params)
+            if (p.key == key && p.value.canConvert<double>())
+                return p.value.toDouble();
+        return fallback;
+    }
+    bool paramBool(const QString& key, bool fallback = false) const {
+        for (const OfxParam& p : params)
+            if (p.key == key && p.value.canConvert<bool>())
+                return p.value.toBool();
+        return fallback;
+    }
+    QString paramString(const QString& key, const QString& fallback = {}) const {
+        for (const OfxParam& p : params)
+            if (p.key == key && p.value.metaType().id() == QMetaType::QString)
+                return p.value.toString();
+        return fallback;
+    }
+    QColor paramColor(const QString& key, const QColor& fallback = Qt::black) const {
+        for (const OfxParam& p : params)
+            if (p.key == key && p.value.metaType().id() == QMetaType::QColor)
+                return p.value.value<QColor>();
+        return fallback;
+    }
+};
+
 struct MediaItem {
     QString id;
     QString filePath;
@@ -72,7 +123,7 @@ inline double cubicBezier(double a, double c1, double c2, double b, double f) {
 // o modo de interpolação de cada segmento. Sem keyframes, retorna o valor base.
 inline double kfValue(const QVector<Keyframe>& keys, double base, double t) {
     if (keys.isEmpty()) return base;
-    if (t <= keys.first().time) return keys.first().value;
+    if (t < keys.first().time) return base;
     if (t >= keys.last().time) return keys.last().value;
     int lo = 0, hi = (int)keys.size() - 1;
     while (lo + 1 < hi) {
@@ -202,6 +253,31 @@ struct Clip {
     QColor chromaKeyColor{Qt::green};
     double chromaKeySimilarity = 0.15;
 
+    // ── Efeito Pierrot: LAINKA (stop motion) ─────────────────────────────
+    bool lainkaEnabled = false;
+    int lainkaSkip = 2;         // frame step (pulo de frame)
+    double lainkaJitterPos = 0.0;  // tremida de posição (0..100)
+    double lainkaJitterRot = 0.0;  // tremida de rotação (0..100)
+    double lainkaJitterScale = 0.0;// tremida de escala (0..100)
+    double lainkaFlicker = 0.0;    // variação de brilho (0..100)
+    double lainkaFlickerSpeed = 50.0; // velocidade do flicker (0..100)
+    double lainkaWarpAmount = 0.0; // distorção por grid (0..100)
+    double lainkaWarpSpeed = 50.0; // velocidade do warp (0..100)
+    int lainkaWarpGrid = 8;        // resolução do grid warp (4..64)
+    double lainkaOnionSkin = 0.0;  // ghosting/overlay (0..100)
+    double lainkaDustAmount = 0.0; // pó e sujeira (0..100)
+    double lainkaScratchAmount = 0.0; // arranhões (0..100)
+    int lainkaTargetFps = 8;       // FPS alvo do stop motion
+    double lainkaMotionBlur = 0.0; // motion blur (0..100)
+    double lainkaOpacity = 100.0;  // opacidade global (0..100)
+    int lainkaAntialias = 1;       // 0=off, 1=on, 2=high quality
+
+    // ── Efeito Pierrot: MotiOn (motion blur) ──────────────────────────
+    bool motionEnabled = false;
+    double motionAmount = 0.0;     // intensidade do blur (0..100)
+    double motionAngle = 0.0;      // direção em graus (0..360)
+    int motionSamples = 8;         // amostras de qualidade (1..32)
+
     // Transform (em pixels no quadro do projeto, graus, escala multiplicativa).
     double tx = 0.0;
     double ty = 0.0;
@@ -226,6 +302,9 @@ struct Clip {
     double denoiseAmount = 12.0;
     bool normalize = false;
     bool invertPhase = false;
+
+    // ── Efeitos OFX (plugins de terceiros) ──────────────────────────────
+    QVector<OfxPluginInstance> ofxFx;  // stack de efeitos OFX (ordem = ordem de aplicação)
 
     // Keyframes animados (tempos em segundos da timeline).
     QVector<Keyframe> kfOpacity;
