@@ -1086,6 +1086,8 @@ void PreviewWidget::drawClipText(QPainter& p, const QRect& canvas, const Clip* c
     const double H = m_project->height;
     const double rel = m_playhead - clip->pos;
     double alpha = std::clamp(kfValue(clip->kfOpacity, clip->opacity, rel), 0.0, 1.0);
+    if (clip->fadeIn > 1e-6) alpha *= std::min(1.0, rel / clip->fadeIn);
+    if (clip->fadeOut > 1e-6) alpha *= std::min(1.0, (clip->dur - rel) / clip->fadeOut);
     if (alpha <= 0.0) return;
 
     // LAINKA no texto: jitter de posição, rotação, escala e flicker.
@@ -1158,6 +1160,7 @@ void PreviewWidget::drawClipText(QPainter& p, const QRect& canvas, const Clip* c
 
     p.save();
     p.setClipRect(canvas);
+    p.setOpacity(alpha);
     // Mapeia espaço de projeto (0..W x 0..H) para o canvas.
     p.translate(canvas.topLeft());
     p.scale(k, k);
@@ -1171,9 +1174,7 @@ void PreviewWidget::drawClipText(QPainter& p, const QRect& canvas, const Clip* c
                 * kfValue(clip->kfScaleY, clip->scaleY, rel));
 
     if (st.textBackground) {
-        QColor bc = st.textBackgroundColor;
-        bc.setAlpha((int)(bc.alpha() * alpha));
-        p.fillRect(box, bc);
+        p.fillRect(box, st.textBackgroundColor);
     }
 
     QPainterPath path;
@@ -1183,14 +1184,10 @@ void PreviewWidget::drawClipText(QPainter& p, const QRect& canvas, const Clip* c
 
     if (st.textOutline > 0.0) {
         const double ow = qMax(1.0, st.textOutline * H);
-        QColor oc = st.textOutlineColor;
-        oc.setAlpha((int)(oc.alpha() * alpha));
-        QPen pen(oc, ow, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+        QPen pen(st.textOutlineColor, ow, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
         p.strokePath(path, pen);
     }
-    QColor fc = st.textColor;
-    fc.setAlpha((int)(fc.alpha() * alpha));
-    p.fillPath(path, fc);
+    p.fillPath(path, st.textColor);
 
     p.restore();
 }
