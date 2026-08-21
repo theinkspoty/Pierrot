@@ -138,12 +138,12 @@ focado no youtube e outras.
 
 ```bash
 sudo apt install cmake g++ pkg-config \
-    qt6-base-dev \
-    libavformat-dev libavcodec-dev libavutil-dev libswscale-dev
+    qt6-base-dev qt6-multimedia-dev \
+    libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev
 ```
 
-Se usar Qt 5 em vez de Qt 6: substitua `qt6-base-dev` por `qtbase5-dev` e
-`qt5-qmake`/`libqt5widgets5`.
+Se usar Qt 5 em vez de Qt 6: substitua `qt6-base-dev` por `qtbase5-dev`,
+`qt6-multimedia-dev` por `qtmultimedia5-dev`.
 
 ## Compilar
 
@@ -208,23 +208,34 @@ um propósito específico. Veja a GNU GPL para mais detalhes.
 
 ```
 src/
-  models/Project             Modelo: mídia, faixas, clipes + serialização JSON
-  ffmpeg/FFmpegDecoder       Decodificação de frames e picos de áudio (libav*)
-  ffmpeg/MediaCache          Cache de waveforms/thumbnails em thread de fundo
-  export/ProjectExporter     Geração do comando ffmpeg (filter_complex)
-  ui/TimelineWidget          Timeline interativa (drag, corte, trim, zoom, reordenação de faixas/pastas, presets de estilo)
-  ui/GraphEditorWidget       Editor de curvas (keyframes, splines bezier, interpolações)
-  ui/PancropWidget           Pan/Crop com keyframes sincronizados com o editor de curvas
-  ui/MediaPoolWidget         Painel de mídia com arrasto do sistema e para a timeline
-  ui/PreviewWidget           Preview + reprodução
-  ui/ExportDialog            Diálogo de exportação com progresso
-  ui/ProjectSettingsDialog   Resolução e fps do projeto
-  ui/EffectsWidget           Painel de efeitos (内置 + OFX)
-  ui/ExpressWidget           Expressões e atalhos
-  ofx/OfxHost                Host OFX (Property/Parameter/ImageEffect/Memory/MultiThread/Message/Progress suites)
-  ofx/OfxPluginManager       Scanner e loader de plugins .ofx
-  ofx/OfxRenderer            Renderização via plugins OFX
-  MainWindow                 Janela principal + undo/redo + salvar/abrir + persistência de geometria/layout
+  main.cpp                    Ponto de entrada
+  version.h                   Versão do projeto
+  CrashReporter               Relatório de crash (backtrace + infos do sistema)
+  models/Project              Modelo: mídia, faixas, clipes + serialização JSON
+  ffmpeg/FFmpegDecoder        Decodificação de frames e picos de áudio (libav*)
+  ffmpeg/MediaCache           Cache de waveforms/thumbnails em thread de fundo
+  export/ProjectExporter      Geração do comando ffmpeg (filter_complex)
+  ui/TimelineWidget           Timeline interativa (drag, corte, trim, zoom, reordenação de faixas/pastas, presets de estilo)
+  ui/GraphEditorWidget        Editor de curvas (keyframes, splines bezier, interpolações)
+  ui/PancropWidget            Pan/Crop com keyframes sincronizados com o editor de curvas
+  ui/MediaPoolWidget          Painel de mídia com arrasto do sistema e para a timeline
+  ui/PreviewWidget            Preview + reprodução (AudioMixer integrado)
+  ui/ExportDialog             Diálogo de exportação com progresso
+  ui/ProjectSettingsDialog    Resolução e fps do projeto
+  ui/EffectsWidget            Painel de efeitos (内置 + OFX)
+  ui/ExpressWidget            Expressões e atalhos
+  ui/AudioEffectsDialog       Diálogo de efeitos de áudio por clipe
+  ui/FileBrowserWidget        Explorador de arquivos (dock, Lugares + miniaturas)
+  ui/SettingsDialog           Configurações gerais
+  ui/TextEditorDialog         Editor de texto para clipes de título
+  ui/TransformDialog          Diálogo de transformação (posição, escala, rotação)
+  ui/TitleBar                 Barra de título personalizada (janela de boas-vindas)
+  ui/WelcomeWindow            Janela de boas-vindas (projetos recentes, novo projeto)
+  ui/ClickLogger              Logger de cliques (debug)
+  ofx/OfxHost                 Host OFX (Property/Parameter/ImageEffect/Memory/MultiThread/Message/Progress suites)
+  ofx/OfxPluginManager        Scanner e loader de plugins .ofx
+  ofx/OfxRenderer             Renderização via plugins OFX
+  MainWindow                  Janela principal + undo/redo + salvar/abrir + persistência de geometria/layout
 ```
 
 ## Roadmap
