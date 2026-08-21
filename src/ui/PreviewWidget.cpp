@@ -6,6 +6,7 @@
 #include "PreviewWidget.h"
 
 #include "ui/SettingsDialog.h"
+#include "ui/TlLog.h"
 #include "ofx/OfxRenderer.h"
 #include "ofx/OfxPluginManager.h"
 
@@ -292,7 +293,12 @@ public:
     explicit AudioMixer(QObject* parent = nullptr) : QIODevice(parent) {
         setOpenMode(ReadOnly | Unbuffered);
     }
+    // O m_jobMutex é adquirido por TODO updateSources/shutdown/destrutor:
+    // jobs rodando no pool de threads nunca se sobrepõem nem correm contra a
+    // destruição do mixer. O m_jobSeq descarta pedidos velhos (cliques rápidos
+    // na timeline: só o último seek precisa executar).
     ~AudioMixer() override {
+        QMutexLocker job(&m_jobMutex);
         QMutexLocker l(&m_mutex);
         for (Source* s : m_sources) { s->dec.close(); delete s; }
         m_sources.clear();
@@ -300,45 +306,105 @@ public:
 
     // atualiza o conjunto de fontes ativas para o playhead atual.
     // reseek=true: reposiciona as fontes existentes (loop, salto de playhead).
-    void updateSources(const QVector<SourceInfo>& want, bool reseek) {
-        QMutexLocker l(&m_mutex);
-        for (const SourceInfo& w : want) {
-            Source* s = findLocked(w.key);
-            if (!s) {
-                s = new Source;
-                if (!s->dec.open(w.path, w.audioStream)) {
-                    if (audioDbg()) qDebug() << "[audio] updateSources: FALHOU ao abrir" << w.path
-                                             << "stream=" << w.audioStream;
-                    delete s; continue;
+    // seq >= 0: só executa se ainda for o pedido mais recente (cliques
+    // rápidos — pedidos intermediários são descartados antes de abrir/seek).
+    //
+    // Executa em 3 fases para NÃO segurar m_mutex durante open()/seekAudio():
+    // esses dois custam segundos em arquivos grandes e, com o mutex tomado,
+    // readData (thread do sink) ficava bloqueada → underrun → relógio de
+    // áudio congelava. Cada FFmpegDecoder tem mutex próprio, então abrir/
+    // reposicionar fora do lock é seguro; enquanto isso readData simplesmente
+    // não encontra amostras da fonte ainda não pronta (silêncio momentâneo).
+    void updateSources(const QVector<SourceInfo>& want, bool reseek, int seq = -1) {
+        QMutexLocker job(&m_jobMutex);
+        if (m_shutdown || (seq >= 0 && seq != m_jobSeq.load())) return;
+        struct Job {
+            Source* s = nullptr;
+            QString path;
+            int stream = 0;
+            double pos = 0.0;
+            bool open = false;
+            bool seek = false;
+            bool failed = false;
+        };
+        QVector<Job> jobs;
+        {
+            QMutexLocker l(&m_mutex);
+            if (m_shutdown) return;
+            for (const SourceInfo& w : want) {
+                Source* s = findLocked(w.key);
+                if (!s) {
+                    s = new Source;
+                    s->key = w.key;
+                    s->active = true; // visível já na fase 1; silêncio até abrir
+                    m_sources.append(s);
                 }
-                s->key = w.key;
-                s->dec.seekAudio(w.mediaPos);
-                m_sources.append(s);
-                if (audioDbg()) qDebug() << "[audio] updateSources: +fonte" << w.path
-                                         << "stream=" << w.audioStream << "mediaPos=" << w.mediaPos;
-            }
-            s->vol = w.vol;
-            s->fx.configure(w.eqLow, w.eqMid, w.eqHigh, w.denoise,
-                            w.denoiseAmount, w.invertPhase, w.normalize);
-            s->active = true;
-            if (reseek) {
-                s->dec.seekAudio(w.mediaPos);
-                s->fx.resetState();
-            }
-        }
-        // Desativa (e libera) fontes que saíram do intervalo do clipe.
-        for (int i = 0; i < m_sources.size(); ++i) {
-            Source* s = m_sources[i];
-            if (s->active && !usedLocked(s->key, want)) {
-                if (audioDbg()) qDebug() << "[audio] updateSources: -fonte" << s->key;
-                s->dec.close();
-                s->active = false;
+                s->vol = w.vol;
+                s->fx.configure(w.eqLow, w.eqMid, w.eqHigh, w.denoise,
+                                w.denoiseAmount, w.invertPhase, w.normalize);
+                s->active = true;
+                Job j;
+                j.s = s;
+                j.path = w.path;
+                j.stream = w.audioStream;
+                j.pos = w.mediaPos;
+                if (!s->opened || s->path != w.path || s->stream != w.audioStream) {
+                    j.open = true;  // arquivo/stream novo: precisa reabrir
+                    j.seek = true;
+                } else if (reseek) {
+                    j.seek = true;
+                }
+                jobs.append(j);
             }
         }
-        m_sources.erase(std::remove_if(m_sources.begin(), m_sources.end(),
-                                       [](Source* s) { return !s->active; }),
-                        m_sources.end());
+        // Fase 2 — SEM lock: abre/reposiciona decoders.
+        for (Job& j : jobs) {
+            if (j.open) {
+                if (!j.s->dec.open(j.path, j.stream)) { j.failed = true; continue; }
+            }
+            if (j.seek && !j.failed) {
+                j.s->dec.seekAudio(j.pos);
+                j.s->fx.resetState();
+            }
+        }
+        // Fase 3 — com lock: aplica resultados e recolhe fontes que saíram.
+        QVector<Source*> retire;
+        {
+            QMutexLocker l(&m_mutex);
+            if (m_shutdown) return;
+            for (Job& j : jobs) {
+                if (j.failed) { j.s->active = false; continue; }
+                j.s->opened = true;
+                j.s->path = j.path;
+                j.s->stream = j.stream;
+            }
+            // Única passada: remove toda fonte não desejada (já inativa ou
+            // ativa mas fora do intervalo) — cada uma entra em `retire` UMA vez.
+            m_sources.erase(std::remove_if(m_sources.begin(), m_sources.end(),
+                                           [&](Source* s) {
+                                               if (!s->active || !usedLocked(s->key, want)) {
+                                                   retire.append(s);
+                                                   return true;
+                                               }
+                                               return false;
+                                           }),
+                            m_sources.end());
+        }
+        // Fecha/deleta FORA do lock: close() pode demorar (libera codec).
+        for (Source* s : retire) { s->dec.close(); delete s; }
     }
+
+    // Desliga o mixer de forma síncrona antes do deleteLater: espera job em
+    // curso terminar, rejeita os próximos e invalida os enfileirados.
+    void shutdown() {
+        QMutexLocker job(&m_jobMutex);
+        QMutexLocker l(&m_mutex);
+        m_shutdown = true;
+        m_jobSeq.fetch_add(1);
+    }
+
+    // Número de sequência para um novo pedido de seek (clique na timeline).
+    int beginJob() { return m_jobSeq.fetch_add(1) + 1; }
 
     qint64 readData(char* data, qint64 maxlen) override {
         QMutexLocker l(&m_mutex);
@@ -348,8 +414,9 @@ public:
         const int capacity = (maxBytes / bytesPerSample) * bytesPerSample;
         memset(data, 0, capacity);
 
-        if (m_sources.isEmpty() || capacity <= 0) {
-            if (audioDbg()) qDebug() << "[audio] readData: sem fontes (silêncio)";
+        if (m_shutdown || m_sources.isEmpty() || capacity <= 0) {
+            if (audioDbg() && !m_shutdown)
+                qDebug() << "[audio] readData: sem fontes (silêncio)";
             return capacity;
         }
 
@@ -357,6 +424,7 @@ public:
         tmp.resize(capacity / 2); // um sample por amostra (ch compensado abaixo)
         int16_t* out = reinterpret_cast<int16_t*>(data);
         for (Source* s : m_sources) {
+            if (!s->opened) continue; // decoder abrindo em background (fase 2)
             const int got = s->dec.decodeAudio(tmp.data(), capacity);
             if (audioDbg() && got == 0)
                 qDebug() << "[audio] readData: decodeAudio retornou 0 (silêncio)";
@@ -381,6 +449,9 @@ private:
     struct Source {
         FFmpegDecoder dec;
         QString key;
+        QString path;          // arquivo aberto no decoder
+        int stream = -1;       // stream de áudio aberto
+        bool opened = false;   // dec.open() já concluiu
         double vol = 1.0;
         bool active = false;
         AudioFx fx;
@@ -395,6 +466,9 @@ private:
     }
     QVector<Source*> m_sources;
     QMutex m_mutex;
+    QMutex m_jobMutex;          // serializa updateSources/shutdown/destrutor
+    std::atomic<int> m_jobSeq{0}; // só o pedido mais recente de seek executa
+    bool m_shutdown = false; // stopAudio(): rejeita novos updates/decodes
 };
 
 
@@ -518,8 +592,15 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
 PreviewWidget::~PreviewWidget() {
     stopAudio();
     if (m_frameThread) {
+        // Esvazia a fila de decodificação antes de parar: com arquivos grandes
+        // o worker podia estar a vários quadros de distância, o wait(2000)
+        // estourava e o objeto morria com decode em andamento (crash no fecho).
+        {
+            QMutexLocker l(&m_frameMutex);
+            m_reqQueue.clear();
+        }
         m_frameThread->quit();
-        m_frameThread->wait(2000);
+        m_frameThread->wait(5000);
     }
 }
 
@@ -1372,24 +1453,42 @@ void PreviewWidget::drawEmptyMonitor(QPainter& p, const QRect& canvas) {
 }
 
 void PreviewWidget::seek(double t) {
+    // O pedido de seek nasceu quase no zero com a agulha longe? Quem emitiu
+    // o playheadChanged mandou valor errado — registra para o dump automático.
+    if (t < 0.25 && m_playhead > 10.0)
+        TlLog::note(QStringLiteral("seek(≈0) pedido com playhead em %1 (playing=%2)")
+                        .arg(m_playhead, 0, 'f', 2).arg(m_playing ? 1 : 0));
     // Snap ao frame do projeto (playhead sempre em frame cheio).
     const double fps = projFps(m_project);
     const double snapped = (fps > 0.0) ? std::round(t * fps) / fps : std::max(0.0, t);
     if (m_playing) {
         // Scrub durante a reprodução: reancora os dois relógios na nova
         // posição e reposiciona os decoders de áudio (antes o tick ignorava
-        // o salto e o playhead voltava na próxima passada).
+        // o salto e o playhead voltava na próxima passada). O reposicionamento
+        // do mixer é assíncrono: com arquivos grandes ele leva tempo demais
+        // para a UI (e congelava o sink, derrubando o relógio de áudio).
         m_playStart = snapped;
         m_clock.restart();
+        m_audioLastRaw = -1.0; // próxima leitura só serve para detectar progresso
         anchorAudioClock(snapped);
         updateMixAudio(snapped, true);
+        TlLog::note(QStringLiteral("seek playing -> %1").arg(snapped, 0, 'f', 2));
+    } else if (std::fabs(snapped - m_playhead) > 0.25) {
+        TlLog::note(QStringLiteral("seek pausado %1 -> %2")
+                        .arg(m_playhead, 0, 'f', 2).arg(snapped, 0, 'f', 2));
     }
     applySeek(snapped);
 }
 
 void PreviewWidget::applySeek(double t) {
     const double fps = projFps(m_project);
+    const double prev = m_playhead;
     m_playhead = (fps > 0.0) ? std::round(t * fps) / fps : std::max(0.0, t);
+    // Salto grande aplicado: entra no histórico do diagnóstico.
+    if (std::fabs(m_playhead - prev) > 0.25)
+        TlLog::note(QStringLiteral("applySeek %1 -> %2 (playing=%3)")
+                        .arg(prev, 0, 'f', 3).arg(m_playhead, 0, 'f', 3)
+                        .arg(m_playing ? 1 : 0));
     if (!m_playing) {
         m_currentFrameIndex = std::llround(m_playhead * fps);
     }
@@ -1414,6 +1513,7 @@ void PreviewWidget::anchorAudioClock(double t) {
     if (raw < 0.0) { m_audioClockOn = false; return; }
     m_audioAnchor = t - raw;
     m_audioClockOn = true;
+    m_lastAnchorClockMs = m_clock.elapsed();
 }
 
 void PreviewWidget::togglePlay() {
@@ -1510,6 +1610,7 @@ void PreviewWidget::stopPlayback() {
     m_playBtn->setText(tr("Reproduzir"));
     m_currentFrameIndex = -1;
     m_audioClockOn = false;
+    m_audioLastRaw = -1.0;
     stopAudio();
     {
         QMutexLocker l(&m_frameMutex);
@@ -1531,16 +1632,44 @@ void PreviewWidget::tick() {
     // reproduções longas o relógio de parede desvia do consumo real do sink;
     // seguir o áudio evita o acúmulo de dessincronia. A correção é suave
     // (slew) para não tremer a imagem; desvio grande (underrun longo) faz a
-    // imagem saltar de volta para o áudio.
+    // imagem saltar de volta para o áudio — MAS só quando o relógio do áudio
+    // está realmente avançando. Durante um seek/scrub com arquivo pesado o
+    // sink entra em underrun e processedUSecs() congela: corrigir para um
+    // relógio parado fazia a agulha saltar DE VOLTA (muitas vezes para perto
+    // do início). Se o áudio não avançou desde o tick anterior, confia no
+    // relógio de parede até ele voltar a correr.
     const double raw = audioClockSec();
     if (raw >= 0.0) {
+        const bool audioAdvanced = m_audioLastRaw < 0.0 || raw > m_audioLastRaw + 1e-6;
+        m_audioLastRaw = raw;
         if (!m_audioClockOn) anchorAudioClock(t);
-        if (m_audioClockOn) {
+        if (m_audioClockOn && audioAdvanced) {
             const double diff = (raw + m_audioAnchor) - t;
-            if (std::fabs(diff) > 0.30) {
-                m_playStart = raw + m_audioAnchor;
-                m_clock.restart();
-                t = m_playStart;
+            // Período de graça: nos primeiros 400ms após uma ancoragem (seek,
+            // loop, play) o desvio ainda é resíduo da troca de posição — os
+            // decoders estão sendo reposicionados. Corrigir nesse intervalo
+            // teleportava a agulha para a posição velha do áudio.
+            const bool graceOver = m_lastAnchorClockMs < 0
+                                   || m_clock.elapsed() - m_lastAnchorClockMs > 400;
+            if (std::fabs(diff) > 0.30 && graceOver) {
+                if (diff < -2.0) {
+                    // Áudio MUITO atrás do vídeo embora avançando: os decoders
+                    // ficaram numa posição errada (seek impreciso em arquivos
+                    // longos, índice esparso). O vídeo é a referência — reancora
+                    // o relógio na posição atual em vez de arrastar a agulha
+                    // para trás (era o "volta pro começo").
+                    TlLog::note(QStringLiteral("tick: reancora (áudio atrás %1s)")
+                                    .arg(-diff, 0, 'f', 1));
+                    m_audioAnchor = t - raw;
+                } else {
+                    // Drift moderado ou áudio à frente: vídeo alcança o áudio.
+                    TlLog::note(QStringLiteral("tick: pula pra frente %1 -> %2")
+                                    .arg(t, 0, 'f', 2).arg(raw + m_audioAnchor, 0, 'f', 2));
+                    m_playStart = raw + m_audioAnchor;
+                    m_clock.restart();
+                    t = m_playStart;
+                    m_lastAnchorClockMs = 0;
+                }
             } else {
                 t += qBound(-0.0025, diff * 0.12, 0.0025);
             }
@@ -1717,16 +1846,23 @@ void PreviewWidget::startAudio(double t) {
     // decoders são abertos — sem cliques porque o audioSink ainda não começou.
     if (!sources.isEmpty()) {
         auto* mixer = m_audioFeed;
-        auto* self = this;
-        QtConcurrent::run([mixer, sources, self]() {
-            // QPointer: verifica se o mixer foi destruído (stopAudio chamado).
-            QPointer<AudioMixer> guard(mixer);
-            if (!guard) return;
-            mixer->updateSources(sources, true);
-            if (!guard) return;
+        // QPointer: o widget/mixer podem ser destruídos (stopAudio) antes do
+        // lambda rodar no pool de threads.
+        QPointer<PreviewWidget> selfGuard(this);
+        QPointer<AudioMixer> mixerGuard(mixer);
+        const int gen = m_audioGen.load();
+        QtConcurrent::run([selfGuard, mixerGuard, sources, gen]() {
+            if (!selfGuard || !mixerGuard) return;
+            mixerGuard->updateSources(sources, true);
+            if (!selfGuard || !mixerGuard) return;
             // Conecta o sink na UI thread depois que os decoders estão prontos.
-            QMetaObject::invokeMethod(self, [self]() {
-                if (!self->m_audioFeed || self->m_audioSink) return;
+            QMetaObject::invokeMethod(selfGuard, [selfGuard, mixerGuard, gen]() {
+                if (!selfGuard || !mixerGuard) return;
+                // Só cria o sink se esta tentativa ainda é a atual (o stop/
+                // start no meio incrementa a geração) e não há sink já ativo.
+                if (selfGuard->m_audioFeed != mixerGuard.data()) return;
+                if (selfGuard->m_audioSink || selfGuard->m_audioOut) return;
+                if (selfGuard->m_audioGen.load() != gen) return;
 #if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
                 const QAudioDevice def = QMediaDevices::defaultAudioOutput();
                 if (def.isNull()) return;
@@ -1734,8 +1870,8 @@ void PreviewWidget::startAudio(double t) {
                 fmt.setSampleFormat(QAudioFormat::Int16);
                 fmt.setSampleRate(48000);
                 fmt.setChannelCount(2);
-                self->m_audioSink = new QAudioSink(def, fmt, self);
-                self->m_audioSink->start(self->m_audioFeed);
+                selfGuard->m_audioSink = new QAudioSink(def, fmt, selfGuard);
+                selfGuard->m_audioSink->start(selfGuard->m_audioFeed);
 #else
                 const QAudioDeviceInfo def = QAudioDeviceInfo::defaultOutputDevice();
                 if (def.isNull()) return;
@@ -1746,8 +1882,8 @@ void PreviewWidget::startAudio(double t) {
                 fmt.setChannelCount(2);
                 fmt.setSampleType(QAudioFormat::SignedInt);
                 fmt.setByteOrder(QAudioFormat::LittleEndian);
-                self->m_audioOut = new QAudioOutput(def, fmt, self);
-                self->m_audioOut->start(self->m_audioFeed);
+                selfGuard->m_audioOut = new QAudioOutput(def, fmt, selfGuard);
+                selfGuard->m_audioOut->start(selfGuard->m_audioFeed);
 #endif
             });
         });
@@ -1790,15 +1926,44 @@ void PreviewWidget::stopAudio() {
     }
 #endif
     if (m_audioFeed) {
+        // shutdown() síncrono: jobs de mix ainda em voo no pool de threads
+        // passam a retornar sem tocar no mixer que está sendo descartado.
+        m_audioFeed->shutdown();
         m_audioFeed->deleteLater();
         m_audioFeed = nullptr;
     }
+    // Invalida qualquer criação de sink pendente em QtConcurrent: sem isso,
+    // um lambda antigo podia criar um sink DEPOIS do stop e o áudio/relógio
+    // ficavam num estado fantasma.
+    ++m_audioGen;
 }
 
 // Recalcula as fontes de áudio ativas no instante `t` e empurra ao mixer.
+// A parte pesada (abrir decoders, seekAudio com descarte por PTS) roda no
+// pool de threads: na UI ela travava o clique na timeline em arquivos grandes
+// e, segurando o mutex do mixer, derrubava o relógio do sink (underrun).
+// Serialização e descarte de pedidos velhos ficam DENTRO do mixer (m_jobMutex/
+// m_jobSeq): cliques rápidos só executam o último seek, sem tocar em estado
+// do widget a partir do pool de threads.
 void PreviewWidget::updateMixAudio(double t, bool reseek) {
     if (!m_audioFeed) return;
-    m_audioFeed->updateSources(buildMixSources(m_project, t), reseek);
+    // Fontes são coletadas na UI thread (leitura leve dos clipes ativos);
+    // só o trabalho pesado desce para o pool.
+    const QVector<AudioMixer::SourceInfo> sources = buildMixSources(m_project, t);
+    auto* feed = m_audioFeed;
+    if (!reseek) {
+        // Caminho leve por frame (volumes/fades/troca de clipes): direto na
+        // UI, sem despachar thread 60x/s. Abrir decoder novo ainda pode cair
+        // aqui na troca de clipe, mas é raro e breve.
+        feed->updateSources(sources, false);
+        return;
+    }
+    QPointer<AudioMixer> guard(feed);
+    const int seq = guard->beginJob();
+    QtConcurrent::run([guard, sources, seq]() {
+        if (!guard) return; // mixer descartado (stopAudio)
+        guard->updateSources(sources, true, seq);
+    });
 }
 
 void PreviewWidget::updateFrame() {

@@ -541,6 +541,7 @@ void FFmpegDecoder::freeAllLocked() {
     m_isImage = false;
     m_audioStream = -1;
     m_audioSkipFrames = 0;
+    m_audioSeekTargetSec = -1.0;
     m_source.clear();
     m_lastPtsSec = -1.0;
     m_swsSrcW = m_swsSrcH = 0;
@@ -931,8 +932,12 @@ void FFmpegDecoder::seekAudio(double seconds) {
     av_seek_frame(afmt, m_audioStream, target, AVSEEK_FLAG_BACKWARD);
     avcodec_flush_buffers(acc);
     if (m_swr) swr_init(static_cast<SwrContext*>(m_swr));
+    // Fallback para streams sem PTS confiável; o descarte principal é por PTS
+    // (m_audioSeekTargetSec), preciso independentemente de onde o seek pousou.
     m_audioSkipFrames = 30;
-    qDebug() << "[audio] seekAudio: skipFrames=30" << "stream=" << m_audioStream << "seconds=" << seconds;
+    m_audioSeekTargetSec = seconds;
+    if (audioDbg())
+        qDebug() << "[audio] seekAudio: target=" << seconds << "stream=" << m_audioStream;
 }
 
 int FFmpegDecoder::decodeAudio(void* outBuf, int maxBytes) {
@@ -954,7 +959,7 @@ int FFmpegDecoder::decodeAudio(void* outBuf, int maxBytes) {
     av_frame_unref(m_audioFrame);
 
     while (produced < maxBytes) {
-        if (m_audioSkipFrames > 0 && produced == 0)
+        if (audioDbg() && m_audioSkipFrames > 0 && produced == 0)
             qDebug() << "[audio] decodeAudio: entrou no loop com skipFrames=" << m_audioSkipFrames;
         const int recv = avcodec_receive_frame(acc, m_audioFrame);
         if (recv == AVERROR(EAGAIN)) {
@@ -986,9 +991,30 @@ int FFmpegDecoder::decodeAudio(void* outBuf, int maxBytes) {
         }
         if (recv < 0) break;
 
-        // Após seek, descarta N frames inteiros sem consultar PTS.
+        // Após seek, descarta frames até ATINGIR o alvo por PTS. O
+        // AVSEEK_FLAG_BACKWARD pousa no ponto de sincronia ANTERIOR ao alvo —
+        // em arquivos longos isso pode ficar a vários segundos (às vezes perto
+        // do início do arquivo). A contagem cega de N frames não cobria essa
+        // distância: o áudio retomava antes da posição pedida e o relógio do
+        // preview saltava para trás. Aqui o PTS manda; sem PTS confiável cai
+        // para o fallback de contagem.
+        if (m_audioSeekTargetSec >= 0.0) {
+            int64_t pts = m_audioFrame->pts;
+            if (pts == AV_NOPTS_VALUE) pts = m_audioFrame->best_effort_timestamp;
+            if (pts != AV_NOPTS_VALUE) {
+                const double fsec = pts * av_q2d(ast->time_base);
+                // Fallback encerrado: o PTS assumiu o controle do descarte.
+                m_audioSkipFrames = 0;
+                if (fsec < m_audioSeekTargetSec - 0.002) {
+                    av_frame_unref(m_audioFrame);
+                    continue;
+                }
+                m_audioSeekTargetSec = -1.0; // alvo alcançado
+            }
+        }
         if (m_audioSkipFrames > 0) {
-            qDebug() << "[audio] decodeAudio: skipFrame restantes=" << m_audioSkipFrames - 1;
+            if (audioDbg())
+                qDebug() << "[audio] decodeAudio: skipFrame restantes=" << m_audioSkipFrames - 1;
             m_audioSkipFrames--;
             av_frame_unref(m_audioFrame);
             continue;

@@ -11,6 +11,7 @@
 #include "ui/AudioEffectsDialog.h"
 #include "ui/TextEditorDialog.h"
 #include "ui/SettingsDialog.h"
+#include "ui/TlLog.h"
 
 #include <QPainter>
 #include <QPainterPath>
@@ -407,10 +408,31 @@ void TimelineWidget::updateScrollRanges() {
     const int totalH = kRulerH + rowsH + foldersH + 20;
     const int totalW = kHeaderW + (int)(total * m_pps) + kMarginR;
 
-    m_hbar->setRange(0, std::max(0, totalW - viewW));
+    // Se o range novo é menor que a posição atual, a QScrollBar vai GRUDAR o
+    // valor para dentro do range — a view inteira pula de lugar ("timeline
+    // resetando"). Registra sempre; colapso grande dispara dump automático.
+    const int newMax = std::max(0, totalW - viewW);
+    if (newMax < m_hbar->value()) {
+        TlLog::note(QStringLiteral("range encolheu: scroll %1 -> %2 (dur=%3 pps=%4)")
+                        .arg(m_hbar->value()).arg(newMax)
+                        .arg(total, 0, 'f', 2).arg(m_pps, 0, 'f', 2));
+        if (newMax < m_hbar->value() * 0.5)
+            TlLog::dump(QStringLiteral("range encolheu %1 -> %2")
+                            .arg(m_hbar->value()).arg(newMax));
+    }
+    m_hbar->setRange(0, newMax);
     m_hbar->setPageStep(std::max(1, viewW));
     m_vbar->setRange(0, std::max(0, totalH - viewH));
     m_vbar->setPageStep(std::max(1, viewH));
+
+    // Mudança grande no alcance horizontal (edição, zoom, resize) entra no
+    // registro — ajuda a correlacionar com cliques que "voltam pro início".
+    static int lastMax = -1;
+    if (lastMax >= 0 && std::abs(newMax - lastMax) > 2000)
+        TlLog::note(QStringLiteral("range: max %1 -> %2 (dur=%3 pps=%4)")
+                        .arg(lastMax).arg(newMax)
+                        .arg(total, 0, 'f', 2).arg(m_pps, 0, 'f', 2));
+    lastMax = newMax;
 
     m_viewStart = m_hbar->value() / m_pps;
     m_viewTop = m_vbar->value();
@@ -563,7 +585,22 @@ double TimelineWidget::snapTime(double t) const {
 }
 
 void TimelineWidget::setPlayhead(double t) {
+    const double prev = m_playhead;
     m_playhead = std::max(0.0, t);
+    // Registro sempre-ligado: só transições relevantes (seeks/saltos), não
+    // cada frame da reprodução. Salto grande para trás dispara o dump
+    // automático do histórico — evidência do "volta pro começo".
+    if (std::fabs(m_playhead - prev) > 0.25)
+        TlLog::note(QStringLiteral("setPlayhead %1 -> %2 (playing=%3 vs=%4 pps=%5 sc=%6/%7)")
+                        .arg(prev, 0, 'f', 3).arg(m_playhead, 0, 'f', 3)
+                        .arg(m_playing ? 1 : 0)
+                        .arg(m_viewStart, 0, 'f', 1).arg(m_pps, 0, 'f', 1)
+                        .arg(m_hbar->value()).arg(m_hbar->maximum()));
+    if (prev > 5.0 && m_playhead < prev - std::max(5.0, prev * 0.25)) {
+        TlLog::note(QStringLiteral("!! SALTO PARA TRÁS detectado"));
+        TlLog::dump(QStringLiteral("agulha saltou %1 -> %2")
+                        .arg(prev, 0, 'f', 2).arg(m_playhead, 0, 'f', 2));
+    }
     // Simbiose das agulhas: durante a reprodução a agulha branca acompanha a
     // vermelha, a não ser que o mouse esteja sobre a régua (aí ela vira prévia
     // da posição do cursor). Assim elas nunca ficam "descoladas" à toa.
@@ -587,10 +624,21 @@ void TimelineWidget::ensurePlayheadVisible() {
     // a agulha mantendo-a perto de 2/3 da largura, em vez de esperar ela sair
     // da tela e "pular". Assim a view avança suavemente a cada frame.
     const double rightEdge = kHeaderW + (viewW - kHeaderW) * (2.0 / 3.0);
-    if (px < kHeaderW) {
-        m_hbar->setValue((int)((m_playhead - (viewW - kHeaderW) * 0.2) * m_pps));
-    } else if (px > rightEdge) {
-        m_hbar->setValue((int)((m_playhead - (viewW - kHeaderW) * (2.0 / 3.0)) * m_pps));
+    if (px < kHeaderW || px > rightEdge) {
+        // Fração da área útil onde a agulha deve pousar depois de rolar
+        // (20% quando ela vinha pela esquerda, 2/3 quando vem pela direita).
+        const double frac = px < kHeaderW ? 0.2 : (2.0 / 3.0);
+        const int before = m_hbar->value();
+        // scroll alvo = tempo×pps − fração×largura_útil  (não misturar
+        // segundos com pixels: era isso que teleportava a view pro zero).
+        const int target = qBound(0,
+                                  (int)std::llround(m_playhead * m_pps
+                                                    - (viewW - kHeaderW) * frac),
+                                  std::max(0, m_hbar->maximum()));
+        m_hbar->setValue(target);
+        TlLog::note(QStringLiteral("follow: px=%1 alvo=%2 scroll %3 -> %4 (max=%5)")
+                        .arg(px, 0, 'f', 0).arg(target)
+                        .arg(before).arg(m_hbar->value()).arg(m_hbar->maximum()));
     }
     m_viewStart = m_hbar->value() / m_pps;
 }
@@ -2108,6 +2156,11 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
     if (y < kRulerH) {
         // Marca o ponteiro branco no ponto clicado da régua.
         m_cursorT = std::max(0.0, xToTime(x));
+        TlLog::note(QStringLiteral("clique regua x=%1 t=%2 (playhead=%3 playing=%4 vs=%5 pps=%6 sc=%7/%8)")
+                        .arg(x).arg(m_cursorT, 0, 'f', 2).arg(m_playhead, 0, 'f', 2)
+                        .arg(m_playing ? 1 : 0)
+                        .arg(m_viewStart, 0, 'f', 1).arg(m_pps, 0, 'f', 1)
+                        .arg(m_hbar->value()).arg(m_hbar->maximum()));
         update();
         const int zx0 = 6;
         if (x >= zx0 && x < zx0 + kZoomW) {
@@ -2340,6 +2393,11 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
         // Clique na timeline move a agulha para onde o mouse clicou. Ctrl+clique
         // apenas seleciona (não mexe na agulha), para multi-seleção ficar confortável.
         if (!(e->modifiers() & Qt::ControlModifier)) {
+            TlLog::note(QStringLiteral("clique faixa x=%1 t=%2 (playhead=%3 playing=%4 vs=%5 pps=%6 sc=%7/%8)")
+                            .arg(x).arg(t, 0, 'f', 2).arg(m_playhead, 0, 'f', 2)
+                            .arg(m_playing ? 1 : 0)
+                            .arg(m_viewStart, 0, 'f', 1).arg(m_pps, 0, 'f', 1)
+                            .arg(m_hbar->value()).arg(m_hbar->maximum()));
             setPlayhead(std::max(0.0, snapTime(t)));
             emit playheadChanged(std::max(0.0, snapTime(t)));
         }
@@ -3064,6 +3122,9 @@ void TimelineWidget::wheelEvent(QWheelEvent* e) {
         if (delta.y() == 0) return;
         const double factor = std::pow(1.1, delta.y() / 120.0);
         const double anchorT = m_viewStart + (e->position().x() - kHeaderW) / m_pps;
+        TlLog::note(QStringLiteral("roda zoom x%1 ancora=%2 (vs=%3 pps=%4)")
+                        .arg(factor, 0, 'f', 2).arg(anchorT, 0, 'f', 1)
+                        .arg(m_viewStart, 0, 'f', 1).arg(m_pps, 0, 'f', 1));
         animateZoomTo(m_pps * factor, anchorT);
     } else if (delta.y() != 0) {
         m_vbar->setValue(m_vbar->value() - delta.y());

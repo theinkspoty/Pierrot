@@ -112,6 +112,12 @@ private:
     // (independentemente do PTS) para eliminar a "rebarba" duplicada que
     // o AVSEEK_FLAG_BACKWARD traz do pacote anterior ao ponto de corte.
     int m_audioSkipFrames = 0;
+    // Seek de áudio preciso: após av_seek_frame (que pode pousar MUITO antes
+    // do alvo em arquivos longos, índice esparso/MKV sem cue), os frames são
+    // descartados até atingirem este tempo (PTS), em vez da contagem cega de
+    // N frames — que não cobria a distância e fazia o áudio retomar adiantado/
+    // atrasado, teleportando o playhead do preview para trás.
+    double m_audioSeekTargetSec = -1.0;
     mutable QMutex m_audioMutex;
 
     // Imagem estática (JPEG, PNG, BMP, etc.): frame único, sem seek.

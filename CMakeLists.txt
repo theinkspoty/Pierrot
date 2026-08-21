@@ -37,6 +37,7 @@ set(SOURCES
     src/ui/MediaPoolWidget.cpp
     src/ui/TimelineWidget.cpp
     src/ui/PreviewWidget.cpp
+    src/ui/TlLog.cpp
     src/ui/PancropWidget.cpp
     src/ui/ExportDialog.cpp
     src/ui/ProjectSettingsDialog.cpp

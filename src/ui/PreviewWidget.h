@@ -8,6 +8,7 @@
 #include <QWidget>
 #include <QRect>
 #include <QMutex>
+#include <atomic>
 #include <QElapsedTimer>
 #include <QHash>
 #include <QImage>
@@ -96,6 +97,20 @@ private:
     // longas. m_audioAnchor converte processedUSecs() -> tempo do projeto.
     double m_audioAnchor = 0.0;
     bool m_audioClockOn = false;
+    // Última leitura bruta do relógio do sink. Serve para detectar underrun:
+    // quando processedUSecs() congela (decoder de áudio reabrindo/seek lento em
+    // arquivos grandes), a correção A/V NÃO pode puxar o vídeo para trás — é
+    // exatamente isso que fazia a agulha "voltar ao início" ao clicar na
+    // timeline durante a reprodução.
+    double m_audioLastRaw = -1.0;
+    // m_clock.elapsed() registrado na última ancoragem do relógio de áudio.
+    // Dá um período de graça após seek/loop: nesse intervalo o desvio ainda é
+    // resíduo da troca de posição, não drift real — corrigir nele é o que
+    // teleportava a agulha para trás em arquivos longos.
+    qint64 m_lastAnchorClockMs = -1;
+    // Geração do sink de áudio: invalida a criação async pendente quando o
+    // stopAudio() roda no meio (evita sink órfão tocando após parar).
+    std::atomic<int> m_audioGen{0};
     qint64 m_currentFrameIndex = -1;
     bool m_playing = true;
     QPushButton* m_playBtn = nullptr;
