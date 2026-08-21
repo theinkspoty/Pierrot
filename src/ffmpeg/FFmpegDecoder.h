@@ -108,6 +108,10 @@ private:
     int m_audioStream = -1;
     int m_audioOutRate = 48000;
     int m_audioOutCh = 2;
+    // Após seekAudio(), descarta os primeiros N frames decodificados
+    // (independentemente do PTS) para eliminar a "rebarba" duplicada que
+    // o AVSEEK_FLAG_BACKWARD traz do pacote anterior ao ponto de corte.
+    int m_audioSkipFrames = 0;
     mutable QMutex m_audioMutex;
 
     // Imagem estática (JPEG, PNG, BMP, etc.): frame único, sem seek.

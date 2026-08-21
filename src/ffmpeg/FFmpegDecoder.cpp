@@ -18,6 +18,7 @@ extern "C" {
 #include <cmath>
 #include <cfloat>
 #include <cstring>
+#include <algorithm>
 #include <QDebug>
 #include <QFileInfo>
 #include <QSet>
@@ -539,6 +540,7 @@ void FFmpegDecoder::freeAllLocked() {
     m_stream = -1;
     m_isImage = false;
     m_audioStream = -1;
+    m_audioSkipFrames = 0;
     m_source.clear();
     m_lastPtsSec = -1.0;
     m_swsSrcW = m_swsSrcH = 0;
@@ -928,6 +930,9 @@ void FFmpegDecoder::seekAudio(double seconds) {
         AVRational{1, 1000000}, ast->time_base);
     av_seek_frame(afmt, m_audioStream, target, AVSEEK_FLAG_BACKWARD);
     avcodec_flush_buffers(acc);
+    if (m_swr) swr_init(static_cast<SwrContext*>(m_swr));
+    m_audioSkipFrames = 30;
+    qDebug() << "[audio] seekAudio: skipFrames=30" << "stream=" << m_audioStream << "seconds=" << seconds;
 }
 
 int FFmpegDecoder::decodeAudio(void* outBuf, int maxBytes) {
@@ -938,6 +943,7 @@ int FFmpegDecoder::decodeAudio(void* outBuf, int maxBytes) {
     AVFormatContext* afmt = static_cast<AVFormatContext*>(m_aCtx);
     AVCodecContext* acc = static_cast<AVCodecContext*>(m_aCodec);
     SwrContext* swr = static_cast<SwrContext*>(m_swr);
+    const AVStream* ast = afmt->streams[m_audioStream];
 
     const int bytesPerSample = 2 * m_audioOutCh; // S16 interleaved
     uint8_t* out = static_cast<uint8_t*>(outBuf);
@@ -948,6 +954,8 @@ int FFmpegDecoder::decodeAudio(void* outBuf, int maxBytes) {
     av_frame_unref(m_audioFrame);
 
     while (produced < maxBytes) {
+        if (m_audioSkipFrames > 0 && produced == 0)
+            qDebug() << "[audio] decodeAudio: entrou no loop com skipFrames=" << m_audioSkipFrames;
         const int recv = avcodec_receive_frame(acc, m_audioFrame);
         if (recv == AVERROR(EAGAIN)) {
             // Precisa de mais pacotes (ou flush no fim do arquivo).
@@ -977,6 +985,14 @@ int FFmpegDecoder::decodeAudio(void* outBuf, int maxBytes) {
             break;
         }
         if (recv < 0) break;
+
+        // Após seek, descarta N frames inteiros sem consultar PTS.
+        if (m_audioSkipFrames > 0) {
+            qDebug() << "[audio] decodeAudio: skipFrame restantes=" << m_audioSkipFrames - 1;
+            m_audioSkipFrames--;
+            av_frame_unref(m_audioFrame);
+            continue;
+        }
 
         const int cap = (maxBytes - produced) / bytesPerSample;
         if (cap <= 0) break;
