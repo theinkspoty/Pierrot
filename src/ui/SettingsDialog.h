@@ -47,6 +47,9 @@ public:
 
     // Avisa (uma vez por sessão) quando importa arquivos MKV experimentais.
     static void warnMkvIfNeeded(QWidget* parent, const QStringList& files);
+    // Avisa (uma vez por sessão) quando importa mídia 4K ou superior.
+    static bool warn4kEnabled();
+    static void warn4kIfNeeded(QWidget* parent, bool has4k);
 protected:
     void accept() override;
     bool eventFilter(QObject* o, QEvent* e) override;

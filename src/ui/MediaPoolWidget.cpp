@@ -586,6 +586,7 @@ void MediaPoolWidget::importPaths(const QStringList& files) {
         int added = 0;
         int invalid = 0;
         QStringList imported;
+        bool has4k = false;
         for (const ProbeResult& r : results) {
             const FFmpegMediaInfo& info = r.info;
             if (!info.hasVideo && !info.hasAudio) {
@@ -594,6 +595,11 @@ void MediaPoolWidget::importPaths(const QStringList& files) {
                                      tr("Não foi possível ler o arquivo:\n%1").arg(r.path));
                 continue;
             }
+            // 4K+ em VÍDEO (fotos grandes são decodificadas uma vez e ficam
+            // em cache — não engasgam o preview).
+            if (info.hasVideo && info.duration > 0.0
+                && qMax(info.width, info.height) >= 3840)
+                has4k = true;
             MediaItem m;
             m.id = newId();
             m.filePath = r.path;
@@ -610,6 +616,7 @@ void MediaPoolWidget::importPaths(const QStringList& files) {
             ++added;
         }
         SettingsDialog::warnMkvIfNeeded(this, imported);
+        SettingsDialog::warn4kIfNeeded(this, has4k);
         if (added > 0) {
             refresh();
             emit mediaAdded(QString());

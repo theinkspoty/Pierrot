@@ -84,6 +84,10 @@ private:
     QHash<QPair<QString, double>, quint64> m_thumbsPending;
     // Pedidos de thumb adiados durante a reprodução (sem custo na UI).
     QSet<QPair<QString, double>> m_thumbsDeferred;
+    // Pedidos de pico adiados durante a reprodução: a varredura completa do
+    // áudio disputa disco/CPU com o decode em tempo real e causa stutter no
+    // primeiro play de um projeto recém-carregado (picos ainda não em cache).
+    QSet<QPair<QString, int>> m_peaksDeferred;
     bool m_playbackActive = false;
     quint64 m_epoch = 0; // troca de projeto: descarta resultados enfileirados
 

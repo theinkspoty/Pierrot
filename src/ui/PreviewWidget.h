@@ -58,6 +58,9 @@ protected:
     void resizeEvent(QResizeEvent*) override;
 private:
     void tick();
+    void applySeek(double t);        // caminho comum do seek (não mexe nos relógios)
+    double audioClockSec() const;    // segundos consumidos pelo sink de áudio (-1 = sem áudio)
+    void anchorAudioClock(double t); // mapeia o relógio do áudio para o tempo do projeto
     void drawEmptyMonitor(QPainter& p, const QRect& canvas);
     void drawClipText(QPainter& p, const QRect& canvas, const Clip* clip, double k);
     void updateFrame();
@@ -88,6 +91,11 @@ private:
     QTimer* m_timer = nullptr;
     QElapsedTimer m_clock;
     double m_playStart = 0.0;
+    // Sincronismo A/V: o playhead segue o relógio do sink de áudio (o que se
+    // ouve), evitando o desvio acumulado do relógio de parede em reproduções
+    // longas. m_audioAnchor converte processedUSecs() -> tempo do projeto.
+    double m_audioAnchor = 0.0;
+    bool m_audioClockOn = false;
     qint64 m_currentFrameIndex = -1;
     bool m_playing = true;
     QPushButton* m_playBtn = nullptr;

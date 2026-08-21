@@ -112,6 +112,9 @@ MediaCache::MediaCache() {
     connect(m_peaksThread, &QThread::finished, m_peaksWorker, &QObject::deleteLater);
     connect(m_peaksWorker, &CacheWorker::peaksReady,
             this, &MediaCache::onPeaksReady, Qt::QueuedConnection);
+    // Prioridade baixa: cache é conteúdo estático; nunca deve disputar com o
+    // decode em tempo real do preview.
+    m_peaksThread->setPriority(QThread::LowPriority);
     m_peaksThread->start();
 
     m_thumbsThread = new QThread(this);
@@ -120,6 +123,7 @@ MediaCache::MediaCache() {
     connect(m_thumbsThread, &QThread::finished, m_thumbsWorker, &QObject::deleteLater);
     connect(m_thumbsWorker, &CacheWorker::thumbReady,
             this, &MediaCache::onThumbReady, Qt::QueuedConnection);
+    m_thumbsThread->setPriority(QThread::LowPriority);
     m_thumbsThread->start();
 }
 
@@ -158,6 +162,14 @@ void MediaCache::requestPeaks(const QString& filePath, int streamIndex) {
     const auto key = qMakePair(filePath, streamIndex);
     if (m_peaksPending.size() >= kMaxPeakPending) return;
     if (m_peaks.contains(key) || m_peaksPending.contains(key)) return;
+    if (m_playbackActive) {
+        // Reproduzindo: a varredura de picos lê o arquivo inteiro e disputa
+        // E/S com o decode em tempo real (stutter no primeiro play após abrir
+        // um projeto). Adia como os thumbs; liberado ao pausar.
+        if (m_peaksDeferred.size() >= kMaxPeakPending) return;
+        m_peaksDeferred.insert(key);
+        return;
+    }
     const bool wasBusy = busy();
     m_peaksPending.insert(key, m_epoch);
     QMetaObject::invokeMethod(m_peaksWorker, "generatePeaks", Qt::QueuedConnection,
@@ -243,6 +255,18 @@ void MediaCache::setPlaybackActive(bool active) {
         QMetaObject::invokeMethod(m_thumbsWorker, "generateThumbs", Qt::QueuedConnection,
                                   Q_ARG(QString, it.key()), Q_ARG(QList<double>, missing));
     }
+    // Picos adiados durante a reprodução: enfileira agora que a CPU/E/S estão
+    // livres. Um invoke por arquivo/stream (a varredura é por passada única).
+    for (auto it = m_peaksDeferred.constBegin(); it != m_peaksDeferred.constEnd(); ++it) {
+        if (m_peaksPending.size() >= kMaxPeakPending) break;
+        const auto key = *it;
+        if (m_peaks.contains(key) || m_peaksPending.contains(key)) continue;
+        m_peaksPending.insert(key, m_epoch);
+        QMetaObject::invokeMethod(m_peaksWorker, "generatePeaks", Qt::QueuedConnection,
+                                  Q_ARG(QString, key.first), Q_ARG(int, key.second),
+                                  Q_ARG(int, kPeaksPerSecond));
+    }
+    m_peaksDeferred.clear();
     if (!wasBusy && busy()) emit busyChanged(true);
 }
 
@@ -257,6 +281,7 @@ void MediaCache::clear() {
     m_peaksPending.clear();
     m_thumbsPending.clear();
     m_thumbsDeferred.clear();
+    m_peaksDeferred.clear();
     if (wasBusy) emit busyChanged(false);
 }
 

@@ -1374,6 +1374,21 @@ void PreviewWidget::drawEmptyMonitor(QPainter& p, const QRect& canvas) {
 void PreviewWidget::seek(double t) {
     // Snap ao frame do projeto (playhead sempre em frame cheio).
     const double fps = projFps(m_project);
+    const double snapped = (fps > 0.0) ? std::round(t * fps) / fps : std::max(0.0, t);
+    if (m_playing) {
+        // Scrub durante a reprodução: reancora os dois relógios na nova
+        // posição e reposiciona os decoders de áudio (antes o tick ignorava
+        // o salto e o playhead voltava na próxima passada).
+        m_playStart = snapped;
+        m_clock.restart();
+        anchorAudioClock(snapped);
+        updateMixAudio(snapped, true);
+    }
+    applySeek(snapped);
+}
+
+void PreviewWidget::applySeek(double t) {
+    const double fps = projFps(m_project);
     m_playhead = (fps > 0.0) ? std::round(t * fps) / fps : std::max(0.0, t);
     if (!m_playing) {
         m_currentFrameIndex = std::llround(m_playhead * fps);
@@ -1381,6 +1396,24 @@ void PreviewWidget::seek(double t) {
     updateFrame();
     update();
     emit playheadMoved(m_playhead);
+}
+
+// Segundos de áudio efetivamente consumidos pelo dispositivo de saída desde
+// o start() do sink — o "relógio do decoder". -1 quando não há sink ativo.
+double PreviewWidget::audioClockSec() const {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+    if (m_audioSink) return m_audioSink->processedUSecs() / 1.0e6;
+#else
+    if (m_audioOut) return m_audioOut->processedUSecs() / 1.0e6;
+#endif
+    return -1.0;
+}
+
+void PreviewWidget::anchorAudioClock(double t) {
+    const double raw = audioClockSec();
+    if (raw < 0.0) { m_audioClockOn = false; return; }
+    m_audioAnchor = t - raw;
+    m_audioClockOn = true;
 }
 
 void PreviewWidget::togglePlay() {
@@ -1398,6 +1431,7 @@ void PreviewWidget::togglePlay() {
     m_currentFrameIndex = std::llround(m_playhead * fps);
     m_playStart = m_playhead;
     m_clock.start();
+    m_audioClockOn = false; // sink novo: reancora no primeiro tick
     m_playing = true;
     // Dispara em metade do período do frame: o tick calcula o frame alvo pelo
     // clock de alta precisão e avança exatamente 1 frame por vez. Com timer
@@ -1418,6 +1452,7 @@ void PreviewWidget::playFrom(double t) {
     m_currentFrameIndex = std::llround(m_playhead * fps);
     m_playStart = m_playhead;
     m_clock.start();
+    m_audioClockOn = false; // sink novo: reancora no primeiro tick
     m_playing = true;
     m_timer->setInterval(fps > 0.0 ? qBound(8, (int)std::lround(1000.0 / fps / 2.0), 40) : 33);
     m_timer->start();
@@ -1474,6 +1509,7 @@ void PreviewWidget::stopPlayback() {
     m_timer->stop();
     m_playBtn->setText(tr("Reproduzir"));
     m_currentFrameIndex = -1;
+    m_audioClockOn = false;
     stopAudio();
     {
         QMutexLocker l(&m_frameMutex);
@@ -1487,9 +1523,32 @@ void PreviewWidget::tick() {
     const double fps = projFps(m_project);
     const double dur = m_project->duration();
 
-    // Determina o índice de frame com base no clock de alta precisão
+    // Tempo esperado pelo relógio de parede…
     const double elapsed = m_clock.elapsed() / 1000.0;
-    const qint64 targetFrame = std::llround((m_playStart + elapsed) * fps);
+    double t = m_playStart + elapsed;
+
+    // …corrigido pelo relógio do áudio (o que se ouve de verdade). Em
+    // reproduções longas o relógio de parede desvia do consumo real do sink;
+    // seguir o áudio evita o acúmulo de dessincronia. A correção é suave
+    // (slew) para não tremer a imagem; desvio grande (underrun longo) faz a
+    // imagem saltar de volta para o áudio.
+    const double raw = audioClockSec();
+    if (raw >= 0.0) {
+        if (!m_audioClockOn) anchorAudioClock(t);
+        if (m_audioClockOn) {
+            const double diff = (raw + m_audioAnchor) - t;
+            if (std::fabs(diff) > 0.30) {
+                m_playStart = raw + m_audioAnchor;
+                m_clock.restart();
+                t = m_playStart;
+            } else {
+                t += qBound(-0.0025, diff * 0.12, 0.0025);
+            }
+        }
+    }
+
+    // Determina o índice de frame com base no clock de alta precisão
+    const qint64 targetFrame = std::llround(t * fps);
 
     // Se o timer acordou ligeiramente antes de 1 frame inteiro passar, não repete nem duplica o frame
     if (targetFrame <= m_currentFrameIndex) {
@@ -1497,22 +1556,23 @@ void PreviewWidget::tick() {
     }
 
     m_currentFrameIndex = targetFrame;
-    const double t = (fps > 0.0) ? (targetFrame / fps) : (m_playStart + elapsed);
+    if (fps <= 0.0) t = m_playStart + elapsed;
 
     if (m_loopEnabled && m_loopOut > m_loopIn && t >= m_loopOut - 1e-9) {
         m_playStart = m_loopIn;
         m_currentFrameIndex = std::llround(m_loopIn * fps);
         m_clock.restart();
-        seek(m_loopIn);
+        anchorAudioClock(m_loopIn); // o sink continua rodando: compensa no anchor
+        applySeek(m_loopIn);
         updateMixAudio(m_loopIn, true);
         return;
     }
     if (t >= dur) {
-        seek(dur);
+        applySeek(dur);
         stopPlayback();
         return;
     }
-    seek(t);
+    applySeek(t);
     updatePrefetch();
     // Mixer acompanha o playhead: volumes/fades e troca de clipes acontecem
     // aqui, sem reiniciar o sink a cada transição.
@@ -1975,10 +2035,16 @@ void PreviewWidget::updateFrame() {
 // (scrub não empilha — a fila só guarda pedidos ainda não enviados).
 void PreviewWidget::requestFrame(const QString& clipId, const QString& path, double t, int maxW) {
     QMutexLocker l(&m_frameMutex);
-    for (const FrameReq& r : m_reqQueue)
-        if (r.clipId == clipId && r.path == path
-            && std::fabs(r.t - t) < 1e-6 && r.maxW == maxW)
-            return; // já enfileirado
+    // Coalesce: durante o scrub (e na reprodução) chegam vários alvos para o
+    // mesmo clipe; só o mais recente interessa — o worker é serial e decodificar
+    // posições intermediárias só atrasa a chegada ao alvo final.
+    for (FrameReq& r : m_reqQueue)
+        if (r.clipId == clipId && r.path == path && r.maxW == maxW) {
+            if (std::fabs(r.t - t) < 1e-6) return; // já enfileirado igual
+            r.t = t;
+            r.dt = 1.0 / projFps(m_project);
+            return;
+        }
     m_reqQueue.append({clipId, path, t, 1.0 / projFps(m_project), maxW});
     kickFrameWorker();
 }

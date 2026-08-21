@@ -79,6 +79,10 @@ bool SettingsDialog::mkvWarningEnabled() {
     return QSettings().value("mkvWarning", true).toBool();
 }
 
+bool SettingsDialog::warn4kEnabled() {
+    return QSettings().value("warn4k", true).toBool();
+}
+
 int SettingsDialog::maxDecodeWidth() {
     return QSettings().value("maxDecodeWidth", 1920).toInt();
 }
@@ -501,4 +505,14 @@ void SettingsDialog::warnMkvIfNeeded(QWidget* parent, const QStringList& files) 
             return;
         }
     }
+}
+
+void SettingsDialog::warn4kIfNeeded(QWidget* parent, bool has4k) {
+    static bool warnedOnce = false;
+    if (!has4k || warnedOnce || !warn4kEnabled()) return;
+    warnedOnce = true;
+    QMessageBox::information(parent, tr("Mídia 4K detectada"),
+        tr("O projeto contém mídia em 4K ou superior. O preview pode engasgar "
+           "nesses arquivos — reduza a qualidade do preview (botão no monitor) "
+           "para aliviar a reprodução."));
 }
