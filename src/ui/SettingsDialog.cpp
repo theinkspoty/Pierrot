@@ -8,6 +8,7 @@
 #include <QCheckBox>
 #include <QGroupBox>
 #include <QLabel>
+#include <QFont>
 #include <QSpinBox>
 #include <QDoubleSpinBox>
 #include <QComboBox>
@@ -18,6 +19,7 @@
 #include <QMessageBox>
 #include <QSettings>
 #include <QFileInfo>
+#include <QDir>
 #include <QListWidget>
 #include <QStackedWidget>
 #include <QTreeWidget>
@@ -28,6 +30,7 @@
 #include <QMouseEvent>
 #include <QKeySequence>
 #include <QFileDialog>
+#include <QLineEdit>
 
 // Presets de qualidade do preview: rótulo amigável + largura máxima de
 // decodificação. Menor = menos RAM/CPU no preview.
@@ -96,6 +99,14 @@ QStringList SettingsDialog::ofxSearchPaths() {
     return QSettings().value("ofxSearchPaths").toStringList();
 }
 
+bool SettingsDialog::exportDefaultDirEnabled() {
+    return QSettings().value("exportDefaultDirEnabled", false).toBool();
+}
+
+QString SettingsDialog::exportDefaultDir() {
+    return QSettings().value("exportDefaultDir").toString();
+}
+
 SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
     setWindowTitle(tr("Configurações"));
     setMinimumSize(860, 600);
@@ -135,6 +146,8 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
     m_catList->setFixedWidth(170);
     m_catList->addItem(tr("Geral"));
     m_catList->addItem(tr("Qualidade e Timeline"));
+    m_catList->addItem(tr("Renderizar"));
+    m_catList->addItem(tr("Efeitos"));
     m_catList->addItem(tr("Plugins OFX"));
     m_catList->addItem(tr("Atalhos do teclado"));
     m_catList->setToolTip(tr("Escolha uma categoria"));
@@ -200,6 +213,87 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
         tlLay->addRow(tlHint);
         v->addWidget(perfBox);
         v->addWidget(tlBox);
+        v->addStretch(1);
+        m_stack->addWidget(page);
+    }
+
+    // Página: Renderizar (pasta padrão de exportação).
+    {
+        auto* page = new QWidget;
+        auto* v = new QVBoxLayout(page);
+        v->setContentsMargins(4, 4, 4, 4);
+
+        m_exportDirEnabled = new QCheckBox(tr("Usar pasta padrão ao exportar"), page);
+        m_exportDirEnabled->setChecked(
+            QSettings().value("exportDefaultDirEnabled", false).toBool());
+
+        m_exportDirEdit = new QLineEdit(page);
+        m_exportDirEdit->setPlaceholderText(QDir::homePath());
+        m_exportDirEdit->setText(QSettings().value("exportDefaultDir").toString());
+        m_exportDirEdit->setEnabled(m_exportDirEnabled->isChecked());
+
+        auto* browseBtn = new QPushButton(tr("…"), page);
+        browseBtn->setFixedWidth(36);
+        connect(browseBtn, &QPushButton::clicked, this, [this]() {
+            const QString dir = QFileDialog::getExistingDirectory(
+                this, tr("Selecionar pasta padrão de render"),
+                m_exportDirEdit->text().isEmpty() ? QDir::homePath() : m_exportDirEdit->text());
+            if (!dir.isEmpty()) m_exportDirEdit->setText(dir);
+        });
+
+        connect(m_exportDirEnabled, &QCheckBox::toggled,
+                m_exportDirEdit, &QLineEdit::setEnabled);
+
+        auto* row = new QHBoxLayout;
+        row->setContentsMargins(0, 0, 0, 0);
+        row->addWidget(m_exportDirEdit, 1);
+        row->addWidget(browseBtn);
+
+        auto* exportBox = new QGroupBox(tr("Pasta padrão de renderização"), page);
+        auto* form = new QFormLayout(exportBox);
+        form->addRow(m_exportDirEnabled);
+        form->addRow(tr("Pasta:"), row);
+
+        auto* hint = new QLabel(tr("Quando ativado, o diálogo de exportação abre "
+                                   "nessa pasta em vez da sua pasta pessoal. "
+                                   "Deixe vazio para usar a pasta pessoal."), exportBox);
+        hint->setStyleSheet("color: #9a9a9a;");
+        hint->setWordWrap(true);
+        form->addRow(hint);
+
+        v->addWidget(exportBox);
+        v->addStretch(1);
+        m_stack->addWidget(page);
+    }
+
+    // Página: Efeitos (aviso de status de desenvolvimento).
+    {
+        auto* page = new QWidget;
+        auto* v = new QVBoxLayout(page);
+        v->setContentsMargins(4, 4, 4, 4);
+
+        auto* fxBox = new QGroupBox(tr("Efeitos de vídeo"), page);
+        auto* fxLay = new QVBoxLayout(fxBox);
+
+        auto* warn = new QLabel(tr("Os efeitos de vídeo estão em fase de criação e "
+                                   "ainda não estão bons para uso."), fxBox);
+        warn->setWordWrap(true);
+        QFont warnFont = warn->font();
+        warnFont.setBold(true);
+        warn->setFont(warnFont);
+        fxLay->addWidget(warn);
+
+        auto* hint = new QLabel(tr("Esse recurso está sendo desenvolvido e pode "
+                                   "apresentar problemas de performance ou "
+                                   "resultados incorretos no preview e na "
+                                   "exportação. Recomendamos acompanhar as "
+                                   "próximas versões do Pierrot antes de usá-lo "
+                                   "em projetos reais."), fxBox);
+        hint->setStyleSheet("color: #9a9a9a;");
+        hint->setWordWrap(true);
+        fxLay->addWidget(hint);
+
+        v->addWidget(fxBox);
         v->addStretch(1);
         m_stack->addWidget(page);
     }
@@ -388,6 +482,8 @@ void SettingsDialog::accept() {
     for (int i = 0; i < m_ofxPaths->count(); ++i)
         ofxPaths.append(m_ofxPaths->item(i)->text());
     s.setValue("ofxSearchPaths", ofxPaths);
+    s.setValue("exportDefaultDirEnabled", m_exportDirEnabled->isChecked());
+    s.setValue("exportDefaultDir", m_exportDirEdit->text().trimmed());
     for (auto it = m_shortcutMap.constBegin(); it != m_shortcutMap.constEnd(); ++it)
         s.setValue(QString("shortcuts/%1").arg(it.key()), it.value());
     QDialog::accept();

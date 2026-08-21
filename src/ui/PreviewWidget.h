@@ -123,6 +123,8 @@ private:
     double m_clipLainkaOpacity = 100.0;
     int m_clipLainkaAntialias = 1;
     QString m_clipLainkaId;
+    double m_lainkaQuantizedTime = -1.0; // tempo quantizado para efeitos LAINKA
+    QImage m_lainkaPrevFrame; // para onion skin (ghosting)
 
     // ── MotiOn cached state ───────────────────────────────────────────
     bool m_clipMotionEnabled = false;

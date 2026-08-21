@@ -140,6 +140,13 @@ void ExpressWidget::addEffect(const QString& effectId)
     // Aplica o efeito ao clipe se for nativo e ainda não aplicado.
     if (effectId == "pierrot_lainka" && !m_currentClip->lainkaEnabled) {
         m_currentClip->lainkaEnabled = true;
+        m_currentClip->lainkaTargetFps = 8;
+        m_currentClip->lainkaJitterPos = 15.0;
+        m_currentClip->lainkaFlicker = 10.0;
+        m_currentClip->lainkaWarpAmount = 30.0;
+        m_currentClip->lainkaDustAmount = 15.0;
+        m_currentClip->lainkaScratchAmount = 10.0;
+        m_currentClip->lainkaOpacity = 100.0;
         emit modified();
     } else if (effectId == "pierrot_motion" && !m_currentClip->motionEnabled) {
         m_currentClip->motionEnabled = true;
@@ -386,45 +393,20 @@ void ExpressWidget::createBuiltInTab(const QString& effectId)
             form->addRow(label, row);
         };
 
-        makeSlider(tr("Frame Step:"), 1, 10, c ? c->lainkaSkip : 2,
-            [this](int v) { applyBuiltInValue("lainkaSkip", v); });
-        makeSlider(tr("Tremida Posição:"), 0, 100, c ? (int)llround(c->lainkaJitterPos) : 0,
-            [this](int v) { applyBuiltInValue("lainkaJitterPos", v); });
-        makeSlider(tr("Tremida Rotação:"), 0, 100, c ? (int)llround(c->lainkaJitterRot) : 0,
-            [this](int v) { applyBuiltInValue("lainkaJitterRot", v); });
-        makeSlider(tr("Tremida Escala:"), 0, 100, c ? (int)llround(c->lainkaJitterScale) : 0,
-            [this](int v) { applyBuiltInValue("lainkaJitterScale", v); });
-        makeSlider(tr("Flicker:"), 0, 100, c ? (int)llround(c->lainkaFlicker) : 0,
-            [this](int v) { applyBuiltInValue("lainkaFlicker", v); }, 1.0, "%");
-        makeSlider(tr("Flicker Speed:"), 0, 100, c ? (int)llround(c->lainkaFlickerSpeed) : 50,
-            [this](int v) { applyBuiltInValue("lainkaFlickerSpeed", v); });
-        makeSlider(tr("Warp Distortion:"), 0, 100, c ? (int)llround(c->lainkaWarpAmount) : 0,
-            [this](int v) { applyBuiltInValue("lainkaWarpAmount", v); });
-        makeSlider(tr("Warp Speed:"), 0, 100, c ? (int)llround(c->lainkaWarpSpeed) : 50,
-            [this](int v) { applyBuiltInValue("lainkaWarpSpeed", v); });
-        makeSlider(tr("Warp Grid:"), 4, 64, c ? c->lainkaWarpGrid : 8,
-            [this](int v) { applyBuiltInValue("lainkaWarpGrid", v); });
-        makeSlider(tr("Onion Skin:"), 0, 100, c ? (int)llround(c->lainkaOnionSkin) : 0,
-            [this](int v) { applyBuiltInValue("lainkaOnionSkin", v); });
-        makeSlider(tr("Dust & Dirt:"), 0, 100, c ? (int)llround(c->lainkaDustAmount) : 0,
-            [this](int v) { applyBuiltInValue("lainkaDustAmount", v); });
-        makeSlider(tr("Scratches:"), 0, 100, c ? (int)llround(c->lainkaScratchAmount) : 0,
-            [this](int v) { applyBuiltInValue("lainkaScratchAmount", v); });
         makeSlider(tr("Target FPS:"), 1, 30, c ? c->lainkaTargetFps : 8,
             [this](int v) { applyBuiltInValue("lainkaTargetFps", v); });
-        makeSlider(tr("Motion Blur:"), 0, 100, c ? (int)llround(c->lainkaMotionBlur) : 0,
-            [this](int v) { applyBuiltInValue("lainkaMotionBlur", v); });
+        makeSlider(tr("Tremida:"), 0, 100, c ? (int)llround(c->lainkaJitterPos) : 15,
+            [this](int v) { applyBuiltInValue("lainkaJitterPos", v); });
+        makeSlider(tr("Flicker:"), 0, 100, c ? (int)llround(c->lainkaFlicker) : 10,
+            [this](int v) { applyBuiltInValue("lainkaFlicker", v); }, 1.0, "%");
+        makeSlider(tr("Papel (warp):"), 0, 100, c ? (int)llround(c->lainkaWarpAmount) : 30,
+            [this](int v) { applyBuiltInValue("lainkaWarpAmount", v); });
+        makeSlider(tr("Pó:"), 0, 100, c ? (int)llround(c->lainkaDustAmount) : 15,
+            [this](int v) { applyBuiltInValue("lainkaDustAmount", v); });
+        makeSlider(tr("Arranhões:"), 0, 100, c ? (int)llround(c->lainkaScratchAmount) : 10,
+            [this](int v) { applyBuiltInValue("lainkaScratchAmount", v); });
         makeSlider(tr("Opacidade:"), 0, 100, c ? (int)llround(c->lainkaOpacity) : 100,
             [this](int v) { applyBuiltInValue("lainkaOpacity", v); }, 1.0, "%");
-
-        auto* aaCombo = new QComboBox;
-        aaCombo->addItem(tr("Off"));
-        aaCombo->addItem(tr("On"));
-        aaCombo->addItem(tr("High Quality"));
-        aaCombo->setCurrentIndex(c ? c->lainkaAntialias : 1);
-        connect(aaCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-            [this](int v) { applyBuiltInValue("lainkaAntialias", v); });
-        form->addRow(tr("Anti-Aliasing:"), aaCombo);
     }
     else if (effectId == "pierrot_motion") {
         auto* chk = new QCheckBox(tr("Ativar MotiOn"));

@@ -18,9 +18,10 @@
 #include <QMenu>
 #include <QAction>
 #include <QLabel>
-#include <QLabel>
 #include <QComboBox>
 #include <QSignalBlocker>
+#include <QPointer>
+#include <QtConcurrent/QtConcurrent>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QIODevice>
@@ -586,13 +587,59 @@ static inline double lainkaQuantizeTime(double srcT, int skip, double fps) {
     return q + interval * 0.5; // centro do intervalo (evita flicker na borda)
 }
 
+// ── Image Pool: reutiliza QImages alocadas para zero alloc no hot path ──────
+namespace ImgPool {
+    struct Pool {
+        QImage bufs[4];
+        int count = 0;
+    };
+
+    static Pool& poolFor(QImage::Format fmt, int /*w*/, int /*h*/) {
+        static Pool p32p; // ARGB32_Premultiplied (dominante no pipeline)
+        static Pool g8;   // Grayscale8 (motion blur block matching)
+        if (fmt == QImage::Format_Grayscale8) return g8;
+        return p32p;
+    }
+
+    // Obtém um buffer reutilizável do pool. Se nenhum disponível, cria novo.
+    // NÃO limpa o conteúdo — o caller vai preencher todos os pixels.
+    static QImage get(QImage::Format fmt, int w, int h) {
+        Pool& p = poolFor(fmt, w, h);
+        for (int i = 0; i < p.count; ++i) {
+            if (p.bufs[i].width() == w && p.bufs[i].height() == h
+                && p.bufs[i].format() == fmt) {
+                QImage img = p.bufs[i];
+                // Remove do pool (último assume a posição)
+                p.bufs[i] = p.bufs[--p.count];
+                return img;
+            }
+        }
+        return QImage(w, h, fmt);
+    }
+
+    // Devolve um buffer ao pool para reutilização futura.
+    static void release(QImage& img) {
+        if (img.isNull()) return;
+        Pool& p = poolFor(img.format(), img.width(), img.height());
+        if (p.count < 4) {
+            p.bufs[p.count++] = img;
+        }
+        img = QImage();
+    }
+
+    // Vetores reutilizáveis para warp grid (evita alloc por frame).
+    static QVector<double>& warpDx() { static QVector<double> v; return v; }
+    static QVector<double>& warpDy() { static QVector<double> v; return v; }
+}
+
 // Aplica todos os efeitos LAINKA a um quadro.
 static QImage lainkaApplyFx(const QImage& src, const QString& clipId, double t,
                             int skip, double jitterPos, double jitterRot,
                             double jitterScale, double flicker, double flickerSpeed,
                             double warpAmount, double warpSpeed, int warpGrid,
                             double onionSkin, double dustAmount, double scratchAmount,
-                            double motionBlur, double opacity, int targetFps) {
+                            double motionBlur, double opacity, int targetFps,
+                            int antialias, const QImage& prevFrame) {
     if (src.isNull() || src.width() < 2 || src.height() < 2) return src;
     if (jitterPos < 1e-6 && jitterRot < 1e-6 && jitterScale < 1e-6 &&
         flicker < 1e-6 && warpAmount < 1e-6 && dustAmount < 1e-6 &&
@@ -601,6 +648,8 @@ static QImage lainkaApplyFx(const QImage& src, const QString& clipId, double t,
         return src;
 
     const int sw = src.width(), sh = src.height();
+    const bool smooth = antialias >= 1;
+    const bool highQuality = antialias >= 2;
     double tScaled = t * (flickerSpeed / 50.0);
 
     // 1) Position jitter
@@ -608,7 +657,7 @@ static QImage lainkaApplyFx(const QImage& src, const QString& clipId, double t,
     if (jitterPos > 1e-6) {
         const double nx = ((lainkaHashN(clipId, t, 0) & 0xFFFF) / 65535.0) * 2.0 - 1.0;
         const double ny = ((lainkaHashN(clipId, t, 1) & 0xFFFF) / 65535.0) * 2.0 - 1.0;
-        const int maxPx = qMax(1, (int)std::lround(jitterPos * 20.0));
+        const int maxPx = qMax(1, (int)std::lround(jitterPos * 0.08));
         const int dx = (int)std::lround(nx * maxPx);
         const int dy = (int)std::lround(ny * maxPx);
         if (dx != 0 || dy != 0) {
@@ -622,18 +671,19 @@ static QImage lainkaApplyFx(const QImage& src, const QString& clipId, double t,
     // 2) Rotation jitter
     if (jitterRot > 1e-6) {
         const double n = ((lainkaHashN(clipId, tScaled, 2) & 0xFFFF) / 65535.0) * 2.0 - 1.0;
-        const double angle = n * jitterRot * 0.5;
+        const double angle = n * jitterRot * 0.015;
         if (std::abs(angle) > 0.01) {
             QTransform tf;
             tf.translate(sw / 2.0, sh / 2.0);
             tf.rotate(angle);
             tf.translate(-sw / 2.0, -sh / 2.0);
-            QImage rotated = out.transformed(tf, Qt::SmoothTransformation);
-            QImage padded(sw, sh, QImage::Format_ARGB32_Premultiplied);
+            QImage rotated = out.transformed(tf, smooth ? Qt::SmoothTransformation : Qt::FastTransformation);
+            QImage padded = ImgPool::get(QImage::Format_ARGB32_Premultiplied, sw, sh);
             padded.fill(Qt::transparent);
             QPainter pp(&padded);
             pp.drawImage((sw - rotated.width()) / 2,
                          (sh - rotated.height()) / 2, rotated);
+            ImgPool::release(out);
             out = padded;
         }
     }
@@ -641,16 +691,17 @@ static QImage lainkaApplyFx(const QImage& src, const QString& clipId, double t,
     // 3) Scale jitter
     if (jitterScale > 1e-6) {
         const double n = ((lainkaHashN(clipId, tScaled, 3) & 0xFFFF) / 65535.0) * 2.0 - 1.0;
-        const double factor = 1.0 + n * jitterScale * 0.02;
+        const double factor = 1.0 + n * jitterScale * 0.001;
         if (std::abs(factor - 1.0) > 1e-6) {
             const int nw = qMax(1, (int)std::lround(sw * factor));
             const int nh = qMax(1, (int)std::lround(sh * factor));
             QImage scaled = out.scaled(nw, nh, Qt::IgnoreAspectRatio,
                                        Qt::SmoothTransformation);
-            QImage padded(sw, sh, QImage::Format_ARGB32_Premultiplied);
+            QImage padded = ImgPool::get(QImage::Format_ARGB32_Premultiplied, sw, sh);
             padded.fill(Qt::transparent);
             QPainter pp(&padded);
             pp.drawImage((sw - nw) / 2, (sh - nh) / 2, scaled);
+            ImgPool::release(out);
             out = padded;
         }
     }
@@ -658,7 +709,7 @@ static QImage lainkaApplyFx(const QImage& src, const QString& clipId, double t,
     // 4) Flicker (variação de brilho real via pixel)
     if (flicker > 1e-6) {
         const double n = ((lainkaHashN(clipId, tScaled, 4) & 0xFF) / 255.0);
-        const double factor = 1.0 + (n * 2.0 - 1.0) * (flicker / 100.0);
+        const double factor = 1.0 + (n * 2.0 - 1.0) * std::min(flicker / 100.0, 0.15);
         for (int y = 0; y < out.height(); ++y) {
             uchar* line = out.scanLine(y);
             for (int x = 0; x < out.width(); ++x) {
@@ -673,14 +724,16 @@ static QImage lainkaApplyFx(const QImage& src, const QString& clipId, double t,
     // 5) Warp distortion orgânico (estilo papel amassado)
     if (warpAmount > 1e-6 && warpGrid >= 2) {
         const double warpT = t * (warpSpeed / 50.0);
-        const double amp = warpAmount * 0.5;
+        const double amp = warpAmount * 0.1;
         const int cols = warpGrid + 1, rows = warpGrid + 1;
         const double cellW = (double)sw / (cols - 1);
         const double cellH = (double)sh / (rows - 1);
 
-        // Gerar campo de deslocamento com interpolação bilinear
-        QVector<double> gridDx(cols * rows);
-        QVector<double> gridDy(cols * rows);
+        QVector<double>& gridDx = ImgPool::warpDx();
+        QVector<double>& gridDy = ImgPool::warpDy();
+        const int gridSize = cols * rows;
+        gridDx.resize(gridSize);
+        gridDy.resize(gridSize);
         for (int gy = 0; gy < rows; ++gy) {
             for (int gx = 0; gx < cols; ++gx) {
                 const uint wh = lainkaHashN(clipId, warpT, gx * 1000 + gy);
@@ -689,7 +742,7 @@ static QImage lainkaApplyFx(const QImage& src, const QString& clipId, double t,
             }
         }
 
-        QImage warped(sw, sh, QImage::Format_ARGB32_Premultiplied);
+        QImage warped = ImgPool::get(QImage::Format_ARGB32_Premultiplied, sw, sh);
         warped.fill(Qt::transparent);
 
         for (int y = 0; y < sh; ++y) {
@@ -720,12 +773,13 @@ static QImage lainkaApplyFx(const QImage& src, const QString& clipId, double t,
                 warped.setPixel(x, y, px);
             }
         }
+        ImgPool::release(out);
         out = warped;
 
         // Sombras de dobra (paper creases)
         const int numFolds = 2 + (int)(warpAmount / 25.0);
         {
-            QImage creaseImg(sw, sh, QImage::Format_ARGB32_Premultiplied);
+            QImage creaseImg = ImgPool::get(QImage::Format_ARGB32_Premultiplied, sw, sh);
             creaseImg.fill(Qt::transparent);
             QPainter cp(&creaseImg);
             for (int i = 0; i < numFolds; ++i) {
@@ -752,6 +806,7 @@ static QImage lainkaApplyFx(const QImage& src, const QString& clipId, double t,
             QPainter op(&out);
             op.setCompositionMode(QPainter::CompositionMode_Multiply);
             op.drawImage(0, 0, creaseImg);
+            ImgPool::release(creaseImg);
         }
     }
 
@@ -786,31 +841,81 @@ static QImage lainkaApplyFx(const QImage& src, const QString& clipId, double t,
         }
     }
 
-    // 8) Motion blur (blur direcional leve)
-    if (motionBlur > 1e-6) {
-        const double blurR = motionBlur * 0.3;
-        if (blurR > 0.5) {
-            const double n = ((lainkaHashN(clipId, tScaled, 5) & 0xFF) / 255.0) * 2.0 - 1.0;
-            const int dx = (int)std::lround(n * blurR);
-            const int dy = (int)std::lround(((lainkaHashN(clipId, tScaled, 6) & 0xFF) / 255.0) * blurR * 0.5);
-            QImage blurred(sw, sh, QImage::Format_ARGB32_Premultiplied);
+    // 8) Motion blur baseado no movimento real entre frames
+    if (motionBlur > 1e-6 && !prevFrame.isNull()
+        && prevFrame.width() == sw && prevFrame.height() == sh) {
+        const double blurR = motionBlur * 0.05;
+        const int samples = highQuality ? 8 : (smooth ? 5 : 3);
+
+        // Block matching simplificado: compara 5x5 blocos no centro para
+        // estimar o vetor de movimento dominante.
+        const int blk = 5;
+        const int searchR = std::max(2, (int)std::lround(blurR * 4));
+        const int cx = sw / 2, cy = sh / 2;
+        const QImage curGray = out.convertToFormat(QImage::Format_Grayscale8);
+        const QImage prevGray = prevFrame.convertToFormat(QImage::Format_Grayscale8);
+
+        double bestDx = 0, bestDy = 0;
+        int bestErr = INT_MAX;
+        for (int dy = -searchR; dy <= searchR; dy += 2) {
+            for (int dx = -searchR; dx <= searchR; dx += 2) {
+                int err = 0;
+                for (int by = -blk; by <= blk; ++by) {
+                    const uchar* cur = curGray.constScanLine(cy + by);
+                    const uchar* prv = prevGray.constScanLine(cy + by + dy);
+                    for (int bx = -blk; bx <= blk; ++bx) {
+                        const int cx2 = cx + bx, px2 = cx + bx + dx;
+                        if (cx2 >= 0 && cx2 < sw && px2 >= 0 && px2 < sw)
+                            err += std::abs((int)cur[cx2] - (int)prv[px2]);
+                    }
+                }
+                if (err < bestErr) { bestErr = err; bestDx = dx; bestDy = dy; }
+            }
+        }
+
+        if (std::abs(bestDx) > 0.5 || std::abs(bestDy) > 0.5) {
+            const double scale = blurR / std::max(1.0, std::sqrt(bestDx * bestDx + bestDy * bestDy));
+            const double baseDx = bestDx * scale;
+            const double baseDy = bestDy * scale;
+            QImage blurred = ImgPool::get(QImage::Format_ARGB32_Premultiplied, sw, sh);
             blurred.fill(Qt::transparent);
             QPainter bp(&blurred);
-            bp.setOpacity(0.5);
-            bp.drawImage(dx, dy, out);
-            bp.setOpacity(0.5);
-            bp.drawImage(0, 0, out);
+            for (int s = 0; s < samples; ++s) {
+                const double frac = (double)s / (samples - 1);
+                const double ox = baseDx * (frac - 0.5) * 2.0;
+                const double oy = baseDy * (frac - 0.5) * 2.0;
+                bp.setOpacity(1.0 / samples);
+                bp.drawImage((int)std::lround(ox), (int)std::lround(oy), out);
+            }
+            bp.end();
+            ImgPool::release(out);
             out = blurred;
         }
     }
 
-    // 9) Opacidade global
+    // 9) Onion Skin (ghosting: mistura frame anterior semi-transparente)
+    if (onionSkin > 1e-6 && !prevFrame.isNull()
+        && prevFrame.width() == sw && prevFrame.height() == sh) {
+        QImage ghosted = ImgPool::get(QImage::Format_ARGB32_Premultiplied, sw, sh);
+        {
+            QPainter cp(&ghosted);
+            cp.drawImage(0, 0, out);
+            cp.setOpacity(onionSkin / 100.0);
+            cp.drawImage(0, 0, prevFrame);
+        }
+        ImgPool::release(out);
+        out = ghosted;
+    }
+
+    // 10) Opacidade global
     if (opacity < 99.9) {
-        QImage blended(src.size(), QImage::Format_ARGB32_Premultiplied);
+        QImage blended = ImgPool::get(QImage::Format_ARGB32_Premultiplied, sw, sh);
         blended.fill(Qt::transparent);
         QPainter bp(&blended);
         bp.setOpacity(opacity / 100.0);
         bp.drawImage(0, 0, out);
+        bp.end();
+        ImgPool::release(out);
         out = blended;
     }
 
@@ -989,7 +1094,8 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
                                           c->lainkaWarpGrid, c->lainkaOnionSkin,
                                           c->lainkaDustAmount, c->lainkaScratchAmount,
                                           c->lainkaMotionBlur, c->lainkaOpacity,
-                                          c->lainkaTargetFps);
+                                          c->lainkaTargetFps, c->lainkaAntialias,
+                                          QImage());
                     }
                     applyBasicEffectsOn(f, *c);
                 } else {
@@ -1519,11 +1625,6 @@ QVector<AudioMixer::SourceInfo> buildMixSources(const Project* p, double t) {
 void PreviewWidget::startAudio(double t) {
     if (!m_project) return;
     stopAudio();
-    // Cria o mixer/SEMPRE, mesmo se não houver fonte de áudio em `t`: dar play
-    // num vão de silêncio (ex.: clipe de áudio movido para longe) não pode
-    // deixar o preview mudo — as fontes são adicionadas pelo updateMixAudio
-    // quando a reprodução alcançar o clipe. Antes retornávamos aqui sem criar
-    // o mixer e o áudio nunca ligava ao alcançar o trecho com som.
     const QVector<AudioMixer::SourceInfo> sources = buildMixSources(m_project, t);
     if (sources.isEmpty() && audioDbg())
         qDebug() << "[audio] startAudio em t=" << t << "- nenhuma fonte (mixer será criado mudo)";
@@ -1550,38 +1651,67 @@ void PreviewWidget::startAudio(double t) {
 
     m_audioFeed = new AudioMixer(this);
     m_audioFeed->open(QIODevice::ReadOnly | QIODevice::Unbuffered);
-    m_audioFeed->updateSources(sources, true);
+
+    // Abre os decoders de áudio em background para não travar a UI.
+    // O mixer retorna silêncio (readData preenche com zeros) enquanto os
+    // decoders são abertos — sem cliques porque o audioSink ainda não começou.
+    if (!sources.isEmpty()) {
+        auto* mixer = m_audioFeed;
+        auto* self = this;
+        QtConcurrent::run([mixer, sources, self]() {
+            // QPointer: verifica se o mixer foi destruído (stopAudio chamado).
+            QPointer<AudioMixer> guard(mixer);
+            if (!guard) return;
+            mixer->updateSources(sources, true);
+            if (!guard) return;
+            // Conecta o sink na UI thread depois que os decoders estão prontos.
+            QMetaObject::invokeMethod(self, [self]() {
+                if (!self->m_audioFeed || self->m_audioSink) return;
 #if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
-    const QAudioDevice def = QMediaDevices::defaultAudioOutput();
-    if (def.isNull()) {
-        if (audioDbg()) qDebug() << "[audio] defaultAudioOutput nulo — sem saída de áudio";
-        return;
-    }
-    m_audioSink = new QAudioSink(def, fmt, this);
-    if (audioDbg()) {
-        connect(m_audioSink, &QAudioSink::stateChanged, this, [this](QAudio::State s) {
-            qDebug() << "[audio] sink state =" << s;
-            if (s == QAudio::StoppedState && m_audioSink)
-                qDebug() << "[audio] sink error =" << m_audioSink->error();
-        });
-    }
-    m_audioSink->start(m_audioFeed);
+                const QAudioDevice def = QMediaDevices::defaultAudioOutput();
+                if (def.isNull()) return;
+                QAudioFormat fmt;
+                fmt.setSampleFormat(QAudioFormat::Int16);
+                fmt.setSampleRate(48000);
+                fmt.setChannelCount(2);
+                self->m_audioSink = new QAudioSink(def, fmt, self);
+                self->m_audioSink->start(self->m_audioFeed);
 #else
-    const QAudioDeviceInfo def = QAudioDeviceInfo::defaultOutputDevice();
-    if (def.isNull()) {
-        if (audioDbg()) qDebug() << "[audio] defaultOutputDevice nulo — sem saída de áudio";
-        return;
-    }
-    m_audioOut = new QAudioOutput(def, fmt, this);
-    if (audioDbg()) {
-        connect(m_audioOut, &QAudioOutput::stateChanged, this, [](QAudioOutput::State s) {
-            qDebug() << "[audio] sink state =" << s;
+                const QAudioDeviceInfo def = QAudioDeviceInfo::defaultOutputDevice();
+                if (def.isNull()) return;
+                QAudioFormat fmt;
+                fmt.setCodec(QStringLiteral("audio/pcm"));
+                fmt.setSampleSize(16);
+                fmt.setSampleRate(48000);
+                fmt.setChannelCount(2);
+                fmt.setSampleType(QAudioFormat::SignedInt);
+                fmt.setByteOrder(QAudioFormat::LittleEndian);
+                self->m_audioOut = new QAudioOutput(def, fmt, self);
+                self->m_audioOut->start(self->m_audioFeed);
+#endif
+            });
         });
-        connect(m_audioOut, &QAudioOutput::errorChanged, this, [](QAudioOutput::Error e) {
-            qDebug() << "[audio] sink ERROR =" << e;
-        });
     }
-    m_audioOut->start(m_audioFeed);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+    else {
+        const QAudioDevice def = QMediaDevices::defaultAudioOutput();
+        if (def.isNull()) {
+            if (audioDbg()) qDebug() << "[audio] defaultAudioOutput nulo — sem saída de áudio";
+            return;
+        }
+        m_audioSink = new QAudioSink(def, fmt, this);
+        m_audioSink->start(m_audioFeed);
+    }
+#else
+    else {
+        const QAudioDeviceInfo def = QAudioDeviceInfo::defaultOutputDevice();
+        if (def.isNull()) {
+            if (audioDbg()) qDebug() << "[audio] defaultOutputDevice nulo — sem saída de áudio";
+            return;
+        }
+        m_audioOut = new QAudioOutput(def, fmt, this);
+        m_audioOut->start(m_audioFeed);
+    }
 #endif
 }
 
@@ -1671,9 +1801,19 @@ void PreviewWidget::updateFrame() {
     m_clipOfxFx = clip->ofxFx;
 
     double srcT = clip->in + (m_playhead - clip->pos) * clip->speed;
-    // LAINKA: quantiza o tempo para simular pulo de frame.
-    if (clip->lainkaEnabled && clip->lainkaSkip > 1)
-        srcT = lainkaQuantizeTime(srcT, clip->lainkaSkip, projFps(m_project));
+    // LAINKA: quantiza o tempo para simular stop motion.
+    // Usa targetFps para calcular o skip (projectFps / targetFps).
+    m_lainkaQuantizedTime = -1.0;
+    if (clip->lainkaEnabled) {
+        const double pfps = projFps(m_project);
+        const int effSkip = (clip->lainkaTargetFps > 0 && pfps > 1.0)
+            ? std::max(1, (int)std::lround(pfps / clip->lainkaTargetFps))
+            : clip->lainkaSkip;
+        if (effSkip > 1) {
+            srcT = lainkaQuantizeTime(srcT, effSkip, pfps);
+            m_lainkaQuantizedTime = srcT;
+        }
+    }
     // Decodifica no tamanho de exibição: muito mais rápido que 4K/1080p.
     // Qualidade do preview (estilo Vegas/FCP): quanto menor o fator, menor a
     // resolução decodificada (mais rápido, mais suave). A exibição mantém o
@@ -1963,8 +2103,12 @@ void PreviewWidget::onFrameReady(const QString& clipId, const QString& path, dou
     // Aplica LAINKA também em camadas inferiores.
     if (clip->lainkaEnabled) {
         double srcT = clip->in + (m_playhead - clip->pos) * clip->speed;
-        if (clip->lainkaSkip > 1)
-            srcT = lainkaQuantizeTime(srcT, clip->lainkaSkip, projFps(m_project));
+        const double pfps = projFps(m_project);
+        const int effSkip = (clip->lainkaTargetFps > 0 && pfps > 1.0)
+            ? std::max(1, (int)std::lround(pfps / clip->lainkaTargetFps))
+            : clip->lainkaSkip;
+        if (effSkip > 1)
+            srcT = lainkaQuantizeTime(srcT, effSkip, pfps);
         cropped = lainkaApplyFx(cropped, clip->id, srcT,
                                 clip->lainkaSkip, clip->lainkaJitterPos,
                                 clip->lainkaJitterRot, clip->lainkaJitterScale,
@@ -1973,7 +2117,8 @@ void PreviewWidget::onFrameReady(const QString& clipId, const QString& path, dou
                                 clip->lainkaWarpGrid, clip->lainkaOnionSkin,
                                 clip->lainkaDustAmount, clip->lainkaScratchAmount,
                                 clip->lainkaMotionBlur, clip->lainkaOpacity,
-                                clip->lainkaTargetFps);
+                                clip->lainkaTargetFps, clip->lainkaAntialias,
+                                QImage());
     }
     // Aplica efeitos básicos também em camadas inferiores.
     applyBasicEffectsOn(cropped, *clip);
@@ -2096,7 +2241,7 @@ void PreviewWidget::applyBasicEffectsOn(QImage& img, const Clip& c) {
 
     // Chroma Key: remove cor específica.
     if (c.chromaKey) {
-        QImage result(img.size(), QImage::Format_ARGB32);
+        QImage result = ImgPool::get(QImage::Format_ARGB32, img.width(), img.height());
         result.fill(Qt::transparent);
         const int w = img.width();
         const int h = img.height();
@@ -2126,13 +2271,14 @@ void PreviewWidget::applyBasicEffectsOn(QImage& img, const Clip& c) {
                 }
             }
         }
+        ImgPool::release(img);
         img = result;
     }
 
     // Desfoque: box blur simples.
     if (c.blur > 0.5) {
         const int radius = std::clamp((int)std::lround(c.blur * 0.5), 1, 30);
-        QImage blurred(img.size(), img.format());
+        QImage blurred = ImgPool::get(img.format(), img.width(), img.height());
         const int w = img.width();
         const int h = img.height();
         for (int y = 0; y < h; ++y) {
@@ -2150,6 +2296,7 @@ void PreviewWidget::applyBasicEffectsOn(QImage& img, const Clip& c) {
                 blurred.setPixel(x, y, qRgba(r / cnt, g / cnt, b / cnt, a / cnt));
             }
         }
+        ImgPool::release(img);
         img = blurred;
     }
 
@@ -2203,7 +2350,13 @@ void PreviewWidget::applyCrop() {
     m_frame = applyCropTo(m_frameFull, m_lastCropL, m_lastCropR, m_lastCropT, m_lastCropB);
     // Aplica efeito LAINKA (stop motion) após o crop.
     if (m_clipLainkaEnabled) {
-        m_frame = lainkaApplyFx(m_frame, m_clipLainkaId, m_playhead,
+        QImage prevFrame = m_lainkaPrevFrame;
+        m_lainkaPrevFrame = m_frame;
+        // Usa tempo quantizado para que jitter/flicker/warp fiquem
+        // congelados no mesmo intervalo de stop motion.
+        const double fxT = (m_lainkaQuantizedTime >= 0.0)
+            ? m_lainkaQuantizedTime : m_playhead;
+        m_frame = lainkaApplyFx(m_frame, m_clipLainkaId, fxT,
                                 m_clipLainkaSkip, m_clipLainkaJitterPos,
                                 m_clipLainkaJitterRot, m_clipLainkaJitterScale,
                                 m_clipLainkaFlicker, m_clipLainkaFlickerSpeed,
@@ -2211,7 +2364,8 @@ void PreviewWidget::applyCrop() {
                                 m_clipLainkaWarpGrid, m_clipLainkaOnionSkin,
                                 m_clipLainkaDustAmount, m_clipLainkaScratchAmount,
                                 m_clipLainkaMotionBlur, m_clipLainkaOpacity,
-                                m_clipLainkaTargetFps);
+                                m_clipLainkaTargetFps, m_clipLainkaAntialias,
+                                prevFrame);
     }
     if (m_clipMotionEnabled && m_clipMotionAmount > 0.0 && !m_frame.isNull()) {
         const double rad = m_clipMotionAngle * M_PI / 180.0;
@@ -2219,15 +2373,18 @@ void PreviewWidget::applyCrop() {
         const int sx = (int)std::lround(std::cos(rad) * dist);
         const int sy = (int)std::lround(std::sin(rad) * dist);
         const int ns = std::clamp(m_clipMotionSamples, 1, 32);
-        QImage result = m_frame.copy();
-        QPainter p(&result);
-        p.setRenderHint(QPainter::SmoothPixmapTransform);
-        for (int i = 1; i < ns; ++i) {
-            const double alpha = 1.0 - (double)i / ns;
-            p.setOpacity(alpha / ns);
-            p.drawImage(sx * i, sy * i, m_frame);
+        QImage result = ImgPool::get(m_frame.format(), m_frame.width(), m_frame.height());
+        {
+            QPainter p(&result);
+            p.drawImage(0, 0, m_frame);
+            p.setRenderHint(QPainter::SmoothPixmapTransform);
+            for (int i = 1; i < ns; ++i) {
+                const double alpha = 1.0 - (double)i / ns;
+                p.setOpacity(alpha / ns);
+                p.drawImage(sx * i, sy * i, m_frame);
+            }
         }
-        p.end();
+        ImgPool::release(m_frame);
         m_frame = result;
     }
     // Aplica efeitos básicos (brilho, contraste, saturação, etc.)

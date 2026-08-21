@@ -3614,6 +3614,13 @@ void TimelineWidget::dropEvent(QDropEvent* e) {
 
         if (effectId == "pierrot_lainka") {
             target->lainkaEnabled = true;
+            target->lainkaTargetFps = 8;
+            target->lainkaJitterPos = 15.0;
+            target->lainkaFlicker = 10.0;
+            target->lainkaWarpAmount = 30.0;
+            target->lainkaDustAmount = 15.0;
+            target->lainkaScratchAmount = 10.0;
+            target->lainkaOpacity = 100.0;
         } else if (effectId == "pierrot_motion") {
             target->motionEnabled = true;
             target->motionAmount = 25.0;

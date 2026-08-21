@@ -417,26 +417,32 @@ void MainWindow::restoreSettings() {
 
 void MainWindow::closeEvent(QCloseEvent* event) {
     // Se houver alterações não salvas, pergunta antes de sair.
-    if (m_modified) {
-        QMessageBox box(this);
-        box.setWindowTitle(tr("Salvar projeto?"));
-        box.setIcon(QMessageBox::Question);
-        box.setText(tr("O projeto tem alterações não salvas. Deseja salvá-las antes de sair?"));
-        QPushButton* saveBtn = box.addButton(tr("Salvar"), QMessageBox::AcceptRole);
-        QPushButton* discardBtn = box.addButton(tr("Descartar"), QMessageBox::DestructiveRole);
-        QPushButton* cancelBtn = box.addButton(tr("Cancelar"), QMessageBox::RejectRole);
-        box.setDefaultButton(saveBtn);
-        box.exec();
-        QAbstractButton* b = box.clickedButton();
-        // Cancelar (ou fechar a caixa) mantém o app aberto.
-        if (!b || b == cancelBtn) { event->ignore(); return; }
-        // Salvar: se o usuário cancelar a caixa de salvar, também não fecha.
-        if (b == saveBtn && !saveProject()) { event->ignore(); return; }
-        // Descartar segue direto para fechar.
-    }
+    if (!confirmDiscardChanges()) { event->ignore(); return; }
     saveSettings();
     QMainWindow::closeEvent(event);
     QApplication::quit();
+}
+
+// Diálogo "Salvar projeto?" reutilizado ao fechar o app e ao criar/abrir um
+// novo projeto. Retorna false se o usuário decidir continuar onde está.
+bool MainWindow::confirmDiscardChanges() {
+    if (!m_modified) return true;
+    QMessageBox box(this);
+    box.setWindowTitle(tr("Salvar projeto?"));
+    box.setIcon(QMessageBox::Question);
+    box.setText(tr("O projeto tem alterações não salvas. Deseja salvá-las antes de continuar?"));
+    QPushButton* saveBtn = box.addButton(tr("Salvar"), QMessageBox::AcceptRole);
+    QPushButton* discardBtn = box.addButton(tr("Descartar"), QMessageBox::DestructiveRole);
+    QPushButton* cancelBtn = box.addButton(tr("Cancelar"), QMessageBox::RejectRole);
+    box.setDefaultButton(saveBtn);
+    box.exec();
+    QAbstractButton* b = box.clickedButton();
+    // Cancelar (ou fechar a caixa) interrompe a operação.
+    if (!b || b == cancelBtn) return false;
+    // Salvar: se o usuário cancelar a caixa de salvar, também interrompe.
+    if (b == saveBtn) return saveProject();
+    // Descartar segue direto para a operação.
+    return true;
 }
 
 void MainWindow::showEvent(QShowEvent* event) {
@@ -1123,6 +1129,7 @@ void MainWindow::updateTitle() {
 }
 
 void MainWindow::newProject() {
+    if (!confirmDiscardChanges()) return;
     MediaCache::instance().clear();
     m_project = Project();
     for (int i = 0; i < 3; ++i) m_project.addTrack(false);

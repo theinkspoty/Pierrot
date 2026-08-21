@@ -16,6 +16,7 @@ class QComboBox;
 class QListWidget;
 class QStackedWidget;
 class QTreeWidget;
+class QLineEdit;
 
 class SettingsDialog : public QDialog {
     Q_OBJECT
@@ -34,6 +35,9 @@ public:
     static double graphSensitivity();
     // Caminhos extras de plugins OFX configurados pelo usuário.
     static QStringList ofxSearchPaths();
+    // Pasta padrão onde o diálogo de exportação abre. Opcional (ativável).
+    static bool exportDefaultDirEnabled();
+    static QString exportDefaultDir();
 
     // Valores escolhidos no diálogo (aplicar depois do OK).
     bool autoSaveEnabled() const;
@@ -65,4 +69,7 @@ private:
     QString m_recordId; // atalho sendo regravado
     // Configuração de caminhos OFX.
     QListWidget* m_ofxPaths = nullptr;
+    // Pasta padrão de renderização (opcional).
+    QCheckBox* m_exportDirEnabled = nullptr;
+    QLineEdit* m_exportDirEdit = nullptr;
 };

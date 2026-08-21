@@ -548,6 +548,7 @@ void FFmpegDecoder::freeAllLocked() {
     if (m_frame) av_frame_unref(m_frame);
     if (m_audioPkt) av_packet_unref(m_audioPkt);
     if (m_audioFrame) av_frame_unref(m_audioFrame);
+    frameCacheClear();
 }
 
 bool FFmpegDecoder::isOpen() const {
@@ -563,16 +564,67 @@ double FFmpegDecoder::fps() const {
     return m_fps;
 }
 
+// ── Frame cache LRU ────────────────────────────────────────────────────────
+
+QImage FFmpegDecoder::frameFromCache(const FrameCacheKey& key) {
+    auto it = m_frameCacheIdx.find(key);
+    if (it == m_frameCacheIdx.end()) return QImage();
+    const int idx = it.value();
+    if (idx < 0 || idx >= m_frameCacheLru.size()) return QImage();
+    // Move para frente (mais recente)
+    m_frameCacheLru.move(idx, 0);
+    // Rebuild index após move (O(n) mas n ≤ 120)
+    m_frameCacheIdx.clear();
+    for (int i = 0; i < m_frameCacheLru.size(); ++i)
+        m_frameCacheIdx.insert(m_frameCacheLru[i].key, i);
+    return m_frameCacheLru.first().img;
+}
+
+void FFmpegDecoder::frameToCache(const FrameCacheKey& key, const QImage& img) {
+    if (img.isNull()) return;
+    auto it = m_frameCacheIdx.find(key);
+    if (it != m_frameCacheIdx.end()) {
+        m_frameCacheLru[it.value()].img = img;
+        m_frameCacheLru.move(it.value(), 0);
+        m_frameCacheIdx.clear();
+        for (int i = 0; i < m_frameCacheLru.size(); ++i)
+            m_frameCacheIdx.insert(m_frameCacheLru[i].key, i);
+        return;
+    }
+    // Insere na frente; remove do fundo se cheio
+    m_frameCacheLru.prepend({key, img});
+    while (m_frameCacheLru.size() > kFrameCacheMax) {
+        const FrameCacheEntry& oldest = m_frameCacheLru.last();
+        m_frameCacheIdx.remove(oldest.key);
+        m_frameCacheLru.removeLast();
+    }
+    // Rebuild index
+    m_frameCacheIdx.clear();
+    for (int i = 0; i < m_frameCacheLru.size(); ++i)
+        m_frameCacheIdx.insert(m_frameCacheLru[i].key, i);
+}
+
+void FFmpegDecoder::frameCacheClear() {
+    m_frameCacheLru.clear();
+    m_frameCacheIdx.clear();
+}
+
 QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
     QMutexLocker locker(&m_mutex);
     QImage result;
     if (!m_ctx || m_stream < 0) return result;
 
+    // ── Frame cache: retorna frame armazenado se disponível ───────────
+    const double targetSec = m_isImage ? 0.0 : std::max(0.0, seconds);
+    if (!m_isImage && m_fps > 0.0) {
+        const FrameCacheKey cacheKey{(int64_t)std::floor(targetSec * m_fps), maxWidth};
+        result = frameFromCache(cacheKey);
+        if (!result.isNull()) return result;
+    }
+
     AVFormatContext* fmt = static_cast<AVFormatContext*>(m_ctx);
     AVCodecContext* cc = static_cast<AVCodecContext*>(m_codec);
     AVStream* st = fmt->streams[m_stream];
-
-    const double targetSec = m_isImage ? 0.0 : std::max(0.0, seconds);
 
     // fsec de um quadro no tempo do stream (fallback: o próprio alvo).
     auto frameSec = [&](const AVFrame* fr) -> double {
@@ -825,6 +877,13 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
 
     av_frame_unref(m_frame);
     av_packet_unref(m_pkt);
+
+    // Armazena no cache LRU se decode foi bem-sucedido
+    if (!result.isNull() && !m_isImage && m_fps > 0.0) {
+        const FrameCacheKey cacheKey{(int64_t)std::floor(targetSec * m_fps), maxWidth};
+        frameToCache(cacheKey, result);
+    }
+
     return result;
 }
 
@@ -848,6 +907,7 @@ void FFmpegDecoder::releaseBuffers() {
         m_lastFrameSec = -1.0;
         m_nextFrameSec = -1.0;
         m_lastPtsSec = -1.0;
+        frameCacheClear();
     }
 }
 

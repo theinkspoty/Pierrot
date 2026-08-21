@@ -9,6 +9,8 @@
 #include <QString>
 #include <QMutex>
 #include <QVector>
+#include <QHash>
+#include <QList>
 
 // Ponteiros p/ tipos do FFmpeg (definidos em libavcodec/avcodec.h, incluído
 // pelos .cpp). Só há membros por ponteiro, então forward declaration basta e
@@ -116,4 +118,29 @@ private:
     AVFrame* m_frame = nullptr;       // frameAt()
     AVPacket* m_audioPkt = nullptr;   // decodeAudio()
     AVFrame* m_audioFrame = nullptr;  // decodeAudio()
+
+    // ── Frame cache LRU (evita re-decodificação no scrub) ─────────────
+    // Chave: (time_bucket, maxWidth). time_bucket = floor(seconds * fps)
+    // para agrupar frames do mesmo quadro.
+    struct FrameCacheKey {
+        int64_t bucket = 0;
+        int maxW = 0;
+        bool operator==(const FrameCacheKey& o) const {
+            return bucket == o.bucket && maxW == o.maxW;
+        }
+        friend inline uint qHash(const FrameCacheKey& k, uint seed = 0) {
+            return qHash(k.bucket, seed) ^ qHash(k.maxW, seed ^ 0x9747b28c);
+        }
+    };
+    struct FrameCacheEntry {
+        FrameCacheKey key;
+        QImage img;
+    };
+    static constexpr int kFrameCacheMax = 120; // ~2min a 30fps, ~240MB
+    QList<FrameCacheEntry> m_frameCacheLru;     // frente = mais recente
+    QHash<FrameCacheKey, int> m_frameCacheIdx;  // key → índice no LRU
+
+    QImage frameFromCache(const FrameCacheKey& key);
+    void   frameToCache(const FrameCacheKey& key, const QImage& img);
+    void   frameCacheClear();
 };

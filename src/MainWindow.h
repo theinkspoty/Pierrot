@@ -68,6 +68,10 @@ private:
     void showWelcomeWindow();
     bool saveProject();
     bool saveProjectAs();
+    // Pergunta se deseja salvar antes de descartar alterações não salvas.
+    // Retorna true se pode prosseguir (salvou/descartou/não havia mudanças)
+    // e false se o usuário cancelou.
+    bool confirmDiscardChanges();
     void projectSettings();
     void openSettings();
     void undo();

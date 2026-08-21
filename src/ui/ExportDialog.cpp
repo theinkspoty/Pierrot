@@ -4,6 +4,7 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "ExportDialog.h"
+#include "SettingsDialog.h"
 
 #include <QLineEdit>
 #include <QComboBox>
@@ -35,6 +36,19 @@ ExportDialog::ExportDialog(Project* project, QWidget* parent)
     auto* browseBtn = new QPushButton(tr("…"), this);
     browseBtn->setFixedWidth(36);
     connect(browseBtn, &QPushButton::clicked, this, &ExportDialog::browseOutput);
+
+    // Pré-preenche o caminho de saída com a pasta padrão de render (quando
+    // ativada nas Configurações), usando o nome do projeto como arquivo.
+    if (SettingsDialog::exportDefaultDirEnabled()) {
+        const QString dir = SettingsDialog::exportDefaultDir();
+        if (!dir.isEmpty() && QDir(dir).exists()) {
+            QString base = m_project->name.trimmed();
+            base.replace(QRegularExpression(QStringLiteral(
+                             "[\\\\/:*?\"<>|]")), QStringLiteral("_"));
+            if (base.isEmpty()) base = QStringLiteral("export");
+            m_outEdit->setText(QDir(dir).filePath(base + QStringLiteral(".mp4")));
+        }
+    }
 
     m_resCombo = new QComboBox(this);
     m_resCombo->addItem(tr("Fonte (%1x%2)").arg(project->width).arg(project->height), "source");
@@ -130,8 +144,16 @@ void ExportDialog::browseOutput() {
     const ExportSettings::Format fmt = (ExportSettings::Format)m_formatCombo->currentData().toInt();
     if (fmt == ExportSettings::MKV) { filter = tr("MKV (*.mkv)"); ext = "mkv"; }
     if (fmt == ExportSettings::WEBM) { filter = tr("WebM (*.webm)"); ext = "webm"; }
+
+    // Abre na pasta padrão de render se o usuário ativou essa opção.
+    QString startDir = QDir::homePath();
+    if (SettingsDialog::exportDefaultDirEnabled()) {
+        const QString d = SettingsDialog::exportDefaultDir();
+        if (!d.isEmpty() && QDir(d).exists()) startDir = d;
+    }
+
     QString f = QFileDialog::getSaveFileName(this, tr("Salvar vídeo"),
-                                             QDir::homePath() + "/export." + ext, filter);
+                                             startDir + "/export." + ext, filter);
     if (f.isEmpty()) return;
     if (!f.endsWith("." + ext)) f += "." + ext;
     m_outEdit->setText(f);

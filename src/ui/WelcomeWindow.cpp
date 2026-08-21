@@ -139,7 +139,7 @@ void WelcomeWindow::buildLayout() {
     nameLabel->setFont(nf);
     nameLabel->setStyleSheet("color:#f2f5fa;");
 
-    auto* verLabel = new QLabel(tr("0.3"), this);
+    auto* verLabel = new QLabel(PIERROT_VERSION, this);
     QFont vf = verLabel->font();
     vf.setPointSize(12);
     vf.setBold(true);

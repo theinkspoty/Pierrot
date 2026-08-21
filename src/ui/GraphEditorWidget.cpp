@@ -613,7 +613,7 @@ void GraphCanvas::moveSelected(double dT, double dV, bool snap) {
         // Movimento vertical restaurado: o valor acompanha o arraste.
         // A sensibilidade (Configurações → Editor de curvas) amplifica o
         // deslocamento vertical para permitir curvas mais exageradas.
-        k.value = std::clamp(o.value + dV * SettingsDialog::graphSensitivity(),
+        k.value = std::clamp(o.value + dV,
                              m_loProp, m_hiProp);
     }
 }
@@ -1192,11 +1192,7 @@ void GraphCanvas::mouseDoubleClickEvent(QMouseEvent* e) {
     }
 
     const double t = m_snap ? snapTime(xToT(e->pos().x())) : xToT(e->pos().x());
-    double v = yToV(e->pos().y());
-    // Duplo clique perto da linha da curva: cria o keyframe EM CIMA dela
-    // (mais fácil e intuitivo de adicionar keyframes na curva).
-    const double vLine = kfValue(K, baseValue(), t);
-    if (std::abs(vToY(vLine) - e->pos().y()) <= 8) v = vLine;
+    const double v = kfValue(K, baseValue(), t);
     if (addKeyframe(t, v) < 0) {
         emit statusMessage(tr("Já existe um keyframe nesse tempo."));
         return;

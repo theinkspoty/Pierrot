@@ -609,6 +609,16 @@ QStringList ProjectExporter::buildCommand(const Project& project,
             const QString outLbl =
                 (n == (int)vclips.size()) ? QStringLiteral("vout") : QStringLiteral("m%1").arg(n);
             const bool hasT = v.c->hasTransform();
+            // Mídia transparente (texto gerado ou PNG/WebP com alpha). Todo
+            // redimensionamento do ffmpeg (o enquadramento contain, o flatt
+            // X/Y e a rotação) interpola RGB com alpha "freio" (straight), e o
+            // RGB preto sob os pixels transparentes vaza para as bordas —
+            // franja escura em volta da transparência (pior ainda ao reduzir e
+            // depois esticar). Para essa mídia, pré-multiplicamos o alpha logo
+            // no início da cadeia e desfazemos depois de toda a geometria.
+            const bool alphaMedia = (v.m == nullptr)
+                || (v.m && isImageFile(v.m->filePath));
+            bool premultiplied = false;
             const QString scaleExpr = kfExpr(v.c->kfScale, v.c->scale, pos);
             const QString rotExpr = kfExpr(v.c->kfRotation, v.c->rotation, pos);
             const QString txExpr = kfExpr(v.c->kfTx, v.c->tx, pos);
@@ -626,9 +636,19 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                 chain = QStringLiteral("[%1:v]fps=%2,settb=AVTB,setpts=(PTS-STARTPTS)/%3+%4/TB,"
                                        "trim=duration=%5,format=rgba")
                             .arg(inIdx).arg(FPS).arg(num(speed)).arg(num(pos)).arg(num(dur));
+                if (alphaMedia) {
+                    chain += QStringLiteral(",premultiply=inplace=1");
+                    premultiplied = true;
+                }
             } else {
                 chain = QStringLiteral("[%1:v]setpts=(PTS-STARTPTS)/%2+%3/TB,trim=duration=%4")
                             .arg(inIdx).arg(num(speed)).arg(num(pos)).arg(num(dur));
+                if (alphaMedia) {
+                    // Pré-multiplica ANTES do enquadramento: o downscale do
+                    // contain é o maior gerador da franja escura.
+                    chain += QStringLiteral(",format=rgba,premultiply=inplace=1");
+                    premultiplied = true;
+                }
                 // Mídia sem fundo (PNG/WebP com alpha): o letterbox usa
                 // TRANSPARENTE para não cobrir o que está por baixo. Vídeos/
                 // imagens opacas usam preto (letterbox clássico).
@@ -752,10 +772,10 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                     const double sAng = std::fabs(std::sin(aRad));
                     return std::max(2, (int)std::ceil(W * maxX * sAng + H * maxY * cAng));
                 }();
-                // Texto tem fundo transparente: rotação preenche com transparente,
-                // não preto (senão as quinas cobrem o vídeo de baixo).
-                const QString rotFill = (v.m == nullptr) ? QStringLiteral("black@0")
-                                                         : QStringLiteral("black");
+                // Mídia transparente: rotação preenche com TRANSPARENTE, não preto (senão
+                // as quinas/canvas viram uma máscara preta sobre a camada de baixo).
+                const QString rotFill = alphaMedia ? QStringLiteral("black@0")
+                                                   : QStringLiteral("black");
                 if (v.c->kfRotation.isEmpty())
                     fc.last().append(QStringLiteral(",rotate=a=%1:ow=%2:oh=%3:c=%4")
                                          .arg(num(v.c->rotation * kPi / 180.0))
@@ -769,11 +789,18 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                                          .arg(num(kPi / 180.0))
                                          .arg(rotW).arg(rotH).arg(rotFill));
             }
+            // Desfaz a pré-multiplicação do alpha após todos os redimensiona-
+            // mentos, voltando ao alpha "freio" antes dos fades/efeitos.
+            // O premultiply/unpremultiply trabalham em gbrap (planar); força
+            // rgba empacotado de volta para os filtros seguintes negociarem
+            // formato com alpha garantido (sem isso a camada podia virar uma
+            // máscara opaca sobre o que está por baixo).
+            if (premultiplied)
+                fc.last().append(QLatin1Char(',') + QStringLiteral("unpremultiply=inplace=1,format=rgba"));
             // Texto: fade por ALPHA (não para preto), senão a camada transparente
             // viraria um quadrado preto durante o fade. Imagens (PNG/WebP) também
             // podem ter alpha — aplicar :alpha=1 para preservar transparência.
-            const bool hasAlphaMedia = (v.m == nullptr) || (v.m && isImageFile(v.m->filePath));
-            const QString fadeAlpha = hasAlphaMedia ? QStringLiteral(":alpha=1") : QString();
+            const QString fadeAlpha = alphaMedia ? QStringLiteral(":alpha=1") : QString();
             if (fadeIn > 0)
                 fc.last().append(QStringLiteral(",fade=t=in:st=%1:d=%2%3")
                                      .arg(num(pos)).arg(num(fadeIn)).arg(fadeAlpha));
@@ -804,19 +831,49 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                                      .arg(num(std::clamp(v.c->blur, 0.0, 40.0))));
             // ── LAINKA: stop motion na exportação ──────────────────────────
             if (v.c->lainkaEnabled) {
-                // Frame skip: reduz FPS para simular stop motion.
-                if (v.c->lainkaSkip > 1) {
-                    const double targetFps = (project.fps > 0.0 ? project.fps : 30.0) / v.c->lainkaSkip;
-                    fc.last().append(QStringLiteral(",fps=fps=%1").arg(num(targetFps)));
+                const double pfps = project.fps > 0.0 ? project.fps : 30.0;
+                const double effectiveFps = (v.c->lainkaTargetFps > 0)
+                    ? std::clamp((double)v.c->lainkaTargetFps, 1.0, pfps)
+                    : pfps / std::max(1, v.c->lainkaSkip);
+                if (effectiveFps < pfps - 0.5)
+                    fc.last().append(QStringLiteral(",fps=fps=%1").arg(num(effectiveFps)));
+
+                if (v.c->lainkaJitterPos > 1e-6) {
+                    const int amp = std::max(1, (int)std::lround(v.c->lainkaJitterPos * 0.08));
+                    fc.last().append(QStringLiteral(
+                        ",crop=iw-%1:ih-%2:random(1)*%1:random(2)*%2,scale=iw+%1:ih+%2")
+                        .arg(num(amp * 2)).arg(num(amp * 2)));
                 }
-                // Flicker: variação de brilho pseudo-aleatória.
+
+                if (v.c->lainkaJitterRot > 1e-6) {
+                    const double maxAngle = v.c->lainkaJitterRot * 0.015;
+                    fc.last().append(QStringLiteral(
+                        ",rotate=eval=frame:ow=rotw(%1):oh=roth(%1):c=none:"
+                        "angle=(random(3)-0.5)*%1*2*PI/180")
+                        .arg(num(maxAngle)));
+                }
+
+                if (v.c->lainkaJitterScale > 1e-6) {
+                    const double maxScale = v.c->lainkaJitterScale * 0.001;
+                    fc.last().append(QStringLiteral(
+                        ",scale=trunc((iw*(1+(random(4)-0.5)*%1*2))/2)*2:"
+                        "trunc((ih*(1+(random(5)-0.5)*%1*2))/2)*2")
+                        .arg(num(maxScale)));
+                }
+
                 if (v.c->lainkaFlicker > 1e-6) {
-                    const double flickAmp = std::clamp(v.c->lainkaFlicker / 100.0, 0.0, 1.0) * 0.15;
+                    const double flickAmp = std::min(v.c->lainkaFlicker / 100.0, 0.15);
                     fc.last().append(QStringLiteral(",eq=brightness='random(1)*%1-%2'")
                                          .arg(num(flickAmp * 2.0))
                                          .arg(num(flickAmp)));
                 }
-                // Opacidade global LAINKA (multiplica com a existente).
+
+                if (v.c->lainkaMotionBlur > 1e-6) {
+                    const int r = std::max(1, (int)std::lround(v.c->lainkaMotionBlur * 0.05));
+                    fc.last().append(QStringLiteral(",boxblur=luma_radius=%1:chroma_radius=%1")
+                                         .arg(num(r)));
+                }
+
                 if (v.c->lainkaOpacity < 99.9) {
                     fc.last().append(QStringLiteral(",colorchannelmixer=aa=%1")
                                          .arg(num(std::clamp(v.c->lainkaOpacity / 100.0, 0.0, 1.0))));
