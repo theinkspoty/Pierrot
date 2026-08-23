@@ -1,0 +1,1256 @@
+// Pierrot — editor de vídeo
+// Copyright (C) 2026 theinkspoty
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
+
+#include "TimelineWidget.h"
+#include "models/Project.h"
+#include "ui/SettingsDialog.h"
+#include "ffmpeg/MediaCache.h"
+#include "ui/TlLog.h"
+
+#include <QPainter>
+#include <QPainterPath>
+#include <QStyleOptionRubberBand>
+#include <QRubberBand>
+#include <QStyle>
+#include <QFileInfo>
+#include <QtMath>
+
+namespace {
+constexpr int kHeaderW = 130;
+constexpr int kRulerH = 26;
+constexpr int kZoomW = 64;
+constexpr int kFolderH = 22;
+constexpr int kResizeHandleH = 5;
+constexpr int kVideoRowH = 56;
+constexpr int kAudioRowH = 44;
+constexpr int kMinRowH = 24;
+constexpr int kMaxRowH = 400;
+constexpr double kMinPps = 2.0;
+constexpr double kMaxPps = 4000.0;
+constexpr double kMinDur = 0.04;
+
+enum Tool {
+    ToolSelect = 0, ToolMove = 1, ToolScissors = 2, ToolEnvelope = 3, ToolZoom = 4,
+    ToolRipple = 5, ToolRolling = 6, ToolSlip = 7, ToolSlide = 8, ToolRateStretch = 9
+};
+
+QString fmtRuler(double t) {
+    const int total = (int)std::floor(t);
+    return QString("%1:%2")
+        .arg(total / 60, 2, 10, QLatin1Char('0'))
+        .arg(total % 60, 2, 10, QLatin1Char('0'));
+}
+}
+
+// ── Geometry helpers ────────────────────────────────────────────────────────
+
+double TimelineWidget::timeToX(double t) const {
+    return kHeaderW + (t - m_viewStart) * m_pps;
+}
+
+double TimelineWidget::xToTime(int x) const {
+    return m_viewStart + (x - kHeaderW) / m_pps;
+}
+
+int TimelineWidget::trackH(int idx, bool audio) const {
+    if (!m_project) return audio ? kAudioRowH : kVideoRowH;
+    const QVector<Track>& list = audio ? m_project->audioTracks : m_project->videoTracks;
+    if (idx < 0 || idx >= (int)list.size()) return audio ? kAudioRowH : kVideoRowH;
+    const int h = list[idx].height;
+    if (h >= kMinRowH) return std::min(h, kMaxRowH);
+    return audio ? kAudioRowH : kVideoRowH;
+}
+
+int TimelineWidget::rowY(int videoIdx, int audioIdx) const {
+    const int n = (int)m_project->videoTracks.size();
+    int y = kRulerH - m_viewTop;
+    if (videoIdx >= 0) {
+        for (int i = 0; i < videoIdx; ++i)
+            if (trackVisible(i, false)) y += trackH(i, false);
+        y += folderStripsAboveVideo(videoIdx) * kFolderH;
+        return y;
+    }
+    for (int i = 0; i < n; ++i)
+        if (trackVisible(i, false)) y += trackH(i, false);
+    y += folderStripsAboveVideo(-1) * kFolderH;
+    y += folderStripsAboveAudio(audioIdx) * kFolderH;
+    for (int i = 0; i < audioIdx; ++i)
+        if (trackVisible(i, true)) y += trackH(i, true);
+    return y;
+}
+
+bool TimelineWidget::rowFromY(int y, int& row, bool& audio) const {
+    if (!m_project) return false;
+    int rem = y + m_viewTop - kRulerH;
+    if (rem < 0) return false;
+    const int n = (int)m_project->videoTracks.size();
+    for (int i = 0; i < n; ++i) {
+        if (!trackVisible(i, false)) continue;
+        const int above = folderStripsAboveVideo(i);
+        const int below = (i > 0) ? folderStripsAboveVideo(i - 1) : 0;
+        rem -= (above - below) * kFolderH;
+        const int h = trackH(i, false);
+        if (rem < h) { row = i; audio = false; return true; }
+        rem -= h;
+    }
+    for (int i = 0; i < (int)m_project->audioTracks.size(); ++i) {
+        if (!trackVisible(i, true)) continue;
+        const int above = folderStripsAboveAudio(i);
+        const int below = (i > 0) ? folderStripsAboveAudio(i - 1) : 0;
+        rem -= (above - below) * kFolderH;
+        const int h = trackH(i, true);
+        if (rem < h) { row = i; audio = true; return true; }
+        rem -= h;
+    }
+    return false;
+}
+
+Clip* TimelineWidget::clipAt(int row, bool audio, double t) const {
+    if (!m_project) return nullptr;
+    auto top = [t](QVector<Clip>& clips) -> Clip* {
+        Clip* best = nullptr;
+        for (auto& c : clips)
+            if (t >= c.pos && t < c.pos + c.dur)
+                if (!best || c.pos > best->pos) best = &c;
+        return best;
+    };
+    if (audio) {
+        if (row < 0 || row >= (int)m_project->audioTracks.size()) return nullptr;
+        return top(m_project->audioTracks[row].clips);
+    } else {
+        if (row < 0 || row >= (int)m_project->videoTracks.size()) return nullptr;
+        return top(m_project->videoTracks[row].clips);
+    }
+}
+
+int TimelineWidget::volLineY(int row, bool audio, const Track& tr) const {
+    const int rowH = trackH(row, audio);
+    const int y = rowY(-1, row);
+    const int pad = 6;
+    const double frac = std::clamp(tr.volume, 0.0, 2.0) / 2.0;
+    return y + rowH - pad - (int)std::lround(frac * (rowH - pad * 2.0));
+}
+
+int TimelineWidget::clipVolLineY(int row, const Clip& c) const {
+    const int rowH = trackH(row, true);
+    const int y = rowY(-1, row);
+    const int pad = 6;
+    const double frac = std::clamp(c.volume, 0.0, 2.0) / 2.0;
+    return y + rowH - pad - (int)std::lround(frac * (rowH - pad * 2.0));
+}
+
+int TimelineWidget::folderStripsAboveVideo(int videoIdx) const {
+    int count = 0;
+    for (const TrackGroup& g : m_project->trackGroups) {
+        int first = -1;
+        for (int i = 0; i < (int)m_project->videoTracks.size(); ++i)
+            if (m_project->videoTracks[i].groupId == g.id) { first = i; break; }
+        if (first < 0) continue;
+        if (videoIdx < 0 || first <= videoIdx) ++count;
+    }
+    return count;
+}
+
+int TimelineWidget::folderStripsAboveAudio(int audioIdx) const {
+    int count = 0;
+    for (const TrackGroup& g : m_project->trackGroups) {
+        bool hasVideo = false;
+        for (const Track& t : m_project->videoTracks)
+            if (t.groupId == g.id) { hasVideo = true; break; }
+        if (hasVideo) continue;
+        int top = -1;
+        for (int i = 0; i < (int)m_project->audioTracks.size(); ++i)
+            if (m_project->audioTracks[i].groupId == g.id) { top = i; break; }
+        if (top >= 0 && top <= audioIdx) ++count;
+    }
+    return count;
+}
+
+QRect TimelineWidget::folderStripRect(const TrackGroup& g) const {
+    if (!m_project) return QRect();
+    int topVideo = -1;
+    for (int i = 0; i < (int)m_project->videoTracks.size(); ++i)
+        if (m_project->videoTracks[i].groupId == g.id) { topVideo = i; break; }
+    if (topVideo >= 0) {
+        const int y = rowY(topVideo, -1) - kFolderH;
+        return QRect(0, y, width(), kFolderH);
+    }
+    int topAudio = -1;
+    for (int i = 0; i < (int)m_project->audioTracks.size(); ++i)
+        if (m_project->audioTracks[i].groupId == g.id) { topAudio = i; break; }
+    if (topAudio >= 0) {
+        const int y = rowY(-1, topAudio) - kFolderH;
+        return QRect(0, y, width(), kFolderH);
+    }
+    return QRect();
+}
+
+bool TimelineWidget::folderStripAt(int y, QString& gid) const {
+    if (!m_project) return false;
+    for (const TrackGroup& g : m_project->trackGroups) {
+        const QRect r = folderStripRect(g);
+        if (y >= r.top() && y < r.bottom()) { gid = g.id; return true; }
+    }
+    return false;
+}
+
+QRect TimelineWidget::folderArrowRect(const TrackGroup& g) const {
+    const QRect r = folderStripRect(g);
+    if (r.isEmpty()) return QRect();
+    return QRect(r.left() + 2, r.top() + (kFolderH - 14) / 2, 18, 14);
+}
+
+bool TimelineWidget::trackVisible(int row, bool audio) const {
+    if (!m_project) return true;
+    const QVector<Track>& list = audio ? m_project->audioTracks : m_project->videoTracks;
+    if (row < 0 || row >= (int)list.size()) return true;
+    const QString& gid = list[row].groupId;
+    if (gid.isEmpty()) return true;
+    const TrackGroup* g = m_project->findGroup(gid);
+    return g ? !g->collapsed : true;
+}
+
+// ── Painting ────────────────────────────────────────────────────────────────
+
+void TimelineWidget::paintEvent(QPaintEvent*) {
+    QPainter p(this);
+    p.fillRect(rect(), QColor(24, 24, 26));
+    if (!m_project) return;
+
+    if (m_staticDirty || m_staticCache.size() != size()) {
+        if (m_staticCache.size() != size())
+            m_staticCache = QPixmap(size());
+        m_staticCache.fill(Qt::transparent);
+        QPainter sp(&m_staticCache);
+        renderScene(sp);
+        m_staticDirty = false;
+    }
+    p.drawPixmap(0, 0, m_staticCache);
+    renderOverlays(p);
+}
+
+void TimelineWidget::renderScene(QPainter& p) {
+    const int H = kHeaderW;
+    const int R = kRulerH;
+
+    // Fundo da régua (só se habilitada).
+    if (m_showRuler) {
+        p.fillRect(0, 0, width(), R, QColor(40, 40, 44));
+        p.setPen(QColor(70, 70, 76));
+        p.drawLine(0, R - 1, width(), R - 1);
+    } else {
+        p.fillRect(0, 0, width(), R, QColor(34, 34, 38));
+    }
+    p.drawLine(H - 1, R, H - 1, height());
+
+    int rowsBottom = kRulerH - m_viewTop;
+    rowsBottom += folderStripsAboveVideo(-1) * kFolderH;
+    rowsBottom += folderStripsAboveAudio((int)m_project->audioTracks.size() - 1) * kFolderH;
+    for (int i = 0; i < (int)m_project->videoTracks.size(); ++i)
+        if (trackVisible(i, false)) rowsBottom += trackH(i, false);
+    for (int i = 0; i < (int)m_project->audioTracks.size(); ++i)
+        if (trackVisible(i, true)) rowsBottom += trackH(i, true);
+    const int gridBottom = std::min(height(), rowsBottom);
+    double step = 1.0;
+    while (step * m_pps < 70.0) step *= 2.0;
+    int subdiv = 5;
+    while (subdiv > 1 && (step / subdiv) * m_pps < 9.0) {
+        if (subdiv == 5) subdiv = 4;
+        else if (subdiv == 4) subdiv = 2;
+        else subdiv = 1;
+    }
+    const double mstep = step / subdiv;
+    const double last = m_viewStart + (width() - H) / m_pps;
+    const long long k0 = (long long)std::ceil(m_viewStart / mstep);
+    QFont f = p.font();
+    f.setPointSizeF(8);
+    p.setFont(f);
+    for (long long k = k0; k * mstep <= last + 1e-9; ++k) {
+        const double t = k * mstep;
+        const int x = (int)(H + (t - m_viewStart) * m_pps);
+        if (x < H - 1) continue;
+        const bool major = (k % subdiv) == 0;
+        if (major) {
+            if (m_showRuler) {
+                p.setPen(QPen(QColor(140, 140, 150), 1));
+                p.drawLine(x, 1, x, R - 1);
+                p.setPen(QColor(215, 215, 225));
+                p.drawText(x + 4, R - 6, fmtRuler(t));
+            }
+            if (m_showGrid) {
+                p.setPen(QColor(52, 52, 58));
+                p.drawLine(x, R, x, gridBottom);
+            }
+        } else if (m_showRuler) {
+            p.setPen(QColor(105, 105, 115));
+            p.drawLine(x, R - 12, x, R - 2);
+        }
+    }
+
+    for (const Marker& mk : m_project->markers) {
+        const int mx = (int)(H + (mk.time - m_viewStart) * m_pps);
+        if (mx < H || mx > width()) continue;
+        p.setPen(QPen(mk.color, 1));
+        p.drawLine(mx, 2, mx, R - 4);
+        QPolygon flag;
+        flag << QPoint(mx, 2) << QPoint(mx + 6, 2) << QPoint(mx + 6, 8) << QPoint(mx, 8);
+        p.setPen(Qt::NoPen);
+        p.setBrush(mk.color);
+        p.drawPolygon(flag);
+        if (!mk.name.isEmpty()) {
+            p.setPen(mk.color);
+            p.drawText(mx + 8, R - 8, mk.name);
+        }
+    }
+
+    const int zx0 = 6;
+    p.fillRect(zx0, 2, kZoomW, R - 4, QColor(60, 60, 66));
+    p.setPen(QColor(200, 200, 205));
+    QFont zf = p.font();
+    zf.setPointSizeF(9);
+    zf.setBold(true);
+    p.setFont(zf);
+    p.drawText(QRect(zx0, 2, kZoomW / 2, R - 4), Qt::AlignCenter, QStringLiteral("\u2212"));
+    p.drawText(QRect(zx0 + kZoomW / 2, 2, kZoomW / 2, R - 4), Qt::AlignCenter, QStringLiteral("+"));
+    p.drawLine(zx0 + kZoomW / 2, 4, zx0 + kZoomW / 2, R - 6);
+
+    p.save();
+    p.setClipRect(QRect(0, R, width(), height() - R));
+    for (int i = 0; i < (int)m_project->videoTracks.size(); ++i) {
+        if (!trackVisible(i, false)) continue;
+        const int y = rowY(i, -1);
+        const int rowH = trackH(i, false);
+        const bool sel = isTrackSelected(i, false);
+        p.fillRect(0, y, width(), rowH, sel ? QColor(44, 50, 64)
+                                            : ((i % 2) ? QColor(31, 31, 34) : QColor(28, 28, 31)));
+        if (sel) {
+            p.fillRect(0, y, 4, rowH, QColor(120, 170, 255));
+            p.setPen(QPen(QColor(110, 160, 240), 1));
+            p.drawRect(0, y, width() - 1, rowH - 1);
+        }
+        p.setPen(QColor(48, 48, 54));
+        p.drawLine(0, y + rowH, width(), y + rowH);
+        drawTrackHeader(p, y, rowH, m_project->videoTracks[i], sel);
+    }
+    for (int i = 0; i < (int)m_project->audioTracks.size(); ++i) {
+        if (!trackVisible(i, true)) continue;
+        const int y = rowY(-1, i);
+        const int rowH = trackH(i, true);
+        const bool sel = isTrackSelected(i, true);
+        p.fillRect(0, y, width(), rowH, sel ? QColor(42, 48, 62)
+                                            : ((i % 2) ? QColor(29, 29, 32) : QColor(26, 26, 29)));
+        if (sel) {
+            p.fillRect(0, y, 4, rowH, QColor(120, 170, 255));
+            p.setPen(QPen(QColor(106, 150, 224), 1));
+            p.drawRect(0, y, width() - 1, rowH - 1);
+        }
+        p.setPen(QColor(46, 46, 52));
+        p.drawLine(0, y + rowH, width(), y + rowH);
+        drawTrackHeader(p, y, rowH, m_project->audioTracks[i], sel);
+    }
+
+    for (const TrackGroup& g : m_project->trackGroups)
+        drawFolderStrip(p, g);
+
+    p.restore();
+
+    p.save();
+    p.setClipRect(QRect(H, R, width() - H, height() - R));
+    auto drawClips = [&](const QVector<Track>& tracks, bool audio) {
+        QVector<QPair<int, const Clip*>> order;
+        for (int i = 0; i < (int)tracks.size(); ++i) {
+            if (!trackVisible(i, audio)) continue;
+            for (const Clip& c : tracks[i].clips)
+                order.append(QPair<int, const Clip*>(i, &c));
+        }
+        std::stable_sort(order.begin(), order.end(),
+                         [](const QPair<int, const Clip*>& a,
+                            const QPair<int, const Clip*>& b) {
+                             return a.second->pos < b.second->pos;
+                         });
+        for (const auto& it : order) {
+            const int i = it.first;
+            const Clip& c = *it.second;
+            const Track& tr = tracks[i];
+            const int y = audio ? rowY(-1, i) : rowY(i, -1);
+            const int rowH = audio ? trackH(i, true) : trackH(i, false);
+            const int cx = (int)(H + (c.pos - m_viewStart) * m_pps);
+            const int cw = std::max(2, (int)(c.dur * m_pps));
+            QRect r(cx + 1, y + 4, cw - 2, rowH - 8);
+            if (r.width() <= 0 || r.height() <= 0) continue;
+            if (r.right() < H || r.left() > width()) continue;
+            drawClip(p, r, c, tr, audio);
+        }
+    };
+    drawClips(m_project->videoTracks, false);
+    drawClips(m_project->audioTracks, true);
+
+    for (int i = 0; i < (int)m_project->videoTracks.size(); ++i) {
+        if (!trackVisible(i, false)) continue;
+        const QVector<Clip>& clips = m_project->videoTracks[i].clips;
+        const int y = rowY(i, -1);
+        const int rowH = trackH(i, false);
+        for (int k = 1; k < (int)clips.size(); ++k) {
+            const Clip& prev = clips[k - 1];
+            const Clip& cur = clips[k];
+            const double end = prev.pos + prev.dur;
+            if (cur.pos >= end - 1e-6) continue;
+            const int x0 = (int)(H + (cur.pos - m_viewStart) * m_pps);
+            const int x1 = (int)(H + (end - m_viewStart) * m_pps);
+            if (x1 < H || x0 > width()) continue;
+            const QRect r(x0 + 1, y + 4, std::max(2, x1 - x0 - 2), rowH - 8);
+            const QString type = isTransition(prev.transitionType)
+                                     ? prev.transitionType
+                                     : QStringLiteral("dissolve");
+            drawTransitionIndicator(p, r, type);
+        }
+    }
+    p.restore();
+
+    if (m_showVolLines) {
+        p.save();
+        p.setClipRect(QRect(H, kRulerH, width() - H, height() - kRulerH));
+        for (int i = 0; i < (int)m_project->audioTracks.size(); ++i) {
+            if (!trackVisible(i, true)) continue;
+            const Track& tr = m_project->audioTracks[i];
+            const int ly = volLineY(i, true, tr);
+            const bool active = m_dragMode == TrackVol && m_volRow == i;
+            p.setPen(QPen(active ? QColor(255, 220, 90) : QColor(255, 255, 255),
+                          active ? 2 : 1, Qt::SolidLine));
+            p.drawLine(H, ly, width(), ly);
+        }
+        for (int i = 0; i < (int)m_project->audioTracks.size(); ++i) {
+            if (!trackVisible(i, true)) continue;
+            const Track& tr = m_project->audioTracks[i];
+            const int y = rowY(-1, i);
+            for (const Clip& c : tr.clips) {
+                const int cx = (int)(H + (c.pos - m_viewStart) * m_pps);
+                const int cw = std::max(2, (int)(c.dur * m_pps));
+                if (cx + cw < H || cx > width()) continue;
+                const int ly = clipVolLineY(i, c);
+                const bool active = m_dragMode == ClipVol && m_volClip == c.id;
+                p.setPen(QPen(active ? QColor(255, 220, 90) : QColor(255, 255, 255, 170),
+                              active ? 2 : 1, Qt::SolidLine));
+                p.drawLine(cx + 1, ly, cx + cw - 1, ly);
+            }
+        }
+        p.restore();
+    }
+}
+
+void TimelineWidget::renderOverlays(QPainter& p) {
+    const int H = kHeaderW;
+    const int R = kRulerH;
+
+    if (m_loopOut > m_loopIn) {
+        const int lx0 = (int)timeToX(m_loopIn);
+        const int lx1 = (int)timeToX(m_loopOut);
+        p.fillRect(QRect(lx0, 0, lx1 - lx0, R), QColor(140, 195, 255, 90));
+        p.fillRect(QRect(lx0, R, lx1 - lx0, height() - R), QColor(140, 195, 255, 16));
+        if (m_loopEnabled) {
+            p.fillRect(QRect(lx0, 0, lx1 - lx0, R), QColor(255, 220, 90, 46));
+            p.fillRect(QRect(lx0, R, lx1 - lx0, height() - R), QColor(255, 220, 90, 22));
+        }
+        p.setPen(QPen(QColor(110, 175, 245, m_loopEnabled ? 255 : 160), m_loopEnabled ? 2 : 1));
+        p.drawLine(lx0, R, lx0, height());
+        p.drawLine(lx1, R, lx1, height());
+        auto drawEdgeTab = [&](int ex) {
+            const QRect tab(ex - 4, 0, 8, R);
+            p.setPen(QPen(QColor(20, 48, 90), 1));
+            p.setBrush(QColor(120, 185, 255));
+            p.drawRect(tab);
+            p.setPen(QColor(30, 70, 120));
+            p.drawLine(ex, 3, ex, R - 3);
+        };
+        drawEdgeTab(lx0);
+        drawEdgeTab(lx1);
+        if (m_loopEnabled) {
+            const QString tag = QStringLiteral("loop");
+            QFont tf = p.font();
+            tf.setPointSizeF(7);
+            tf.setBold(true);
+            p.setFont(tf);
+            QFontMetrics tfm(tf);
+            const int tw = tfm.horizontalAdvance(tag) + 6;
+            const QRect badge(lx0 + 2, 7, tw, 11);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(50, 140, 220));
+            p.drawRoundedRect(badge, 2, 2);
+            p.setPen(Qt::white);
+            p.drawText(badge, Qt::AlignCenter, tag);
+            p.setFont(p.font());
+        }
+    }
+
+    const double px = H + (m_playhead - m_viewStart) * m_pps;
+    if (px >= H && px <= width()) {
+        p.setPen(QColor(255, 70, 70));
+        p.drawLine((int)px, R, (int)px, height());
+        QPolygon tri;
+        tri << QPoint((int)px - 6, 0) << QPoint((int)px + 6, 0) << QPoint((int)px, 9);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(255, 70, 70));
+        p.drawPolygon(tri);
+    }
+
+    if (m_cursorT >= 0.0) {
+        const double cx = timeToX(m_cursorT);
+        if (cx >= H && cx <= width()) {
+            p.setPen(QPen(QColor(255, 255, 255, 230), 1));
+            p.drawLine((int)cx, R, (int)cx, height());
+            QPolygon ctri;
+            ctri << QPoint((int)cx - 5, 0) << QPoint((int)cx + 5, 0) << QPoint((int)cx, 8);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(255, 255, 255, 235));
+            p.drawPolygon(ctri);
+        }
+    }
+
+    if (m_dragMode == Razor) {
+        const int rx = (int)timeToX(m_razorT);
+        p.setPen(QPen(QColor(255, 255, 255, 190), 1, Qt::DashLine));
+        p.drawLine(rx, R, rx, height());
+    } else if (m_dragMode == ZoomSelect) {
+        const int zx1 = (int)timeToX(m_zoomT0);
+        const int zx2 = (int)timeToX(m_zoomT1);
+        const QRect zr(QPoint(std::min(zx1, zx2), R), QPoint(std::max(zx1, zx2), height()));
+        QStyleOptionRubberBand opt;
+        opt.initFrom(this);
+        opt.rect = zr;
+        opt.shape = QRubberBand::Rectangle;
+        opt.opaque = false;
+        style()->drawControl(QStyle::CE_RubberBand, &opt, &p, this);
+    } else if (m_dragMode == Marquee) {
+        const QRect mr = m_marqueeRect.normalized();
+        if (!mr.isEmpty()) {
+            QStyleOptionRubberBand opt;
+            opt.initFrom(this);
+            opt.rect = mr;
+            opt.shape = QRubberBand::Rectangle;
+            opt.opaque = false;
+            style()->drawControl(QStyle::CE_RubberBand, &opt, &p, this);
+        }
+    }
+
+    if (m_dragHoverRow >= 0 && m_dragHoverDur > 0.0) {
+        const int hy = m_dragHoverAudio ? rowY(-1, m_dragHoverRow)
+                                        : rowY(m_dragHoverRow, -1);
+        const int hh = trackH(m_dragHoverRow, m_dragHoverAudio);
+        const int gx0 = (int)timeToX(m_dragHoverT);
+        const int gx1 = (int)timeToX(m_dragHoverT + m_dragHoverDur);
+        const QRect ghost(gx0, hy + 2, qMax(1, gx1 - gx0), hh - 4);
+        p.setPen(QPen(QColor(140, 200, 255), 1));
+        p.fillRect(ghost.adjusted(1, 1, -1, -1), QColor(90, 165, 255, 95));
+        p.drawRect(ghost);
+        if (!m_dragHoverName.isEmpty() && ghost.width() > 40) {
+            p.setPen(QColor(210, 235, 255));
+            p.drawText(ghost.adjusted(6, 0, -6, 0), Qt::AlignVCenter | Qt::AlignLeft,
+                       m_dragHoverName);
+        }
+        p.setPen(QColor(140, 200, 255, 180));
+        p.drawLine(gx0, hy, gx0, hy + hh);
+    }
+
+    if (m_dragMode == TrackDrag) {
+        const bool isGroup = !m_dragGroupId.isEmpty();
+        if (isGroup) {
+            if (m_dropRow >= 0) {
+                const int dy = m_dropAudio ? rowY(-1, m_dropRow) : rowY(m_dropRow, -1);
+                p.setPen(QPen(QColor(80, 200, 120), 2));
+                p.drawLine(0, dy, width(), dy);
+            }
+        } else if (!m_dropGroup.isEmpty()) {
+            const TrackGroup* g = m_project->findGroup(m_dropGroup);
+            if (g) {
+                const QRect fr = folderStripRect(*g);
+                p.fillRect(fr, QColor(80, 200, 120, 60));
+                p.setPen(QPen(QColor(80, 200, 120), 2));
+                p.drawRect(fr.adjusted(0, 0, -1, -1));
+            }
+        } else if (m_dropRow >= 0) {
+            const int dy = m_dropAudio ? rowY(-1, m_dropRow) : rowY(m_dropRow, -1);
+            p.setPen(QPen(QColor(80, 200, 120), 2));
+            p.drawLine(0, dy, width(), dy);
+        }
+    }
+}
+
+void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
+                              const Track& tr, bool audio) {
+    if (r.width() <= 0 || r.height() <= 0) return;
+    const bool sel = isSelected(c.id);
+    QColor fill = audio ? QColor(26, 86, 66) : QColor(32, 66, 116);
+    QColor border = audio ? QColor(70, 160, 120) : QColor(90, 140, 210);
+    if (sel) {
+        fill = audio ? QColor(40, 120, 92) : QColor(46, 96, 168);
+        border = QColor(255, 170, 40);
+    }
+    p.setPen(QPen(border, sel ? 2 : 1));
+    p.setBrush(fill);
+    p.drawRoundedRect(r, 3, 3);
+
+    const MediaItem* mi = m_project ? m_project->findMedia(c.mediaId) : nullptr;
+    const QString path = mi ? mi->filePath : QString();
+    const ClipVisKey key{c.id, r.width(), r.height(), m_clipEpoch};
+    QPixmap content = m_clipPix.value(key);
+    if (content.isNull() || content.size() != r.size()) {
+        content = QPixmap(r.size());
+        content.fill(Qt::transparent);
+        QPainter cp(&content);
+        const QRect cr(0, 0, r.width(), r.height());
+        if (audio)
+            drawAudioWaveform(cp, cr, c, path);
+        else if (c.isText)
+            drawTextClipBody(cp, cr, c);
+        else if (mi && mi->isSolid)
+            cp.fillRect(cr, mi->solidColor);
+        else
+            drawVideoThumbs(cp, cr, c, path);
+        if (!audio)
+            drawOpacityHandle(cp, cr, c);
+        drawFadeCorners(cp, cr, c);
+        if (m_tool == ToolEnvelope && (m_showVolLines || !audio))
+            drawEnvelope(cp, cr, c, audio);
+        const qint64 bytes = (qint64)content.width() * content.height()
+                             * (content.depth() / 8);
+        if (m_clipBytes + bytes > 96LL * 1024 * 1024) {
+            m_clipPix.clear();
+            m_clipBytes = 0;
+        }
+        m_clipBytes += bytes;
+        m_clipPix.insert(key, content);
+    }
+    p.drawPixmap(r.topLeft(), content);
+
+    if (m_tool != ToolEnvelope)
+        drawKeyframeDiamonds(p, r, c, audio);
+
+    QString label = c.name.isEmpty() ? tr.name : c.name;
+    if (audio) {
+        label += QString("  \u00b7  v %1%").arg((int)llround(c.volume * 100.0));
+        if (c.hasAudioFx())
+            label += QString("  \u00b7  FX");
+    }
+    if (std::fabs(c.speed - 1.0) > 1e-4)
+        label += QString("  \u00b7  %1\u00d7").arg(c.speed, 0, 'g', 3);
+    QFont f = p.font();
+    f.setPointSizeF(8.5);
+    p.setFont(f);
+    QFontMetrics fm(f);
+    label = fm.elidedText(label, Qt::ElideRight, std::max(1, r.width() - 10));
+    QRect labelRect(r.left() + 3, r.top() + 2, r.width() - 6, fm.height());
+    p.fillRect(labelRect, QColor(0, 0, 0, 110));
+    // Ícone de áudio (alto-falante) para clipes de áudio.
+    int textX = r.left() + 5;
+    if (audio) {
+        static QPixmap audioIcon;
+        if (audioIcon.isNull()) {
+            audioIcon = QPixmap(QStringLiteral(":/imagens/audio.svg"));
+            if (!audioIcon.isNull())
+                audioIcon = audioIcon.scaled(14, 14, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        }
+        if (!audioIcon.isNull()) {
+            p.drawPixmap(textX, r.top() + 3, audioIcon);
+            textX += 17;
+        }
+    }
+    p.setPen(QColor(235, 235, 240));
+    QRect textRect(textX, r.top() + 2, r.right() - 3 - textX, fm.height());
+    p.drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, label);
+
+    if (!audio) {
+        QRect obar(r.left() + 5, r.top() + 22, std::max(1, r.width() - 10), 3);
+        const int w = (int)(obar.width() * c.opacity);
+        p.fillRect(obar, QColor(0, 0, 0, 110));
+        p.fillRect(QRect(obar.x(), obar.y(), w, obar.height()), QColor(255, 255, 255, 190));
+    }
+
+    if (!audio && c.id == m_hoverGripClip) {
+        const int cx = r.center().x();
+        QPainterPath tab;
+        const int tw = 28;
+        tab.moveTo(cx - tw / 2, r.top() + 1);
+        tab.lineTo(cx + tw / 2, r.top() + 1);
+        tab.lineTo(cx, r.top() + 14);
+        tab.closeSubpath();
+        p.setPen(QPen(QColor(255, 255, 255), 2));
+        p.setBrush(QColor(180, 215, 255, 230));
+        p.drawPath(tab);
+    }
+
+    if (c.id == m_hoverCornerClip && m_hoverCornerSide != 0) {
+        const int s = 17;
+        QPainterPath tab;
+        if (m_hoverCornerSide < 0) {
+            tab.moveTo(r.left() + 1, r.top() + 1);
+            tab.lineTo(r.left() + 1, r.top() + s);
+            tab.lineTo(r.left() + s, r.top() + 1);
+        } else {
+            tab.moveTo(r.right() - 1, r.top() + 1);
+            tab.lineTo(r.right() - 1, r.top() + s);
+            tab.lineTo(r.right() - s, r.top() + 1);
+        }
+        tab.closeSubpath();
+        p.setPen(QPen(QColor(255, 255, 255), 2));
+        p.setBrush(QColor(255, 220, 130, 240));
+        p.drawPath(tab);
+    }
+
+    const QString range = fmtRuler(c.in) + " \u2013 " + fmtRuler(c.in + c.dur);
+    f.setPointSizeF(7.5);
+    p.setFont(f);
+    QFontMetrics fm2(f);
+    const QString rng = fm2.elidedText(range, Qt::ElideRight, std::max(1, r.width() - 10));
+    QRect rangeRect(r.left() + 3, r.bottom() - fm2.height() - 2, r.width() - 6, fm2.height());
+    p.fillRect(rangeRect, QColor(0, 0, 0, 110));
+    p.setPen(QColor(190, 195, 205));
+    p.drawText(rangeRect, Qt::AlignLeft | Qt::AlignVCenter, rng);
+}
+
+void TimelineWidget::drawTextClipBody(QPainter& p, const QRect& r, const Clip& c) {
+    const TextStyle& st = *m_project->textStyleFor(c);
+    QFont f = p.font();
+    f.setPointSizeF(9.5);
+    f.setBold(true);
+    p.setFont(f);
+    p.setPen(st.textColor);
+    p.drawText(r.adjusted(5, 3, -5, -3), Qt::AlignLeft | Qt::AlignTop, tr("T"));
+    f.setPointSizeF(8.5);
+    f.setBold(false);
+    p.setFont(f);
+    p.setPen(QColor(220, 225, 235));
+    QString txt = st.text.simplified();
+    if (txt.isEmpty()) txt = tr("(texto vazio)");
+    const QFontMetrics fm(f);
+    txt = fm.elidedText(txt, Qt::ElideRight, std::max(10, r.width() - 16));
+    p.drawText(QRect(r.left() + 4, r.top() + 18, std::max(10, r.width() - 8),
+                     std::max(10, r.height() - 22)),
+               Qt::AlignLeft | Qt::AlignTop, txt);
+}
+
+void TimelineWidget::drawAudioWaveform(QPainter& p, const QRect& r, const Clip& c,
+                                       const QString& path) {
+    if (path.isEmpty() || r.width() < 2) return;
+    MediaCache& cache = MediaCache::instance();
+    if (!cache.hasPeaks(path, c.audioStreamIndex)) {
+        cache.requestPeaks(path, c.audioStreamIndex);
+        p.setPen(QColor(255, 255, 255, 45));
+        p.drawLine(r.left(), r.center().y(), r.right(), r.center().y());
+        return;
+    }
+
+    const FFmpegAudioPeaks& pk = cache.peaks(path, c.audioStreamIndex);
+    if (pk.min.isEmpty()) return;
+
+    const int bps = pk.bucketsPerSecond > 0 ? pk.bucketsPerSecond : 1;
+    const int x0 = r.left();
+    const int x1 = r.right();
+    const double dur = c.dur;
+    const int midY = r.center().y();
+    const double amp = r.height() / 2.0 - 2.0;
+    const bool sel = isSelected(c.id);
+
+    // ── Fundo: faixa escura com leve gradiente para profundidade ──────
+    p.fillRect(r, sel ? QColor(18, 52, 42) : QColor(14, 14, 17));
+
+    // ── Grade de referência dB (estilo profissional) ──────────────────
+    // -6dB = 50%, -12dB = 25%, -18dB = 12.5% — linhas horizontais
+    // Tracejas sutis para não poluir, mas visíveis o suficiente para
+    // medir dynamic range durante a edição.
+    struct DbLine { double frac; QColor color; };
+    const DbLine dbLines[] = {
+        { 0.50, QColor(80, 80, 90, 100) },   // -6dB
+        { 0.25, QColor(65, 65, 75, 80) },     // -12dB
+        { 0.125, QColor(55, 55, 65, 60) },    // -18dB
+    };
+    for (const DbLine& dl : dbLines) {
+        const int dy = (int)std::lround(dl.frac * amp);
+        p.setPen(QPen(dl.color, 1, Qt::DotLine));
+        p.drawLine(x0, midY - dy, x1, midY - dy);
+        p.drawLine(x0, midY + dy, x1, midY + dy);
+    }
+
+    // ── Linha zero (centro exato da onda) ────────────────────────────
+    p.setPen(QPen(QColor(255, 255, 255, 50), 1));
+    p.drawLine(x0, midY, x1, midY);
+
+    // ── Marcadores de tempo (a cada 0.5s ou 1s conforme zoom) ─────────
+    const double pxPerSec = r.width() / dur;
+    const double timeStep = (pxPerSec > 200.0) ? 0.1 : (pxPerSec > 80.0) ? 0.25 : 0.5;
+    const double startTime = std::ceil(c.in / timeStep) * timeStep;
+    for (double t = startTime; t < c.in + dur; t += timeStep) {
+        const int mx = x0 + (int)std::lround((t - c.in) / dur * r.width());
+        if (mx < x0 || mx > x1) continue;
+        const bool major = std::fabs(std::fmod(t, 1.0)) < 1e-6
+                           || std::fabs(std::fmod(t, 1.0) - 1.0) < 1e-6;
+        p.setPen(QPen(major ? QColor(255, 255, 255, 35) : QColor(255, 255, 255, 18), 1));
+        p.drawLine(mx, midY - 3, mx, midY + 3);
+    }
+
+    // ── Onda preenchida (simétrica, estilo profissional) ──────────────
+    // Cada coluna de pixel: preenche da borda superior (max) até a
+    // inferior (min) com cor que escala com a amplitude. Seções mais
+    // altas ficam mais brilhantes — permite identificar picos e silêncio
+    // rapidamente ao editar.
+    for (int x = x0; x <= x1; ++x) {
+        const double t0 = c.in + (x - x0) * dur / (double)(x1 - x0 + 1);
+        const double t1 = c.in + (x + 1 - x0) * dur / (double)(x1 - x0 + 1);
+        int b0 = (int)std::floor(t0 * bps);
+        int b1 = (int)std::floor(t1 * bps);
+        if (b0 < 0) b0 = 0;
+        if (b1 >= pk.min.size()) b1 = pk.min.size() - 1;
+        if (b0 > b1) continue;
+
+        float mn = 0.0f;
+        float mx = 0.0f;
+        for (int b = b0; b <= b1; ++b) {
+            if (pk.min[b] < mn) mn = pk.min[b];
+            if (pk.max[b] > mx) mx = pk.max[b];
+        }
+
+        const int py0 = (int)std::lround(midY - mx * amp);
+        const int py1 = (int)std::lround(midY - mn * amp);
+        const int top = qBound(r.top(), py0, r.bottom());
+        const int bot = qBound(r.top(), py1, r.bottom());
+        if (top >= bot) continue;
+
+        // Amplitude normalizada (0..1) para escalar cor e brilho.
+        const float peakAmp = std::max(std::fabs(mx), std::fabs(mn));
+        const float norm = std::clamp(peakAmp, 0.0f, 1.0f);
+
+        // Cor dinâmica: silêncio = verde escuro, alto = ciano brilhante.
+        // A componente azul sobe com a amplitude para dar "vida" ao sinal.
+        const int g = (int)(120 + norm * 115);  // 120..235
+        const int b_ = (int)(80 + norm * 175);  // 80..255
+        const int a = (int)(140 + norm * 115);  // 140..255 (alpha)
+        const QColor col(40, g, b_, a);
+
+        // Preenchimento simétrico: espelho a onda acima e abaixo do zero.
+        // A parte "positiva" (topo) fica levemente mais clara; a
+        // "negativa" (base) fica levemente mais escura — dá noção de
+        // polaridade sem precisar de channel split.
+        const int posH = midY - top;
+        const int negH = bot - midY;
+        const int halfH = std::max(posH, negH);
+
+        // Preenchimento real (min→max) com cor da amplitude.
+        p.setPen(Qt::NoPen);
+        p.setBrush(col);
+        p.drawRect(x, top, 1, bot - top);
+
+        // Borda de pico (1px branco sutil no extremo) para definir contorno.
+        if (peakAmp > 0.01f) {
+            p.setPen(QPen(QColor(255, 255, 255, (int)(40 + norm * 60)), 1));
+            if (mx > 0.01f) p.drawPoint(x, top);
+            if (mn < -0.01f) p.drawPoint(x, bot);
+        }
+    }
+
+    // ── Borda do clipe (contorno sutil) ──────────────────────────────
+    p.setPen(QPen(sel ? QColor(255, 170, 40, 120) : QColor(70, 160, 120, 80), 1));
+    p.setBrush(Qt::NoBrush);
+    p.drawRect(r.adjusted(0, 0, -1, -1));
+}
+
+void TimelineWidget::drawVideoThumbs(QPainter& p, const QRect& r, const Clip& c,
+                                     const QString& path) {
+    if (path.isEmpty()) return;
+    const int mode = SettingsDialog::thumbMode();
+    if (mode == 2) return;
+
+    MediaCache& cache = MediaCache::instance();
+
+    const auto drawCover = [&p](const QRect& slice, const QImage& img) {
+        const double scale = std::max(slice.width() / (double)img.width(),
+                                      slice.height() / (double)img.height());
+        const int tw = (int)std::ceil(img.width() * scale);
+        const int th = (int)std::ceil(img.height() * scale);
+        p.drawImage(QRect(slice.x() + (slice.width() - tw) / 2,
+                          slice.y() + (slice.height() - th) / 2, tw, th),
+                    img);
+    };
+
+    QPainterPath clipPath;
+    clipPath.addRoundedRect(r, 3, 3);
+    p.save();
+    p.setClipPath(clipPath);
+
+    if (mode == 1) {
+        const int sw = std::min(96, std::max(1, r.width() / 3));
+        const QRect slices[2] = {
+            QRect(r.left(), r.top(), sw, r.height()),
+            QRect(r.right() - sw + 1, r.top(), sw, r.height()),
+        };
+        const double ts[2] = { c.in, std::max(c.in, c.in + c.dur - 0.01) };
+        QList<double> want;
+        for (int i = 0; i < 2; ++i) {
+            if (i == 1 && r.width() < sw * 2 + 2) break;
+            const double k = std::round(ts[i] * 10.0) / 10.0;
+            QImage img = cache.thumb(path, k);
+            if (img.isNull()) {
+                want.append(k);
+                p.fillRect(slices[i].adjusted(1, 1, -1, -1), QColor(0, 0, 0, 70));
+                continue;
+            }
+            drawCover(slices[i], img);
+        }
+        if (!want.isEmpty()) cache.requestThumbs(path, want);
+        p.restore();
+        return;
+    }
+
+    const int sliceW = 96;
+    const int maxSlices = 20;
+    const int n = std::clamp(std::max(1, r.width() / sliceW), 1, maxSlices);
+
+    QList<double> want;
+    for (int i = 0; i < n; ++i) {
+        const int sliceLeft = r.left() + i * r.width() / n;
+        const int sliceRight = r.left() + (i + 1) * r.width() / n;
+        const int sw = sliceRight - sliceLeft;
+        const QRect sliceRect(sliceLeft, r.top(), sw, r.height());
+
+        const double t = c.in + (i + 0.5) / n * c.dur;
+        const double k = std::round(t * 10.0) / 10.0;
+        QImage img = cache.thumb(path, k);
+        if (img.isNull()) {
+            want.append(k);
+            p.fillRect(sliceRect.adjusted(1, 1, -1, -1), QColor(0, 0, 0, 70));
+            continue;
+        }
+
+        drawCover(sliceRect, img);
+    }
+    if (!want.isEmpty()) cache.requestThumbs(path, want);
+    p.restore();
+}
+
+void TimelineWidget::drawEnvelope(QPainter& p, const QRect& r, const Clip& c, bool audio) {
+    const double maxV = audio ? 3.0 : 1.0;
+    const QVector<Keyframe>& keys = audio ? c.kfVolume : c.kfOpacity;
+
+    QPainterPath path;
+    const int steps = std::max(2, r.width() / 2);
+    for (int i = 0; i <= steps; ++i) {
+        const double t = (double)i / steps * c.dur;
+        const double v = audio ? kfValue(c.kfVolume, c.volume, t)
+                               : kfValue(c.kfOpacity, c.opacity, t);
+        const double cl = std::clamp(v, 0.0, maxV) / maxV;
+        const int x = r.left() + (int)std::lround((double)i / steps * r.width());
+        const int y = r.bottom() - (int)std::lround(cl * (r.height() - 4.0)) - 2;
+        if (i == 0) path.moveTo(x, y);
+        else path.lineTo(x, y);
+    }
+    p.setPen(QPen(QColor(255, 220, 90), 1.4));
+    p.setBrush(Qt::NoBrush);
+    p.drawPath(path);
+
+    for (const Keyframe& k : keys) {
+        if (k.time < -1e-6 || k.time > c.dur + 1e-6) continue;
+        const int x = r.left() + (int)std::lround(k.time / c.dur * r.width());
+        const double cl = std::clamp(k.value, 0.0, maxV) / maxV;
+        const int y = r.bottom() - (int)std::lround(cl * (r.height() - 4.0)) - 2;
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(255, 220, 90));
+        p.drawEllipse(QPoint(x, y), 3, 3);
+    }
+}
+
+void TimelineWidget::drawFadeCorners(QPainter& p, const QRect& r, const Clip& c) {
+    const double dur = std::max(c.dur, kMinDur);
+    const int fi = (int)std::round(std::min(c.fadeIn, dur) / dur * r.width());
+    const int fo = (int)std::round(std::min(c.fadeOut, dur) / dur * r.width());
+    auto drawCornerTab = [&](bool right, int len) {
+        const bool active = len > 0;
+        const QColor fill = active ? QColor(255, 195, 70) : QColor(255, 255, 255, 120);
+        const int s = 13;
+        QPainterPath tab;
+        if (!right) {
+            tab.moveTo(r.left() + 1, r.top() + 1);
+            tab.lineTo(r.left() + 1, r.top() + s);
+            tab.lineTo(r.left() + s, r.top() + 1);
+        } else {
+            tab.moveTo(r.right() - 1, r.top() + 1);
+            tab.lineTo(r.right() - 1, r.top() + s);
+            tab.lineTo(r.right() - s, r.top() + 1);
+        }
+        tab.closeSubpath();
+        p.setPen(QPen(QColor(255, 245, 210, 190), 1));
+        p.setBrush(fill);
+        p.drawPath(tab);
+    };
+    drawCornerTab(false, fi);
+    drawCornerTab(true, fo);
+
+    QPainterPath path;
+    if (fi > 0) {
+        path.moveTo(r.left(), r.top());
+        path.lineTo(r.left() + fi, r.top());
+        path.lineTo(r.left() + fi, r.top() + fi);
+        path.closeSubpath();
+    }
+    if (fo > 0) {
+        path.moveTo(r.right(), r.top());
+        path.lineTo(r.right() - fo, r.top());
+        path.lineTo(r.right() - fo, r.top() + fo);
+        path.closeSubpath();
+    }
+    if (!path.isEmpty()) {
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0, 0, 0, 110));
+        p.drawPath(path);
+    }
+}
+
+void TimelineWidget::drawOpacityHandle(QPainter& p, const QRect& r, const Clip& c) {
+    if (r.width() < 16 || r.height() < 10) return;
+    const bool active = c.opacity < 1.0 - 1e-4;
+    const QColor col = active ? QColor(120, 170, 255) : QColor(255, 255, 255, 70);
+
+    const int lineY = r.top() + (int)std::lround((1.0 - c.opacity) * r.height());
+    const int visY = qBound(r.top() + 1, lineY, r.bottom());
+    if (active) {
+        const int h = std::max(0, visY - r.top());
+        p.fillRect(r.left(), r.top(), r.width(), h, QColor(0, 0, 0, 100));
+    }
+    p.setPen(QPen(active ? QColor(120, 170, 255) : QColor(255, 255, 255, 80), 1));
+    p.drawLine(r.left(), visY, r.right(), visY);
+
+    const int cx = r.center().x();
+    const int tw = 22;
+    QPainterPath tab;
+    tab.moveTo(cx - tw / 2, r.top() + 1);
+    tab.lineTo(cx + tw / 2, r.top() + 1);
+    tab.lineTo(cx, r.top() + 12);
+    tab.closeSubpath();
+    p.setPen(QPen(active ? QColor(150, 200, 255) : QColor(255, 255, 255, 130), 1));
+    p.setBrush(col);
+    p.drawPath(tab);
+
+    if (active) {
+        p.save();
+        QFont f = p.font();
+        f.setPointSizeF(7.5);
+        f.setBold(true);
+        p.setFont(f);
+        p.setPen(QColor(140, 180, 255));
+        p.drawText(r.left() + 4, r.top() + 14, QString("%1%").arg((int)llround(c.opacity * 100.0)));
+        p.restore();
+    }
+}
+
+void TimelineWidget::drawTransitionIndicator(QPainter& p, const QRect& r,
+                                             const QString& type) {
+    if (r.width() < 3 || r.height() < 3) return;
+    p.fillRect(r, QColor(255, 170, 40, 70));
+    p.setPen(QPen(QColor(255, 190, 80, 120), 1));
+    const int step = 5;
+    for (int x = r.left() - r.height(); x < r.right() + r.height(); x += step)
+        p.drawLine(x, r.bottom(), x + r.height(), r.top());
+    QFont f = p.font();
+    f.setPointSizeF(8.5);
+    f.setBold(true);
+    p.setFont(f);
+    QFontMetrics fm(f);
+    QString glyph;
+    if (type == QStringLiteral("wipeleft"))
+        glyph = QStringLiteral("\u2190");
+    else if (type == QStringLiteral("wiperight"))
+        glyph = QStringLiteral("\u2192");
+    else if (type == QStringLiteral("wipeup"))
+        glyph = QStringLiteral("\u2191");
+    else if (type == QStringLiteral("wipedown"))
+        glyph = QStringLiteral("\u2193");
+    else
+        glyph = QStringLiteral("\u2715");
+    const QRect symRect(r.left(), r.top(), r.width(), fm.height());
+    p.setPen(QColor(255, 220, 140));
+    p.drawText(symRect, Qt::AlignHCenter | Qt::AlignTop, glyph);
+}
+
+void TimelineWidget::drawKeyframeDiamonds(QPainter& p, const QRect& r,
+                                          const Clip& c, bool audio) {
+    struct KfSet { const QVector<Keyframe>* keys; QColor color; };
+    QVector<KfSet> sets;
+    if (audio) {
+        sets.append(KfSet{&c.kfVolume, QColor(110, 235, 185)});
+    } else {
+        sets.append(KfSet{&c.kfOpacity, QColor(255, 255, 255)});
+        sets.append(KfSet{&c.kfScale, QColor(90, 200, 255)});
+        sets.append(KfSet{&c.kfScaleX, QColor(80, 220, 220)});
+        sets.append(KfSet{&c.kfScaleY, QColor(80, 220, 220)});
+        sets.append(KfSet{&c.kfRotation, QColor(210, 150, 255)});
+        sets.append(KfSet{&c.kfTx, QColor(255, 200, 90)});
+        sets.append(KfSet{&c.kfTy, QColor(255, 160, 90)});
+        sets.append(KfSet{&c.kfCropL, QColor(120, 255, 140)});
+        sets.append(KfSet{&c.kfCropR, QColor(120, 255, 140)});
+        sets.append(KfSet{&c.kfCropT, QColor(120, 255, 140)});
+        sets.append(KfSet{&c.kfCropB, QColor(120, 255, 140)});
+    }
+    const double dur = std::max(c.dur, kMinDur);
+    int lane = 0;
+    for (const KfSet& s : sets) {
+        if (!s.keys || s.keys->isEmpty()) continue;
+        const int laneY = r.bottom() - (audio ? 20 : 22) - (lane % 2) * 10;
+        for (const Keyframe& k : *s.keys) {
+            const int x = r.left() + (int)std::lround(
+                std::clamp(k.time, 0.0, dur) / dur * r.width());
+            const QPolygonF dia = QPolygonF()
+                << QPointF(x, laneY - 4) << QPointF(x + 4, laneY)
+                << QPointF(x, laneY + 4) << QPointF(x - 4, laneY);
+            p.setPen(QPen(QColor(20, 20, 24), 1));
+            p.setBrush(s.color);
+            p.drawPolygon(dia);
+        }
+        ++lane;
+    }
+}
+
+void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& tr, bool selected) {
+    const int H = kHeaderW;
+    bool anySolo = false;
+    if (m_project) {
+        for (const Track& t : m_project->videoTracks) if (t.solo) { anySolo = true; break; }
+        if (!anySolo)
+            for (const Track& t : m_project->audioTracks) if (t.solo) { anySolo = true; break; }
+    }
+
+    QColor base = selected
+        ? (tr.audio ? QColor(42, 48, 62) : QColor(44, 50, 64))
+        : (tr.audio ? QColor(34, 34, 38) : QColor(37, 37, 41));
+    if (tr.locked) base = selected ? QColor(58, 46, 46) : QColor(46, 38, 38);
+    p.fillRect(0, y, H, rowH, base);
+
+    if (selected)
+        p.fillRect(0, y, 3, rowH, QColor(120, 170, 255));
+    p.fillRect(0, y, 3, rowH,
+               tr.locked ? QColor(200, 90, 90)
+                         : (tr.audio ? QColor(70, 160, 120) : QColor(90, 140, 210)));
+
+    QFont basef = p.font();
+    QFont f = basef;
+    f.setBold(true);
+    f.setPointSizeF(8.5);
+    p.setFont(f);
+    p.setPen(tr.audio ? QColor(200, 200, 208) : QColor(215, 215, 222));
+    p.drawText(QRect(12, y + 2, H - 20, 16), Qt::AlignLeft | Qt::AlignVCenter, tr.name);
+
+    p.setRenderHint(QPainter::Antialiasing, true);
+    if (tr.audio) {
+        const QColor c = tr.locked ? QColor(215, 150, 150) : QColor(70, 160, 120);
+        QPainterPath sp;
+        sp.moveTo(4.5, y + 8);
+        sp.lineTo(9.0, y + 5);
+        sp.lineTo(9.0, y + 11);
+        sp.closeSubpath();
+        p.setPen(Qt::NoPen);
+        p.setBrush(c);
+        p.drawPath(sp);
+        p.fillRect(QRectF(9, y + 6.5, 4.5, 3), c);
+        p.setPen(QPen(c, 1));
+        p.drawArc(QRectF(11.5, y + 5, 4.5, 6), 0, 180 * 16);
+    } else {
+        const QColor c = tr.locked ? QColor(215, 150, 150) : QColor(90, 140, 210);
+        p.setPen(Qt::NoPen);
+        p.setBrush(c);
+        p.drawRoundedRect(QRectF(3, y + 4.5, 10.5, 7), 1.6, 1.6);
+        p.setBrush(QColor(22, 24, 28));
+        p.drawEllipse(QPointF(8.2, y + 8), 2.3, 2.3);
+    }
+    p.setRenderHint(QPainter::Antialiasing, false);
+    p.setFont(basef);
+
+    if (tr.audio) {
+        const QString pct = QString("%1%").arg((int)llround(tr.volume * 100.0));
+        QFont vf = basef;
+        vf.setPointSizeF(7.5);
+        vf.setBold(true);
+        p.setFont(vf);
+        p.setPen(QColor(120, 190, 150));
+        p.drawText(QRect(6, y + 19, H - 12, 14), Qt::AlignRight | Qt::AlignVCenter, pct);
+        p.setFont(basef);
+    } else {
+        const QString pct = QString("%1%").arg((int)llround(tr.opacity * 100.0));
+        QFont vf = basef;
+        vf.setPointSizeF(7.5);
+        vf.setBold(true);
+        p.setFont(vf);
+        p.setPen(QColor(130, 170, 230));
+        p.drawText(QRect(6, y + 19, H - 12, 14), Qt::AlignRight | Qt::AlignVCenter, pct);
+        p.setFont(basef);
+        const int barY = y + 34;
+        const int barH = 4;
+        const int barX0 = 6;
+        const int barW = H - 12;
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(50, 52, 58));
+        p.drawRoundedRect(QRectF(barX0, barY, barW, barH), 2, 2);
+        const int fillW = qMax(2, (int)std::lround(barW * std::clamp(tr.opacity, 0.0, 1.0)));
+        p.setBrush(QColor(90, 140, 210));
+        p.drawRoundedRect(QRectF(barX0, barY, fillW, barH), 2, 2);
+    }
+
+    const bool audible = !tr.muted && !(anySolo && !tr.solo);
+    const QColor dim(110, 110, 120);
+    const int btnY = y + rowH - 22;
+    const int size = 18, gap = 3, bx0 = 6;
+    auto drawBtn = [&](int idx, const QString& label, bool active, const QColor& on) {
+        const int bx = bx0 + idx * (size + gap);
+        const QRect r(bx, btnY, size, size);
+        p.setPen(QPen(active ? on.lighter(140) : QColor(48, 48, 54), 1));
+        p.setBrush(active ? on : QColor(52, 52, 58));
+        p.drawRect(r);
+        p.setPen(active ? QColor(255, 255, 255) : dim);
+        QFont bf = basef;
+        bf.setBold(true);
+        bf.setPointSizeF(7.5);
+        p.setFont(bf);
+        p.drawText(r, Qt::AlignCenter, label);
+        p.setFont(basef);
+    };
+    drawBtn(0, QStringLiteral("M"), tr.muted || !audible, QColor(200, 90, 70));
+    drawBtn(1, QStringLiteral("S"), tr.solo, QColor(215, 170, 50));
+    drawBtn(2, QStringLiteral("L"), tr.locked, QColor(90, 160, 210));
+
+    const int gy0 = y + rowH - kResizeHandleH;
+    p.fillRect(0, gy0, H, kResizeHandleH, QColor(26, 27, 31));
+    p.setPen(QColor(70, 72, 80));
+    const int gx0 = (H - 26) / 2;
+    for (int i = 0; i < 4; ++i)
+        p.drawLine(gx0 + i * 8, gy0 + 2, gx0 + i * 8, gy0 + 3);
+}
+
+void TimelineWidget::drawFolderStrip(QPainter& p, const TrackGroup& g) {
+    const QRect r = folderStripRect(g);
+    if (r.isEmpty()) return;
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(150, 118, 60));
+    p.drawRect(r);
+    p.setPen(QColor(120, 92, 46));
+    p.drawLine(r.left(), r.bottom(), r.right(), r.bottom());
+    const QRect ar = folderArrowRect(g);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setBrush(QColor(235, 220, 180));
+    p.setPen(Qt::NoPen);
+    QPolygon tri;
+    const int cx = ar.center().x();
+    const int cy = ar.center().y();
+    if (g.collapsed)
+        tri << QPoint(cx - 4, cy - 5) << QPoint(cx + 3, cy) << QPoint(cx - 4, cy + 5);
+    else
+        tri << QPoint(cx - 5, cy - 4) << QPoint(cx + 5, cy - 4) << QPoint(cx, cy + 4);
+    p.drawPolygon(tri);
+    p.setRenderHint(QPainter::Antialiasing, false);
+    p.setBrush(QColor(224, 192, 112));
+    p.drawRect(QRect(r.left() + 24, r.top() + 5, 11, 5));
+    p.drawRect(QRect(r.left() + 22, r.top() + 8, 17, 12));
+    p.setPen(QColor(245, 235, 210));
+    QFont f = p.font();
+    f.setBold(true);
+    f.setPointSizeF(8.5);
+    p.setFont(f);
+    p.drawText(QRect(r.left() + 46, r.top(), r.width() - 54, kFolderH),
+               Qt::AlignLeft | Qt::AlignVCenter, g.name);
+}

@@ -424,7 +424,7 @@ public:
         tmp.resize(capacity / 2); // um sample por amostra (ch compensado abaixo)
         int16_t* out = reinterpret_cast<int16_t*>(data);
         for (Source* s : m_sources) {
-            if (!s->opened) continue; // decoder abrindo em background (fase 2)
+            if (!s->opened || !s->active) continue; // decoder abrindo ou inativo
             const int got = s->dec.decodeAudio(tmp.data(), capacity);
             if (audioDbg() && got == 0)
                 qDebug() << "[audio] readData: decodeAudio retornou 0 (silêncio)";
@@ -1489,9 +1489,7 @@ void PreviewWidget::applySeek(double t) {
         TlLog::note(QStringLiteral("applySeek %1 -> %2 (playing=%3)")
                         .arg(prev, 0, 'f', 3).arg(m_playhead, 0, 'f', 3)
                         .arg(m_playing ? 1 : 0));
-    if (!m_playing) {
-        m_currentFrameIndex = std::llround(m_playhead * fps);
-    }
+    m_currentFrameIndex = std::llround(m_playhead * fps);
     updateFrame();
     update();
     emit playheadMoved(m_playhead);
@@ -1951,19 +1949,12 @@ void PreviewWidget::updateMixAudio(double t, bool reseek) {
     // só o trabalho pesado desce para o pool.
     const QVector<AudioMixer::SourceInfo> sources = buildMixSources(m_project, t);
     auto* feed = m_audioFeed;
-    if (!reseek) {
-        // Caminho leve por frame (volumes/fades/troca de clipes): direto na
-        // UI, sem despachar thread 60x/s. Abrir decoder novo ainda pode cair
-        // aqui na troca de clipe, mas é raro e breve.
-        feed->updateSources(sources, false);
-        return;
-    }
-    QPointer<AudioMixer> guard(feed);
-    const int seq = guard->beginJob();
-    QtConcurrent::run([guard, sources, seq]() {
-        if (!guard) return; // mixer descartado (stopAudio)
-        guard->updateSources(sources, true, seq);
-    });
+    // reseek=true (seek/loop): executa síncrono para garantir que decoders
+    // antigos com chave obsoleta (ex: primeiro corte muda id→groupId) sejam
+    // removidos IMEDIATAMENTE — o caminho async capturava a lista want
+    // ANTES do corte e o decoder velho sobrevivia causando duplicação de áudio.
+    // Fase 2 (open/seek) roda fora do lock, então a UI não congela.
+    feed->updateSources(sources, reseek);
 }
 
 void PreviewWidget::updateFrame() {

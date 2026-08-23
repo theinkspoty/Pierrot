@@ -197,6 +197,8 @@ static QJsonObject clipToJson(const Clip& c) {
     o["scaleX"] = c.scaleX;
     o["scaleY"] = c.scaleY;
     o["rotation"] = c.rotation;
+    o["anchorX"] = c.anchorX;
+    o["anchorY"] = c.anchorY;
     o["cropL"] = c.cropL;
     o["cropR"] = c.cropR;
     o["cropT"] = c.cropT;
@@ -216,6 +218,8 @@ static QJsonObject clipToJson(const Clip& c) {
     o["kfScaleX"] = kfToJson(c.kfScaleX);
     o["kfScaleY"] = kfToJson(c.kfScaleY);
     o["kfRotation"] = kfToJson(c.kfRotation);
+    o["kfAnchorX"] = kfToJson(c.kfAnchorX);
+    o["kfAnchorY"] = kfToJson(c.kfAnchorY);
     o["kfCropL"] = kfToJson(c.kfCropL);
     o["kfCropR"] = kfToJson(c.kfCropR);
     o["kfCropT"] = kfToJson(c.kfCropT);
@@ -304,6 +308,8 @@ static Clip clipFromJson(const QJsonObject& o) {
     c.scaleX = o["scaleX"].toDouble(1.0);
     c.scaleY = o["scaleY"].toDouble(1.0);
     c.rotation = o["rotation"].toDouble(0.0);
+    c.anchorX = o["anchorX"].toDouble(0.0);
+    c.anchorY = o["anchorY"].toDouble(0.0);
     c.cropL = o["cropL"].toDouble(0.0);
     c.cropR = o["cropR"].toDouble(0.0);
     c.cropT = o["cropT"].toDouble(0.0);
@@ -323,6 +329,8 @@ static Clip clipFromJson(const QJsonObject& o) {
     c.kfScaleX = kfFromJson(o["kfScaleX"]);
     c.kfScaleY = kfFromJson(o["kfScaleY"]);
     c.kfRotation = kfFromJson(o["kfRotation"]);
+    c.kfAnchorX = kfFromJson(o["kfAnchorX"]);
+    c.kfAnchorY = kfFromJson(o["kfAnchorY"]);
     c.kfCropL = kfFromJson(o["kfCropL"]);
     c.kfCropR = kfFromJson(o["kfCropR"]);
     c.kfCropT = kfFromJson(o["kfCropT"]);

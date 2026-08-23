@@ -287,6 +287,9 @@ struct Clip {
     double scaleX = 1.0;
     double scaleY = 1.0;
     double rotation = 0.0;
+    // Ponto de ancoragem (relativo ao centro: 0,0 = centro; -1,-1 = canto superior esquerdo).
+    double anchorX = 0.0;
+    double anchorY = 0.0;
 
     // Pan/Crop (fração de cada borda removida, 0..1 do quadro original).
     double cropL = 0.0;
@@ -315,6 +318,8 @@ struct Clip {
     QVector<Keyframe> kfRotation;
     QVector<Keyframe> kfScaleX;
     QVector<Keyframe> kfScaleY;
+    QVector<Keyframe> kfAnchorX;
+    QVector<Keyframe> kfAnchorY;
     QVector<Keyframe> kfCropL;
     QVector<Keyframe> kfCropR;
     QVector<Keyframe> kfCropT;
@@ -324,9 +329,11 @@ struct Clip {
     bool hasTransform() const {
         return tx != 0.0 || ty != 0.0 || scale != 1.0 || rotation != 0.0
             || scaleX != 1.0 || scaleY != 1.0
+            || anchorX != 0.0 || anchorY != 0.0
             || !kfTx.isEmpty() || !kfTy.isEmpty()
             || !kfScale.isEmpty() || !kfRotation.isEmpty()
-            || !kfScaleX.isEmpty() || !kfScaleY.isEmpty();
+            || !kfScaleX.isEmpty() || !kfScaleY.isEmpty()
+            || !kfAnchorX.isEmpty() || !kfAnchorY.isEmpty();
     }
 
     // True se algum pan/crop (estático ou animado) está ativo.

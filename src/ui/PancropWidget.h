@@ -15,6 +15,8 @@
 class QSlider;
 class QLabel;
 class QPushButton;
+class QDoubleSpinBox;
+class QToolButton;
 
 // Painel docável de pan/crop estilo DaVinci/Vegas: viewfinder com a caixa de
 // recorte/zoom arrastável e sliders de crop/escala/pan.
@@ -28,7 +30,7 @@ public:
     // Propriedades de transformação do pancrop (mesmas usadas nos sliders).
     enum Prop {
         P_CropL = 0, P_CropR, P_CropT, P_CropB, P_Scale, P_PanX, P_PanY,
-        P_Rotation, P_ScaleX, P_ScaleY
+        P_Rotation, P_ScaleX, P_ScaleY, P_AnchorX, P_AnchorY
     };
 
     explicit PancropWidget(QWidget* parent = nullptr);
@@ -62,6 +64,7 @@ private:
     void viewportMove(QWidget* view, QMouseEvent* e);
     void viewportRelease(QWidget* view, QMouseEvent* e);
     void viewportWheel(QWidget* view, QWheelEvent* e);
+    void viewportContextMenu(QWidget* view, QContextMenuEvent* e);
 
     void paintKeyframeStrip(QWidget* view);
     void stripPress(QWidget* view, QMouseEvent* e);
@@ -78,6 +81,7 @@ private:
     void commitSlider(int prop, double baseValue);
     void updateValueLabels();
     void setCropValues(double L, double R, double T, double B);
+    void nudgeFocusedSpinBox(int delta);
 
     // Keyframes (estilo DaVinci).
     double relPlayhead();
@@ -97,7 +101,7 @@ private:
     QPointF rotatedViewPos(const QRect& viewRect, const QPoint& sp) const;
     void applyPan(double sx, double sy);
 
-    enum DragMode { DragNone, DragPan,
+    enum DragMode { DragNone, DragPan, DragAnchor,
                     DragCropL, DragCropR, DragCropT, DragCropB,
                     DragCropTL, DragCropTR, DragCropBL, DragCropBR };
 
@@ -120,20 +124,26 @@ private:
     QSlider* m_rotation = nullptr;
     QSlider* m_scaleX = nullptr;
     QSlider* m_scaleY = nullptr;
+    QSlider* m_anchorX = nullptr;
+    QSlider* m_anchorY = nullptr;
 
-    QLabel* m_cropLVal = nullptr;
-    QLabel* m_cropRVal = nullptr;
-    QLabel* m_cropTVal = nullptr;
-    QLabel* m_cropBVal = nullptr;
-    QLabel* m_scaleVal = nullptr;
-    QLabel* m_panXVal = nullptr;
-    QLabel* m_panYVal = nullptr;
-    QLabel* m_rotationVal = nullptr;
-    QLabel* m_scaleXVal = nullptr;
-    QLabel* m_scaleYVal = nullptr;
+    QDoubleSpinBox* m_cropLVal = nullptr;
+    QDoubleSpinBox* m_cropRVal = nullptr;
+    QDoubleSpinBox* m_cropTVal = nullptr;
+    QDoubleSpinBox* m_cropBVal = nullptr;
+    QDoubleSpinBox* m_scaleVal = nullptr;
+    QDoubleSpinBox* m_panXVal = nullptr;
+    QDoubleSpinBox* m_panYVal = nullptr;
+    QDoubleSpinBox* m_rotationVal = nullptr;
+    QDoubleSpinBox* m_scaleXVal = nullptr;
+    QDoubleSpinBox* m_scaleYVal = nullptr;
+    QDoubleSpinBox* m_anchorXVal = nullptr;
+    QDoubleSpinBox* m_anchorYVal = nullptr;
 
     QHash<int, QPushButton*> m_kfDiamonds;
+    QHash<int, QToolButton*> m_resetBtns;
     QPushButton* m_kfAuto = nullptr;
+    bool m_showGrid = true;
 
     DragMode m_dragMode = DragNone;
     QPointF m_grabOffset{0.0, 0.0};

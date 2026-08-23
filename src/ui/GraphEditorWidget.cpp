@@ -69,6 +69,8 @@ QString propName(GraphProp p) {
         case GPropCropR:     return QStringLiteral("Crop Right");
         case GPropCropT:     return QStringLiteral("Crop Top");
         case GPropCropB:     return QStringLiteral("Crop Bottom");
+        case GPropAnchorX:   return QStringLiteral("Anchor X");
+        case GPropAnchorY:   return QStringLiteral("Anchor Y");
     }
     return QString();
 }
@@ -99,6 +101,8 @@ QVector<Keyframe>* keysFor(Clip* c, GraphProp p) {
         case GPropCropR:    return &c->kfCropR;
         case GPropCropT:    return &c->kfCropT;
         case GPropCropB:    return &c->kfCropB;
+        case GPropAnchorX:  return &c->kfAnchorX;
+        case GPropAnchorY:  return &c->kfAnchorY;
     }
     return nullptr;
 }
@@ -118,6 +122,8 @@ double baseFor(Clip* c, GraphProp p) {
         case GPropCropR:    return c->cropR;
         case GPropCropT:    return c->cropT;
         case GPropCropB:    return c->cropB;
+        case GPropAnchorX:  return c->anchorX;
+        case GPropAnchorY:  return c->anchorY;
     }
     return 0.0;
 }
@@ -135,6 +141,8 @@ void rangeFor(GraphProp p, double* lo, double* hi) {
         case GPropCropL: case GPropCropR:
         case GPropCropT: case GPropCropB:
             *lo = 0.0; *hi = 1.0; return;
+        case GPropAnchorX: case GPropAnchorY:
+            *lo = -1.0; *hi = 1.0; return;
     }
     *lo = 0.0; *hi = 1.0;
 }
@@ -1964,6 +1972,7 @@ void GraphEditorWidget::rebuildRows() {
                                          GPropScaleY,
                                          GPropRotation,
                                          GPropTx, GPropTy,
+                                         GPropAnchorX, GPropAnchorY,
                                          GPropCropL, GPropCropR, GPropCropT, GPropCropB };
         for (GraphProp p : vid) m_props.append(p);
     }

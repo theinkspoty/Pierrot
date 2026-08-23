@@ -56,6 +56,13 @@ public:
     void setPlayhead(double t);
     // Posição da agulha "ponteiro" branca (=-1 se ainda não posicionada).
     double cursorPos() const { return m_cursorT; }
+    // IDs dos clipes selecionados.
+    QStringList selectedIds() const { return m_selected; }
+    // Limpa a seleção.
+    void clearSelection() { m_selected.clear(); update(); }
+    // Valores do loop.
+    double loopIn() const { return m_loopIn; }
+    double loopOut() const { return m_loopOut; }
     // Último clipe selecionado (ou vazio se não houver seleção).
     QString lastSelectedId() const {
         return m_selected.isEmpty() ? QString() : m_selected.last();
@@ -67,6 +74,8 @@ public:
 
     void addTrack(bool audio);
     void updateScrollRanges();
+    void invalidateScene();
+    void nudgeSelected(int dir);
 public slots:
     void cutAtPlayhead();
     void deleteSelected();
@@ -81,6 +90,8 @@ public slots:
     void setTool(int tool);
     void setSnap(bool on);
     void setPlaying(bool p); // sincroniza a agulha branca com a vermelha
+    void setGridVisible(bool on);
+    void setRulerVisible(bool on);
     void setLoopInAtPlayhead();
     void setLoopOutAtPlayhead();
     void clearLoop();
@@ -127,7 +138,13 @@ protected:
     void dragLeaveEvent(QDragLeaveEvent*) override;
     void dropEvent(QDropEvent*) override;
 private:
-    enum DragMode { None, MoveClip, TrimLeft, TrimRight, ResizeSpeed, FadeIn, FadeOut, ClipOpacity, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, RulerLoopEdge, ResizeTrack, TrackVol, TrackOp, ClipVol, TrackDrag };
+    enum DragMode { None, MoveClip, TrimLeft, TrimRight, ResizeSpeed, FadeIn, FadeOut, ClipOpacity, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, RulerLoopEdge, ResizeTrack, TrackVol, TrackOp, ClipVol, TrackDrag,
+        RippleEdit,    // Trim com ripple (desloca subsequentes)
+        RollingEdit,   // Ajusta fronteira entre 2 clipes
+        SlipEdit,      // Mudar in/out sem mudar posição
+        SlideEdit,     // Mover clipe e adjacentes ajustam
+        RateStretch    // Mudar velocidade para preencher espaço
+    };
     // Qual borda da região de loop está sendo arrastada (RulerLoopEdge).
     enum LoopEdge { LoopEdgeNone = -1, LoopEdgeIn = 0, LoopEdgeOut = 1 };
     struct ClipOrig { double pos = 0.0, in = 0.0, dur = 0.0, speed = 1.0; };
@@ -158,7 +175,6 @@ private:
     bool isSelected(const QString& id) const;
     void setSelection(const QString& id);
     void toggleSelection(const QString& id);
-    void invalidateScene();
     // Redesenha sem descartar os caches de conteúdo dos clipes (rolagem,
     // zoom e follow do playhead). Só mudanças estruturais bumpam o epoch.
     void refreshView();
@@ -185,6 +201,15 @@ private:
     void duplicateClip(Clip* c);
     void selectInMarquee(bool add);
     void razorSplitAt(double t);
+    // Novas ferramentas de edição (Kdenlive + Premiere Pro)
+    void rippleTrimLeft(Clip* c, double newIn);
+    void rippleTrimRight(Clip* c, double newDur);
+    void rollingEdit(double delta);
+    void slipEdit(Clip* c, double delta);
+    void slideEdit(Clip* c, double delta);
+    void rateStretch(Clip* c, double newSpeed);
+    Clip* clipAtTime(int row, bool audio, double t) const;
+    QPair<Clip*, Clip*> adjacentClips(Clip* c);
     void envelopePress(Clip* c, double t);
     void applyZoomRect(double t0, double t1);
     void removeClipsByIds(const QStringList& ids);
@@ -206,7 +231,6 @@ private:
     void pasteClips();
     void pasteAttributes();
     void duplicateSelected();
-    void nudgeSelected(int dir);
     void selectAllClips();
     // Vegas: U separa os clipes selecionados do grupo (groupId limpo);
     // G agrupa os clipes selecionados num grupo novo.
@@ -250,6 +274,8 @@ private:
     bool m_hasAnchor = false;
     int m_tool = 0;
     bool m_snap = true;
+    bool m_showGrid = true;
+    bool m_showRuler = true;
     bool m_showVolLines = false;
     double m_loopIn = -1.0;
     double m_loopOut = -1.0;
@@ -263,6 +289,26 @@ private:
     double m_dragOrigDur = 0.0;
     double m_dragOrigFade = 0.0; // valor original de fadeIn/fadeOut ao arrastar
     double m_dragOrigOpacity = 1.0; // opacidade original do clipe ao arrastar no topo
+    // Estado para Rolling Edit
+    QString m_rollClipA;  // clipe da esquerda
+    QString m_rollClipB;  // clipe da direita
+    double m_rollOrigDurA = 0.0;
+    double m_rollOrigDurB = 0.0;
+    // Estado para Slip Edit
+    double m_slipOrigIn = 0.0;
+    double m_slipOrigOut = 0.0;
+    // Estado para Slide Edit
+    QString m_slidePrevId;  // clipe anterior
+    QString m_slideNextId;  // clipe seguinte
+    double m_slideOrigPosA = 0.0;
+    double m_slideOrigDurA = 0.0;
+    double m_slideOrigPosB = 0.0;
+    double m_slideOrigDurB = 0.0;
+    double m_slideOrigPosC = 0.0;
+    double m_slideOrigDurC = 0.0;
+    // Estado para Rate Stretch
+    double m_rateOrigSpeed = 1.0;
+    double m_rateOrigDur = 0.0;
     double m_loopPressT = 0.0;
     int m_loopEdge = LoopEdgeNone;   // borda da região de loop sendo arrastada
     double m_loopEdgeOther = 0.0;    // borda oposta mantida fixa durante o arraste

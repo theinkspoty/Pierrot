@@ -53,6 +53,7 @@ static QKeySequence appKey(const char* id, const QKeySequence& fallback) {
 #include <QCloseEvent>
 #include <QShowEvent>
 #include <QStyle>
+#include <QShortcut>
 #include <QPainterPath>
 #include <QPolygonF>
 #include <QTimer>
@@ -125,9 +126,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     m_preview->setProject(&m_project);
     // O preview ocupa a área central e o monitor escala junto com a janela.
     auto* centralHost = new QWidget;
-    auto* centralLay = new QVBoxLayout(centralHost);
-    centralLay->setContentsMargins(4, 4, 4, 4);
-    centralLay->addWidget(m_preview, 1);
+    m_centralLay = new QVBoxLayout(centralHost);
+    m_centralLay->setContentsMargins(4, 4, 4, 4);
+    m_centralLay->setSpacing(2);
+    m_centralLay->addWidget(m_preview, 1);
     setCentralWidget(centralHost);
 
     m_pancrop = new PancropWidget(this);
@@ -189,6 +191,65 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     createDocks();
     createActions();
+
+    // Barra de transporte abaixo do preview.
+    auto* transportBar = new QToolBar(tr("Transporte"), this);
+    transportBar->setMovable(false);
+    transportBar->setIconSize(QSize(18, 18));
+    transportBar->setStyleSheet(QStringLiteral(
+        "QToolBar{spacing:2px; background:#1a1c22; border-top:1px solid #2a2d34;}"));
+
+    QAction* goToStart = new QAction(style()->standardIcon(QStyle::SP_MediaSkipBackward), tr("Início"), this);
+    goToStart->setToolTip(tr("Ir para o início (Home)"));
+    goToStart->setShortcut(QKeySequence(Qt::Key_Home));
+    connect(goToStart, &QAction::triggered, this, [this]() {
+        m_timeline->setPlayhead(0.0);
+        m_preview->seek(0.0);
+        m_timeline->update();
+    });
+    transportBar->addAction(goToStart);
+
+    QAction* stepBack = new QAction(style()->standardIcon(QStyle::SP_MediaSeekBackward), tr("Voltar 1 frame"), this);
+    stepBack->setToolTip(tr("Voltar 1 frame (←)"));
+    connect(stepBack, &QAction::triggered, this, [this]() {
+        Project* p = m_timeline->project();
+        const double t = m_timeline->playhead() - 1.0 / (p ? p->fps : 30.0);
+        m_timeline->setPlayhead(std::max(0.0, t));
+        m_preview->seek(m_timeline->playhead());
+        m_timeline->update();
+    });
+    transportBar->addAction(stepBack);
+
+    transportBar->addAction(m_playAction);
+
+    QAction* stepFwd = new QAction(style()->standardIcon(QStyle::SP_MediaSeekForward), tr("Avançar 1 frame"), this);
+    stepFwd->setToolTip(tr("Avançar 1 frame (→)"));
+    connect(stepFwd, &QAction::triggered, this, [this]() {
+        Project* p = m_timeline->project();
+        const double dur = p ? p->duration() : 10.0;
+        const double t = m_timeline->playhead() + 1.0 / (p ? p->fps : 30.0);
+        m_timeline->setPlayhead(std::min(dur, t));
+        m_preview->seek(m_timeline->playhead());
+        m_timeline->update();
+    });
+    transportBar->addAction(stepFwd);
+
+    QAction* goToEnd = new QAction(style()->standardIcon(QStyle::SP_MediaSkipForward), tr("Fim"), this);
+    goToEnd->setToolTip(tr("Ir para o fim (End)"));
+    goToEnd->setShortcut(QKeySequence(Qt::Key_End));
+    connect(goToEnd, &QAction::triggered, this, [this]() {
+        Project* p = m_timeline->project();
+        const double dur = p ? p->duration() : 10.0;
+        m_timeline->setPlayhead(dur);
+        m_preview->seek(dur);
+        m_timeline->update();
+    });
+    transportBar->addAction(goToEnd);
+
+    m_centralLay->addWidget(transportBar);
+
+    // Intercepta setas ←/→ globalmente via eventFilter no qApp.
+    qApp->installEventFilter(this);
 
     m_undoStack.append(snapshotState());
     m_undoIndex = 0;
@@ -372,6 +433,45 @@ bool MainWindow::event(QEvent* e) {
     if (e->type() == QEvent::WindowDeactivate && !m_restoringSettings)
         scheduleLayoutSave();
     return QMainWindow::event(e);
+}
+
+bool MainWindow::eventFilter(QObject* obj, QEvent* e) {
+    if (e->type() == QEvent::KeyPress) {
+        auto* ke = static_cast<QKeyEvent*>(e);
+        QWidget* fw = focusWidget();
+        const bool inPancrop = fw && m_pancrop && m_pancrop->isAncestorOf(fw);
+        const bool inGraph = fw && m_graph && m_graph->isAncestorOf(fw);
+        if (!inPancrop && !inGraph) {
+            if (ke->key() == Qt::Key_Left && !(ke->modifiers() & Qt::AltModifier)) {
+                Project* p = m_timeline->project();
+                const double t = m_timeline->playhead() - 1.0 / (p ? p->fps : 30.0);
+                m_timeline->setPlayhead(std::max(0.0, t));
+                m_preview->seek(m_timeline->playhead());
+                m_timeline->update();
+                return true;
+            }
+            if (ke->key() == Qt::Key_Right && !(ke->modifiers() & Qt::AltModifier)) {
+                Project* p = m_timeline->project();
+                const double dur = p ? p->duration() : 10.0;
+                const double t = m_timeline->playhead() + 1.0 / (p ? p->fps : 30.0);
+                m_timeline->setPlayhead(std::min(dur, t));
+                m_preview->seek(m_timeline->playhead());
+                m_timeline->update();
+                return true;
+            }
+            if (ke->modifiers() & Qt::AltModifier) {
+                if (ke->key() == Qt::Key_Left) {
+                    m_timeline->nudgeSelected(-1);
+                    return true;
+                }
+                if (ke->key() == Qt::Key_Right) {
+                    m_timeline->nudgeSelected(1);
+                    return true;
+                }
+            }
+        }
+    }
+    return QMainWindow::eventFilter(obj, e);
 }
 
 void MainWindow::restoreSettings() {
@@ -768,14 +868,19 @@ void MainWindow::createActions() {
     toolTb->setToolButtonStyle(Qt::ToolButtonTextOnly);
     const QStringList toolNames = {
         tr("Selecionar (0)"), tr("Mover (M)"), tr("Tesoura (R)"),
-        tr("Envelope (E)"), tr("Lupa (Z)")
+        tr("Envelope (E)"), tr("Lupa (Z)"),
+        tr("Ripple (B)"), tr("Rolamento (N)"), tr("Deslizar (Y)"),
+        tr("Escorregar (Ctrl+U)"), tr("Esticar Velocidade (W)")
     };
     const QList<QIcon> toolIcons = {
-        iconCursor(), iconMove(), iconRazor(), iconEnvelope(), iconZoom()
+        iconCursor(), iconMove(), iconRazor(), iconEnvelope(), iconZoom(),
+        iconRipple(), iconRolling(), iconSlip(), iconSlide(), iconRateStretch()
     };
     const QList<QKeySequence> toolKeys = {
         QKeySequence(Qt::Key_0), QKeySequence(Qt::Key_M), QKeySequence(Qt::Key_R),
-        QKeySequence(Qt::Key_E), QKeySequence(Qt::Key_Z)
+        QKeySequence(Qt::Key_E), QKeySequence(Qt::Key_Z),
+        QKeySequence(Qt::Key_B), QKeySequence(Qt::Key_N), QKeySequence(Qt::Key_Y),
+        QKeySequence(Qt::CTRL | Qt::Key_U), QKeySequence(Qt::Key_W)
     };
     QActionGroup* toolGroup = new QActionGroup(this);
     for (int i = 0; i < toolNames.size(); ++i) {
@@ -821,8 +926,23 @@ void MainWindow::createActions() {
     styleAct->setToolTip(tr("Estilo das faixas: minimizada, normal ou grande (experimental)"));
     connect(styleAct, &QAction::triggered, m_timeline, &TimelineWidget::showTrackPresetMenu);
     toolTb->addAction(styleAct);
+    toolTb->addSeparator();
+    // Botões de grid e régua (estilo Vegas).
+    QAction* gridAct = new QAction(tr("Grid"), this);
+    gridAct->setCheckable(true);
+    gridAct->setChecked(true);
+    gridAct->setToolTip(tr("Mostrar/ocultar grade vertical na timeline"));
+    connect(gridAct, &QAction::toggled, m_timeline, &TimelineWidget::setGridVisible);
+    toolTb->addAction(gridAct);
+    QAction* rulerAct = new QAction(tr("Régua"), this);
+    rulerAct->setCheckable(true);
+    rulerAct->setChecked(true);
+    rulerAct->setToolTip(tr("Mostrar/ocultar régua de tempo na timeline"));
+    connect(rulerAct, &QAction::toggled, m_timeline, &TimelineWidget::setRulerVisible);
+    toolTb->addAction(rulerAct);
 
     tlLay->addWidget(toolTb);
+
     tlLay->addWidget(m_timeline, 1);
     m_timelineDock->setWidget(tlContainer);
 }
@@ -992,6 +1112,107 @@ QIcon MainWindow::iconZoom() const {
         p.drawLine(QPointF(18, 18), QPointF(28, 28));
         p.drawLine(QPointF(12, 7), QPointF(12, 17));
         p.drawLine(QPointF(7, 12), QPointF(17, 12));
+    });
+}
+
+QIcon MainWindow::iconRipple() const {
+    return makeIcon([](QPainter& p, const QColor& c) {
+        QPen pen(c, 2.0);
+        pen.setCapStyle(Qt::RoundCap);
+        pen.setJoinStyle(Qt::RoundJoin);
+        p.setPen(pen);
+        p.setBrush(c);
+        // Setas de ripple (deslocamento)
+        p.drawLine(QPointF(8, 16), QPointF(24, 16));
+        QPolygonF arrow;
+        arrow << QPointF(24, 16) << QPointF(18, 10) << QPointF(18, 22);
+        p.drawPolygon(arrow);
+        // Linhas de corte
+        p.setPen(QPen(c, 1.5));
+        p.drawLine(QPointF(12, 8), QPointF(12, 24));
+        p.drawLine(QPointF(20, 8), QPointF(20, 24));
+    });
+}
+
+QIcon MainWindow::iconRolling() const {
+    return makeIcon([](QPainter& p, const QColor& c) {
+        QPen pen(c, 2.0);
+        pen.setCapStyle(Qt::RoundCap);
+        pen.setJoinStyle(Qt::RoundJoin);
+        p.setPen(pen);
+        p.setBrush(c);
+        // Duas setas opostas (ajuste de fronteira)
+        p.drawLine(QPointF(8, 16), QPointF(24, 16));
+        QPolygonF left;
+        left << QPointF(8, 16) << QPointF(14, 10) << QPointF(14, 22);
+        p.drawPolygon(left);
+        QPolygonF right;
+        right << QPointF(24, 16) << QPointF(18, 10) << QPointF(18, 22);
+        p.drawPolygon(right);
+        // Linha central
+        p.setPen(QPen(c, 1.5));
+        p.drawLine(QPointF(16, 8), QPointF(16, 24));
+    });
+}
+
+QIcon MainWindow::iconSlip() const {
+    return makeIcon([](QPainter& p, const QColor& c) {
+        QPen pen(c, 2.0);
+        pen.setCapStyle(Qt::RoundCap);
+        pen.setJoinStyle(Qt::RoundJoin);
+        p.setPen(pen);
+        p.setBrush(c);
+        // Retângulo (clip) com setas internas
+        p.drawRect(QRectF(6, 10, 20, 12));
+        // Setas horizontais dentro
+        p.drawLine(QPointF(10, 16), QPointF(22, 16));
+        QPolygonF left;
+        left << QPointF(10, 16) << QPointF(14, 12) << QPointF(14, 20);
+        p.drawPolygon(left);
+        QPolygonF right;
+        right << QPointF(22, 16) << QPointF(18, 12) << QPointF(18, 20);
+        p.drawPolygon(right);
+    });
+}
+
+QIcon MainWindow::iconSlide() const {
+    return makeIcon([](QPainter& p, const QColor& c) {
+        QPen pen(c, 2.0);
+        pen.setCapStyle(Qt::RoundCap);
+        pen.setJoinStyle(Qt::RoundJoin);
+        p.setPen(pen);
+        p.setBrush(c);
+        // Retângulo central com setas para fora
+        p.drawRect(QRectF(10, 10, 12, 12));
+        // Setas para esquerda e direita
+        p.drawLine(QPointF(8, 16), QPointF(2, 16));
+        QPolygonF left;
+        left << QPointF(2, 16) << QPointF(6, 12) << QPointF(6, 20);
+        p.drawPolygon(left);
+        p.drawLine(QPointF(24, 16), QPointF(30, 16));
+        QPolygonF right;
+        right << QPointF(30, 16) << QPointF(26, 12) << QPointF(26, 20);
+        p.drawPolygon(right);
+    });
+}
+
+QIcon MainWindow::iconRateStretch() const {
+    return makeIcon([](QPainter& p, const QColor& c) {
+        QPen pen(c, 2.0);
+        pen.setCapStyle(Qt::RoundCap);
+        pen.setJoinStyle(Qt::RoundJoin);
+        p.setPen(pen);
+        p.setBrush(c);
+        // Relógio (velocidade)
+        p.drawEllipse(QPointF(16, 16), 10, 10);
+        p.drawLine(QPointF(16, 16), QPointF(16, 10));
+        p.drawLine(QPointF(16, 16), QPointF(22, 16));
+        // Seta de velocidade
+        p.setPen(QPen(c, 1.5));
+        p.drawLine(QPointF(4, 28), QPointF(28, 28));
+        QPolygonF arrow;
+        arrow << QPointF(28, 28) << QPointF(22, 24) << QPointF(22, 32);
+        p.drawPolygon(arrow);
     });
 }
 

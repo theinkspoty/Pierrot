@@ -36,6 +36,10 @@ set(SOURCES
     src/ofx/OfxRenderer.cpp
     src/ui/MediaPoolWidget.cpp
     src/ui/TimelineWidget.cpp
+    src/ui/TimelineCommands.cpp
+    src/ui/TimelineSelection.cpp
+    src/ui/TimelinePaint.cpp
+    src/ui/TimelineDrag.cpp
     src/ui/PreviewWidget.cpp
     src/ui/TlLog.cpp
     src/ui/PancropWidget.cpp
@@ -68,6 +72,7 @@ set(HEADERS
     src/ofx/OfxRenderer.h
     src/ui/MediaPoolWidget.h
     src/ui/TimelineWidget.h
+    src/ui/TimelineCommands.h
     src/ui/PreviewWidget.h
     src/ui/PancropWidget.h
     src/ui/ExportDialog.h

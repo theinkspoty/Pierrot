@@ -12,6 +12,7 @@
 #include <QJsonDocument>
 #include <QIcon>
 #include <QDockWidget>
+class QVBoxLayout;
 #include <functional>
 #include "models/Project.h"
 
@@ -40,6 +41,7 @@ protected:
     void closeEvent(QCloseEvent* event) override;
     void showEvent(QShowEvent* event) override;
     bool event(QEvent* e) override;
+    bool eventFilter(QObject* obj, QEvent* e) override;
 private slots:
     void pushUndo();
     void setModified();
@@ -59,6 +61,11 @@ private:
     QIcon iconRazor() const;
     QIcon iconEnvelope() const;
     QIcon iconZoom() const;
+    QIcon iconRipple() const;
+    QIcon iconRolling() const;
+    QIcon iconSlip() const;
+    QIcon iconSlide() const;
+    QIcon iconRateStretch() const;
     QIcon iconMagnet() const;
     QIcon iconImport() const;
     QIcon iconExport() const;
@@ -112,6 +119,7 @@ private:
     QDockWidget* m_effectsDock = nullptr;
     QDockWidget* m_expressDock = nullptr;
     QDockWidget* m_fileBrowserDock = nullptr;
+    QVBoxLayout* m_centralLay = nullptr;
     QHash<QDockWidget*, QDockWidget::DockWidgetFeatures> m_originalFeatures;
     QAction* m_lockAction = nullptr;
     QAction* m_playAction = nullptr;

@@ -14,7 +14,7 @@
 #include <algorithm>
 
 namespace {
-constexpr int kPeaksPerSecond = 50;
+constexpr int kPeaksPerSecond = 200;
 constexpr int kThumbMaxWidth = 160;
 constexpr int kMaxPeakCache = 32;
 constexpr int kMaxThumbCache = 512;
