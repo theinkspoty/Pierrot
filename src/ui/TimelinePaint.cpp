@@ -1117,6 +1117,7 @@ void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& 
             for (const Track& t : m_project->audioTracks) if (t.solo) { anySolo = true; break; }
     }
 
+    // ── Fundo ───────────────────────────────────────────────────────────
     QColor base = selected
         ? (tr.audio ? QColor(42, 48, 62) : QColor(44, 50, 64))
         : (tr.audio ? QColor(34, 34, 38) : QColor(37, 37, 41));
@@ -1129,6 +1130,16 @@ void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& 
                tr.locked ? QColor(200, 90, 90)
                          : (tr.audio ? QColor(70, 160, 120) : QColor(90, 140, 210)));
 
+    // ── Layout proporcional ─────────────────────────────────────────────
+    const int resizeH = kResizeHandleH;  // 5px
+    const int btnH = 18;
+    const int btnGap = 3;
+    const int btnY = y + rowH - resizeH - btnH;  // botões na base (acima do resize)
+    const int contentBottom = btnY - 4;           // fim da área de conteúdo (acima dos botões)
+    const int contentTop = y + 18;                // abaixo do ícone/nome (18px para ícone+nome)
+    const int contentH = contentBottom - contentTop;
+
+    // ── Nome da track ───────────────────────────────────────────────────
     QFont basef = p.font();
     QFont f = basef;
     f.setBold(true);
@@ -1137,6 +1148,7 @@ void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& 
     p.setPen(tr.audio ? QColor(200, 200, 208) : QColor(215, 215, 222));
     p.drawText(QRect(12, y + 2, H - 20, 16), Qt::AlignLeft | Qt::AlignVCenter, tr.name);
 
+    // ── Ícone (audio/vídeo) ─────────────────────────────────────────────
     p.setRenderHint(QPainter::Antialiasing, true);
     if (tr.audio) {
         const QColor c = tr.locked ? QColor(215, 150, 150) : QColor(70, 160, 120);
@@ -1162,42 +1174,51 @@ void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& 
     p.setRenderHint(QPainter::Antialiasing, false);
     p.setFont(basef);
 
-    if (tr.audio) {
-        const QString pct = QString("%1%").arg((int)llround(tr.volume * 100.0));
+    // ── Percentual + barra (centralizado na área de conteúdo) ───────────
+    if (contentH > 0) {
         QFont vf = basef;
         vf.setPointSizeF(7.5);
         vf.setBold(true);
         p.setFont(vf);
-        p.setPen(QColor(120, 190, 150));
-        p.drawText(QRect(6, y + 19, H - 12, 14), Qt::AlignRight | Qt::AlignVCenter, pct);
+
+        if (tr.audio) {
+            // Áudio: percentual de volume centralizado na área disponível.
+            const QString pct = QString("%1%").arg((int)llround(tr.volume * 100.0));
+            p.setPen(QColor(120, 190, 150));
+            p.drawText(QRect(6, contentTop, H - 12, contentH),
+                       Qt::AlignRight | Qt::AlignVCenter, pct);
+        } else {
+            // Vídeo: percentual + barra de opacidade.
+            const QString pct = QString("%1%").arg((int)llround(tr.opacity * 100.0));
+            p.setPen(QColor(130, 170, 230));
+            // Texto na metade de cima da área de conteúdo.
+            const int textH = contentH / 2;
+            p.drawText(QRect(6, contentTop, H - 12, textH),
+                       Qt::AlignRight | Qt::AlignVCenter, pct);
+            // Barra na metade de baixo (se couber).
+            if (contentH >= 8) {
+                const int barH = 4;
+                const int barY = contentTop + textH + (contentH - textH - barH) / 2;
+                const int barX0 = 6;
+                const int barW = H - 12;
+                p.setPen(Qt::NoPen);
+                p.setBrush(QColor(50, 52, 58));
+                p.drawRoundedRect(QRectF(barX0, barY, barW, barH), 2, 2);
+                const int fillW = qMax(2, (int)std::lround(barW * std::clamp(tr.opacity, 0.0, 1.0)));
+                p.setBrush(QColor(90, 140, 210));
+                p.drawRoundedRect(QRectF(barX0, barY, fillW, barH), 2, 2);
+            }
+        }
         p.setFont(basef);
-    } else {
-        const QString pct = QString("%1%").arg((int)llround(tr.opacity * 100.0));
-        QFont vf = basef;
-        vf.setPointSizeF(7.5);
-        vf.setBold(true);
-        p.setFont(vf);
-        p.setPen(QColor(130, 170, 230));
-        p.drawText(QRect(6, y + 19, H - 12, 14), Qt::AlignRight | Qt::AlignVCenter, pct);
-        p.setFont(basef);
-        const int barY = y + 34;
-        const int barH = 4;
-        const int barX0 = 6;
-        const int barW = H - 12;
-        p.setPen(Qt::NoPen);
-        p.setBrush(QColor(50, 52, 58));
-        p.drawRoundedRect(QRectF(barX0, barY, barW, barH), 2, 2);
-        const int fillW = qMax(2, (int)std::lround(barW * std::clamp(tr.opacity, 0.0, 1.0)));
-        p.setBrush(QColor(90, 140, 210));
-        p.drawRoundedRect(QRectF(barX0, barY, fillW, barH), 2, 2);
     }
 
+    // ── Botões M / S / L ────────────────────────────────────────────────
     const bool audible = !tr.muted && !(anySolo && !tr.solo);
     const QColor dim(110, 110, 120);
-    const int btnY = y + rowH - 22;
-    const int size = 18, gap = 3, bx0 = 6;
+    const int size = 18;
+    const int bx0 = 6;
     auto drawBtn = [&](int idx, const QString& label, bool active, const QColor& on) {
-        const int bx = bx0 + idx * (size + gap);
+        const int bx = bx0 + idx * (size + btnGap);
         const QRect r(bx, btnY, size, size);
         p.setPen(QPen(active ? on.lighter(140) : QColor(48, 48, 54), 1));
         p.setBrush(active ? on : QColor(52, 52, 58));
@@ -1214,8 +1235,9 @@ void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& 
     drawBtn(1, QStringLiteral("S"), tr.solo, QColor(215, 170, 50));
     drawBtn(2, QStringLiteral("L"), tr.locked, QColor(90, 160, 210));
 
-    const int gy0 = y + rowH - kResizeHandleH;
-    p.fillRect(0, gy0, H, kResizeHandleH, QColor(26, 27, 31));
+    // ── Alça de redimensionamento ────────────────────────────────────────
+    const int gy0 = y + rowH - resizeH;
+    p.fillRect(0, gy0, H, resizeH, QColor(26, 27, 31));
     p.setPen(QColor(70, 72, 80));
     const int gx0 = (H - 26) / 2;
     for (int i = 0; i < 4; ++i)

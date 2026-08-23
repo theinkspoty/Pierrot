@@ -178,9 +178,14 @@ void TimelineCommands::cutAtPlayhead(TimelineWidget* tl) {
     if (!tl || !tl->project()) return;
     emit tl->editStart();
 
+    const QStringList sel = tl->selectedIds();
+    const bool hasSel = !sel.isEmpty();
+
     QHash<QString, QString> units;
     auto consider = [&](const Clip& c) {
         if (trackLocked(tl, &c)) return;
+        // Se há seleção, corta apenas clipes selecionados.
+        if (hasSel && !sel.contains(c.id)) return;
         if (tl->playhead() > c.pos + 1e-6 && tl->playhead() < c.pos + c.dur - 1e-6) {
             const QString key = c.groupId.isEmpty() ? c.id : c.groupId;
             if (!units.contains(key)) units.insert(key, c.id);

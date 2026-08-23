@@ -959,20 +959,16 @@ void TimelineWidget::keyPressEvent(QKeyEvent* e) {
         break;
     case Qt::Key_Enter:
     case Qt::Key_Return:
-        // Vegas: Enter toca a partir de onde a agulha/ponteiro está. Se já
-        // estiver reproduzindo, retoma de onde está (como Space). Se parado,
-        // move a agulha vermelha para o ponteiro branco e reproduz dali.
+        // Enter: pausa e move a agulha vermelha para o ponteiro branco (cursor).
         {
             if (m_playing) {
                 emit playPauseRequested();
-            } else {
-                const double t = std::clamp(
-                    m_cursorT >= 0.0 ? m_cursorT : m_playhead, 0.0,
-                    m_project ? m_project->duration() : 0.0);
-                setPlayhead(t);
-                emit playheadChanged(t);
-                emit playFromCursor();
             }
+            const double t = std::clamp(
+                m_cursorT >= 0.0 ? m_cursorT : m_playhead, 0.0,
+                m_project ? m_project->duration() : 0.0);
+            setPlayhead(t);
+            emit playheadChanged(t);
         }
         e->accept();
         break;

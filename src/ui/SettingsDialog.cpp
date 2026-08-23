@@ -65,7 +65,18 @@ const ShortcutDef kShortcutDefs[] = {
     { "tool2",   "Tesoura",             "R",                 "Ferramentas" },
     { "tool3",   "Envelope",            "E",                 "Ferramentas" },
     { "tool4",   "Lupa (Zoom)",         "Z",                 "Ferramentas" },
+    { "tool5",   "Ripple",              "B",                 "Ferramentas" },
+    { "tool6",   "Rolling",             "N",                 "Ferramentas" },
+    { "tool7",   "Slip",                "Y",                 "Ferramentas" },
+    { "tool8",   "Slide",               "Ctrl+U",            "Ferramentas" },
+    { "tool9",   "Esticar Velocidade",  "W",                 "Ferramentas" },
     { "play",    "Reproduzir/Pausar",   "Space",             "Reprodução" },
+    { "stepL",   "Voltar 1 frame",      "Left",              "Reprodução" },
+    { "stepR",   "Avançar 1 frame",     "Right",             "Reprodução" },
+    { "nudgeL",  "Deslocar clipes ←",   "Alt+Left",          "Edição" },
+    { "nudgeR",  "Deslocar clipes →",   "Alt+Right",         "Edição" },
+    { "goStart", "Início",              "Home",              "Reprodução" },
+    { "goEnd",   "Fim",                 "End",               "Reprodução" },
 };
 constexpr int kShortcutCount = (int)(sizeof(kShortcutDefs) / sizeof(kShortcutDefs[0]));
 
