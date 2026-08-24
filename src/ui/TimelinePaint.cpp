@@ -581,13 +581,17 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
                               const Track& tr, bool audio) {
     if (r.width() <= 0 || r.height() <= 0) return;
     const bool sel = isSelected(c.id);
+    const bool sel2 = !sel && isSecondarySelected(c.id);
     QColor fill = audio ? QColor(26, 86, 66) : QColor(32, 66, 116);
     QColor border = audio ? QColor(70, 160, 120) : QColor(90, 140, 210);
     if (sel) {
         fill = audio ? QColor(40, 120, 92) : QColor(46, 96, 168);
         border = QColor(255, 170, 40);
+    } else if (sel2) {
+        fill = audio ? QColor(32, 100, 78) : QColor(38, 78, 138);
+        border = QColor(255, 170, 40, 120);
     }
-    p.setPen(QPen(border, sel ? 2 : 1));
+    p.setPen(QPen(border, sel ? 2 : sel2 ? 1.5 : 1));
     p.setBrush(fill);
     p.drawRoundedRect(r, 3, 3);
 
@@ -751,9 +755,10 @@ void TimelineWidget::drawAudioWaveform(QPainter& p, const QRect& r, const Clip& 
     const int midY = r.center().y();
     const double amp = r.height() / 2.0 - 2.0;
     const bool sel = isSelected(c.id);
+    const bool sel2 = !sel && isSecondarySelected(c.id);
 
     // ── Fundo: faixa escura com leve gradiente para profundidade ──────
-    p.fillRect(r, sel ? QColor(18, 52, 42) : QColor(14, 14, 17));
+    p.fillRect(r, sel ? QColor(18, 52, 42) : sel2 ? QColor(16, 44, 36) : QColor(14, 14, 17));
 
     // ── Grade de referência dB (estilo profissional) ──────────────────
     // -6dB = 50%, -12dB = 25%, -18dB = 12.5% — linhas horizontais

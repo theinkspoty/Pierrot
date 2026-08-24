@@ -129,6 +129,12 @@ static void rippleDeleteInTrack(Track& t, const QStringList& sel) {
 // ── Corte ──────────────────────────────────────────────────────────────
 
 void TimelineCommands::splitClipAt(TimelineWidget* tl, Clip* c, double t) {
+    QStringList newIds;
+    splitClipAt(tl, c, t, &newIds);
+}
+
+void TimelineCommands::splitClipAt(TimelineWidget* tl, Clip* c, double t,
+                                   QStringList* newIds) {
     if (!c || !tl || !tl->project()) return;
 
     // Coleta IDs dos membros do grupo (evita invalidação de ponteiros).
@@ -164,6 +170,8 @@ void TimelineCommands::splitClipAt(TimelineWidget* tl, Clip* c, double t) {
         cc->groupId = fg;
         b.groupId = bg;
 
+        if (newIds) newIds->append(b.id);
+
         Track* tr = trackOf(tl, cc);
         if (tr) {
             int idx = -1;
@@ -182,6 +190,7 @@ void TimelineCommands::cutAtPlayhead(TimelineWidget* tl) {
     const bool hasSel = !sel.isEmpty();
 
     QHash<QString, QString> units;
+    QStringList newClipIds;
     auto consider = [&](const Clip& c) {
         if (trackLocked(tl, &c)) return;
         // Se há seleção, corta apenas clipes selecionados.
@@ -198,8 +207,48 @@ void TimelineCommands::cutAtPlayhead(TimelineWidget* tl) {
 
     for (const QString& rep : units.values()) {
         Clip* cc = findClipById(tl, rep);
-        if (cc) splitClipAt(tl, cc, tl->playhead());
+        if (cc) splitClipAt(tl, cc, tl->playhead(), &newClipIds);
     }
+    tl->setSecondarySelection(newClipIds);
+    tl->updateScrollRanges();
+    tl->update();
+    emit tl->modified();
+}
+
+void TimelineCommands::cutAndDelete(TimelineWidget* tl) {
+    if (!tl || !tl->project()) return;
+    emit tl->editStart();
+
+    const QStringList sel = tl->selectedIds();
+    const bool hasSel = !sel.isEmpty();
+
+    QHash<QString, QString> units;
+    QStringList newClipIds;
+    auto consider = [&](const Clip& c) {
+        if (trackLocked(tl, &c)) return;
+        if (hasSel && !sel.contains(c.id)) return;
+        if (tl->playhead() > c.pos + 1e-6 && tl->playhead() < c.pos + c.dur - 1e-6) {
+            const QString key = c.groupId.isEmpty() ? c.id : c.groupId;
+            if (!units.contains(key)) units.insert(key, c.id);
+        }
+    };
+    for (const Track& t : tl->project()->videoTracks)
+        for (const Clip& c : t.clips) consider(c);
+    for (const Track& t : tl->project()->audioTracks)
+        for (const Clip& c : t.clips) consider(c);
+
+    // 1) Corta — coleta IDs dos clipes da direita.
+    for (const QString& rep : units.values()) {
+        Clip* cc = findClipById(tl, rep);
+        if (cc) splitClipAt(tl, cc, tl->playhead(), &newClipIds);
+    }
+
+    // 2) Remove os clipes da direita (com grupos expandidos).
+    QStringList toRemove = expandToGroups(tl, newClipIds);
+    for (Track& t : tl->project()->videoTracks) rippleDeleteInTrack(t, toRemove);
+    for (Track& t : tl->project()->audioTracks) rippleDeleteInTrack(t, toRemove);
+
+    tl->clearSelection();
     tl->updateScrollRanges();
     tl->update();
     emit tl->modified();

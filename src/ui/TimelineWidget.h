@@ -56,10 +56,14 @@ public:
     void setPlayhead(double t);
     // Posição da agulha "ponteiro" branca (=-1 se ainda não posicionada).
     double cursorPos() const { return m_cursorT; }
-    // IDs dos clipes selecionados.
+    // IDs dos clipes selecionados (seleção primária — borda laranja).
     QStringList selectedIds() const { return m_selected; }
-    // Limpa a seleção.
-    void clearSelection() { m_selected.clear(); update(); }
+    // IDs dos clipes com seleção secundária (tom suave, criados pelo último corte).
+    QStringList secondarySelectedIds() const { return m_secondarySelected; }
+    // Limpa a seleção primária.
+    void clearSelection() { m_selected.clear(); m_secondarySelected.clear(); update(); }
+    // Limpa a seleção secundária.
+    void clearSecondarySelection() { m_secondarySelected.clear(); update(); }
     // Valores do loop.
     double loopIn() const { return m_loopIn; }
     double loopOut() const { return m_loopOut; }
@@ -69,6 +73,10 @@ public:
     }
     // Seleciona um clipe (usado para restaurar a seleção após undo/redo).
     void selectClip(const QString& id) { setSelection(id); }
+    // Verifica se um clipe tem seleção secundária.
+    bool isSecondarySelected(const QString& id) const;
+    // Define a seleção secundária (clipes da direita após corte).
+    void setSecondarySelection(const QStringList& ids);
     // Abre o menu de estilos das faixas (minimizada/normal/grande).
     void showTrackPresetMenu();
 
@@ -78,6 +86,8 @@ public:
     void nudgeSelected(int dir);
 public slots:
     void cutAtPlayhead();
+    // Corta na posição do playhead e deleta os clipes da direita (S+D juntos).
+    void cutAndDelete();
     void deleteSelected();
     void deleteSelection(); // clipes selecionados, ou faixas selecionadas se não houver clipes
     void deleteSelectedLeaveGap();
@@ -198,6 +208,8 @@ private:
     void drawEnvelope(QPainter& p, const QRect& r, const Clip& c, bool audio);
     void finishDrop(const QStringList& mediaIds, const QPoint& dropPos);
     void splitClipAt(Clip* c, double t);
+    // Versão com saída: retorna IDs dos clipes criados (metade direita) em newIds.
+    void splitClipAt(Clip* c, double t, QStringList* newIds);
     void duplicateClip(Clip* c);
     void selectInMarquee(bool add);
     void razorSplitAt(double t);
@@ -269,6 +281,7 @@ private:
     QScrollBar* m_hbar = nullptr;
     QScrollBar* m_vbar = nullptr;
     QStringList m_selected;
+    QStringList m_secondarySelected; // clipes da direita após corte (seleção fraca)
     QVector<TrackSel> m_selTracks;
     TrackSel m_selAnchor;
     bool m_hasAnchor = false;

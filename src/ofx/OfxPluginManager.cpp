@@ -77,7 +77,8 @@ QStringList OfxPluginManager::searchPaths() const
     paths << QStringLiteral("/usr/lib/ofx")
           << QStringLiteral("/usr/share/ofx")
           << QStringLiteral("/usr/local/lib/ofx")
-          << QStringLiteral("/usr/lib64/ofx");
+          << QStringLiteral("/usr/lib64/ofx")
+          << QDir::homePath() + QStringLiteral("/.local/lib/ofx");
 #endif
 #ifdef Q_OS_WIN
     const QString progFiles = QCoreApplication::applicationDirPath();
@@ -153,21 +154,26 @@ void OfxPluginManager::scanDirectory(const QString& dir)
     }
 
     // Também procura por estrutura .ofx/bin/ ou .ofx/Contents/
+    // Suporta .ofx e .ofx.bundle (convenção Natron)
     QDir d(dir);
     const QFileInfoList entries = d.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
     for (const QFileInfo& entry : entries) {
-        if (!entry.fileName().endsWith(".ofx")) continue;
+        const QString fn = entry.fileName();
+        if (!fn.endsWith(".ofx") && !fn.endsWith(".ofx.bundle")) continue;
         const QString bundlePath = entry.absoluteFilePath();
+        // Extrai ID do plugin: "NtscRs.ofx" -> "NtscRs", "X.ofx.bundle" -> "X"
+        const QString pluginId = fn.endsWith(".ofx.bundle")
+            ? QFileInfo(fn.left(fn.size() - 8)).fileName()
+            : QFileInfo(bundlePath).completeBaseName();
         // Procura binário em subdiretórios
         for (const QString& subDir : {"bin", "lib", "Contents", "Contents/MacOS", "Contents/Linux-x86-64"}) {
             QDir sub(bundlePath + "/" + subDir);
             if (!sub.exists()) continue;
             const QFileInfoList bins = sub.entryInfoList(
-                QStringList() << "*.so" << "*.dylib" << "*.dll" << "*.of",
+                QStringList() << "*.so" << "*.dylib" << "*.dll" << "*.of" << "*.ofx",
                 QDir::Files);
             for (const QFileInfo& bin : bins) {
-                loadOfxLibrary(bin.absoluteFilePath(),
-                               QFileInfo(bundlePath).completeBaseName());
+                loadOfxLibrary(bin.absoluteFilePath(), pluginId);
             }
         }
     }
@@ -187,7 +193,7 @@ bool OfxPluginManager::loadPluginBundle(const QString& bundlePath)
 #elif defined(Q_OS_MAC)
         "*.dylib", "*.bundle"
 #else
-        "*.so"
+        "*.so", "*.ofx"
 #endif
     };
 
@@ -303,7 +309,13 @@ bool OfxPluginManager::loadOfxLibrary(const QString& libPath, const QString& fal
 
             // Coleta parâmetros com tipo e label
             QVector<QPair<QString,QPair<QString,QString>>> paramList;
-            for (const auto& pd : tempInst.paramDefs) {
+            for (auto& pd : tempInst.paramDefs) {
+                // Copia props do storage temporário (preenchido pelo plugin)
+                if (pd.tempStorage) {
+                    pd.props.m_props = reinterpret_cast<OfxPropSet*>(pd.tempStorage)->m_props;
+                    delete reinterpret_cast<OfxPropSet*>(pd.tempStorage);
+                    pd.tempStorage = nullptr;
+                }
                 QString label = pd.props.getStringQt(kOfxPropLabel, 0, pd.name);
                 paramList.append({pd.name, {pd.type, label}});
             }
@@ -312,6 +324,14 @@ bool OfxPluginManager::loadOfxLibrary(const QString& libPath, const QString& fal
             if (m_describeCb)
                 m_describeCb(info.id, info.name, info.grouping, info.description,
                              info.versionMajor, info.versionMinor, paramList);
+        }
+
+        // Limpa tempStorage mesmo se describe falhou
+        for (auto& pd : tempInst.paramDefs) {
+            if (pd.tempStorage) {
+                delete reinterpret_cast<OfxPropSet*>(pd.tempStorage);
+                pd.tempStorage = nullptr;
+            }
         }
 
         m_libs[info.id] = libInfo;

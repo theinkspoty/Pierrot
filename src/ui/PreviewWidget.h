@@ -221,4 +221,10 @@ private:
     // ── OFX plugin manager ────────────────────────────────────────────
     OfxPluginManager* m_ofxManager = nullptr;
     QVector<OfxPluginInstance> m_clipOfxFx; // efeitos OFX do clipe ativo
+
+    // ── Grade visual do preview (estilo Vegas) ────────────────────────
+    bool m_showGrid = false;
+    int m_gridDivisions = 3; // NxN linhas de grade
+    QToolButton* m_gridBtn = nullptr;
+    void drawGrid(QPainter& p, const QRect& canvas);
 };

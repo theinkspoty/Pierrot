@@ -7,6 +7,7 @@
 
 #include <QDialog>
 #include <QString>
+#include <QHash>
 #include "models/Project.h"
 #include "export/ProjectExporter.h"
 
@@ -31,6 +32,7 @@ private slots:
 private:
     ExportSettings currentSettings() const;
     void log(const QString& line);
+    void restoreLainkaMedia();
     Project* m_project = nullptr;
     QLineEdit* m_outEdit = nullptr;
     QComboBox* m_resCombo = nullptr;
@@ -42,4 +44,9 @@ private:
     QProcess* m_process = nullptr;
     double m_total = 0.0;
     QString m_logFile;
+    // Mapeamento para restaurar mediaId após exportação LAINKA.
+    QHash<QString, QString> m_lainkaOriginalMedia; // clipId → mediaId original
+    QHash<QString, double> m_lainkaOriginalIn;     // clipId → in original
+    QHash<QString, bool> m_lainkaOriginalEnabled;  // clipId → lainkaEnabled original
+    QStringList m_lainkaTempMedia;                 // mediaIds temporários criados
 };

@@ -593,12 +593,13 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
             update();
         } else {
             m_selected.clear();
+            m_secondarySelected.clear();
             refreshView();
             emit selectionChanged(QString());
         }
-        update();
     } else {
         m_selected.clear();
+        m_secondarySelected.clear();
         clearTrackSelection();
         refreshView();
         emit selectionChanged(QString());
@@ -1091,6 +1092,7 @@ void TimelineWidget::mouseReleaseEvent(QMouseEvent* e) {
             // Clique simples no vazio: desfaz a seleção (Ctrl mantém).
             if (!(e->modifiers() & Qt::ControlModifier)) {
                 m_selected.clear();
+                m_secondarySelected.clear();
                 refreshView();
                 emit selectionChanged(QString());
             }
@@ -1287,12 +1289,12 @@ void TimelineWidget::dropEvent(QDropEvent* e) {
 
         if (effectId == "pierrot_lainka") {
             target->lainkaEnabled = true;
-            target->lainkaTargetFps = 8;
-            target->lainkaJitterPos = 15.0;
-            target->lainkaFlicker = 10.0;
-            target->lainkaWarpAmount = 30.0;
-            target->lainkaDustAmount = 15.0;
-            target->lainkaScratchAmount = 10.0;
+            target->lainkaTargetFps = 6;
+            target->lainkaJitterPos = 10.0;
+            target->lainkaFlicker = 8.0;
+            target->lainkaWarpAmount = 8.0;
+            target->lainkaDustAmount = 0.0;
+            target->lainkaScratchAmount = 0.0;
             target->lainkaOpacity = 100.0;
         } else if (effectId == "pierrot_motion") {
             target->motionEnabled = true;

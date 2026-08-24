@@ -140,12 +140,12 @@ void ExpressWidget::addEffect(const QString& effectId)
     // Aplica o efeito ao clipe se for nativo e ainda não aplicado.
     if (effectId == "pierrot_lainka" && !m_currentClip->lainkaEnabled) {
         m_currentClip->lainkaEnabled = true;
-        m_currentClip->lainkaTargetFps = 8;
-        m_currentClip->lainkaJitterPos = 15.0;
-        m_currentClip->lainkaFlicker = 10.0;
-        m_currentClip->lainkaWarpAmount = 30.0;
-        m_currentClip->lainkaDustAmount = 15.0;
-        m_currentClip->lainkaScratchAmount = 10.0;
+        m_currentClip->lainkaTargetFps = 6;
+        m_currentClip->lainkaJitterPos = 10.0;
+        m_currentClip->lainkaFlicker = 8.0;
+        m_currentClip->lainkaWarpAmount = 8.0;
+        m_currentClip->lainkaDustAmount = 0.0;
+        m_currentClip->lainkaScratchAmount = 0.0;
         m_currentClip->lainkaOpacity = 100.0;
         emit modified();
     } else if (effectId == "pierrot_motion" && !m_currentClip->motionEnabled) {
@@ -399,12 +399,8 @@ void ExpressWidget::createBuiltInTab(const QString& effectId)
             [this](int v) { applyBuiltInValue("lainkaJitterPos", v); });
         makeSlider(tr("Flicker:"), 0, 100, c ? (int)llround(c->lainkaFlicker) : 10,
             [this](int v) { applyBuiltInValue("lainkaFlicker", v); }, 1.0, "%");
-        makeSlider(tr("Papel (warp):"), 0, 100, c ? (int)llround(c->lainkaWarpAmount) : 30,
+        makeSlider(tr("Papel (warp):"), 0, 100, c ? (int)llround(c->lainkaWarpAmount) : 8,
             [this](int v) { applyBuiltInValue("lainkaWarpAmount", v); });
-        makeSlider(tr("Pó:"), 0, 100, c ? (int)llround(c->lainkaDustAmount) : 15,
-            [this](int v) { applyBuiltInValue("lainkaDustAmount", v); });
-        makeSlider(tr("Arranhões:"), 0, 100, c ? (int)llround(c->lainkaScratchAmount) : 10,
-            [this](int v) { applyBuiltInValue("lainkaScratchAmount", v); });
         makeSlider(tr("Opacidade:"), 0, 100, c ? (int)llround(c->lainkaOpacity) : 100,
             [this](int v) { applyBuiltInValue("lainkaOpacity", v); }, 1.0, "%");
     }

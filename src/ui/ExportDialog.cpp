@@ -5,6 +5,7 @@
 
 #include "ExportDialog.h"
 #include "SettingsDialog.h"
+#include "export/LainkaRenderer.h"
 
 #include <QLineEdit>
 #include <QComboBox>
@@ -112,6 +113,7 @@ ExportDialog::ExportDialog(Project* project, QWidget* parent)
 }
 
 ExportDialog::~ExportDialog() {
+    restoreLainkaMedia();
     if (m_process && m_process->state() != QProcess::NotRunning) {
         m_process->kill();
         log(tr("Exportação cancelada pelo encerramento da janela."));
@@ -131,6 +133,7 @@ void ExportDialog::requestCancel() {
         m_process->kill();
         m_process->deleteLater();
         m_process = nullptr;
+        restoreLainkaMedia();
         m_startBtn->setEnabled(true);
         m_progress->setValue(0);
         log(tr("Renderização cancelada pelo usuário."));
@@ -181,6 +184,74 @@ void ExportDialog::startExport() {
 
     const ExportSettings s = currentSettings();
     if (s.outputPath.isEmpty()) { log(tr("Informe o caminho de saída.")); return; }
+
+    // ── Pré-renderização LAINKA ────────────────────────────────────────
+    // Antes de montar o comando ffmpeg, renderiza clipes com LAINKA
+    // frame-a-frame para garantir consistência preview↔export.
+    QHash<QString, QString> lainkaRenders; // clipId → arquivo temporário
+    {
+        bool hasLainka = false;
+        for (const Track& t : m_project->videoTracks)
+            for (const Clip& c : t.clips)
+                if (c.lainkaEnabled) { hasLainka = true; break; }
+        if (hasLainka) {
+            log(tr("Pré-renderizando efeitos LAINKA…"));
+            m_progress->setRange(0, 0); // indeterminado durante pré-render
+            QApplication::processEvents();
+
+            QString lainkaError;
+            lainkaRenders = LainkaRenderer::renderAll(*m_project, s.fps,
+                [this](int cur, int total) -> bool {
+                    if (total > 0)
+                        log(tr("LAINKA: frame %1/%2").arg(cur + 1).arg(total));
+                    QApplication::processEvents();
+                    return true; // sempre prossegue (cancelamento via janela)
+                }, &lainkaError);
+
+            m_progress->setRange(0, 100);
+
+            if (!lainkaError.isEmpty() && lainkaRenders.isEmpty()) {
+                log(tr("Erro na pré-renderização LAINKA: %1").arg(lainkaError));
+                // Continua mesmo assim — o export vai usar os filtros ffmpeg
+                // como fallback (qualidade parcial).
+            }
+
+            if (!lainkaRenders.isEmpty()) {
+                log(tr("LAINKA pré-renderizado: %1 clipe(s)").arg(lainkaRenders.size()));
+
+                // Substitui temporariamente os mediaId dos clipes pré-renderizados.
+                // Salva os originais para restaurar depois.
+                for (Track& t : m_project->videoTracks)
+                    for (Clip& c : t.clips)
+                        if (lainkaRenders.contains(c.id)) {
+                            m_lainkaOriginalMedia.insert(c.id, c.mediaId);
+                            // Salva in e lainkaEnabled originais para restaurar depois.
+                            m_lainkaOriginalIn.insert(c.id, c.in);
+                            m_lainkaOriginalEnabled.insert(c.id, c.lainkaEnabled);
+                            // Cria um MediaItem temporário para o arquivo pré-renderizado.
+                            const QString tmpPath = lainkaRenders[c.id];
+                            MediaItem mi;
+                            mi.id = newId();
+                            mi.filePath = tmpPath;
+                            mi.name = c.name.isEmpty()
+                                ? QString("LAINKA_%1").arg(c.id.left(8))
+                                : c.name;
+                            mi.hasVideo = true;
+                            mi.width = m_project->width;
+                            mi.height = m_project->height;
+                            m_project->media.append(mi);
+                            c.mediaId = mi.id;
+                            // Desabilita LAINKA no clip para que buildCommand()
+                            // NÃO aplique os filtros ffmpeg LAINKA novamente
+                            // (o efeito já está baked no arquivo pré-renderizado).
+                            c.lainkaEnabled = false;
+                            // O arquivo pré-renderizado começa do frame correto.
+                            c.in = 0.0;
+                            m_lainkaTempMedia.append(mi.id);
+                        }
+            }
+        }
+    }
 
     QString err;
     const QStringList args = ProjectExporter::buildCommand(*m_project, s, &err);
@@ -237,6 +308,7 @@ void ExportDialog::onReadyRead() {
 }
 
 void ExportDialog::onFinished(int exitCode) {
+    restoreLainkaMedia();
     m_startBtn->setEnabled(true);
     if (m_process) {
         m_process->deleteLater();
@@ -263,4 +335,36 @@ void ExportDialog::log(const QString& line) {
             f.write("\n");
         }
     }
+}
+
+void ExportDialog::restoreLainkaMedia() {
+    if (m_lainkaOriginalMedia.isEmpty()) return;
+
+    // Restaura os mediaId, in e lainkaEnabled originais nos clipes.
+    for (Track& t : m_project->videoTracks)
+        for (Clip& c : t.clips)
+            if (m_lainkaOriginalMedia.contains(c.id)) {
+                c.mediaId = m_lainkaOriginalMedia[c.id];
+                if (m_lainkaOriginalIn.contains(c.id))
+                    c.in = m_lainkaOriginalIn[c.id];
+                if (m_lainkaOriginalEnabled.contains(c.id))
+                    c.lainkaEnabled = m_lainkaOriginalEnabled[c.id];
+            }
+
+    // Remove os mediaIds temporários do projeto.
+    for (const QString& tmpId : m_lainkaTempMedia) {
+        for (int i = m_project->media.size() - 1; i >= 0; --i) {
+            if (m_project->media[i].id == tmpId) {
+                // Remove o arquivo temporário do disco.
+                QFile::remove(m_project->media[i].filePath);
+                m_project->media.removeAt(i);
+                break;
+            }
+        }
+    }
+
+    m_lainkaOriginalMedia.clear();
+    m_lainkaOriginalIn.clear();
+    m_lainkaOriginalEnabled.clear();
+    m_lainkaTempMedia.clear();
 }

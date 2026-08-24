@@ -60,6 +60,7 @@ struct OfxParamDef {
     QString name;
     QString type;       // kOfxParamTypeDouble, etc.
     OfxPropSet props;   // propriedades do descritor (label, min, max, default, etc.)
+    void* tempStorage = nullptr;  // ponteiro temporário para PropSetStorage (preenchido pelo plugin)
 };
 
 // ── Parameter instance (per-effect instance) ─────────────────────────────

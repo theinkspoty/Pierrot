@@ -10,9 +10,14 @@ bool TimelineWidget::isSelected(const QString& id) const {
     return m_selected.contains(id);
 }
 
+bool TimelineWidget::isSecondarySelected(const QString& id) const {
+    return m_secondarySelected.contains(id);
+}
+
 void TimelineWidget::setSelection(const QString& id) {
     clearTrackSelection();
     m_selected.clear();
+    m_secondarySelected.clear();
     m_selected.append(id);
     refreshView();
     emit selectionChanged(id);
@@ -20,11 +25,17 @@ void TimelineWidget::setSelection(const QString& id) {
 
 void TimelineWidget::toggleSelection(const QString& id) {
     clearTrackSelection();
+    m_secondarySelected.clear();
     const int i = m_selected.indexOf(id);
     if (i >= 0) m_selected.removeAt(i);
     else m_selected.append(id);
     refreshView();
     emit selectionChanged(m_selected.isEmpty() ? QString() : m_selected.last());
+}
+
+void TimelineWidget::setSecondarySelection(const QStringList& ids) {
+    m_secondarySelected = ids;
+    update();
 }
 
 bool TimelineWidget::isTrackSelected(int row, bool audio) const {
@@ -34,6 +45,7 @@ bool TimelineWidget::isTrackSelected(int row, bool audio) const {
 void TimelineWidget::setTrackSel(int row, bool audio) {
     if (!m_selected.isEmpty()) {
         m_selected.clear();
+        m_secondarySelected.clear();
         emit selectionChanged(QString());
     }
     m_selTracks.clear();
@@ -45,6 +57,7 @@ void TimelineWidget::setTrackSel(int row, bool audio) {
 void TimelineWidget::toggleTrackSel(int row, bool audio) {
     if (!m_selected.isEmpty()) {
         m_selected.clear();
+        m_secondarySelected.clear();
         emit selectionChanged(QString());
     }
     const TrackSel ts{row, audio};
@@ -62,6 +75,7 @@ void TimelineWidget::selectTrackRange(int row, bool audio) {
     }
     if (!m_selected.isEmpty()) {
         m_selected.clear();
+        m_secondarySelected.clear();
         emit selectionChanged(QString());
     }
     int a = m_selAnchor.row;
@@ -76,6 +90,7 @@ void TimelineWidget::selectTrackRightClick(int row, bool audio) {
     if (isTrackSelected(row, audio)) return;
     if (!m_selected.isEmpty()) {
         m_selected.clear();
+        m_secondarySelected.clear();
         emit selectionChanged(QString());
     }
     m_selTracks.clear();
@@ -93,6 +108,7 @@ void TimelineWidget::selectAllClips() {
     if (!m_project) return;
     clearTrackSelection();
     m_selected.clear();
+    m_secondarySelected.clear();
     for (const Track& t : m_project->videoTracks)
         for (const Clip& c : t.clips) m_selected.append(c.id);
     for (const Track& t : m_project->audioTracks)
@@ -122,6 +138,7 @@ void TimelineWidget::selectInMarquee(bool add) {
         if (trackVisible(i, true))
             collect(m_project->audioTracks[i], true, i);
     if (!add) m_selected.clear();
+    m_secondarySelected.clear();
     for (const QString& id : found)
         if (!m_selected.contains(id)) m_selected.append(id);
     clearTrackSelection();

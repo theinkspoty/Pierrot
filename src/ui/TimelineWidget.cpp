@@ -229,6 +229,7 @@ void TimelineWidget::refreshView() {
 void TimelineWidget::setProject(Project* p) {
     m_project = p;
     m_selected.clear();
+    m_secondarySelected.clear();
     clearTrackSelection();
     m_clipPix.clear();
     m_clipBytes = 0;
@@ -985,15 +986,23 @@ void TimelineWidget::keyPressEvent(QKeyEvent* e) {
                 deleteLoopLeaveGap();
             else
                 deleteLoopRipple();
-        } else if (shift) {
-            deleteSelectedLeaveGap();
         } else {
-            // "Fechar o vão automaticamente (ripple)" é configurável: com a
-            // opção desativada, excluir deixa o espaço vazio.
-            if (SettingsDialog::rippleDeleteEnabled())
-                deleteSelection();
-            else
+            // Mescla seleção secundária na primária para deletar tudo junto.
+            if (!m_secondarySelected.isEmpty()) {
+                for (const QString& id : m_secondarySelected)
+                    if (!m_selected.contains(id)) m_selected.append(id);
+                m_secondarySelected.clear();
+            }
+            if (shift) {
                 deleteSelectedLeaveGap();
+            } else {
+                // "Fechar o vão automaticamente (ripple)" é configurável: com a
+                // opção desativada, excluir deixa o espaço vazio.
+                if (SettingsDialog::rippleDeleteEnabled())
+                    deleteSelection();
+                else
+                    deleteSelectedLeaveGap();
+            }
         }
         e->accept();
         break;
@@ -1023,7 +1032,8 @@ void TimelineWidget::keyPressEvent(QKeyEvent* e) {
         break;
     case Qt::Key_D:
         if (ctrl) { duplicateSelected(); e->accept(); break; }
-        QWidget::keyPressEvent(e);
+        cutAndDelete();
+        e->accept();
         break;
     case Qt::Key_A:
         if (ctrl) { selectAllClips(); e->accept(); break; }
@@ -1382,6 +1392,7 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
             m_project->removeTrack(audio, vrow);
             pruneEmptyGroups();
             m_selected.clear();
+            m_secondarySelected.clear();
             clearTrackSelection();
             invalidateScene();
             updateScrollRanges();
@@ -1433,6 +1444,10 @@ void TimelineWidget::cutAtPlayhead() {
     TimelineCommands::cutAtPlayhead(this);
 }
 
+void TimelineWidget::cutAndDelete() {
+    TimelineCommands::cutAndDelete(this);
+}
+
 void TimelineWidget::splitClipAt(Clip* c, double t) {
     if (!c || !m_project) return;
     // Usa ids (não ponteiros): inserir clipes pode realocar o vetor e
@@ -1472,6 +1487,44 @@ void TimelineWidget::splitClipAt(Clip* c, double t) {
         cc->dur = t - cc->pos;
         cc->groupId = fg;
         b.groupId = bg;
+        Track* tr = trackOf(cc);
+        if (tr) {
+            int idx = -1;
+            for (int i = 0; i < tr->clips.size(); ++i)
+                if (tr->clips[i].id == cc->id) { idx = i; break; }
+            if (idx >= 0) tr->clips.insert(idx + 1, b);
+        }
+    }
+}
+
+void TimelineWidget::splitClipAt(Clip* c, double t, QStringList* newIds) {
+    if (!c || !m_project) return;
+    QStringList ids;
+    if (!c->groupId.isEmpty()) {
+        for (Clip* m : groupMembers(c->groupId)) ids.append(m->id);
+    } else {
+        ids.append(c->id);
+    }
+
+    const bool grouped = ids.size() > 1;
+    const QString fg = grouped ? newId() : QString();
+    const QString bg = grouped ? newId() : QString();
+    for (const QString& id : ids) {
+        Clip* cc = findClipById(id);
+        if (!cc) continue;
+        if (t <= cc->pos + 1e-6 || t >= cc->pos + cc->dur - 1e-6) {
+            if (grouped) cc->groupId = newId();
+            continue;
+        }
+        Clip b = *cc;
+        b.id = newId();
+        b.pos = t;
+        b.in = cc->in + (t - cc->pos);
+        b.dur = cc->dur - (t - cc->pos);
+        cc->dur = t - cc->pos;
+        cc->groupId = fg;
+        b.groupId = bg;
+        if (newIds) newIds->append(b.id);
         Track* tr = trackOf(cc);
         if (tr) {
             int idx = -1;
@@ -1878,6 +1931,7 @@ void TimelineWidget::toggleGroupCollapsed(const QString& gid) {
     g->collapsed = !g->collapsed;
     if (!m_selected.isEmpty()) {
         m_selected.clear();
+        m_secondarySelected.clear();
         emit selectionChanged(QString());
     }
     clearTrackSelection();
@@ -1934,6 +1988,7 @@ void TimelineWidget::selectGroupTracks(const QString& gid) {
             m_selTracks.append(TrackSel{i, true});
     if (!m_selected.isEmpty()) {
         m_selected.clear();
+        m_secondarySelected.clear();
         emit selectionChanged(QString());
     }
     m_hasAnchor = false;
@@ -1944,6 +1999,7 @@ void TimelineWidget::selectGroupTracks(const QString& gid) {
 void TimelineWidget::toggleGroupTracks(const QString& gid) {
     if (!m_selected.isEmpty()) {
         m_selected.clear();
+        m_secondarySelected.clear();
         emit selectionChanged(QString());
     }
     QVector<TrackSel> group;

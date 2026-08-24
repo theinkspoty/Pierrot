@@ -19,9 +19,14 @@ namespace TimelineCommands {
 // ── Corte ──────────────────────────────────────────────────────────────
 // Divide um clipe (e todos os membros do seu grupo) na posição t.
 void splitClipAt(TimelineWidget* tl, Clip* c, double t);
+// Versão com saída: retorna IDs dos clipes criados (metade direita).
+void splitClipAt(TimelineWidget* tl, Clip* c, double t, QStringList* newIds);
 
 // Divide TODOS os clipes que cruzam a posição t (estilo Vegas).
 void cutAtPlayhead(TimelineWidget* tl);
+
+// Corta e deleta os clipes da direita numa única operação undo (S+D).
+void cutAndDelete(TimelineWidget* tl);
 
 // Divide clipes na posição t (ferramenta tesoura).
 void razorSplitAt(TimelineWidget* tl, double t);

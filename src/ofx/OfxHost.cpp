@@ -201,13 +201,21 @@ OfxStatus OfxHostImpl::propSetInt(OfxPropertySetHandle h, const char* p, int i, 
     PROP_HANDLE(h); ps->setInt(p, i, v); return kOfxStatOK;
 }
 OfxStatus OfxHostImpl::propGetPointer(OfxPropertySetHandle h, const char* p, int i, void** v) {
-    PROP_HANDLE(h); return ps->getPointer(p, i, v) ? kOfxStatOK : kOfxStatErrUnknown;
+    PROP_HANDLE(h);
+    if (!ps->getPointer(p, i, v)) {
+        qWarning() << "[OFX] propGetPointer FAILED:" << p << "[" << i << "]";
+        return kOfxStatErrUnknown;
+    }
+    return kOfxStatOK;
 }
 OfxStatus OfxHostImpl::propGetString(OfxPropertySetHandle h, const char* p, int i, char** v) {
     PROP_HANDLE(h);
     static thread_local QByteArray tlBuf;
     const char* c = nullptr;
-    if (!ps->getString(p, i, c)) return kOfxStatErrUnknown;
+    if (!ps->getString(p, i, c)) {
+        qWarning() << "[OFX] propGetString FAILED:" << p << "[" << i << "]";
+        return kOfxStatErrUnknown;
+    }
     tlBuf = QByteArray(c);
     if (v) *v = tlBuf.data();
     return kOfxStatOK;
@@ -215,14 +223,20 @@ OfxStatus OfxHostImpl::propGetString(OfxPropertySetHandle h, const char* p, int 
 OfxStatus OfxHostImpl::propGetDouble(OfxPropertySetHandle h, const char* p, int i, double* v) {
     PROP_HANDLE(h);
     double d = 0;
-    if (!ps->getDouble(p, i, d)) return kOfxStatErrUnknown;
+    if (!ps->getDouble(p, i, d)) {
+        qWarning() << "[OFX] propGetDouble FAILED:" << p << "[" << i << "]";
+        return kOfxStatErrUnknown;
+    }
     if (v) *v = d;
     return kOfxStatOK;
 }
 OfxStatus OfxHostImpl::propGetInt(OfxPropertySetHandle h, const char* p, int i, int* v) {
     PROP_HANDLE(h);
     int iv = 0;
-    if (!ps->getInt(p, i, iv)) return kOfxStatErrUnknown;
+    if (!ps->getInt(p, i, iv)) {
+        qWarning() << "[OFX] propGetInt FAILED:" << p << "[" << i << "]";
+        return kOfxStatErrUnknown;
+    }
     if (v) *v = iv;
     return kOfxStatOK;
 }
@@ -297,7 +311,7 @@ OfxStatus OfxHostImpl::paramDefine(OfxParamSetHandle h, const char* type,
     if (props) {
         auto* storage = new PropSetStorage;
         *props = reinterpret_cast<OfxPropertySetHandle>(storage);
-        def.props.m_props = storage->m_props; // copia vazio — plugin vai preencher
+        def.tempStorage = storage; // plugin vai preencher; copiar depois do describe
     }
     defs->append(def);
     return kOfxStatOK;
@@ -510,14 +524,14 @@ const OfxImageEffectSuiteV1 OfxHostImpl::s_imageEffectSuite = {
 };
 
 OfxStatus OfxHostImpl::ieGetPropSet(OfxImageEffectHandle h, OfxPropertySetHandle* p) {
-    if (!h) return kOfxStatErrBadHandle;
+    if (!h) { qWarning() << "[OFX] ieGetPropSet: null handle"; return kOfxStatErrBadHandle; }
     auto* inst = instFromHandle(h);
     if (p) *p = reinterpret_cast<OfxPropertySetHandle>(&inst->props);
     return kOfxStatOK;
 }
 
 OfxStatus OfxHostImpl::ieGetParamSet(OfxImageEffectHandle h, OfxParamSetHandle* p) {
-    if (!h) return kOfxStatErrBadHandle;
+    if (!h) { qWarning() << "[OFX] ieGetParamSet: null handle"; return kOfxStatErrBadHandle; }
     auto* inst = instFromHandle(h);
     if (p) *p = reinterpret_cast<OfxParamSetHandle>(&inst->paramDefs);
     return kOfxStatOK;
@@ -539,10 +553,14 @@ OfxStatus OfxHostImpl::ieClipDefine(OfxImageEffectHandle h, const char* name, Of
 
 OfxStatus OfxHostImpl::ieClipGetHandle(OfxImageEffectHandle h, const char* name,
                                     OfxImageClipHandle* clip, OfxPropertySetHandle* props) {
-    if (!h || !name) return kOfxStatErrBadHandle;
+    if (!h || !name) { qWarning() << "[OFX] ieClipGetHandle: null handle/name"; return kOfxStatErrBadHandle; }
     auto* inst = instFromHandle(h);
     QString qname = QString::fromLatin1(name);
-    if (!inst->clips.contains(qname)) return kOfxStatErrUnknown;
+    if (!inst->clips.contains(qname)) {
+        qWarning() << "[OFX] ieClipGetHandle: clip" << qname << "not found (available:" << inst->clips.keys() << ")";
+        return kOfxStatErrUnknown;
+    }
+    qInfo() << "[OFX] ieClipGetHandle:" << qname;
 
     if (clip) *clip = reinterpret_cast<OfxImageClipHandle>(&inst->clips[qname]);
     if (props) *props = reinterpret_cast<OfxPropertySetHandle>(&inst->clips[qname].props);
@@ -556,11 +574,16 @@ OfxStatus OfxHostImpl::ieClipGetPropSet(OfxImageClipHandle h, OfxPropertySetHand
     return kOfxStatOK;
 }
 
-OfxStatus OfxHostImpl::ieClipGetImage(OfxImageClipHandle h, OfxTime, const OfxRectD*,
+OfxStatus OfxHostImpl::ieClipGetImage(OfxImageClipHandle h, OfxTime t, const OfxRectD* r,
                                     OfxPropertySetHandle* image) {
-    if (!h) return kOfxStatErrBadHandle;
+    if (!h) { qWarning() << "[OFX] ieClipGetImage: null handle"; return kOfxStatErrBadHandle; }
     auto* clip = reinterpret_cast<OfxClip*>(h);
-    if (clip->image.isNull()) return kOfxStatFailed;
+    if (clip->image.isNull()) {
+        qWarning() << "[OFX] ieClipGetImage: null image for clip" << clip->name;
+        return kOfxStatFailed;
+    }
+    qInfo() << "[OFX] ieClipGetImage:" << clip->name << "time" << t
+            << "size" << clip->image.width() << "x" << clip->image.height();
 
     // Cria um property set com ponteiro para a QImage
     // Usamos propSetPointer com um ponteiro para a QImage
@@ -578,6 +601,8 @@ OfxStatus OfxHostImpl::ieClipGetImage(OfxImageClipHandle h, OfxTime, const OfxRe
     ps->setString(kOfxImageEffectPropPixelDepth, 0, kOfxBitDepthByte);
     ps->setString(kOfxImageEffectPropComponents, 0, kOfxImageComponentRGBA);
     ps->setPointer("OfxImageClipPropImage", 0, &clip->image); // pointer para QImage
+    ps->setDouble(kOfxImageEffectPropRenderScale, 0, 1.0);
+    ps->setDouble(kOfxImageEffectPropRenderScale, 1, 1.0);
 
     if (image) *image = reinterpret_cast<OfxPropertySetHandle>(ps);
     return kOfxStatOK;
@@ -758,20 +783,32 @@ void OfxHostImpl::initPlugin(OfxEffectInstance& inst, void* libHandle,
 bool OfxHostImpl::describe(OfxEffectInstance& inst) {
     if (!inst.entry) return false;
 
-    // Propriedades do plugin
+    // Propriedades do host (passadas ao plugin durante kOfxActionLoad)
     auto* pluginProps = new PropSetStorage;
-    pluginProps->setString(kOfxPropType, 0, kOfxTypeImageEffect);
+    pluginProps->setString(kOfxPropType, 0, kOfxTypeImageEffectHost);
+    pluginProps->setString(kOfxImageEffectPropSupportedContexts, 0, kOfxImageEffectContextFilter);
+    pluginProps->setString(kOfxImageEffectPropSupportedContexts, 1, kOfxImageEffectContextGeneral);
+    pluginProps->setString(kOfxImageEffectPropSupportedContexts, 2, kOfxImageEffectContextGenerator);
+    pluginProps->setString(kOfxImageEffectPropSupportedPixelDepths, 0, kOfxBitDepthByte);
+    pluginProps->setString(kOfxImageEffectPropSupportedPixelDepths, 1, kOfxBitDepthShort);
+    pluginProps->setString(kOfxImageEffectPropSupportedPixelDepths, 2, kOfxBitDepthFloat);
+    pluginProps->setString(kOfxImageEffectPropSupportedComponents, 0, kOfxImageComponentRGBA);
+    pluginProps->setString(kOfxImageEffectPropSupportedComponents, 1, kOfxImageComponentRGB);
+    pluginProps->setString(kOfxImageEffectPropSupportedComponents, 2, kOfxImageComponentAlpha);
 
     OfxPropertySetHandle propsHandle = reinterpret_cast<OfxPropertySetHandle>(pluginProps);
 
+    // Handle do efeito (passado como primeiro argumento das ações)
+    OfxImageEffectHandle effectHandle = reinterpret_cast<OfxImageEffectHandle>(&inst);
+
     // kOfxActionLoad
-    OfxStatus s = inst.entry(kOfxActionLoad, nullptr, propsHandle, nullptr);
+    OfxStatus s = inst.entry(kOfxActionLoad, effectHandle, propsHandle, nullptr);
     if (s != kOfxStatOK && s != kOfxStatReplyDefault) {
         qWarning() << "[OFX] Plugin" << inst.pluginId << "kOfxActionLoad failed:" << s;
     }
 
     // kOfxActionDescribe
-    s = inst.entry(kOfxActionDescribe, nullptr, propsHandle, nullptr);
+    s = inst.entry(kOfxActionDescribe, effectHandle, propsHandle, nullptr);
     if (s != kOfxStatOK && s != kOfxStatReplyDefault) {
         qWarning() << "[OFX] Plugin" << inst.pluginId << "kOfxActionDescribe failed:" << s;
         return false;
@@ -785,11 +822,11 @@ bool OfxHostImpl::describe(OfxEffectInstance& inst) {
     contextProps->setString(kOfxImageEffectPropContext, 0, kOfxImageEffectContextFilter);
     OfxPropertySetHandle ctxHandle = reinterpret_cast<OfxPropertySetHandle>(contextProps);
 
-    s = inst.entry(kOfxImageEffectActionDescribeInContext, nullptr, ctxHandle, nullptr);
+    s = inst.entry(kOfxImageEffectActionDescribeInContext, effectHandle, ctxHandle, nullptr);
     if (s != kOfxStatOK && s != kOfxStatReplyDefault) {
         // Tenta context geral
         contextProps->setString(kOfxImageEffectPropContext, 0, kOfxImageEffectContextGeneral);
-        s = inst.entry(kOfxImageEffectActionDescribeInContext, nullptr, ctxHandle, nullptr);
+        s = inst.entry(kOfxImageEffectActionDescribeInContext, effectHandle, ctxHandle, nullptr);
     }
 
     delete contextProps;
@@ -799,18 +836,49 @@ bool OfxHostImpl::describe(OfxEffectInstance& inst) {
 bool OfxHostImpl::createInstance(OfxEffectInstance& inst) {
     if (!inst.entry) return false;
 
-    // Cria os clips padrão
-    OfxClip source;
-    source.name = QStringLiteral("Source");
-    inst.clips["Source"] = source;
+    // Copia propriedades do descritor para a instância
+    inst.props.m_props = inst.imageEffectProps.m_props;
 
-    OfxClip output;
-    output.name = QStringLiteral("Output");
-    inst.clips["Output"] = output;
+    // Garante que clips Source e Output existem
+    if (!inst.clips.contains(QStringLiteral("Source"))) {
+        OfxClip source;
+        source.name = QStringLiteral("Source");
+        inst.clips["Source"] = source;
+    }
+    if (!inst.clips.contains(QStringLiteral("Output"))) {
+        OfxClip output;
+        output.name = QStringLiteral("Output");
+        inst.clips["Output"] = output;
+    }
+
+    // Cria instâncias de parâmetros a partir das definições
+    inst.params.clear();
+    for (const auto& pd : inst.paramDefs) {
+        OfxParamInst pi;
+        pi.name = pd.name;
+        pi.type = pd.type;
+        if (pd.type == kOfxParamTypeDouble)
+            pi.doubleVal = pd.props.getDoubleVal(kOfxParamPropDefault, 0, 0.0);
+        else if (pd.type == kOfxParamTypeInteger)
+            pi.intVal = pd.props.getIntVal(kOfxParamPropDefault, 0, 0);
+        else if (pd.type == kOfxParamTypeBoolean)
+            pi.boolVal = pd.props.getIntVal(kOfxParamPropDefault, 0, 0) != 0;
+        else if (pd.type == kOfxParamTypeChoice)
+            pi.choiceVal = pd.props.getIntVal(kOfxParamPropDefault, 0, 0);
+        else if (pd.type == kOfxParamTypeRGB || pd.type == kOfxParamTypeRGBA) {
+            pi.r = pd.props.getDoubleVal(kOfxParamPropDefault, 0, 0.0);
+            pi.g = pd.props.getDoubleVal(kOfxParamPropDefault, 1, 0.0);
+            pi.b = pd.props.getDoubleVal(kOfxParamPropDefault, 2, 0.0);
+            if (pd.type == kOfxParamTypeRGBA)
+                pi.a = pd.props.getDoubleVal(kOfxParamPropDefault, 3, 1.0);
+        }
+        inst.params.append(pi);
+    }
 
     // Chama kOfxActionCreateInstance
     OfxPropertySetHandle propsHandle = reinterpret_cast<OfxPropertySetHandle>(&inst.props);
-    OfxStatus s = inst.entry(kOfxActionCreateInstance, nullptr, propsHandle, nullptr);
+    OfxImageEffectHandle effectHandle = reinterpret_cast<OfxImageEffectHandle>(&inst);
+    OfxStatus s = inst.entry(kOfxActionCreateInstance, effectHandle, propsHandle, nullptr);
 
     return s == kOfxStatOK || s == kOfxStatReplyDefault;
 }
@@ -819,13 +887,17 @@ bool OfxHostImpl::render(OfxEffectInstance& inst, const QImage& input, QImage& o
                       double time, int width, int height) {
     if (!inst.entry || input.isNull()) return false;
 
-    // Atribui a imagem de entrada ao clip Source
+    // Atribui a imagem de entrada ao clip Source e suas propriedades
     inst.clips["Source"].image = input;
+    inst.clips["Source"].props.setString(kOfxImageEffectPropPixelDepth, 0, kOfxBitDepthByte);
+    inst.clips["Source"].props.setString(kOfxImageEffectPropComponents, 0, kOfxImageComponentRGBA);
 
     // Prepara a imagem de saída
     output = QImage(width, height, QImage::Format_ARGB32_Premultiplied);
     output.fill(Qt::transparent);
     inst.clips["Output"].image = output;
+    inst.clips["Output"].props.setString(kOfxImageEffectPropPixelDepth, 0, kOfxBitDepthByte);
+    inst.clips["Output"].props.setString(kOfxImageEffectPropComponents, 0, kOfxImageComponentRGBA);
 
     // Prepara argumentos de render
     auto* inArgs = new PropSetStorage;
@@ -839,15 +911,22 @@ bool OfxHostImpl::render(OfxEffectInstance& inst, const QImage& input, QImage& o
     inArgs->setInt(kOfxImageEffectPropRenderWindow, 2, width);
     inArgs->setInt(kOfxImageEffectPropRenderWindow, 3, height);
 
+    // Também seta no property set do efeito (o plugin lê daqui via ieGetPropSet)
+    inst.props.setDouble(kOfxImageEffectPropRenderScale, 0, 1.0);
+    inst.props.setDouble(kOfxImageEffectPropRenderScale, 1, 1.0);
+
     OfxPropertySetHandle inHandle = reinterpret_cast<OfxPropertySetHandle>(inArgs);
     OfxPropertySetHandle outHandle = nullptr;
 
-    OfxStatus s = inst.entry(kOfxImageEffectActionRender, nullptr, inHandle, outHandle);
+    OfxImageEffectHandle effectHandle = reinterpret_cast<OfxImageEffectHandle>(&inst);
+    OfxStatus s = inst.entry(kOfxImageEffectActionRender, effectHandle, inHandle, outHandle);
 
     if (s == kOfxStatOK) {
         output = inst.clips["Output"].image;
     } else {
-        qWarning() << "[OFX] Render failed for" << inst.pluginId << "- status:" << s;
+        qWarning() << "[OFX] Render failed for" << inst.pluginId
+                   << "- status:" << s
+                   << "(0=OK,1=Failed,2=Fatal,3=Unknown,4=MissingHost,5=Unsupported)";
         output = input; // fallback: retorna input
     }
 
@@ -857,11 +936,18 @@ bool OfxHostImpl::render(OfxEffectInstance& inst, const QImage& input, QImage& o
 
 void OfxHostImpl::destroyInstance(OfxEffectInstance& inst) {
     if (inst.entry) {
+        OfxImageEffectHandle effectHandle = reinterpret_cast<OfxImageEffectHandle>(&inst);
         OfxPropertySetHandle propsHandle = reinterpret_cast<OfxPropertySetHandle>(&inst.props);
-        inst.entry(kOfxActionDestroyInstance, nullptr, propsHandle, nullptr);
+        inst.entry(kOfxActionDestroyInstance, effectHandle, propsHandle, nullptr);
     }
     inst.privateData = nullptr;
     inst.params.clear();
+    for (auto& pd : inst.paramDefs) {
+        if (pd.tempStorage) {
+            delete reinterpret_cast<PropSetStorage*>(pd.tempStorage);
+            pd.tempStorage = nullptr;
+        }
+    }
     inst.paramDefs.clear();
     inst.clips.clear();
 }
