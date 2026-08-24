@@ -26,7 +26,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ARCH="$(uname -m)"
 TOOLS="$ROOT/packaging/.tools"
-VERSION="${VERSION:-0.4}"
+VERSION="${VERSION:-0.4.2}"
 OUT_DIR="${OUT_DIR:-$ROOT/dist}"
 BUNDLE_FFMPEG="${BUNDLE_FFMPEG:-1}"
 
