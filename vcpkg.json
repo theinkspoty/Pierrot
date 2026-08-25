@@ -1,9 +1,0 @@
-{
-  "name": "pierrot",
-  "version-string": "0.1.0",
-  "description": "Editor de video estilo Vegas Pro",
-  "dependencies": [
-    "qtbase",
-    "ffmpeg"
-  ]
-}

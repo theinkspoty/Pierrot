@@ -6,7 +6,7 @@
 # Estratégia:
 #   1. Se pkg-config estiver disponível, usa diretamente os includes e libs
 #      reportados (libavformat.pc etc.) — padrão em Linux/Arch.
-#   2. Fallback: find_path/find_library (funciona no Windows com vcpkg).
+#   2. Fallback: find_path/find_library.
 #      Aponte FFMPEG_ROOT (cache) se as libs não estiverem em local padrão.
 #
 # Targets exportados: FFmpeg::avformat, FFmpeg::avcodec, FFmpeg::avutil,

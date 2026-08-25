@@ -95,11 +95,7 @@ set(HEADERS
     src/ui/TitleBar.h
 )
 
-if(WIN32)
-    add_executable(pierrot WIN32 ${SOURCES} ${HEADERS} packaging/windows/pierrot.rc)
-else()
-    add_executable(pierrot ${SOURCES} ${HEADERS})
-endif()
+add_executable(pierrot ${SOURCES} ${HEADERS})
 
 target_include_directories(pierrot PRIVATE src src/ofx/sdk)
 
@@ -114,9 +110,7 @@ target_link_libraries(pierrot PRIVATE
 )
 
 # dlopen/dlsym para carregar plugins OFX em runtime
-if(NOT WIN32)
-    target_link_libraries(pierrot PRIVATE dl)
-endif()
+target_link_libraries(pierrot PRIVATE ${CMAKE_DL_LIBS})
 
 if(TARGET FFmpeg::swresample)
     target_link_libraries(pierrot PRIVATE FFmpeg::swresample)
@@ -125,7 +119,5 @@ else()
 endif()
 
 install(TARGETS pierrot RUNTIME DESTINATION bin)
-if(NOT WIN32)
-    install(FILES packaging/pierrot.desktop DESTINATION share/applications)
-    install(FILES packaging/pierrot.svg DESTINATION share/icons/hicolor/scalable/apps)
-endif()
+install(FILES packaging/pierrot.desktop DESTINATION share/applications)
+install(FILES packaging/pierrot.svg DESTINATION share/icons/hicolor/scalable/apps)

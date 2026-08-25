@@ -11,42 +11,25 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QDebug>
-#include <QCoreApplication>
 #include <QSettings>
 #include <QDirIterator>
 #include <cstring>
 
-#ifdef Q_OS_WIN
-#include <windows.h>
-#else
 #include <dlfcn.h>
-#endif
 
 // ── Helpers para dlopen/dlsym ────────────────────────────────────────────
 
 static void* ofxLoadLibrary(const QString& path) {
-#ifdef Q_OS_WIN
-    return (void*)LoadLibraryW(reinterpret_cast<const wchar_t*>(path.utf16()));
-#else
     return dlopen(path.toLocal8Bit().constData(), RTLD_NOW | RTLD_LOCAL);
-#endif
 }
 
 static void* ofxGetSymbol(void* lib, const char* name) {
-#ifdef Q_OS_WIN
-    return (void*)GetProcAddress((HMODULE)lib, name);
-#else
     return dlsym(lib, name);
-#endif
 }
 
 static QString ofxLoadError() {
-#ifdef Q_OS_WIN
-    return QString::number(GetLastError());
-#else
     const char* err = dlerror();
     return err ? QString::fromLatin1(err) : QStringLiteral("unknown");
-#endif
 }
 
 // ── Construtor / Destrutor ───────────────────────────────────────────────
@@ -57,11 +40,7 @@ OfxPluginManager::~OfxPluginManager() { cleanupLibs(); }
 void OfxPluginManager::cleanupLibs() {
     for (auto it = m_libs.begin(); it != m_libs.end(); ++it) {
         if (it.value().handle) {
-#ifdef Q_OS_WIN
-            FreeLibrary((HMODULE)it.value().handle);
-#else
             dlclose(it.value().handle);
-#endif
         }
     }
     m_libs.clear();
@@ -79,12 +58,6 @@ QStringList OfxPluginManager::searchPaths() const
           << QStringLiteral("/usr/local/lib/ofx")
           << QStringLiteral("/usr/lib64/ofx")
           << QDir::homePath() + QStringLiteral("/.local/lib/ofx");
-#endif
-#ifdef Q_OS_WIN
-    const QString progFiles = QCoreApplication::applicationDirPath();
-    paths << progFiles + QStringLiteral("/../lib/ofx")
-          << QStringLiteral("C:/Program Files/OFX/Plugins")
-          << QStringLiteral("C:/Program Files (x86)/OFX/Plugins");
 #endif
 
     const QString userDir =
@@ -136,7 +109,7 @@ int OfxPluginManager::scanPlugins()
 void OfxPluginManager::scanDirectory(const QString& dir)
 {
     // Busca recursiva por diretórios .ofx e por arquivos .of/.ofx.bundle
-    QDirIterator it(dir, QStringList() << "*.ofx" << "*.so" << "*.dylib" << "*.dll",
+    QDirIterator it(dir, QStringList() << "*.ofx" << "*.so" << "*.dylib",
                     QDir::Files | QDir::Dirs, QDirIterator::Subdirectories);
 
     while (it.hasNext()) {
@@ -170,7 +143,7 @@ void OfxPluginManager::scanDirectory(const QString& dir)
             QDir sub(bundlePath + "/" + subDir);
             if (!sub.exists()) continue;
             const QFileInfoList bins = sub.entryInfoList(
-                QStringList() << "*.so" << "*.dylib" << "*.dll" << "*.of" << "*.ofx",
+                QStringList() << "*.so" << "*.dylib" << "*.of" << "*.ofx",
                 QDir::Files);
             for (const QFileInfo& bin : bins) {
                 loadOfxLibrary(bin.absoluteFilePath(), pluginId);
@@ -184,13 +157,10 @@ bool OfxPluginManager::loadPluginBundle(const QString& bundlePath)
     // Procura o binário compartilhado dentro do bundle
     static const QStringList searchSubDirs = {
         "", "bin", "lib",
-        "Contents", "Contents/MacOS", "Contents/Linux-x86-64",
-        "Contents/Win64"
+        "Contents", "Contents/MacOS", "Contents/Linux-x86-64"
     };
     static const QStringList libPatterns = {
-#ifdef Q_OS_WIN
-        "*.dll"
-#elif defined(Q_OS_MAC)
+#if defined(Q_OS_MAC)
         "*.dylib", "*.bundle"
 #else
         "*.so", "*.ofx"
@@ -234,22 +204,14 @@ bool OfxPluginManager::loadOfxLibrary(const QString& libPath, const QString& fal
         numPlugins = getNumPlugins();
         if (numPlugins <= 0) {
             qWarning() << "[OFX] Plugin relata 0 plugins:" << libPath;
-#ifdef Q_OS_WIN
-            FreeLibrary((HMODULE)lib);
-#else
             dlclose(lib);
-#endif
             return false;
         }
     }
 
     if (!getPlugin) {
         qWarning() << "[OFX] Não encontrou OfxGetPlugin:" << libPath;
-#ifdef Q_OS_WIN
-        FreeLibrary((HMODULE)lib);
-#else
         dlclose(lib);
-#endif
         return false;
     }
 
@@ -345,11 +307,7 @@ bool OfxPluginManager::loadOfxLibrary(const QString& libPath, const QString& fal
     }
 
     if (!anyLoaded) {
-#ifdef Q_OS_WIN
-        FreeLibrary((HMODULE)lib);
-#else
         dlclose(lib);
-#endif
     }
 
     return anyLoaded;
