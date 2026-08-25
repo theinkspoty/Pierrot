@@ -7,11 +7,6 @@ desenvolvido **exclusivamente para Linux**, escrito em
 A ideia do editor é: ser otimizado e ter um fluxo de trabalho rápido,
 pra vídeos sem complexidade, focado no YouTube e outras plataformas.
 
-> **Pelas minhas mãos, o Pierrot nunca pisará no Windows.**
-> Este projeto nasceu no Linux, é construído para o Linux e assim permanecerá —
-> não existe, nem existirá, build para Windows neste repositório.
-> — *theinkspoty*
-
 ![Pierrot](imagens/Captura_de_tela.png)
 
 ## Especificações
