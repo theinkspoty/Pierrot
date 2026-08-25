@@ -47,6 +47,7 @@ set(SOURCES
     src/ui/ExportDialog.cpp
     src/ui/ProjectSettingsDialog.cpp
     src/ui/SettingsDialog.cpp
+    src/ui/Theme.cpp
     src/ui/TransformDialog.cpp
     src/ui/AudioEffectsDialog.cpp
     src/ui/TextEditorDialog.cpp
@@ -81,6 +82,7 @@ set(HEADERS
     src/ui/ExportDialog.h
     src/ui/ProjectSettingsDialog.h
     src/ui/SettingsDialog.h
+    src/ui/Theme.h
     src/ui/TransformDialog.h
     src/ui/AudioEffectsDialog.h
     src/ui/TextEditorDialog.h

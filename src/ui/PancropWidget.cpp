@@ -4,6 +4,7 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "PancropWidget.h"
+#include "ui/Theme.h"
 
 #include <QPainter>
 #include <QPainterPath>
@@ -244,8 +245,11 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
         sb->setButtonSymbols(QAbstractSpinBox::NoButtons);
         sb->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         sb->setStyleSheet(QStringLiteral(
-            "QDoubleSpinBox{color:#9cc4f0; font-weight:bold; background:#202228;"
-            "border:1px solid #2c2f36; border-radius:3px; padding:1px 4px;}"));
+            "QDoubleSpinBox{color:%1; font-weight:bold; background:%2;"
+            "border:1px solid %3; border-radius:3px; padding:1px 4px;}")
+            .arg(themeColors().spinText.name(),
+                 themeColors().inputBg.name(),
+                 themeColors().inputBorder.name()));
         return sb;
     };
     auto makeDiamond = [this](int prop) {
@@ -254,8 +258,10 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
         b->setCursor(Qt::PointingHandCursor);
         b->setToolTip(tr("Alternar keyframe no playhead"));
         b->setStyleSheet(QStringLiteral(
-            "QPushButton{color:#565d68; border:none; background:transparent; font-size:14px;}"
-            "QPushButton:hover{color:#c9d4e2;}"));
+            "QPushButton{color:%1; border:none; background:transparent; font-size:14px;}"
+            "QPushButton:hover{color:%2;}")
+            .arg(themeColors().iconMuted.name(),
+                 themeColors().text.name()));
         connect(b, &QPushButton::clicked, this, [this, prop]() { toggleKeyframe(prop); });
         m_kfDiamonds[prop] = b;
         return b;
@@ -267,8 +273,10 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
         b->setCursor(Qt::PointingHandCursor);
         b->setToolTip(tr("Redefinir esta propriedade"));
         b->setStyleSheet(QStringLiteral(
-            "QToolButton{color:#565d68; border:none; background:transparent; font-size:13px;}"
-            "QToolButton:hover{color:#e8a040;}"));
+            "QToolButton{color:%1; border:none; background:transparent; font-size:13px;}"
+            "QToolButton:hover{color:%2;}")
+            .arg(themeColors().iconMuted.name(),
+                 themeColors().accentGold.name()));
         m_resetBtns[prop] = b;
         return b;
     };
@@ -495,7 +503,8 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
                                "flip e grid. Setas ajustam valor."),
                             this);
     hint->setWordWrap(true);
-    hint->setStyleSheet(QStringLiteral("color:#7e8794; font-size:11px;"));
+    hint->setStyleSheet(QStringLiteral("color:%1; font-size:11px;")
+                            .arg(themeColors().placeholderText.name()));
 
     auto* kfBar = new QHBoxLayout;
     kfBar->setSpacing(4);
@@ -550,27 +559,33 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     auto* snapShiftRight = new QShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Right), this);
     connect(snapShiftRight, &QShortcut::activated, this, [this]() { nudgeFocusedSpinBox(10); });
 
+    const auto& tc = themeColors();
     setStyleSheet(QStringLiteral(
-        "QWidget{background:#15161a;}"
+        "QWidget{background:%1;}"
         "QToolButton#sectionHeader{background:transparent; border:none;"
-        " color:#e6ebf2; font-weight:bold; font-size:12px; padding:5px 6px;"
+        " color:%2; font-weight:bold; font-size:12px; padding:5px 6px;"
         " text-align:left;}"
-        "QToolButton#sectionHeader:hover{background:#20222a; color:#ffffff;}"
-        "QToolButton#sectionHeader:checked{color:#8ab8e8;}"
-        "QPushButton{border:1px solid #2e3138; border-radius:3px; background:#23252b;"
-        " color:#c9cdd4; padding:2px 8px;}"
-        "QPushButton:hover{background:#2b2e35; border-color:#3c414b;}"
-        "QPushButton:checked{background:#243447; border-color:#3f6ea5; color:#9cc4f0;}"
-        "QToolButton{border:1px solid #2e3138; border-radius:3px; background:#23252b;"
-        " color:#c9cdd4; padding:2px 8px;}"
-        "QToolButton:hover{background:#2b2e35; border-color:#3c414b;}"
-        "QToolButton:checked{background:#243447; border-color:#3f6ea5; color:#9cc4f0;}"
-        "QSlider::groove:horizontal{height:4px; background:#2a2d34; border-radius:2px;}"
-        "QSlider::sub-page:horizontal{background:#3f6ea5; border-radius:2px;}"
+        "QToolButton#sectionHeader:hover{background:%3; color:%4;}"
+        "QToolButton#sectionHeader:checked{color:%5;}"
+        "QPushButton{border:1px solid %6; border-radius:3px; background:%7;"
+        " color:%2; padding:2px 8px;}"
+        "QPushButton:hover{background:%3; border-color:%8;}"
+        "QPushButton:checked{background:%9; border-color:%10; color:%11;}"
+        "QToolButton{border:1px solid %6; border-radius:3px; background:%7;"
+        " color:%2; padding:2px 8px;}"
+        "QToolButton:hover{background:%3; border-color:%8;}"
+        "QToolButton:checked{background:%9; border-color:%10; color:%11;}"
+        "QSlider::groove:horizontal{height:4px; background:%8; border-radius:2px;}"
+        "QSlider::sub-page:horizontal{background:%10; border-radius:2px;}"
         "QSlider::handle:horizontal{width:12px; margin:-4px 0; border-radius:6px;"
-        " background:#8fb4dd; border:1px solid #5582b5;}"
-        "QSlider::handle:horizontal:hover{background:#a9c6ea;}"
-        "QLabel{color:#c9cdd4;}"));
+        " background:%5; border:1px solid %10;}"
+        "QSlider::handle:horizontal:hover{background:%11;}"
+        "QLabel{color:%2;}")
+        .arg(tc.pancropBg.name(), tc.text.name(), tc.btnHover.name(),
+             QColor(Qt::white).name(), tc.accent.name(), tc.canvasBorder.name(),
+             tc.button.name(), tc.trackBorder.name(), tc.btnActive.name())
+        .arg(tc.btnPrimary.name())
+        .arg(tc.spinText.name()));
 
     refreshDiamonds();
     m_strip->update();
@@ -872,11 +887,15 @@ void PancropWidget::gotoKeyframe(int dir) {
 void PancropWidget::refreshDiamonds() {
     const double rel = relPlayhead();
     const QString on =
-        QStringLiteral("QPushButton{color:#ffb340; border:none; background:transparent; font-size:14px;}"
-                       "QPushButton:hover{color:#ffd080;}");
+        QStringLiteral("QPushButton{color:%1; border:none; background:transparent; font-size:14px;}"
+                       "QPushButton:hover{color:%2;}")
+            .arg(themeColors().accentGold.name(),
+                 themeColors().accentGold.lighter(130).name());
     const QString off =
-        QStringLiteral("QPushButton{color:#565d68; border:none; background:transparent; font-size:14px;}"
-                       "QPushButton:hover{color:#c9d4e2;}");
+        QStringLiteral("QPushButton{color:%1; border:none; background:transparent; font-size:14px;}"
+                       "QPushButton:hover{color:%2;}")
+            .arg(themeColors().iconMuted.name(),
+                 themeColors().text.name());
     for (auto it = m_kfDiamonds.begin(); it != m_kfDiamonds.end(); ++it) {
         bool active = false;
         if (rel >= 0.0) {

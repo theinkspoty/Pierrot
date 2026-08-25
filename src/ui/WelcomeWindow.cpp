@@ -6,6 +6,7 @@
 #include "WelcomeWindow.h"
 #include "version.h"
 #include "ui/TitleBar.h"
+#include "ui/Theme.h"
 
 #include <QComboBox>
 #include <QSpinBox>
@@ -137,14 +138,14 @@ void WelcomeWindow::buildLayout() {
     nf.setPointSize(30);
     nf.setBold(true);
     nameLabel->setFont(nf);
-    nameLabel->setStyleSheet("color:#f2f5fa;");
+    nameLabel->setStyleSheet(QStringLiteral("color:%1;").arg(themeColors().highlightedText.name()));
 
     auto* verLabel = new QLabel(PIERROT_VERSION, this);
     QFont vf = verLabel->font();
     vf.setPointSize(12);
     vf.setBold(true);
     verLabel->setFont(vf);
-    verLabel->setStyleSheet("color:#7f92ab;");
+    verLabel->setStyleSheet(QStringLiteral("color:%1;").arg(themeColors().accent.name()));
 
     auto* nameRow = new QHBoxLayout;
     nameRow->setSpacing(6);
@@ -155,7 +156,7 @@ void WelcomeWindow::buildLayout() {
     nameRow->addStretch(1);
 
     auto* slogan = new QLabel(tr("para Linux"), this);
-    slogan->setStyleSheet("color:#8a93a2; font-size:13px; letter-spacing:1px;");
+    slogan->setStyleSheet(QStringLiteral("color:%1; font-size:13px; letter-spacing:1px;").arg(themeColors().text.name()));
     slogan->setAlignment(Qt::AlignHCenter);
 
     auto* imageCol = new QVBoxLayout;
@@ -165,11 +166,11 @@ void WelcomeWindow::buildLayout() {
     imageCol->addWidget(slogan);
 
     auto* credits = new QLabel(tr("by InkSpoty"), this);
-    credits->setStyleSheet("color: #6b7280; font-size: 11px;");
+    credits->setStyleSheet(QStringLiteral("color: %1; font-size: 11px;").arg(themeColors().disabledText.name()));
     credits->setAlignment(Qt::AlignHCenter);
 
     auto* version = new QLabel(tr("Versão %1").arg(QStringLiteral(PIERROT_VERSION)), this);
-    version->setStyleSheet("color: #4e5560; font-size: 10px;");
+    version->setStyleSheet(QStringLiteral("color: %1; font-size: 10px;").arg(themeColors().disabledText.name()));
     version->setAlignment(Qt::AlignHCenter);
 
     // Projetos recentes
@@ -254,13 +255,20 @@ void WelcomeWindow::buildLayout() {
     createBtn->setCursor(Qt::PointingHandCursor);
     createBtn->setMinimumHeight(40);
     createBtn->setStyleSheet(
+        QStringLiteral(
         "QPushButton{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-        " stop:0 #2f6fb3, stop:1 #3d8fd4);"
+        " stop:0 %1, stop:1 %2);"
         " border:none; border-radius:8px;"
-        " color:#ffffff; padding:10px 28px; font-weight:bold; font-size:14px;}"
+        " color:%3; padding:10px 28px; font-weight:bold; font-size:14px;}"
         "QPushButton:hover{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-        " stop:0 #3780c5, stop:1 #4a9adf);}"
-        "QPushButton:pressed{background:#2a5f96;}");
+        " stop:0 %4, stop:1 %5);}"
+        "QPushButton:pressed{background:%6;}")
+        .arg(themeColors().welcomeBtnGradStart.name())
+        .arg(themeColors().welcomeBtnGradEnd.name())
+        .arg(themeColors().highlightedText.name())
+        .arg(themeColors().btnPrimary.name())
+        .arg(themeColors().accent.name())
+        .arg(themeColors().btnActive.name()));
     connect(createBtn, &QPushButton::clicked, this, &WelcomeWindow::requestNewProject);
 
     auto* newLay = new QVBoxLayout(newBox);
@@ -307,12 +315,12 @@ void WelcomeWindow::buildLayout() {
     autoLay->addStretch(1);
 
     auto* hint = new QLabel(tr("Feche esta janela para abrir o editor vazio."), this);
-    hint->setStyleSheet("color: #777777;");
+    hint->setStyleSheet(QStringLiteral("color: %1;").arg(themeColors().disabledText.name()));
 
     // Aviso de fase inicial de desenvolvimento, no canto inferior esquerdo.
     auto* betaWarn = new QLabel(
         tr("O editor está no início do desenvolvimento e pode apresentar falhas."), this);
-    betaWarn->setStyleSheet("color: #b08a3c; font-size: 10px; font-style: italic;");
+    betaWarn->setStyleSheet(QStringLiteral("color: %1; font-size: 10px; font-style: italic;").arg(themeColors().accentGold.name()));
     betaWarn->setWordWrap(false);
 
     // Aviso de versão de desenvolvimento: exibido apenas em builds de debug.
@@ -320,8 +328,10 @@ void WelcomeWindow::buildLayout() {
                               "Recursos podem estar incompletos ou instáveis."), this);
     m_devWarn->setWordWrap(true);
     m_devWarn->setStyleSheet(
-        "background-color: #5a3b00; color: #ffd97a; padding: 6px 10px;"
-        "border-radius: 4px; font-weight: bold;");
+        QStringLiteral("background-color: %1; color: %2; padding: 6px 10px;"
+        "border-radius: 4px; font-weight: bold;")
+        .arg(themeColors().btnActive.name())
+        .arg(themeColors().accentGold.name()));
     m_devWarn->setVisible(false);
 
     // Montagem geral: imagem (moldura) à esquerda, recentes ao centro,
@@ -379,29 +389,53 @@ void WelcomeWindow::buildLayout() {
     // pintado no paintEvent (com cantos arredondados), então não colocamos
     // background aqui.
     setStyleSheet(QStringLiteral(
-        "QGroupBox{border:1px solid #343945; border-radius:12px; margin-top:18px;"
+        "QGroupBox{border:1px solid %1; border-radius:12px; margin-top:18px;"
         " background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-        "  stop:0 #2a2d34, stop:1 #202228);}"
+        "  stop:0 %2, stop:1 %3);}"
         "QGroupBox::title{subcontrol-origin:margin; left:15px; top:3px; padding:0 9px;"
-        " color:#a7b8cf; font-weight:bold; font-size:12px; letter-spacing:0.6px;}"
-        "QListWidget{background:#1b1d22; border:1px solid #383e4b;"
+        " color:%4; font-weight:bold; font-size:12px; letter-spacing:0.6px;}"
+        "QListWidget{background:%5; border:1px solid %6;"
         " border-radius:8px; padding:5px; outline:none;}"
-        "QListWidget::item{padding:13px 14px; border-radius:6px; margin:3px; color:#d8dce3;}"
+        "QListWidget::item{padding:13px 14px; border-radius:6px; margin:3px; color:%7;}"
         "QListWidget::item:hover{background:rgba(110,160,230,0.12);}"
-        "QListWidget::item:selected{background:rgba(70,130,210,0.32); color:#ffffff;}"
-        "QPushButton{border:1px solid #3a404c; border-radius:7px; background:#2b2e36;"
-        " color:#dde2ea; padding:8px 18px; font-weight:bold;}"
-        "QPushButton:hover{background:#333843; border-color:#4d5462;}"
-        "QPushButton:pressed{background:#25282f;}"
-        "QLineEdit,QComboBox,QSpinBox{background:#1b1d22;"
-        " border:1px solid #383e4b; border-radius:7px; padding:7px 11px;"
-        " color:#e4e8ee; selection-background-color:#2c4a6e;}"
-        "QLineEdit:focus,QComboBox:focus,QSpinBox:focus{border-color:#4a6a94;}"
+        "QListWidget::item:selected{background:rgba(70,130,210,0.32); color:%8;}"
+        "QPushButton{border:1px solid %9; border-radius:7px; background:%10;"
+        " color:%11; padding:8px 18px; font-weight:bold;}"
+        "QPushButton:hover{background:%12; border-color:%13;}"
+        "QPushButton:pressed{background:%14;}"
+        "QLineEdit,QComboBox,QSpinBox{background:%15;"
+        " border:1px solid %16; border-radius:7px; padding:7px 11px;"
+        " color:%17; selection-background-color:%18;}"
+        "QLineEdit:focus,QComboBox:focus,QSpinBox:focus{border-color:%19;}"
         "QComboBox::drop-down{border:none; width:24px;}"
-        "QComboBox QAbstractItemView{background:#1e2026; border:1px solid #383e4b;"
-        " selection-background-color:#2c4a6e; border-radius:5px;}"
-        "QCheckBox{color:#cdd2da; spacing:6px;}"
-        "QLabel{color:#cdd2da;}"));
+        "QComboBox QAbstractItemView{background:%20; border:1px solid %21;"
+        " selection-background-color:%22; border-radius:5px;}"
+        "QCheckBox{color:%23; spacing:6px;}"
+        "QLabel{color:%24;}")
+        .arg(themeColors().dockBorder.name())
+        .arg(themeColors().welcomeBgTop.name())
+        .arg(themeColors().welcomeBgBottom.name())
+        .arg(themeColors().dockTitleText.name())
+        .arg(themeColors().base.name())
+        .arg(themeColors().inputBorder.name())
+        .arg(themeColors().text.name())
+        .arg(themeColors().highlightedText.name())
+        .arg(themeColors().inputBorder.name())
+        .arg(themeColors().button.name())
+        .arg(themeColors().buttonText.name())
+        .arg(themeColors().btnHover.name())
+        .arg(themeColors().dockBorder.name())
+        .arg(themeColors().btnActive.name())
+        .arg(themeColors().base.name())
+        .arg(themeColors().inputBorder.name())
+        .arg(themeColors().text.name())
+        .arg(themeColors().highlight.name())
+        .arg(themeColors().inputFocus.name())
+        .arg(themeColors().alternateBase.name())
+        .arg(themeColors().inputBorder.name())
+        .arg(themeColors().highlight.name())
+        .arg(themeColors().text.name())
+        .arg(themeColors().text.name()));
 }
 
 void WelcomeWindow::loadRecentProjects() {
@@ -514,8 +548,8 @@ void WelcomeWindow::paintEvent(QPaintEvent*) {
     QPainterPath path;
     path.addRoundedRect(QRectF(rect()), 18, 18);
     QLinearGradient g(0, 0, 0, height());
-    g.setColorAt(0, QColor(38, 40, 46));
-    g.setColorAt(1, QColor(21, 22, 26));
+    g.setColorAt(0, themeColors().welcomeBgTop);
+    g.setColorAt(1, themeColors().welcomeBgBottom);
     p.fillPath(path, g);
 }
 

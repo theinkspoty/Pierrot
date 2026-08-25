@@ -17,6 +17,7 @@
 #include "ui/ExportDialog.h"
 #include "ui/ProjectSettingsDialog.h"
 #include "ui/SettingsDialog.h"
+#include "ui/Theme.h"
 #include "ofx/OfxPluginManager.h"
 
 #include <QSettings>
@@ -197,7 +198,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     transportBar->setMovable(false);
     transportBar->setIconSize(QSize(18, 18));
     transportBar->setStyleSheet(QStringLiteral(
-        "QToolBar{spacing:2px; background:#1a1c22; border-top:1px solid #2a2d34;}"));
+        "QToolBar{spacing:2px; background:%1; border-top:1px solid %2;}")
+        .arg(themeColors().transportBg.name(), themeColors().transportBorder.name()));
 
     QAction* goToStart = new QAction(style()->standardIcon(QStyle::SP_MediaSkipBackward), tr("Início"), this);
     goToStart->setToolTip(tr("Ir para o início (Home)"));
@@ -632,30 +634,8 @@ void MainWindow::createDocks() {
     addDockWidget(Qt::LeftDockWidgetArea, m_fileBrowserDock);
     m_fileBrowserDock->hide();
 
-    // Visual das barras de título dos painéis dockáveis (estilo Adobe Premiere:
-    // barra escura retangular, sem gradiente, texto claro e controles discretos).
-    setStyleSheet(QStringLiteral(R"(
-        QDockWidget {
-            color: #cfd3d9;
-        }
-        QDockWidget::title {
-            background-color: #282a2f;
-            border-bottom: 1px solid #17191c;
-            border-top: 1px solid #31343a;
-            padding: 4px 5px 4px 10px;
-            spacing: 4px;
-        }
-        QDockWidget::title:hover { background-color: #2e3137; }
-        QDockWidget::float-button,
-        QDockWidget::close-button {
-            background: transparent;
-            border: none;
-            margin: 1px;
-            padding: 2px;
-        }
-        QDockWidget::float-button:hover { background-color: #3a3f45; }
-        QDockWidget::close-button:hover { background-color: #5a1c1c; }
-    )"));
+    // Visual das barras de título dos painéis dockáveis.
+    setStyleSheet(globalStyleSheet(savedTheme()));
 
     // Qualquer mudança de arranjo dos painéis agenda o salvamento do layout.
     for (QDockWidget* dock : {m_poolDock, m_timelineDock, m_pancropDock, m_graphDock,

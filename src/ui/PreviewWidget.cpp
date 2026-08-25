@@ -10,6 +10,7 @@
 #include "ofx/OfxRenderer.h"
 #include "ofx/OfxPluginManager.h"
 #include "export/LainkaFx.h"
+#include "ui/Theme.h"
 
 #include <QPainter>
 #include <QTimer>
@@ -690,7 +691,7 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
     QPainter p(this);
 
     // Fundo do console (área ao redor do monitor).
-    p.fillRect(m_videoRect, QColor(13, 13, 16));
+    p.fillRect(m_videoRect, themeColors().monitorBg);
 
     if (!m_project || m_project->width <= 0 || m_project->height <= 0) {
         drawEmptyMonitor(p, m_videoRect);
@@ -710,17 +711,17 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
     canvas.moveCenter(work.center());
     canvas = canvas.intersected(work); // centraliza e recorta quando zoom > 1
 
-    // Monitor: fundo preto com borda fina (como os viewers de DaVinci/Vegas).
-    p.setPen(QPen(QColor(70, 70, 78), 1));
+    // Monitor: fundo preto com borda fina.
+    p.setPen(QPen(themeColors().canvasBorder, 1));
     p.setBrush(QColor(0, 0, 0));
     p.drawRect(canvas.adjusted(-1, -1, 0, 0));
-    p.fillRect(canvas, QColor(8, 8, 10));
+    p.fillRect(canvas, themeColors().canvasBg);
 
     // Rótulo de resolução/fps, discreto, no canto do monitor.
     QFont f = p.font();
     f.setPointSizeF(7.5);
     p.setFont(f);
-    p.setPen(QColor(175, 175, 185));
+    p.setPen(themeColors().monitorLabel);
     p.drawText(canvas.adjusted(6, 4, -6, -4), Qt::AlignLeft | Qt::AlignTop,
                    QStringLiteral("%1 × %2 · %3 fps")
                        .arg(m_project->width)

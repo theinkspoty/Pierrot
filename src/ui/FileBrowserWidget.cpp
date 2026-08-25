@@ -4,6 +4,7 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "FileBrowserWidget.h"
+#include "ui/Theme.h"
 
 #include <QFileSystemModel>
 #include <QTreeView>
@@ -133,10 +134,15 @@ FileBrowserWidget::FileBrowserWidget(QWidget* parent) : QWidget(parent) {
     m_places->setMaximumWidth(140);
     m_places->setSpacing(2);
     m_places->setStyleSheet(QStringLiteral(
-        "QListWidget{background:#1c1e23; border:1px solid #2a2d34;"
-        " color:#c9cdd4; outline:0;}"
+        "QListWidget{background:%1; border:1px solid %2;"
+        " color:%3; outline:0;}"
         "QListWidget::item{padding:4px 6px; border-radius:3px;}"
-        "QListWidget::item:selected{background:#243447; color:#9cc4f0;}"));
+        "QListWidget::item:selected{background:%4; color:%5;}")
+        .arg(themeColors().base.name())
+        .arg(themeColors().dockBorder.name())
+        .arg(themeColors().text.name())
+        .arg(themeColors().highlight.name())
+        .arg(themeColors().highlightedText.name()));
     populatePlaces();
     connect(m_places, &QListWidget::itemClicked, this, [this](QListWidgetItem* it) {
         const QString path = it->data(Qt::UserRole).toString();
@@ -185,8 +191,11 @@ FileBrowserWidget::FileBrowserWidget(QWidget* parent) : QWidget(parent) {
     // Grade de miniaturas (modo opcional).
     m_thumbList = new MediaThumbList(this);
     m_thumbList->setStyleSheet(QStringLiteral(
-        "QListWidget{background:#1c1e23; border:1px solid #2a2d34;"
-        " color:#c9cdd4; outline:0;}"));
+        "QListWidget{background:%1; border:1px solid %2;"
+        " color:%3; outline:0;}")
+        .arg(themeColors().base.name())
+        .arg(themeColors().dockBorder.name())
+        .arg(themeColors().text.name()));
     m_thumbList->hide();
     connect(qobject_cast<MediaThumbList*>(m_thumbList), &MediaThumbList::thumbSizeChanged,
             this, [this]() { populateThumbs(); });
@@ -205,14 +214,27 @@ FileBrowserWidget::FileBrowserWidget(QWidget* parent) : QWidget(parent) {
     lay->addLayout(body, 1);
 
     setStyleSheet(QStringLiteral(
-        "QWidget{background:#15161a;}"
-        "QTreeView{background:#1c1e23; border:1px solid #2a2d34;"
-        " color:#c9cdd4; selection-background-color:#243447;}"
-        "QLineEdit{background:#23252b; border:1px solid #2e3138;"
-        " color:#c9cdd4; padding:2px 6px; border-radius:3px;}"
-        "QPushButton{border:1px solid #2e3138; border-radius:3px;"
-        " background:#23252b; color:#c9cdd4; padding:2px 8px;}"
-        "QPushButton:hover{background:#2b2e35; border-color:#3c414b;}"));
+        "QWidget{background:%1;}"
+        "QTreeView{background:%2; border:1px solid %3;"
+        " color:%4; selection-background-color:%5;}"
+        "QLineEdit{background:%6; border:1px solid %7;"
+        " color:%8; padding:2px 6px; border-radius:3px;}"
+        "QPushButton{border:1px solid %9; border-radius:3px;"
+        " background:%10; color:%11; padding:2px 8px;}"
+        "QPushButton:hover{background:%12; border-color:%13;}")
+        .arg(themeColors().window.name())
+        .arg(themeColors().base.name())
+        .arg(themeColors().dockBorder.name())
+        .arg(themeColors().text.name())
+        .arg(themeColors().highlight.name())
+        .arg(themeColors().inputBg.name())
+        .arg(themeColors().inputBorder.name())
+        .arg(themeColors().text.name())
+        .arg(themeColors().inputBorder.name())
+        .arg(themeColors().inputBg.name())
+        .arg(themeColors().text.name())
+        .arg(themeColors().btnHover.name())
+        .arg(themeColors().dockBorder.name()));
 
     connect(m_fileList, &QTreeView::activated, this, [this](const QModelIndex& idx) {
         openIndex(m_proxy->mapToSource(idx));

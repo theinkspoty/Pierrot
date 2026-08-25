@@ -4,6 +4,7 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "SettingsDialog.h"
+#include "Theme.h"
 
 #include <QCheckBox>
 #include <QGroupBox>
@@ -153,6 +154,12 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
     m_thumbMode->addItem(tr("Nenhuma"));
     m_thumbMode->setCurrentIndex(s.value("timelineThumbMode", 0).toInt());
 
+    // Tema da interface.
+    m_themeCombo = new QComboBox(this);
+    m_themeCombo->addItem(tr("Escuro"));
+    m_themeCombo->addItem(tr("Claro (Final Cut)"));
+    m_themeCombo->setCurrentIndex(savedTheme() == AppTheme::Light ? 1 : 0);
+
     m_rippleDelete = new QCheckBox(tr("Fechar o vão automaticamente ao excluir (ripple)"), this);
     m_rippleDelete->setChecked(s.value("timelineRippleDelete", true).toBool());
 
@@ -179,14 +186,22 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
         mkvLay->addWidget(m_mkvWarn);
         auto* mkvHint = new QLabel(tr("MKV é experimental: alguns arquivos podem não abrir "
                                       "ou apresentar problemas de áudio/vídeo."), mkvBox);
-        mkvHint->setStyleSheet("color: #9a9a9a;");
+        mkvHint->setStyleSheet(QStringLiteral("color: %1;").arg(themeColors().placeholderText.name()));
         mkvHint->setWordWrap(true);
         mkvLay->addWidget(mkvHint);
+        auto* themeBox = new QGroupBox(tr("Aparência"), page);
+        auto* themeLay = new QFormLayout(themeBox);
+        themeLay->addRow(tr("Tema:"), m_themeCombo);
+        auto* themeHint = new QLabel(tr("Requer reinício do aplicação para tomar efeito."), themeBox);
+        themeHint->setStyleSheet(QStringLiteral("color: %1;").arg(themeColors().placeholderText.name()));
+        themeHint->setWordWrap(true);
+        themeLay->addWidget(themeHint);
         auto* autoBox = new QGroupBox(tr("Salvamento automático"), page);
         auto* autoLay = new QFormLayout(autoBox);
         autoLay->addRow(m_autoSave);
         autoLay->addRow(tr("Intervalo:"), m_autoInterval);
         v->addWidget(mkvBox);
+        v->addWidget(themeBox);
         v->addWidget(autoBox);
         v->addStretch(1);
         m_stack->addWidget(page);
@@ -203,7 +218,7 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
         auto* perfHint = new QLabel(tr("Qualidades mais baixas usam menos RAM/CPU no "
                                        "preview e no scrub. Recomendado em projetos "
                                        "grandes com muitos cortes."), perfBox);
-        perfHint->setStyleSheet("color: #9a9a9a;");
+        perfHint->setStyleSheet(QStringLiteral("color: %1;").arg(themeColors().placeholderText.name()));
         perfHint->setWordWrap(true);
         perfLay->addRow(perfHint);
         auto* tlBox = new QGroupBox(tr("Timeline"), page);
@@ -223,7 +238,7 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
                                      "clipes de vídeo. \"Todas\" mostra fatias "
                                      "contínuas; \"Início e fim\" só nos extremos; "
                                      "\"Nenhuma\" deixa os clipes sem miniatura."), tlBox);
-        tlHint->setStyleSheet("color: #9a9a9a;");
+        tlHint->setStyleSheet(QStringLiteral("color: %1;").arg(themeColors().placeholderText.name()));
         tlHint->setWordWrap(true);
         tlLay->addRow(tlHint);
         v->addWidget(perfBox);
@@ -272,7 +287,7 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
         auto* hint = new QLabel(tr("Quando ativado, o diálogo de exportação abre "
                                    "nessa pasta em vez da sua pasta pessoal. "
                                    "Deixe vazio para usar a pasta pessoal."), exportBox);
-        hint->setStyleSheet("color: #9a9a9a;");
+        hint->setStyleSheet(QStringLiteral("color: %1;").arg(themeColors().placeholderText.name()));
         hint->setWordWrap(true);
         form->addRow(hint);
 
@@ -304,7 +319,7 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
                                    "exportação. Recomendamos acompanhar as "
                                    "próximas versões do Pierrot antes de usá-lo "
                                    "em projetos reais."), fxBox);
-        hint->setStyleSheet("color: #9a9a9a;");
+        hint->setStyleSheet(QStringLiteral("color: %1;").arg(themeColors().placeholderText.name()));
         hint->setWordWrap(true);
         fxLay->addWidget(hint);
 
@@ -350,7 +365,7 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
         auto* hint = new QLabel(tr("Adicione pastas onde seus plugins OFX (.ofx) estão "
                                     "instalados. O Pierrot já procura em "
                                     "~/.config/pierrot/ofx e /usr/lib/ofx por padrão."), ofxBox);
-        hint->setStyleSheet("color: #9a9a9a;");
+        hint->setStyleSheet(QStringLiteral("color: %1;").arg(themeColors().placeholderText.name()));
         hint->setWordWrap(true);
         ofxLay->addWidget(hint);
 
@@ -493,6 +508,7 @@ void SettingsDialog::accept() {
     s.setValue("timelineThumbMode", m_thumbMode->currentIndex());
     s.setValue("timelineRippleDelete", m_rippleDelete->isChecked());
     s.setValue("graphSensitivity", m_graphSens->value());
+    saveTheme(m_themeCombo->currentIndex() == 1 ? AppTheme::Light : AppTheme::Dark);
     QStringList ofxPaths;
     for (int i = 0; i < m_ofxPaths->count(); ++i)
         ofxPaths.append(m_ofxPaths->item(i)->text());

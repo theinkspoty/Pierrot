@@ -4,6 +4,7 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "TitleBar.h"
+#include "ui/Theme.h"
 
 #include <QLabel>
 #include <QPushButton>
@@ -29,9 +30,12 @@ TitleBar::TitleBar(const QString& title, QWidget* window, QWidget* parent)
     setFixedHeight(38);
     // Cantos superiores arredondados para acompanhar a janela arredondada.
     setStyleSheet(QStringLiteral(
-        "TitleBar{background:#22242a; border-bottom:1px solid #2a2d34;"
+        "TitleBar{background:%1; border-bottom:1px solid %2;"
         " border-top-left-radius:18px; border-top-right-radius:18px;}"
-        "QLabel{color:#c9cdd4; font-size:13px; font-weight:bold;}"));
+        "QLabel{color:%3; font-size:13px; font-weight:bold;}")
+        .arg(themeColors().dockTitleBg.name())
+        .arg(themeColors().dockBorder.name())
+        .arg(themeColors().dockTitleText.name()));
     setCursor(Qt::ArrowCursor);
 
     m_title = new QLabel(title, this);
@@ -42,14 +46,20 @@ TitleBar::TitleBar(const QString& title, QWidget* window, QWidget* parent)
     m_maxBtn = new QPushButton(tr("□"), this);
     m_closeBtn = new QPushButton(tr("✕"), this);
     const QString btnStyle = QStringLiteral(
-        "QPushButton{border:none; background:transparent; color:#8a919c;"
+        "QPushButton{border:none; background:transparent; color:%1;"
         " font-size:13px; padding:0 13px; height:38px;}"
-        "QPushButton:hover{background:#2b2e37; color:#e0e4ea;}"
-        "QPushButton:pressed{background:#23252c;}");
+        "QPushButton:hover{background:%2; color:%3;}"
+        "QPushButton:pressed{background:%4;}")
+        .arg(themeColors().iconNormal.name())
+        .arg(themeColors().dockTitleBgHover.name())
+        .arg(themeColors().dockTitleText.name())
+        .arg(themeColors().dockTitleBg.name());
     m_minBtn->setStyleSheet(btnStyle);
     m_maxBtn->setStyleSheet(btnStyle);
     m_closeBtn->setStyleSheet(btnStyle +
-        QStringLiteral("QPushButton:hover{background:#c0392b; color:#fff;}"));
+        QStringLiteral("QPushButton:hover{background:%1; color:%2;}")
+        .arg(themeColors().dockCloseHover.name())
+        .arg(themeColors().brightText.name()));
     m_closeBtn->setToolTip(tr("Fechar"));
 
     m_minBtn->setCursor(Qt::PointingHandCursor);

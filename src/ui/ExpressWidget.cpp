@@ -6,6 +6,7 @@
 #include "ExpressWidget.h"
 #include "EffectsWidget.h"
 #include "models/Project.h"
+#include "ui/Theme.h"
 
 #include <ofxParam.h>
 
@@ -42,20 +43,29 @@ ExpressWidget::ExpressWidget(QWidget* parent) : QWidget(parent)
     m_tabs->setTabsClosable(true);
     m_tabs->setMovable(true);
     m_tabs->setStyleSheet(QStringLiteral(
-        "QTabWidget::pane { background:#2b2d31; border:none; }"
-        "QTabBar { background:#23252a; }"
-        "QTabBar::tab { background:#2b2d31; color:#8e9297; "
+        "QTabWidget::pane { background:%1; border:none; }"
+        "QTabBar { background:%2; }"
+        "QTabBar::tab { background:%3; color:%4; "
         "  padding:6px 14px; border:none; border-bottom:2px solid transparent; }"
-        "QTabBar::tab:selected { color:#dcddde; border-bottom:2px solid #3b5998; }"
-        "QTabBar::tab:hover { color:#dcddde; background:#2f3136; }"
+        "QTabBar::tab:selected { color:%5; border-bottom:2px solid %6; }"
+        "QTabBar::tab:hover { color:%7; background:%8; }"
         "QTabBar::close-button { image: none; subcontrol-position: right; "
-        "  subcontrol-origin: padding; }"
-    ));
+        "  subcontrol-origin: padding; }")
+        .arg(themeColors().expressBg.name())
+        .arg(themeColors().tabBg.name())
+        .arg(themeColors().expressBg.name())
+        .arg(themeColors().expressDescText.name())
+        .arg(themeColors().text.name())
+        .arg(themeColors().accent.name())
+        .arg(themeColors().text.name())
+        .arg(themeColors().btnHover.name()));
     lay->addWidget(m_tabs);
 
     m_emptyLabel = new QLabel(tr("Arraste efeitos da lista para cá\nou selecione um clipe na timeline"), this);
     m_emptyLabel->setAlignment(Qt::AlignCenter);
-    m_emptyLabel->setStyleSheet(QStringLiteral("color:#5f6772; font-size:12px; background:#2b2d31;"));
+    m_emptyLabel->setStyleSheet(QStringLiteral("color:%1; font-size:12px; background:%2;")
+        .arg(themeColors().expressDescText.name())
+        .arg(themeColors().expressBg.name()));
     lay->addWidget(m_emptyLabel);
     m_emptyLabel->show();
     m_tabs->hide();
@@ -63,7 +73,7 @@ ExpressWidget::ExpressWidget(QWidget* parent) : QWidget(parent)
     connect(m_tabs, &QTabWidget::tabCloseRequested, this, &ExpressWidget::onTabCloseRequested);
 
     setAcceptDrops(true);
-    setStyleSheet(QStringLiteral("background:#2b2d31;"));
+    setStyleSheet(QStringLiteral("background:%1;").arg(themeColors().expressBg.name()));
 }
 
 // ── Plugins OFX ──────────────────────────────────────────────────────────
@@ -436,7 +446,7 @@ void ExpressWidget::createBuiltInTab(const QString& effectId)
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setWidget(inner);
-    scroll->setStyleSheet(QStringLiteral("background:#2b2d31;"));
+    scroll->setStyleSheet(QStringLiteral("background:%1;").arg(themeColors().expressBg.name()));
 
     const auto& names = effectDisplayNames();
     const QString displayName = names.value(effectId, effectId);
@@ -469,13 +479,15 @@ void ExpressWidget::createOfxTab(const QString& pluginId)
 
     auto* title = new QLabel;
     title->setText(QStringLiteral("<b style='color:#dcddde;'>%1</b>").arg(titleText));
-    title->setStyleSheet(QStringLiteral("padding:12px 16px 4px; background:#2b2d31;"));
+    title->setStyleSheet(QStringLiteral("padding:12px 16px 4px; background:%1;").arg(themeColors().expressBg.name()));
     pageLay->addWidget(title);
 
     if (info && !info->description.isEmpty()) {
         auto* desc = new QLabel(info->description);
         desc->setWordWrap(true);
-        desc->setStyleSheet(QStringLiteral("color:#8e9297; padding:4px 16px; font-size:11px; background:#2b2d31;"));
+        desc->setStyleSheet(QStringLiteral("color:%1; padding:4px 16px; font-size:11px; background:%2;")
+            .arg(themeColors().expressDescText.name())
+            .arg(themeColors().expressBg.name()));
         pageLay->addWidget(desc);
     }
 
@@ -522,8 +534,11 @@ void ExpressWidget::createOfxTab(const QString& pluginId)
             spin->setDecimals(paramType == kOfxParamTypeInteger ? 0 : 3);
             spin->setValue(0);
             spin->setStyleSheet(QStringLiteral(
-                "QDoubleSpinBox { background:#36393f; color:#dcddde; border:1px solid #4f545c; "
-                "border-radius:3px; padding:3px 6px; }"));
+                "QDoubleSpinBox { background:%1; color:%2; border:1px solid %3; "
+                "border-radius:3px; padding:3px 6px; }")
+                .arg(themeColors().expressCardBg.name())
+                .arg(themeColors().text.name())
+                .arg(themeColors().inputBorder.name()));
             if (paramIndex >= 0 && m_currentClip) {
                 spin->setValue(m_currentClip->ofxFx[0].params[paramIndex].value.toDouble());
             }
@@ -547,7 +562,8 @@ void ExpressWidget::createOfxTab(const QString& pluginId)
             auto* check = new QCheckBox;
             check->setChecked(false);
             check->setStyleSheet(QStringLiteral(
-                "QCheckBox { color:#dcddde; } QCheckBox::indicator { width:16px; height:16px; }"));
+                "QCheckBox { color:%1; } QCheckBox::indicator { width:16px; height:16px; }")
+                .arg(themeColors().text.name()));
             if (paramIndex >= 0 && m_currentClip) {
                 check->setChecked(m_currentClip->ofxFx[0].params[paramIndex].value.toBool());
             }
@@ -570,8 +586,11 @@ void ExpressWidget::createOfxTab(const QString& pluginId)
         else if (paramType == kOfxParamTypeChoice) {
             auto* combo = new QComboBox;
             combo->setStyleSheet(QStringLiteral(
-                "QComboBox { background:#36393f; color:#dcddde; border:1px solid #4f545c; "
-                "border-radius:3px; padding:3px 6px; }"));
+                "QComboBox { background:%1; color:%2; border:1px solid %3; "
+                "border-radius:3px; padding:3px 6px; }")
+                .arg(themeColors().expressCardBg.name())
+                .arg(themeColors().text.name())
+                .arg(themeColors().inputBorder.name()));
             combo->addItem(QStringLiteral("0"));
             connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
                 [this, pluginId, paramName](int val) {
@@ -593,7 +612,8 @@ void ExpressWidget::createOfxTab(const QString& pluginId)
             auto* colorBtn = new QPushButton;
             colorBtn->setFixedSize(60, 24);
             colorBtn->setStyleSheet(QStringLiteral(
-                "QPushButton { background:#00ff00; border:1px solid #4f545c; border-radius:3px; }"));
+                "QPushButton { background:#00ff00; border:1px solid %1; border-radius:3px; }")
+                .arg(themeColors().inputBorder.name()));
                 connect(colorBtn, &QPushButton::clicked, this,
                     [this, colorBtn, pluginId, paramName, paramLabel]() {
                     QColor c = QColorDialog::getColor(Qt::green, this, paramLabel);
@@ -618,9 +638,12 @@ void ExpressWidget::createOfxTab(const QString& pluginId)
         }
         else if (paramType == kOfxParamTypeString) {
             auto* edit = new QLineEdit;
-            edit->setStyleSheet(QStringLiteral(
-                "QLineEdit { background:#36393f; color:#dcddde; border:1px solid #4f545c; "
-                "border-radius:3px; padding:3px 6px; }"));
+                    edit->setStyleSheet(QStringLiteral(
+                        "QLineEdit { background:%1; color:%2; border:1px solid %3; "
+                        "border-radius:3px; padding:3px 6px; }")
+                        .arg(themeColors().expressCardBg.name())
+                        .arg(themeColors().text.name())
+                        .arg(themeColors().inputBorder.name()));
             connect(edit, &QLineEdit::textChanged, this,
                 [this, pluginId, paramName](const QString& val) {
                     if (!m_currentClip) return;
@@ -642,13 +665,16 @@ void ExpressWidget::createOfxTab(const QString& pluginId)
     if (!hasParams) {
         auto* note = new QLabel(tr("Nenhum parâmetro descoberto.\nO plugin pode não expor parâmetros editáveis."));
         note->setAlignment(Qt::AlignCenter);
-        note->setStyleSheet(QStringLiteral("color:#5f6772; font-size:11px; padding:20px; background:#2b2d31;"));
+        note->setStyleSheet(QStringLiteral("color:%1; font-size:11px; padding:20px; background:%2;")
+            .arg(themeColors().expressDescText.name())
+            .arg(themeColors().expressBg.name()));
         pageLay->addWidget(note);
     } else {
         auto* scroll = new QScrollArea;
         scroll->setWidgetResizable(true);
         scroll->setWidget(paramsWidget);
-        scroll->setStyleSheet(QStringLiteral("QScrollArea { background:#2b2d31; border:none; }"));
+        scroll->setStyleSheet(QStringLiteral("QScrollArea { background:%1; border:none; }")
+            .arg(themeColors().expressBg.name()));
         pageLay->addWidget(scroll);
     }
     pageLay->addStretch(1);

@@ -5,6 +5,7 @@
 
 #include "GraphEditorWidget.h"
 #include "SettingsDialog.h"
+#include "ui/Theme.h"
 
 #include <QPainter>
 #include <QPainterPath>
@@ -654,7 +655,7 @@ void GraphCanvas::emitKeyInfo(int idx) {
 
 void GraphCanvas::paintEvent(QPaintEvent*) {
     QPainter p(this);
-    p.fillRect(rect(), QColor(26, 26, 29));
+    p.fillRect(rect(), themeColors().graphBg);
 
     const double t0 = timeStart();
     const double range = timeRange();
@@ -690,7 +691,7 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
 
     // Fundo quadriculado de referência (grade sutil de tempo x valor), sem
     // preenchimento azul — só as linhas dão a noção de posição.
-    p.setPen(QColor(255, 255, 255, 10));
+    p.setPen(themeColors().graphGrid);
     const double vStep = niceStep((m_hi - m_lo) / 5.0);
     for (double v = std::ceil(m_lo / vStep) * vStep; v <= m_hi + 1e-9; v += vStep)
         p.drawLine(r.left(), vToY(v), r.right(), vToY(v));
@@ -777,7 +778,7 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
             addTo(last.time, last.value);
             addTo(std::max(win1, last.time), last.value);
         }
-        p.setPen(QPen(QColor(110, 200, 255), 1.6));
+        p.setPen(QPen(themeColors().graphLine, 1.6));
         p.drawPath(path);
     }
 
@@ -815,7 +816,7 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
         const bool active = relPh >= 0.0 && std::fabs(k.time - relPh) < 1e-6;
         const QColor fill = sel ? QColor(120, 230, 150)
                                 : active ? QColor(255, 179, 64)
-                                         : QColor(200, 205, 215);
+                                         : themeColors().graphKeyframe;
         const qreal size = (sel && i == m_dragKey) ? 7 : 6;
         drawKeyGlyph(p, kp, k.interp, size, fill);
     }
@@ -1486,13 +1487,13 @@ void KeyframeStrip::paintEvent(QPaintEvent*) {
     if (!ks || ks->isEmpty()) return;
 
     const int midY = height() / 2;
-    p.setPen(QPen(QColor(70, 74, 84), 1));
+    p.setPen(QPen(themeColors().iconMuted, 1));
     p.drawLine(4, midY, width() - 4, midY);
 
     const double rel = m_clip ? std::clamp(m_playhead - m_clip->pos, 0.0, m_clip->dur) : -1.0;
     if (rel >= 0.0) {
         const int x = tToX(rel);
-        p.setPen(QPen(QColor(190, 220, 255, 200), 1));
+        p.setPen(QPen(themeColors().playhead, 1));
         p.drawLine(x, 2, x, height() - 2);
     }
 
@@ -1500,7 +1501,7 @@ void KeyframeStrip::paintEvent(QPaintEvent*) {
         const Keyframe& k = (*ks)[i];
         const QPointF kp(tToX(k.time), midY);
         const bool active = rel >= 0.0 && std::fabs(k.time - rel) < 1e-6;
-        const QColor fill = active ? QColor(255, 179, 64) : QColor(200, 205, 215);
+        const QColor fill = active ? QColor(255, 179, 64) : themeColors().graphKeyframe;
         drawKeyGlyph(p, kp, k.interp, 4.5, fill);
     }
 }
@@ -1575,7 +1576,7 @@ GraphPropRow::GraphPropRow(GraphProp p, QWidget* parent) : QFrame(parent), m_pro
 
     m_value = new QLabel(this);
     m_value->setAttribute(Qt::WA_TransparentForMouseEvents);
-    m_value->setStyleSheet(QStringLiteral("color:#8a9; font-size:11px;"));
+    m_value->setStyleSheet(QStringLiteral("color:%1; font-size:11px;").arg(themeColors().graphLabel.name()));
 
     m_stopwatch = new QToolButton(this);
     m_stopwatch->setAutoRaise(true);
@@ -1661,7 +1662,9 @@ void GraphPropRow::setAnimated(bool on) {
 void GraphPropRow::setActive(bool on) {
     if (on)
         setStyleSheet(QStringLiteral(
-            "#propRow { background:#1f3145; border:1px solid #2e4a68; border-radius:3px; }"));
+            "#propRow { background:%1; border:1px solid %2; border-radius:3px; }")
+            .arg(themeColors().highlight.name(),
+                 themeColors().highlight.lighter(130).name()));
     else
         setStyleSheet(QStringLiteral(
             "#propRow { background:transparent; border:1px solid transparent; border-radius:3px; }"));
@@ -1756,7 +1759,7 @@ GraphEditorWidget::GraphEditorWidget(QWidget* parent) : QWidget(parent) {
     m_rowsLayout->setSpacing(2);
     m_noClip = new QLabel(tr("Selecione um clipe na timeline para\neditar os keyframes."), list);
     m_noClip->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
-    m_noClip->setStyleSheet(QStringLiteral("color:#667; font-size:11px; padding:8px 4px;"));
+    m_noClip->setStyleSheet(QStringLiteral("color:%1; font-size:11px; padding:8px 4px;").arg(themeColors().iconMuted.name()));
     m_rowsLayout->addWidget(m_noClip);
     m_rowsLayout->addStretch(1);
     m_scroll->setWidget(list);
@@ -1772,7 +1775,7 @@ GraphEditorWidget::GraphEditorWidget(QWidget* parent) : QWidget(parent) {
 
     m_status = new QLabel(this);
     m_status->setTextFormat(Qt::PlainText);
-    m_status->setStyleSheet(QStringLiteral("color:#9aa; font-size:11px; padding:2px 6px;"));
+    m_status->setStyleSheet(QStringLiteral("color:%1; font-size:11px; padding:2px 6px;").arg(themeColors().iconNormal.name()));
 
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);

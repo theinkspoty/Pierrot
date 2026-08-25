@@ -4,6 +4,7 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "ProjectSettingsDialog.h"
+#include "ui/Theme.h"
 
 #include <QSpinBox>
 #include <QComboBox>
@@ -39,49 +40,69 @@ ProjectSettingsDialog::ProjectSettingsDialog(int width, int height, int fps,
     setMinimumWidth(480);
 
     setStyleSheet(QStringLiteral(R"(
-        QDialog { background: #1e2025; }
-        QLabel { color: #c9cdd4; }
+        QDialog { background: %1; }
+        QLabel { color: %2; }
         QGroupBox {
             font-weight: 600;
-            border: 1px solid #2c3038;
+            border: 1px solid %3;
             border-radius: 6px;
             margin-top: 14px;
-            background: #23262c;
-            color: #dfe3ea;
+            background: %4;
+            color: %5;
         }
         QGroupBox::title {
             subcontrol-origin: margin;
             left: 12px;
             top: 4px;
             padding: 0 4px;
-            color: #9fc4f0;
+            color: %6;
         }
         QSpinBox, QComboBox {
-            background: #2a2d34;
-            border: 1px solid #343944;
+            background: %7;
+            border: 1px solid %8;
             border-radius: 4px;
-            color: #e3e6ea;
+            color: %9;
             padding: 4px 8px;
             min-height: 18px;
         }
-        QSpinBox:focus, QComboBox:focus { border-color: #4a6a94; }
+        QSpinBox:focus, QComboBox:focus { border-color: %10; }
         QComboBox::drop-down { border: none; }
         QComboBox QAbstractItemView {
-            background: #23262c;
-            border: 1px solid #343944;
-            color: #e3e6ea;
-            selection-background-color: #243447;
+            background: %11;
+            border: 1px solid %12;
+            color: %13;
+            selection-background-color: %14;
         }
         QDialogButtonBox QPushButton {
-            background: #2e323a;
-            border: 1px solid #3a3f4a;
+            background: %15;
+            border: 1px solid %16;
             border-radius: 4px;
-            color: #dfe3ea;
+            color: %17;
             padding: 5px 14px;
         }
-        QDialogButtonBox QPushButton:hover { background: #383d47; border-color: #4a5468; }
-        QDialogButtonBox QPushButton:pressed { background: #262a30; }
-    )"));
+        QDialogButtonBox QPushButton:hover { background: %18; border-color: %19; }
+        QDialogButtonBox QPushButton:pressed { background: %20; }
+    )")
+        .arg(themeColors().window.name())
+        .arg(themeColors().text.name())
+        .arg(themeColors().dockBorder.name())
+        .arg(themeColors().button.name())
+        .arg(themeColors().buttonText.name())
+        .arg(themeColors().accent.name())
+        .arg(themeColors().inputBg.name())
+        .arg(themeColors().inputBorder.name())
+        .arg(themeColors().text.name())
+        .arg(themeColors().inputFocus.name())
+        .arg(themeColors().button.name())
+        .arg(themeColors().inputBorder.name())
+        .arg(themeColors().text.name())
+        .arg(themeColors().highlight.name())
+        .arg(themeColors().button.name())
+        .arg(themeColors().inputBorder.name())
+        .arg(themeColors().buttonText.name())
+        .arg(themeColors().btnHover.name())
+        .arg(themeColors().dockBorder.name())
+        .arg(themeColors().btnActive.name()));
 
     m_preset = new QComboBox(this);
     for (const ProjectPreset& p : kPresets)
@@ -103,7 +124,7 @@ ProjectSettingsDialog::ProjectSettingsDialog(int width, int height, int fps,
     // Rótulo da proporção (ex.: 16:9).
     m_aspect = new QLabel(this);
     m_aspect->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    m_aspect->setStyleSheet("color:#7d8591;");
+    m_aspect->setStyleSheet(QStringLiteral("color:%1;").arg(themeColors().iconMuted.name()));
 
     // Detecta qual preset corresponde às configurações atuais.
     for (int i = 0; i < kPresetCount - 1; ++i)

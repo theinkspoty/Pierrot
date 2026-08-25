@@ -5,6 +5,7 @@
 
 #include "EffectsWidget.h"
 #include "models/Project.h"
+#include "ui/Theme.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -95,10 +96,11 @@ EffectsWidget::EffectsWidget(QWidget* parent) : QWidget(parent)
     m_searchBox->setPlaceholderText(tr("Buscar efeitos..."));
     m_searchBox->setClearButtonEnabled(true);
     m_searchBox->setStyleSheet(QStringLiteral(
-        "QLineEdit { background:#1e1f22; color:#dcddde; border:none; "
+        "QLineEdit { background:%1; color:%2; border:none; "
         "padding:6px 8px; font-size:12px; }"
-        "QLineEdit:focus { border-bottom:1px solid rgba(70,130,210,0.5); }"
-    ));
+        "QLineEdit:focus { border-bottom:1px solid rgba(70,130,210,0.5); }")
+        .arg(themeColors().effectsSearchBg.name())
+        .arg(themeColors().text.name()));
     rootLay->addWidget(m_searchBox);
 
     // Layout horizontal: árvore (esquerda) + preview (direita)
@@ -115,27 +117,31 @@ EffectsWidget::EffectsWidget(QWidget* parent) : QWidget(parent)
     m_tree->setDragEnabled(true);
     m_tree->setDragDropMode(QAbstractItemView::DragOnly);
     m_tree->setStyleSheet(QStringLiteral(
-        "QTreeWidget { background:#2b2d31; color:#dcddde; border:none; }"
+        "QTreeWidget { background:%1; color:%2; border:none; }"
         "QTreeWidget::item { padding:2px 4px; }"
         "QTreeWidget::item:selected { background:rgba(70,130,210,0.32); }"
         "QTreeWidget::item:hover { background:rgba(255,255,255,0.06); }"
-        "QTreeWidget::branch { background:#2b2d31; }"
-        "QScrollBar:vertical { background:#2b2d31; width:8px; }"
-        "QScrollBar::handle:vertical { background:#4a4d54; border-radius:4px; min-height:24px; }"
-        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }"
-    ));
+        "QTreeWidget::branch { background:%3; }"
+        "QScrollBar:vertical { background:%4; width:8px; }"
+        "QScrollBar::handle:vertical { background:%5; border-radius:4px; min-height:24px; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }")
+        .arg(themeColors().effectsTreeBg.name())
+        .arg(themeColors().text.name())
+        .arg(themeColors().effectsTreeBg.name())
+        .arg(themeColors().scrollbarBg.name())
+        .arg(themeColors().scrollbarHandle.name()));
     hLay->addWidget(m_tree, 1);
 
     // Separador vertical
     auto* separator = new QFrame;
     separator->setFrameShape(QFrame::VLine);
-    separator->setStyleSheet(QStringLiteral("color:#3a3d44;"));
+    separator->setStyleSheet(QStringLiteral("color:%1;").arg(themeColors().dockBorder.name()));
     hLay->addWidget(separator);
 
     // Painel de preview
     m_previewPanel = new QWidget(this);
     m_previewPanel->setMinimumWidth(180);
-    m_previewPanel->setStyleSheet(QStringLiteral("background:#2b2d31;"));
+    m_previewPanel->setStyleSheet(QStringLiteral("background:%1;").arg(themeColors().effectsPreviewBg.name()));
     auto* previewLay = new QVBoxLayout(m_previewPanel);
     previewLay->setContentsMargins(16, 16, 16, 16);
     previewLay->setSpacing(12);
@@ -151,13 +157,13 @@ EffectsWidget::EffectsWidget(QWidget* parent) : QWidget(parent)
     nameFont.setBold(true);
     nameFont.setPointSize(13);
     m_previewName->setFont(nameFont);
-    m_previewName->setStyleSheet(QStringLiteral("color:#dcddde;"));
+    m_previewName->setStyleSheet(QStringLiteral("color:%1;").arg(themeColors().text.name()));
     previewLay->addWidget(m_previewName);
 
     m_previewDesc = new QLabel(m_previewPanel);
     m_previewDesc->setAlignment(Qt::AlignLeft | Qt::AlignTop);
     m_previewDesc->setWordWrap(true);
-    m_previewDesc->setStyleSheet(QStringLiteral("color:#8e9297; font-size:12px; line-height:1.4;"));
+    m_previewDesc->setStyleSheet(QStringLiteral("color:%1; font-size:12px; line-height:1.4;").arg(themeColors().expressDescText.name()));
     previewLay->addWidget(m_previewDesc);
 
     hLay->addWidget(m_previewPanel, 1);
