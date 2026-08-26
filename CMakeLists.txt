@@ -57,7 +57,10 @@ set(SOURCES
     src/ui/EffectsWidget.cpp
     src/ui/ExpressWidget.cpp
     src/ui/FileBrowserWidget.cpp
+    src/ui/MixerWidget.cpp
     src/ui/TitleBar.cpp
+    src/ui/MesaWidget.cpp
+    src/render/MesaRenderer.cpp
     resources.qrc
 )
 
@@ -92,7 +95,10 @@ set(HEADERS
     src/ui/EffectsWidget.h
     src/ui/ExpressWidget.h
     src/ui/FileBrowserWidget.h
+    src/ui/MixerWidget.h
     src/ui/TitleBar.h
+    src/ui/MesaWidget.h
+    src/render/MesaRenderer.h
 )
 
 add_executable(pierrot ${SOURCES} ${HEADERS})

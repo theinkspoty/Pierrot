@@ -108,6 +108,8 @@ public slots:
     void addMediaAtPlayhead(const QString& mediaId);
     // Cria um clipe independente de texto (animável) numa faixa de vídeo.
     void addTextClipAt(int row, double t);
+    // Cria um clipe Mesa (composição 2D) numa faixa de vídeo.
+    void criarMesa();
     // Arrasto manual vindo da pool de mídia (não depende do DnD do
     // compositor, que falha em alguns ambientes/Wayland).
     void showDropHover(const QPoint& globalPos);
@@ -129,6 +131,7 @@ signals:
     void toolChanged(int tool);
     void loopChanged(double in, double out);
     void loopEnabledChanged(bool enabled); // "Q" liga/desliga o loop de reprodução
+    void mesaOpenRequested(const QString& mesaId);
     void selectionChanged(const QString& id);
     void pancropRequested(const QString& id);
     void mediaImported();

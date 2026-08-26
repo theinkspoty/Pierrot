@@ -384,6 +384,40 @@ void TimelineWidget::addTextClipAt(int row, double t) {
     if (created) showTextEditorDialog(created);
 }
 
+void TimelineWidget::criarMesa() {
+    if (!m_project) return;
+
+    emit editStart();
+
+    // Cria a composição 2D
+    MesaComposition mc;
+    mc.id = newId();
+    mc.name = tr("Mesa %1").arg(m_project->mesas.size() + 1);
+    mc.canvasW = m_project->width;
+    mc.canvasH = m_project->height;
+
+    // Cria uma nova track para a Mesa
+    m_project->addTrack(false);
+    Track& newTrack = m_project->videoTracks.last();
+    newTrack.name = mc.name;
+
+    // Cria o TrackGroup (pasta) vinculado à Mesa
+    TrackGroup grp;
+    grp.id = mc.id;
+    grp.name = mc.name;
+    grp.mesaId = mc.id;
+    m_project->trackGroups.append(grp);
+    newTrack.groupId = grp.id;
+
+    mc.trackIds.append(newTrack.id);
+    m_project->mesas.append(mc);
+
+    emit modified();
+    emit mesaOpenRequested(mc.id);
+    invalidateScene();
+    update();
+}
+
 void TimelineWidget::resizeEvent(QResizeEvent*) {
     const int bar = m_vbar->sizeHint().width();
     const int hbarH = m_hbar->sizeHint().height();
@@ -1112,6 +1146,12 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
             QAction* col = menu.addAction(g->collapsed ? tr("Expandir pasta")
                                                        : tr("Recolher pasta"));
             QAction* del = menu.addAction(tr("Desagrupar faixas"));
+            QAction* openMesa = nullptr;
+            QAction* delMesa = nullptr;
+            if (!g->mesaId.isEmpty()) {
+                openMesa = menu.addAction(tr("Abrir Mesa"));
+                delMesa = menu.addAction(tr("Excluir Mesa"));
+            }
             QAction* act = menu.exec(e->globalPos());
             if (act == selAll) {
                 selectGroupTracks(gid);
@@ -1120,6 +1160,18 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
                 renameTrackGroup(gid);
             } else if (act == col) {
                 toggleGroupCollapsed(gid);
+            } else if (act == openMesa) {
+                emit mesaOpenRequested(g->mesaId);
+            } else if (act == delMesa) {
+                emit editStart();
+                const QString mesaId = g->mesaId;
+                for (int i = (int)m_project->mesas.size() - 1; i >= 0; --i)
+                    if (m_project->mesas[i].id == mesaId)
+                        m_project->mesas.removeAt(i);
+                g->mesaId.clear();
+                updateScrollRanges();
+                invalidateScene();
+                emit modified();
             } else if (act == del) {
                 emit editStart();
                 for (int i = (int)m_project->trackGroups.size() - 1; i >= 0; --i)
@@ -1300,6 +1352,7 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         QAction* addV = menu.addAction(tr("Adicionar faixa de vídeo"));
         QAction* addA = menu.addAction(tr("Adicionar faixa de áudio"));
         QAction* newText = menu.addAction(tr("Novo texto…"));
+        QAction* newMesa = menu.addAction(tr("Nova Mesa…"));
         QAction* paste = nullptr;
         if (!m_clipboard.isEmpty()) paste = menu.addAction(tr("Colar"));
         QAction* act = nullptr;
@@ -1341,6 +1394,7 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         QAction* groupTracks = nullptr;
         QAction* renameGroup = nullptr;
         QAction* ungroupTracks = nullptr;
+        QAction* createMesa = nullptr;
         if (track) {
             menu.addSeparator();
             if (m_selTracks.size() >= 2)
@@ -1349,6 +1403,7 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
                 renameGroup = menu.addAction(tr("Renomear pasta…"));
                 ungroupTracks = menu.addAction(tr("Desagrupar faixas"));
             }
+            createMesa = menu.addAction(tr("Criar Mesa"));
         }
         QAction* delTrack = nullptr;
         if (track) {
@@ -1361,6 +1416,9 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         else if (act == newText) {
             const double tt = std::max(0.0, snapTime(xToTime(e->pos().x())));
             addTextClipAt(vrow, tt);
+        }
+        else if (act == newMesa) {
+            criarMesa();
         }
         else if (act == paste) pasteClips();
         else if (act == trackVol) {
@@ -1417,6 +1475,9 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
             updateScrollRanges();
             invalidateScene();
             emit modified();
+        }
+        else if (track && act == createMesa) {
+            criarMesa();
         }
         else if (track && act && blendMenu && act->parent() == blendMenu) {
             emit editStart();

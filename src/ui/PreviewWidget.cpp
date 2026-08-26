@@ -291,6 +291,9 @@ public:
         double denoiseAmount = 12.0;
         bool normalize = false;
         bool invertPhase = false;
+        int trackIndex = -1;   // índice da faixa (dentro de video/audio)
+        bool isAudioTrack = false;
+        double pan = 0.0;      // -1..+1, 0=centro
     };
 
     explicit AudioMixer(QObject* parent = nullptr) : QIODevice(parent) {
@@ -343,6 +346,9 @@ public:
                     m_sources.append(s);
                 }
                 s->vol = w.vol;
+                s->pan = w.pan;
+                s->trackIndex = w.trackIndex;
+                s->isAudioTrack = w.isAudioTrack;
                 s->fx.configure(w.eqLow, w.eqMid, w.eqHigh, w.denoise,
                                 w.denoiseAmount, w.invertPhase, w.normalize);
                 s->active = true;
@@ -409,6 +415,18 @@ public:
     // Número de sequência para um novo pedido de seek (clique na timeline).
     int beginJob() { return m_jobSeq.fetch_add(1) + 1; }
 
+    void setMasterVolume(double v) { m_masterVolume = v; }
+
+    // Níveis de áudio por faixa e master (thread-safe para MixerWidget).
+    struct TrackLevels {
+        QHash<QPair<bool,int>, float> rms; // (isAudio, trackIndex) → RMS 0..1
+        float masterRms = 0.0;
+    };
+    TrackLevels currentLevels() const {
+        QMutexLocker ll(&m_levelMutex);
+        return m_levels;
+    }
+
     qint64 readData(char* data, qint64 maxlen) override {
         QMutexLocker l(&m_mutex);
         const int ch = kChannels;
@@ -426,8 +444,13 @@ public:
         QVector<int16_t> tmp;
         tmp.resize(capacity / 2); // um sample por amostra (ch compensado abaixo)
         int16_t* out = reinterpret_cast<int16_t*>(data);
+
+        // Acumuladores de RMS por faixa.
+        QHash<QPair<bool,int>, double> sumSq;
+        QHash<QPair<bool,int>, int>    countSq;
+
         for (Source* s : m_sources) {
-            if (!s->opened || !s->active) continue; // decoder abrindo ou inativo
+            if (!s->opened || !s->active) continue;
             const int got = s->dec.decodeAudio(tmp.data(), capacity);
             if (audioDbg() && got == 0)
                 qDebug() << "[audio] readData: decodeAudio retornou 0 (silêncio)";
@@ -435,13 +458,62 @@ public:
             if (n > 0) {
                 s->fx.process(tmp.data(), n);
                 const int16_t* src = tmp.constData();
-                for (int i = 0; i < n * ch; ++i) {
-                    const float sum = out[i] / 32768.0f + src[i] / 32768.0f * (float)s->vol;
-                    const float cl = qBound(-1.0f, sum, 1.0f);
-                    out[i] = (int16_t)std::lround(cl * 32768.0f);
+                // Gains de pan por canal (potência equal-power).
+                const float pan = (float)s->pan;
+                const float gL = std::sqrt(std::max(0.0f, (1.0f - pan) * 0.5f));
+                const float gR = std::sqrt(std::max(0.0f, (1.0f + pan) * 0.5f));
+                const float volL = (float)s->vol * gL;
+                const float volR = (float)s->vol * gR;
+                double localSumSq = 0.0;
+                for (int i = 0; i < n; ++i) {
+                    const int li = i * 2;
+                    const int ri = li + 1;
+                    const float sumL = out[li] / 32768.0f + src[li] / 32768.0f * volL;
+                    const float sumR = out[ri] / 32768.0f + src[ri] / 32768.0f * volR;
+                    out[li] = (int16_t)std::lround(qBound(-1.0f, sumL, 1.0f) * 32768.0f);
+                    out[ri] = (int16_t)std::lround(qBound(-1.0f, sumR, 1.0f) * 32768.0f);
+                    const float sL = src[li] / 32768.0f * volL;
+                    const float sR = src[ri] / 32768.0f * volR;
+                    localSumSq += sL * sL + sR * sR;
                 }
+                // RMS deste clipe para a faixa correspondente.
+                const float rms = std::sqrt(localSumSq / std::max(1, n * ch));
+                const auto key = qMakePair(s->isAudioTrack, s->trackIndex);
+                sumSq[key] += rms * rms;
+                countSq[key] += 1;
             }
         }
+
+        // Aplica volume master no buffer final.
+        const float mv = (float)m_masterVolume;
+        if (std::fabs(mv - 1.0f) > 1e-4f) {
+            int16_t* p = reinterpret_cast<int16_t*>(data);
+            const int totalSamples = capacity / 2;
+            for (int i = 0; i < totalSamples; ++i)
+                p[i] = (int16_t)std::lround(qBound(-32768.0f, p[i] * mv, 32767.0f));
+        }
+
+        // RMS master (buffer final após aplicar masterVolume).
+        double masterSq = 0.0;
+        const int16_t* final = reinterpret_cast<const int16_t*>(data);
+        const int totalSamples = capacity / 2;
+        for (int i = 0; i < totalSamples; ++i) {
+            const float s = final[i] / 32768.0f;
+            masterSq += s * s;
+        }
+        const float masterRms = std::sqrt(masterSq / std::max(1, totalSamples));
+
+        // Salva níveis (thread-safe).
+        {
+            QMutexLocker ll(&m_levelMutex);
+            m_levels.masterRms = masterRms;
+            m_levels.rms.clear();
+            for (auto it = sumSq.cbegin(); it != sumSq.cend(); ++it) {
+                const int cnt = countSq.value(it.key(), 1);
+                m_levels.rms[it.key()] = std::sqrt(it.value() / cnt);
+            }
+        }
+
         return capacity;
     }
     qint64 writeData(const char*, qint64) override { return -1; }
@@ -458,6 +530,9 @@ private:
         double vol = 1.0;
         bool active = false;
         AudioFx fx;
+        int trackIndex = -1;
+        bool isAudioTrack = false;
+        double pan = 0.0;
     };
     Source* findLocked(const QString& key) const {
         for (Source* s : m_sources) if (s->key == key) return s;
@@ -472,6 +547,9 @@ private:
     QMutex m_jobMutex;          // serializa updateSources/shutdown/destrutor
     std::atomic<int> m_jobSeq{0}; // só o pedido mais recente de seek executa
     bool m_shutdown = false; // stopAudio(): rejeita novos updates/decodes
+    double m_masterVolume = 1.0;
+    mutable QMutex m_levelMutex;
+    TrackLevels m_levels;
 };
 
 
@@ -679,6 +757,15 @@ void PreviewWidget::refreshView() {
     update();
 }
 
+PreviewWidget::AudioLevels PreviewWidget::audioLevels() const {
+    if (!m_audioFeed) return {};
+    const AudioMixer::TrackLevels tl = m_audioFeed->currentLevels();
+    AudioLevels out;
+    out.rms = tl.rms;
+    out.masterRms = tl.masterRms;
+    return out;
+}
+
 void PreviewWidget::resizeEvent(QResizeEvent*) {
     const int top = m_topBar ? m_topBar->height() + 4 : 40;
     m_videoRect = QRect(0, top, width(), std::max(0, height() - top));
@@ -745,6 +832,7 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
     // com transform, pan/rot/zoom giram em torno do centro do quadro. Assim,
     // adicionar um keyframe de transform nunca muda o tamanho do vídeo.
     const Clip* clip = clipAt(m_playhead);
+
     const double S = clip ? kfValue(clip->kfScale, clip->scale, m_playhead - clip->pos) : 1.0;
     const double SX = clip ? kfValue(clip->kfScaleX, clip->scaleX, m_playhead - clip->pos) : 1.0;
     const double SY = clip ? kfValue(clip->kfScaleY, clip->scaleY, m_playhead - clip->pos) : 1.0;
@@ -805,96 +893,80 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
             }
             if (!c) continue;
             const QPainter::CompositionMode mode = blendModeToQt(t.blendMode);
+
+            // Quadro deste clipe: vídeo normal
+            QImage clipFrame;
             if (topClip && c->id == topClip->id && !m_frame.isNull()) {
-                // Transição (mesma faixa): o clipe de trás por baixo, o da
-                // frente por cima com fade (dissolve) ou deslizando (wipe).
-                if (m_transAlpha >= 0.0 && !m_underFrame.isNull()) {
-                    Layer u;
-                    u.frame = m_underFrame;
-                    layers.append(u);
-                }
-                Layer L;
-                L.frame = m_frame;
-                L.s = S; L.sX = SX; L.sY = SY; L.rot = rot; L.x = tx; L.y = ty;
-                const double rel = m_playhead - topClip->pos;
-                double alpha = std::clamp(kfValue(topClip->kfOpacity, topClip->opacity, rel), 0.0, 1.0);
-                if (topClip->fadeIn > 1e-6) alpha *= std::min(1.0, rel / topClip->fadeIn);
-                if (topClip->fadeOut > 1e-6) alpha *= std::min(1.0, (topClip->dur - rel) / topClip->fadeOut);
-                if (m_transAlpha >= 0.0) {
-                    if (m_transType == QStringLiteral("dissolve")) alpha *= m_transAlpha;
-                    else if (m_transType == QStringLiteral("wipeleft")) L.ox = pw * (1.0 - m_transAlpha);
-                    else if (m_transType == QStringLiteral("wiperight")) L.ox = -pw * (1.0 - m_transAlpha);
-                    else if (m_transType == QStringLiteral("wipeup")) L.oy = ph * (1.0 - m_transAlpha);
-                    else if (m_transType == QStringLiteral("wipedown")) L.oy = -ph * (1.0 - m_transAlpha);
-                }
-                L.alpha = alpha;
-                // Opacidade da faixa (estilo Vegas/FCE): a faixa inteira é
-                // composta com transparência sobre as de baixo.
-                L.alpha *= std::clamp(t.opacity, 0.0, 1.0);
-                L.mode = mode;
-                layers.append(L);
+                clipFrame = m_frame;
             } else {
                 const MediaItem* mm = m_project->findMedia(c->mediaId);
                 if (!mm || !mm->hasVideo) continue;
-                QImage f;
                 if (mm->isSolid) {
-                    // Mídia gerada (cor sólida estilo Vegas): sem arquivo — o
-                    // quadro é preenchido na hora, na proporção do projeto (o
-                    // "fit" do drawLayer enche o quadro; cor uniforme não
-                    // perde qualidade ao ser ampliada).
                     const int w = qMax(1, mm->width > 0 ? mm->width : m_project->width);
                     const int h = qMax(1, mm->height > 0 ? mm->height : m_project->height);
                     const int sw = 64;
                     const int sh = qMax(1, sw * h / w);
-                    f = QImage(sw, sh, QImage::Format_ARGB32);
-                    f.fill(mm->solidColor);
-                    // Aplica LAINKA também a cores sólidas.
+                    clipFrame = QImage(sw, sh, QImage::Format_ARGB32);
+                    clipFrame.fill(mm->solidColor);
                     if (c->lainkaEnabled) {
                         const double srcT = c->in + (m_playhead - c->pos) * c->speed;
-                        f = lainkaApplyFx(f, c->id, srcT,
-                                          c->lainkaSkip, c->lainkaJitterPos,
-                                          c->lainkaJitterRot, c->lainkaJitterScale,
-                                          c->lainkaFlicker, c->lainkaFlickerSpeed,
-                                          c->lainkaWarpAmount, c->lainkaWarpSpeed,
-                                          c->lainkaWarpGrid, c->lainkaOnionSkin,
-                                          c->lainkaDustAmount, c->lainkaScratchAmount,
-                                          c->lainkaMotionBlur, c->lainkaOpacity,
-                                          c->lainkaTargetFps, c->lainkaAntialias,
-                                          QImage());
+                        clipFrame = lainkaApplyFx(clipFrame, c->id, srcT,
+                                                  c->lainkaSkip, c->lainkaJitterPos,
+                                                  c->lainkaJitterRot, c->lainkaJitterScale,
+                                                  c->lainkaFlicker, c->lainkaFlickerSpeed,
+                                                  c->lainkaWarpAmount, c->lainkaWarpSpeed,
+                                                  c->lainkaWarpGrid, c->lainkaOnionSkin,
+                                                  c->lainkaDustAmount, c->lainkaScratchAmount,
+                                                  c->lainkaMotionBlur, c->lainkaOpacity,
+                                                  c->lainkaTargetFps, c->lainkaAntialias,
+                                                  QImage());
                     }
-                    applyBasicEffectsOn(f, *c);
+                    applyBasicEffectsOn(clipFrame, *c);
                 } else {
                     {
                         QMutexLocker l(&m_frameMutex);
-                        f = m_layerCache.value(c->id).img;
+                        clipFrame = m_layerCache.value(c->id).img;
                     }
-                    if (f.isNull()) continue; // quadro ainda não chegou
+                    if (clipFrame.isNull()) continue;
                 }
-                const double rel = m_playhead - c->pos;
-                Layer L;
-                L.frame = f;
-                L.s = kfValue(c->kfScale, c->scale, rel);
-                L.sX = kfValue(c->kfScaleX, c->scaleX, rel);
-                L.sY = kfValue(c->kfScaleY, c->scaleY, rel);
-                L.rot = kfValue(c->kfRotation, c->rotation, rel);
-                L.x = kfValue(c->kfTx, c->tx, rel);
-                L.y = kfValue(c->kfTy, c->ty, rel);
-                double alpha = std::clamp(kfValue(c->kfOpacity, c->opacity, rel), 0.0, 1.0);
-                if (c->fadeIn > 1e-6) alpha *= std::min(1.0, rel / c->fadeIn);
-                if (c->fadeOut > 1e-6) alpha *= std::min(1.0, (c->dur - rel) / c->fadeOut);
-                L.alpha = alpha;
-                // Opacidade da faixa (estilo Vegas/FCE): a faixa inteira é
-                // composta com transparência sobre as de baixo.
-                L.alpha *= std::clamp(t.opacity, 0.0, 1.0);
-                L.mode = mode;
-                layers.append(L);
             }
+
+            if (clipFrame.isNull()) continue;
+
+            // Transição (mesma faixa): o clipe de trás por baixo
+            if (topClip && c->id == topClip->id && m_transAlpha >= 0.0 && !m_underFrame.isNull()) {
+                Layer u;
+                u.frame = m_underFrame;
+                layers.append(u);
+            }
+
+            Layer L;
+            L.frame = clipFrame;
+            L.s = kfValue(c->kfScale, c->scale, m_playhead - c->pos);
+            L.sX = kfValue(c->kfScaleX, c->scaleX, m_playhead - c->pos);
+            L.sY = kfValue(c->kfScaleY, c->scaleY, m_playhead - c->pos);
+            L.rot = kfValue(c->kfRotation, c->rotation, m_playhead - c->pos);
+            L.x = kfValue(c->kfTx, c->tx, m_playhead - c->pos);
+            L.y = kfValue(c->kfTy, c->ty, m_playhead - c->pos);
+            const double rel = m_playhead - c->pos;
+            double alpha = std::clamp(kfValue(c->kfOpacity, c->opacity, rel), 0.0, 1.0);
+            if (c->fadeIn > 1e-6) alpha *= std::min(1.0, rel / c->fadeIn);
+            if (c->fadeOut > 1e-6) alpha *= std::min(1.0, (c->dur - rel) / c->fadeOut);
+            if (topClip && c->id == topClip->id && m_transAlpha >= 0.0) {
+                if (m_transType == QStringLiteral("dissolve")) alpha *= m_transAlpha;
+                else if (m_transType == QStringLiteral("wipeleft")) L.ox = pw * (1.0 - m_transAlpha);
+                else if (m_transType == QStringLiteral("wiperight")) L.ox = -pw * (1.0 - m_transAlpha);
+                else if (m_transType == QStringLiteral("wipeup")) L.oy = ph * (1.0 - m_transAlpha);
+                else if (m_transType == QStringLiteral("wipedown")) L.oy = -ph * (1.0 - m_transAlpha);
+            }
+            L.alpha = alpha;
+            L.alpha *= std::clamp(t.opacity, 0.0, 1.0);
+            L.mode = mode;
+            layers.append(L);
             if (composeDbg())
                 qDebug() << "[compose] tr=" << tr
                          << "clip=" << (c->name.isEmpty() ? c->id : c->name)
-                         << "top=" << (topClip && c->id == topClip->id)
-                         << "media=" << (m_project->findMedia(c->mediaId)
-                                            ? m_project->findMedia(c->mediaId)->name : QString());
+                         << "top=" << (topClip && c->id == topClip->id);
         }
     }
 
@@ -970,9 +1042,11 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
                 if (c.id == clip->id) { clipTrackOpacity = std::clamp(tr.opacity, 0.0, 1.0); break; }
     }
     clipAlpha *= clipTrackOpacity;
+    // Para clipes Mesa, usa o quadro renderizado em vez de m_frame
+    const QImage& singleFrame = m_frame;
     const bool transActive = m_transAlpha >= 0.0
-                             && !m_frame.isNull() && !m_underFrame.isNull();
-    if (!m_frame.isNull()) {
+                             && !singleFrame.isNull() && !m_underFrame.isNull();
+    if (!singleFrame.isNull()) {
         if (transActive) {
             drawLayer(p, m_underFrame, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, k,
                       canvas.center().x(), canvas.center().y(), canvas);
@@ -983,10 +1057,10 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
             else if (m_transType == QStringLiteral("wipedown")) oy = -ph * (1.0 - m_transAlpha);
             double a = clipAlpha;
             if (m_transType == QStringLiteral("dissolve")) a *= m_transAlpha;
-            drawLayer(p, m_frame, S, rot, tx, ty, a, SX, SY, k,
+            drawLayer(p, singleFrame, S, rot, tx, ty, a, SX, SY, k,
                       canvas.center().x(), canvas.center().y(), canvas, ox, oy);
         } else {
-            drawLayer(p, m_frame, S, rot, tx, ty, clipAlpha, SX, SY, k,
+            drawLayer(p, singleFrame, S, rot, tx, ty, clipAlpha, SX, SY, k,
                       canvas.center().x(), canvas.center().y(), canvas);
         }
     }
@@ -1411,6 +1485,62 @@ const Clip* PreviewWidget::clipAt(double t) const {
     return nullptr;
 }
 
+bool PreviewWidget::tryRenderMesa(const Clip* clip) {
+    if (!m_project || !clip) return false;
+
+    // Encontra a faixa do clipe ativo e o grupo dela.
+    const Track* track = nullptr;
+    for (const Track& tr : m_project->videoTracks) {
+        for (const Clip& c : tr.clips)
+            if (c.id == clip->id) { track = &tr; break; }
+    }
+    if (!track) return false;
+    if (track->groupId.isEmpty()) return false;
+
+    const TrackGroup* g = m_project->findGroup(track->groupId);
+    if (!g || g->mesaId.isEmpty()) return false;
+
+    const MesaComposition* mc = m_project->findMesa(g->mesaId);
+    if (!mc) return false;
+
+    // Renderiza o canvas (layers) sem a transform de câmera.
+    const QImage canvas = m_mesaRenderer.renderCanvas(*mc, *m_project, m_playhead);
+    if (canvas.isNull()) return false;
+
+    // Enquadra o canvas no projeto (letterbox) e usa como quadro do preview.
+    const double pw = m_project->width;
+    const double ph = m_project->height;
+    const double fit = qMin(pw / canvas.width(), ph / canvas.height());
+    const int w = qMax(1, (int)std::lround(canvas.width() * fit));
+    const int h = qMax(1, (int)std::lround(canvas.height() * fit));
+    QImage out(pw, ph, QImage::Format_ARGB32);
+    out.fill(Qt::black);
+    {
+        QPainter p(&out);
+        p.setRenderHint(QPainter::SmoothPixmapTransform);
+        p.drawImage(QRect((pw - w) / 2, (ph - h) / 2, w, h), canvas);
+    }
+
+    {
+        QMutexLocker l(&m_frameMutex);
+        m_frameFull = out;
+        m_shownPath = QStringLiteral("mesa:") + mc->id;
+        m_shownT = m_playhead;
+        m_shownW = m_project->width;
+        m_lastSrcT = m_playhead;
+        m_lastDecodeW = m_project->width;
+        m_lastFile.clear();
+        m_prefetch.valid = false;
+        m_prefetch.requested = false;
+    }
+    // Nenhum efeito de clipe deve ser aplicado à composição da Mesa.
+    m_clipLainkaEnabled = false;
+    m_clipMotionEnabled = false;
+    m_clipOfxFx.clear();
+    applyCrop();
+    return true;
+}
+
 // Clip de áudio "ativo": o mais acima (vídeo ou áudio) em `t` cujo media tem áudio.
 // Clipes de áudio ativos em `t`, prontos para o mixer. Dedupe de vídeo+áudio
 // vinculados (mesmo groupId): a faixa de áudio vence, senão o som sobraria
@@ -1426,10 +1556,11 @@ QVector<AudioMixer::SourceInfo> buildMixSources(const Project* p, double t) {
         for (const Track& tr : p->audioTracks)
             if (tr.solo) { anySolo = true; break; }
 
-    struct Rep { const Clip* clip; double vol; };
+    struct Rep { const Clip* clip; double vol; double pan; int trackIdx; bool isAudio; };
     QHash<QString, Rep> reps;
-    auto collect = [&](const QVector<Track>& tracks) {
-        for (const Track& tr : tracks) {
+    auto collect = [&](const QVector<Track>& tracks, bool isAudio) {
+        for (int ti = 0; ti < tracks.size(); ++ti) {
+            const Track& tr = tracks[ti];
             for (const Clip& c : tr.clips) {
                 if (!(t >= c.pos && t < c.pos + c.dur)) continue;
                 if (tr.muted || (anySolo && !tr.solo)) {
@@ -1467,12 +1598,12 @@ QVector<AudioMixer::SourceInfo> buildMixSources(const Project* p, double t) {
                 // faixa de áudio vence o da faixa de vídeo (inserido depois).
                 const QString base = c.groupId.isEmpty() ? c.id : c.groupId;
                 const QString key = QStringLiteral("%1|%2").arg(base).arg(c.audioStreamIndex);
-                reps.insert(key, {&c, vol});
+                reps.insert(key, {&c, vol, tr.pan, ti, isAudio});
             }
         }
     };
-    collect(p->videoTracks);
-    collect(p->audioTracks);
+    collect(p->videoTracks, false);
+    collect(p->audioTracks, true);
 
     for (auto it = reps.cbegin(); it != reps.cend(); ++it) {
         const Clip* c = it.value().clip;
@@ -1491,6 +1622,9 @@ QVector<AudioMixer::SourceInfo> buildMixSources(const Project* p, double t) {
         si.denoiseAmount = c->denoiseAmount;
         si.normalize = c->normalize;
         si.invertPhase = c->invertPhase;
+        si.trackIndex = it.value().trackIdx;
+        si.isAudioTrack = it.value().isAudio;
+        si.pan = it.value().pan;
         out.append(si);
     }
     return out;
@@ -1524,6 +1658,7 @@ void PreviewWidget::startAudio(double t) {
     fmt.setChannelCount(2);
 
     m_audioFeed = new AudioMixer(this);
+    m_audioFeed->setMasterVolume(m_project ? m_project->masterVolume : 1.0);
     m_audioFeed->open(QIODevice::ReadOnly | QIODevice::Unbuffered);
 
     // Abre os decoders de áudio em background para não travar a UI.
@@ -1632,6 +1767,7 @@ void PreviewWidget::stopAudio() {
 // do widget a partir do pool de threads.
 void PreviewWidget::updateMixAudio(double t, bool reseek) {
     if (!m_audioFeed) return;
+    m_audioFeed->setMasterVolume(m_project ? m_project->masterVolume : 1.0);
     // Fontes são coletadas na UI thread (leitura leve dos clipes ativos);
     // só o trabalho pesado desce para o pool.
     const QVector<AudioMixer::SourceInfo> sources = buildMixSources(m_project, t);
@@ -1653,6 +1789,18 @@ void PreviewWidget::updateFrame() {
         m_frame = QImage();
         m_transAlpha = -1.0;
         m_underFrame = QImage();
+        m_clipLainkaEnabled = false;
+        m_clipOfxFx.clear();
+        update();
+        return;
+    }
+
+    // Clipe pertence a um grupo Mesa → renderiza a composição inteira
+    // (todas as camadas), sem a transform de câmera.
+    if (tryRenderMesa(clip)) {
+        m_underFrame = QImage();
+        m_underRequested = false;
+        m_transAlpha = -1.0;
         m_clipLainkaEnabled = false;
         m_clipOfxFx.clear();
         update();
@@ -1704,6 +1852,7 @@ void PreviewWidget::updateFrame() {
     m_clipOfxFx = clip->ofxFx;
 
     double srcT = clip->in + (m_playhead - clip->pos) * clip->speed;
+
     // LAINKA: quantiza o tempo para simular stop motion.
     // Usa targetFps para calcular o skip (projectFps / targetFps).
     m_lainkaQuantizedTime = -1.0;

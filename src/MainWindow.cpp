@@ -14,6 +14,8 @@
 #include "ui/EffectsWidget.h"
 #include "ui/ExpressWidget.h"
 #include "ui/FileBrowserWidget.h"
+#include "ui/MixerWidget.h"
+#include "ui/MesaWidget.h"
 #include "ui/ExportDialog.h"
 #include "ui/ProjectSettingsDialog.h"
 #include "ui/SettingsDialog.h"
@@ -277,8 +279,30 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     connect(m_timeline, &TimelineWidget::modified, this, [this]() {
         m_preview->refreshView();
+        if (m_mixer) m_mixer->refresh();
+        if (m_mesa) m_mesa->refresh();
     });
     connect(m_timeline, &TimelineWidget::modified, this, &MainWindow::setModified);
+    connect(m_mixer, &MixerWidget::modified, this, &MainWindow::pushUndo);
+    connect(m_mixer, &MixerWidget::modified, this, &MainWindow::setModified);
+    connect(m_mixer, &MixerWidget::modified, this, [this]() {
+        m_preview->refreshView();
+    });
+    connect(m_mesa, &MesaWidget::modified, this, &MainWindow::setModified);
+    connect(m_mesa, &MesaWidget::changesCommitted, this, &MainWindow::pushUndo);
+    connect(m_mesa, &MesaWidget::modified, this, [this]() {
+        m_preview->refreshView();
+        m_timeline->update();
+    });
+    connect(m_mesa, &MesaWidget::mesaCreateRequested, this, [this]() {
+        m_timeline->criarMesa();
+    });
+    connect(m_timeline, &TimelineWidget::mesaOpenRequested, this, [this](const QString& mesaId) {
+        m_mesa->setMesaId(mesaId);
+        m_mesaDock->show();
+        m_mesaDock->raise();
+        m_mesa->refresh();
+    });
     connect(m_timeline, &TimelineWidget::mediaImported, this, [this]() {
         m_pool->refreshFromProject();
         setModified();
@@ -327,6 +351,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_timeline, &TimelineWidget::playheadChanged, m_pancrop, &PancropWidget::setPlayhead);
     connect(m_timeline, &TimelineWidget::selectionChanged, m_graph, &GraphEditorWidget::setClipId);
     connect(m_timeline, &TimelineWidget::playheadChanged, m_graph, &GraphEditorWidget::setPlayhead);
+    connect(m_timeline, &TimelineWidget::playheadChanged, this, [this](double t) {
+        if (m_mesa) { m_mesa->setPlayheadPosition(t); m_mesa->refresh(); }
+    });
     connect(m_graph, &GraphEditorWidget::editStart, this, &MainWindow::pushUndo);
     connect(m_graph, &GraphEditorWidget::modified, this, [this]() {
         m_timeline->update();
@@ -634,12 +661,43 @@ void MainWindow::createDocks() {
     addDockWidget(Qt::LeftDockWidgetArea, m_fileBrowserDock);
     m_fileBrowserDock->hide();
 
+    // Mixer — dock na parte inferior, ao lado da timeline.
+    m_mixer = new MixerWidget(this);
+    m_mixer->setProject(&m_project);
+    m_mixer->setPreview(m_preview);
+    m_mixerDock = new QDockWidget(tr("Mixer"), this);
+    m_mixerDock->setObjectName(QStringLiteral("mixerDock"));
+    m_mixerDock->setWidget(m_mixer);
+    m_mixerDock->setAllowedAreas(Qt::AllDockWidgetAreas);
+    m_mixerDock->setFeatures(QDockWidget::DockWidgetMovable
+                             | QDockWidget::DockWidgetFloatable
+                             | QDockWidget::DockWidgetClosable);
+    addDockWidget(Qt::BottomDockWidgetArea, m_mixerDock);
+    splitDockWidget(m_timelineDock, m_mixerDock, Qt::Vertical);
+    m_mixerDock->setMinimumHeight(120);
+    m_mixerDock->hide();
+
+    // Mesa (composição 2D) — dock ao lado do preview.
+    m_mesa = new MesaWidget(this);
+    m_mesa->setProject(&m_project);
+    m_mesaDock = new QDockWidget(tr("Mesa"), this);
+    m_mesaDock->setObjectName(QStringLiteral("mesaDock"));
+    m_mesaDock->setWidget(m_mesa);
+    m_mesaDock->setAllowedAreas(Qt::AllDockWidgetAreas);
+    m_mesaDock->setFeatures(QDockWidget::DockWidgetMovable
+                             | QDockWidget::DockWidgetFloatable
+                             | QDockWidget::DockWidgetClosable);
+    addDockWidget(Qt::RightDockWidgetArea, m_mesaDock);
+    tabifyDockWidget(m_pancropDock, m_mesaDock);
+    m_mesaDock->hide();
+
     // Visual das barras de título dos painéis dockáveis.
     setStyleSheet(globalStyleSheet(savedTheme()));
 
     // Qualquer mudança de arranjo dos painéis agenda o salvamento do layout.
     for (QDockWidget* dock : {m_poolDock, m_timelineDock, m_pancropDock, m_graphDock,
-                              m_effectsDock, m_expressDock, m_fileBrowserDock}) {
+                              m_effectsDock, m_expressDock, m_fileBrowserDock,
+                              m_mixerDock, m_mesaDock}) {
         connect(dock, &QDockWidget::topLevelChanged, this, &MainWindow::scheduleLayoutSave);
         connect(dock, &QDockWidget::visibilityChanged, this, &MainWindow::scheduleLayoutSave);
     }
@@ -804,6 +862,8 @@ void MainWindow::createActions() {
     viewMenu->addAction(m_effectsDock->toggleViewAction());
     viewMenu->addAction(m_expressDock->toggleViewAction());
     viewMenu->addAction(m_fileBrowserDock->toggleViewAction());
+    viewMenu->addAction(m_mixerDock->toggleViewAction());
+    viewMenu->addAction(m_mesaDock->toggleViewAction());
     viewMenu->addSeparator();
     viewMenu->addAction(m_lockAction);
 
@@ -929,7 +989,8 @@ void MainWindow::createActions() {
 
 void MainWindow::setDockLocked(bool locked) {
     for (QDockWidget* dock : {m_poolDock, m_timelineDock, m_pancropDock, m_graphDock,
-                              m_effectsDock, m_expressDock, m_fileBrowserDock}) {
+                              m_effectsDock, m_expressDock, m_fileBrowserDock,
+                              m_mixerDock, m_mesaDock}) {
         if (locked) {
             if (!m_originalFeatures.contains(dock))
                 m_originalFeatures.insert(dock, dock->features());
@@ -1308,6 +1369,9 @@ void MainWindow::applyUndoState() {
     m_pancrop->setProject(&m_project);
     m_graph->refresh();
     m_preview->refreshView();
+    m_mixer->refresh();
+    m_mesa->refresh();
+    m_mesa->autoSelectMesa();
     updateUndoActions();
 }
 

@@ -1,4 +1,4 @@
-# Funcionalidades do Pierrot v0.4.2
+# Funcionalidades do Pierrot v0.4.3
 
 ## Media Pool
 
@@ -93,6 +93,17 @@
 - Qualidade de preview configurável (resolução de decodificação).
 - Sincronização A/V pelo relógio do áudio (slew suave, correção de drift).
 - **Relógio de áudio** como mestre para evitar dessincronia.
+
+## Mixer (dock)
+
+- **Faders por faixa** de áudio e vídeo (vertical, 0–200% com escala dB).
+- **Pan** por faixa (knob rotativo, equal-power).
+- **Volume master** com fader dedicado.
+- **Mute / Solo** por faixa.
+- **VU meters** em tempo real com **peak hold** (barra LED, gradiente verde→amarelo→vermelho).
+- Volume master e pan aplicados no preview e na exportação (.Blanc).
+- Visual escuro estilo Vegas Pro.
+- Acessível via menu **Exibir → Mixer**; layout persistido entre sessões.
 
 ## Atalhos de Teclado
 

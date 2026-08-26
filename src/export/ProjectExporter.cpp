@@ -111,6 +111,7 @@ QImage renderTextImage(const TextStyle& st, int W, int H) {
 struct AudioClipRef {
     const Clip* c;
     double trackVol = 1.0;
+    double trackPan = 0.0; // -1..+1
 };
 
 QString hexColor(const QColor& col) {
@@ -500,7 +501,7 @@ QStringList ProjectExporter::buildCommand(const Project& project,
         if (t.muted || (anySolo && !t.solo)) continue;
         for (const Clip& c : t.clips) {
             const MediaItem* m = project.findMedia(c.mediaId);
-            if (m && m->hasAudio) aclips.push_back({&c, t.volume});
+            if (m && m->hasAudio) aclips.push_back({&c, t.volume, t.pan});
         }
     }
     std::sort(aclips.begin(), aclips.end(),
@@ -1035,6 +1036,13 @@ QStringList ProjectExporter::buildCommand(const Project& project,
             if (std::fabs(c->eqHigh) > 0.01)
                 fc.last().append(QStringLiteral(",equalizer=f=6000:width_type=q:width=1:g=%1")
                                      .arg(num(std::clamp(c->eqHigh, -12.0, 12.0))));
+            // Pan estéreo: aplica pan da faixa (equal-power).
+            if (std::fabs(ar.trackPan) > 0.01) {
+                const double gL = std::sqrt(std::max(0.0, (1.0 - ar.trackPan) * 0.5));
+                const double gR = std::sqrt(std::max(0.0, (1.0 + ar.trackPan) * 0.5));
+                fc.last().append(QStringLiteral(",aeval='val(0)*%1|val(1)*%2'")
+                                     .arg(num(gL)).arg(num(gR)));
+            }
             fc.last().append(QStringLiteral(",aformat=sample_fmts=fltp:channel_layouts=stereo,"
                                             "aresample=%1")
                                  .arg((qint64)project.audioRate));
@@ -1057,6 +1065,14 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                       "amix=inputs=%1:duration=longest:dropout_transition=0[aout]")
                       .arg(albl.size());
             aout = QStringLiteral("[aout]");
+        }
+        // Volume master: aplica o masterVolume do projeto no sinal de áudio final.
+        if (std::fabs(project.masterVolume - 1.0) > 1e-4) {
+            const QString masterLbl = QStringLiteral("amstr");
+            fc << aout + QStringLiteral("volume=%1[%2]")
+                    .arg(num(std::clamp(project.masterVolume, 0.0, 2.0)))
+                    .arg(masterLbl);
+            aout = QStringLiteral("[%1]").arg(masterLbl);
         }
     }
 

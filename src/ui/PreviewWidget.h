@@ -11,9 +11,11 @@
 #include <atomic>
 #include <QElapsedTimer>
 #include <QHash>
+#include <QPair>
 #include <QImage>
 #include "models/Project.h"
 #include "ffmpeg/FFmpegDecoder.h"
+#include "render/MesaRenderer.h"
 
 class QTimer;
 class QPushButton;
@@ -39,7 +41,15 @@ public:
     void setProject(Project* p);
     void setOfxManager(OfxPluginManager* m) { m_ofxManager = m; }
     void refreshView();
+    AudioMixer* audioMixer() const { return m_audioFeed; }
     double playhead() const { return m_playhead; }
+
+    // Níveis de áudio para o MixerWidget (thread-safe).
+    struct AudioLevels {
+        QHash<QPair<bool,int>, float> rms; // (isAudio, trackIndex) → RMS 0..1
+        float masterRms = 0.0;
+    };
+    AudioLevels audioLevels() const;
     static int maxDecodeWidth();
     static void setMaxDecodeWidth(int w);
 public slots:
@@ -82,6 +92,9 @@ private:
     void stopAudio();
     void updateMixAudio(double t, bool reseek);
     const Clip* clipAt(double t) const;
+    // Se o clipe ativo pertence a um grupo Mesa, renderiza a composição e
+    // devolve true preenchendo m_frameFull/m_frame (sem a transform de câmera).
+    bool tryRenderMesa(const Clip* clip);
     Project* m_project = nullptr;
     double m_playhead = 0.0;
     double m_loopIn = -1.0;
@@ -227,4 +240,8 @@ private:
     int m_gridDivisions = 3; // NxN linhas de grade
     QToolButton* m_gridBtn = nullptr;
     void drawGrid(QPainter& p, const QRect& canvas);
+
+    // Renderiza o canvas de uma Mesa (sem câmera) quando o clipe ativo
+    // pertence a um grupo Mesa. Usa um MesaRenderer dedicado.
+    MesaRenderer m_mesaRenderer;
 };

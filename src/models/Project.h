@@ -211,6 +211,27 @@ struct TextResource {
     TextStyle text;
 };
 
+struct MesaComposition {
+    QString id;
+    QString name;
+    int canvasW = 1920;        // largura do canvas
+    int canvasH = 1080;        // altura do canvas
+
+    // Tracks que compõem esta Mesa (ordem = ordem de renderização, fundo → topo).
+    // Cada track referencia suas props de canvas (mesaX/Y etc.) na própria Track.
+    QVector<QString> trackIds;
+
+    // Câmera (define o enquadramento que vai pro output)
+    double camX = 0.0;         // posição X da câmera (pixels no canvas)
+    double camY = 0.0;         // posição Y da câmera
+    double camZoom = 1.0;      // zoom (1.0 = canvas inteiro no output)
+    double camRotation = 0.0;  // rotação da câmera em graus
+    QVector<Keyframe> kfCamX;
+    QVector<Keyframe> kfCamY;
+    QVector<Keyframe> kfCamZoom;
+    QVector<Keyframe> kfCamRotation;
+};
+
 // Tipos de transição de saída de um clipe (aplicada quando ele se sobrepõe ao
 // próximo clipe da mesma faixa de vídeo; a duração é o tamanho da sobreposição).
 //  ""/"dissolve" = crossfade; "wipeleft"/"wiperight"/"wipeup"/"wipedown" = o
@@ -353,13 +374,16 @@ struct TrackGroup {
     QString id;
     QString name;
     bool collapsed = false; // faixas da pasta ocultas na timeline
+    QString mesaId;         // vazio = pasta normal; preenchido = grupo Mesa
 };
 
 struct Track {
+    QString id;                // id único da track (para referência em MesaComposition)
     QString name;
     bool audio = false;
     QString blendMode = QStringLiteral("normal");
     double volume = 1.0;
+    double pan = 0.0; // -1.0 (esquerda) a +1.0 (direita), 0.0 = centro
     // Opacidade da faixa de vídeo (0..1, estilo Vegas/FCE): a faixa inteira
     // composta com transparência sobre as de baixo.
     double opacity = 1.0;
@@ -369,6 +393,39 @@ struct Track {
     QString groupId; // pasta (TrackGroup) a que a faixa pertence; vazio = nenhuma
     int height = 0; // altura da faixa em pixels na timeline; 0 = padrão
     QVector<Clip> clips;
+
+    // ── Propriedades de canvas (Mesa: composição 2D) ────────────────────
+    // Estas propriedades são usadas quando a track pertence a um grupo Mesa.
+    // Posição, escala, rotação e opacidade da track no canvas da composição.
+    double mesaX = 0.0;          // posição X no canvas (pixels, centro = 0)
+    double mesaY = 0.0;          // posição Y no canvas (pixels, centro = 0)
+    double mesaScaleX = 1.0;     // escala horizontal no canvas
+    double mesaScaleY = 1.0;     // escala vertical no canvas
+    double mesaRotation = 0.0;   // rotação no canvas (graus)
+    double mesaOpacity = 1.0;    // opacidade no canvas (0..1)
+    double mesaAnchorX = 0.0;    // anchor point X (pixels relativo ao centro)
+    double mesaAnchorY = 0.0;    // anchor point Y (pixels relativo ao centro)
+
+    // Keyframes das propriedades de canvas (tempos em segundos da timeline).
+    QVector<Keyframe> kfMesaX;
+    QVector<Keyframe> kfMesaY;
+    QVector<Keyframe> kfMesaScaleX;
+    QVector<Keyframe> kfMesaScaleY;
+    QVector<Keyframe> kfMesaRotation;
+    QVector<Keyframe> kfMesaOpacity;
+    QVector<Keyframe> kfMesaAnchorX;
+    QVector<Keyframe> kfMesaAnchorY;
+
+    // True se a track tem propriedades de canvas ativas (diferentes do padrão).
+    bool hasMesaTransform() const {
+        return mesaX != 0.0 || mesaY != 0.0
+            || mesaScaleX != 1.0 || mesaScaleY != 1.0
+            || mesaRotation != 0.0
+            || mesaAnchorX != 0.0 || mesaAnchorY != 0.0
+            || !kfMesaX.isEmpty() || !kfMesaY.isEmpty()
+            || !kfMesaScaleX.isEmpty() || !kfMesaScaleY.isEmpty()
+            || !kfMesaRotation.isEmpty();
+    }
 };
 
 inline QString newId() {
@@ -382,6 +439,7 @@ public:
     int height = 1080;
     int fps = 30;
     double audioRate = 48000.0;
+    double masterVolume = 1.0; // Volume geral do mixer
 
     QVector<MediaItem> media;
     QVector<Track> videoTracks;
@@ -390,6 +448,8 @@ public:
     QVector<TrackGroup> trackGroups;
     // Recursos de texto compartilhados (cópias unificadas de texto).
     QVector<TextResource> textResources;
+    // Composições 2D (Mesas).
+    QVector<MesaComposition> mesas;
 
     // Estilo de texto efetivo de um clipe: recurso compartilhado se referenciado,
     // senão o próprio. Nunca retorna nulo.
@@ -423,6 +483,17 @@ public:
         return nullptr;
     }
 
+    MesaComposition* findMesa(const QString& id) {
+        for (auto& m : mesas)
+            if (m.id == id) return &m;
+        return nullptr;
+    }
+    const MesaComposition* findMesa(const QString& id) const {
+        for (const auto& m : mesas)
+            if (m.id == id) return &m;
+        return nullptr;
+    }
+
     void addMarker(const Marker& m) {
         markers.append(m);
         std::sort(markers.begin(), markers.end(),
@@ -431,6 +502,7 @@ public:
 
     void addTrack(bool audio) {
         Track t;
+        t.id = newId();
         t.audio = audio;
         t.name = audio
             ? QString("Audio %1").arg(audioTracks.size() + 1)
@@ -439,11 +511,19 @@ public:
     }
 
     void removeTrack(bool audio, int index) {
+        const QVector<Track>& src = audio ? audioTracks : videoTracks;
+        if (index < 0 || index >= src.size()) return;
+        const QString tid = src[index].id;
         if (audio) {
-            if (index >= 0 && index < audioTracks.size()) audioTracks.remove(index);
+            audioTracks.remove(index);
         } else {
-            if (index >= 0 && index < videoTracks.size()) videoTracks.remove(index);
+            videoTracks.remove(index);
         }
+        // Remove a referência da track em qualquer Mesa (evita cantos vazios
+        // e "conteúdo" que some ao reabrir o projeto).
+        if (!tid.isEmpty())
+            for (MesaComposition& m : mesas)
+                m.trackIds.removeAll(tid);
     }
 
     const MediaItem* findMedia(const QString& id) const {

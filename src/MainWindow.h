@@ -24,6 +24,8 @@ class GraphEditorWidget;
 class EffectsWidget;
 class ExpressWidget;
 class FileBrowserWidget;
+class MixerWidget;
+class MesaWidget;
 class OfxPluginManager;
 class QAction;
 class QColor;
@@ -112,6 +114,8 @@ private:
     EffectsWidget* m_effects = nullptr;
     ExpressWidget* m_express = nullptr;
     FileBrowserWidget* m_fileBrowser = nullptr;
+    MixerWidget* m_mixer = nullptr;
+    MesaWidget* m_mesa = nullptr;
     QDockWidget* m_poolDock = nullptr;
     QDockWidget* m_timelineDock = nullptr;
     QDockWidget* m_pancropDock = nullptr;
@@ -119,6 +123,8 @@ private:
     QDockWidget* m_effectsDock = nullptr;
     QDockWidget* m_expressDock = nullptr;
     QDockWidget* m_fileBrowserDock = nullptr;
+    QDockWidget* m_mixerDock = nullptr;
+    QDockWidget* m_mesaDock = nullptr;
     QVBoxLayout* m_centralLay = nullptr;
     QHash<QDockWidget*, QDockWidget::DockWidgetFeatures> m_originalFeatures;
     QAction* m_lockAction = nullptr;

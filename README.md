@@ -80,6 +80,12 @@ o `.zsync` correspondente também é movido para `dist/`).
 4. `S` divide o clipe na posição do playhead; `Delete` remove o selecionado.
 5. **Arquivo → Exportar…** (Ctrl+E) para gerar o vídeo final.
 
+## Roadmap
+
+- [ ] **Versão para macOS** — levar o Pierrot para quem edita no Mac.
+
+> O foco continua sendo o Linux: a versão para Mac é um plano futuro.
+
 ## Licença
 
 Pierrot é um software livre: você pode redistribuí-lo e/ou modificá-lo sob os

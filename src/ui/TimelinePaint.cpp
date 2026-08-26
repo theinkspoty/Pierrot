@@ -750,6 +750,7 @@ void TimelineWidget::drawTextClipBody(QPainter& p, const QRect& r, const Clip& c
                Qt::AlignLeft | Qt::AlignTop, txt);
 }
 
+
 void TimelineWidget::drawAudioWaveform(QPainter& p, const QRect& r, const Clip& c,
                                        const QString& path) {
     if (path.isEmpty() || r.width() < 2) return;

@@ -143,6 +143,47 @@ static TextStyle textStyleFromJson(const QJsonObject& o) {
     return t;
 }
 
+// ── Mesa (composição 2D) ────────────────────────────────────────────────
+
+static QJsonObject mesaToJson(const MesaComposition& m) {
+    QJsonObject o;
+    o["id"] = m.id;
+    o["name"] = m.name;
+    o["canvasW"] = m.canvasW;
+    o["canvasH"] = m.canvasH;
+    QJsonArray tids;
+    for (const QString& tid : m.trackIds) tids.append(tid);
+    o["trackIds"] = tids;
+    o["camX"] = m.camX;
+    o["camY"] = m.camY;
+    o["camZoom"] = m.camZoom;
+    o["camRotation"] = m.camRotation;
+    o["kfCamX"] = kfToJson(m.kfCamX);
+    o["kfCamY"] = kfToJson(m.kfCamY);
+    o["kfCamZoom"] = kfToJson(m.kfCamZoom);
+    o["kfCamRotation"] = kfToJson(m.kfCamRotation);
+    return o;
+}
+
+static MesaComposition mesaFromJson(const QJsonObject& o) {
+    MesaComposition m;
+    m.id = o["id"].toString();
+    m.name = o["name"].toString();
+    m.canvasW = o["canvasW"].toInt(1920);
+    m.canvasH = o["canvasH"].toInt(1080);
+    const QJsonArray tids = o["trackIds"].toArray();
+    for (const QJsonValue& v : tids) m.trackIds.append(v.toString());
+    m.camX = o["camX"].toDouble(0.0);
+    m.camY = o["camY"].toDouble(0.0);
+    m.camZoom = o["camZoom"].toDouble(1.0);
+    m.camRotation = o["camRotation"].toDouble(0.0);
+    m.kfCamX = kfFromJson(o["kfCamX"]);
+    m.kfCamY = kfFromJson(o["kfCamY"]);
+    m.kfCamZoom = kfFromJson(o["kfCamZoom"]);
+    m.kfCamRotation = kfFromJson(o["kfCamRotation"]);
+    return m;
+}
+
 static QJsonObject clipToJson(const Clip& c) {
     QJsonObject o;
     o["id"] = c.id;
@@ -387,10 +428,12 @@ static Marker markerFromJson(const QJsonObject& o) {
 
 static QJsonObject trackToJson(const Track& t) {
     QJsonObject o;
+    o["id"] = t.id;
     o["name"] = t.name;
     o["audio"] = t.audio;
     o["blendMode"] = t.blendMode;
     o["volume"] = t.volume;
+    o["pan"] = t.pan;
     o["opacity"] = t.opacity;
     o["muted"] = t.muted;
     o["solo"] = t.solo;
@@ -400,16 +443,36 @@ static QJsonObject trackToJson(const Track& t) {
     QJsonArray clips;
     for (const Clip& c : t.clips) clips.append(clipToJson(c));
     o["clips"] = clips;
+    // Props de canvas (Mesa)
+    o["mesaX"] = t.mesaX;
+    o["mesaY"] = t.mesaY;
+    o["mesaScaleX"] = t.mesaScaleX;
+    o["mesaScaleY"] = t.mesaScaleY;
+    o["mesaRotation"] = t.mesaRotation;
+    o["mesaOpacity"] = t.mesaOpacity;
+    o["mesaAnchorX"] = t.mesaAnchorX;
+    o["mesaAnchorY"] = t.mesaAnchorY;
+    o["kfMesaX"] = kfToJson(t.kfMesaX);
+    o["kfMesaY"] = kfToJson(t.kfMesaY);
+    o["kfMesaScaleX"] = kfToJson(t.kfMesaScaleX);
+    o["kfMesaScaleY"] = kfToJson(t.kfMesaScaleY);
+    o["kfMesaRotation"] = kfToJson(t.kfMesaRotation);
+    o["kfMesaOpacity"] = kfToJson(t.kfMesaOpacity);
+    o["kfMesaAnchorX"] = kfToJson(t.kfMesaAnchorX);
+    o["kfMesaAnchorY"] = kfToJson(t.kfMesaAnchorY);
     return o;
 }
 
 static Track trackFromJson(const QJsonObject& o, bool audio) {
     Track t;
+    t.id = o["id"].toString();
+    if (t.id.isEmpty()) t.id = newId();
     t.name = o["name"].toString(audio ? QStringLiteral("Audio")
                                       : QStringLiteral("Video"));
     t.audio = audio;
     t.blendMode = o["blendMode"].toString(QStringLiteral("normal"));
     t.volume = o["volume"].toDouble(1.0);
+    t.pan = o["pan"].toDouble(0.0);
     t.opacity = o["opacity"].toDouble(1.0);
     t.muted = o["muted"].toBool();
     t.solo = o["solo"].toBool();
@@ -419,6 +482,23 @@ static Track trackFromJson(const QJsonObject& o, bool audio) {
     const QJsonArray clips = o["clips"].toArray();
     for (const QJsonValue& v : clips)
         t.clips.append(clipFromJson(v.toObject()));
+    // Props de canvas (Mesa)
+    t.mesaX = o["mesaX"].toDouble(0.0);
+    t.mesaY = o["mesaY"].toDouble(0.0);
+    t.mesaScaleX = o["mesaScaleX"].toDouble(1.0);
+    t.mesaScaleY = o["mesaScaleY"].toDouble(1.0);
+    t.mesaRotation = o["mesaRotation"].toDouble(0.0);
+    t.mesaOpacity = o["mesaOpacity"].toDouble(1.0);
+    t.mesaAnchorX = o["mesaAnchorX"].toDouble(0.0);
+    t.mesaAnchorY = o["mesaAnchorY"].toDouble(0.0);
+    t.kfMesaX = kfFromJson(o["kfMesaX"]);
+    t.kfMesaY = kfFromJson(o["kfMesaY"]);
+    t.kfMesaScaleX = kfFromJson(o["kfMesaScaleX"]);
+    t.kfMesaScaleY = kfFromJson(o["kfMesaScaleY"]);
+    t.kfMesaRotation = kfFromJson(o["kfMesaRotation"]);
+    t.kfMesaOpacity = kfFromJson(o["kfMesaOpacity"]);
+    t.kfMesaAnchorX = kfFromJson(o["kfMesaAnchorX"]);
+    t.kfMesaAnchorY = kfFromJson(o["kfMesaAnchorY"]);
     return t;
 }
 
@@ -429,6 +509,7 @@ QJsonObject Project::toJson() const {
     o["height"] = height;
     o["fps"] = fps;
     o["audioRate"] = audioRate;
+    o["masterVolume"] = masterVolume;
 
     QJsonArray mediaArr;
     for (const MediaItem& m : media) mediaArr.append(mediaToJson(m));
@@ -452,6 +533,7 @@ QJsonObject Project::toJson() const {
         go["id"] = g.id;
         go["name"] = g.name;
         go["collapsed"] = g.collapsed;
+        go["mesaId"] = g.mesaId;
         tgs.append(go);
     }
     o["trackGroups"] = tgs;
@@ -465,6 +547,10 @@ QJsonObject Project::toJson() const {
     }
     o["textResources"] = trs;
 
+    QJsonArray mesaArr;
+    for (const MesaComposition& m : mesas) mesaArr.append(mesaToJson(m));
+    o["mesas"] = mesaArr;
+
     return o;
 }
 
@@ -474,12 +560,14 @@ void Project::fromJson(const QJsonObject& o) {
     height = o["height"].toInt(1080);
     fps = o["fps"].toInt(30);
     audioRate = o["audioRate"].toDouble(48000.0);
+    masterVolume = o["masterVolume"].toDouble(1.0);
 
     media.clear();
     videoTracks.clear();
     audioTracks.clear();
     trackGroups.clear();
     textResources.clear();
+    mesas.clear();
 
     const QJsonArray ma = o["media"].toArray();
     for (const QJsonValue& v : ma) media.append(mediaFromJson(v.toObject()));
@@ -501,6 +589,7 @@ void Project::fromJson(const QJsonObject& o) {
         g.id = go["id"].toString();
         g.name = go["name"].toString();
         g.collapsed = go["collapsed"].toBool();
+        g.mesaId = go["mesaId"].toString();
         if (!g.id.isEmpty()) trackGroups.append(g);
     }
 
@@ -511,5 +600,11 @@ void Project::fromJson(const QJsonObject& o) {
         r.id = ro["id"].toString();
         r.text = textStyleFromJson(ro["textStyle"].toObject());
         if (!r.id.isEmpty()) textResources.append(r);
+    }
+
+    const QJsonArray mesaArr = o["mesas"].toArray();
+    for (const QJsonValue& v : mesaArr) {
+        MesaComposition m = mesaFromJson(v.toObject());
+        if (!m.id.isEmpty()) mesas.append(m);
     }
 }
