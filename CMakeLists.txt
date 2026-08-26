@@ -60,6 +60,9 @@ set(SOURCES
     src/ui/MixerWidget.cpp
     src/ui/TitleBar.cpp
     src/ui/MesaWidget.cpp
+    src/ui/MesaHitTest.cpp
+    src/ui/MesaInputHandler.cpp
+    src/ui/MesaOverlayRenderer.cpp
     src/render/MesaRenderer.cpp
     resources.qrc
 )

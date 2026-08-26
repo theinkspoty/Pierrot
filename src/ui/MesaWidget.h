@@ -10,6 +10,7 @@
 #include <QTimer>
 #include <QHash>
 #include <QSize>
+#include <QElapsedTimer>
 #include "models/Project.h"
 #include "render/MesaRenderer.h"
 
@@ -27,8 +28,6 @@ public:
     void setPlayheadPosition(double timeSec) {
         if (!qFuzzyCompare(m_playheadTime, timeSec)) {
             m_playheadTime = timeSec;
-            m_canvasCache = QImage();
-            m_canvasCacheTime = -1.0;
             update();
         }
     }
@@ -97,6 +96,16 @@ private:
     void drawLayerList(QPainter& p);
     void drawPropertyPanel(QPainter& p);
     int propPanelHeight() const { return 36; }
+    void fitToContent();
+    void throttledUpdate();  // máx ~60fps durante drag
+
+    // Cache de tracks (evita alloc por frame)
+    mutable QVector<Track*> m_cachedTracks;
+    mutable QString m_cachedMesaId;
+    mutable qint64 m_cachedTracksVersion = 0;
+
+    // Throttle de updates durante drag (máx ~60fps)
+    QElapsedTimer m_lastUpdateTimer;
 
     Project* m_project = nullptr;
     QString m_mesaId;
@@ -150,18 +159,10 @@ private:
 
     // Renderer (decodifica e compõe frames reais)
     MesaRenderer m_renderer;
-    QImage m_canvasCache;
-    double m_canvasCacheTime = -1.0;
 
-    // Cache base (composição sem a camada sendo arrastada) + id da camada
-    // omitida — durante um drag, re-render só a camada arrastada por cima.
-    QImage m_baseCache;
-    double m_baseCacheTime = -1.0;
-    QString m_baseCacheSkipId;
+    // Drag: id da camada sendo arrastada (skip no render principal)
     QString m_dragTrackId;
     int m_dragTrackIndex = -1;
-    MesaRenderer::LayerPrep m_dragPrep;
-    bool m_dragPrepValid = false;
 
     // Botão "Criar Mesa" (estado vazio)
     QRect m_createMesaBtnRect;

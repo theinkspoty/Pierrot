@@ -92,8 +92,8 @@ private:
     void stopAudio();
     void updateMixAudio(double t, bool reseek);
     const Clip* clipAt(double t) const;
-    // Se o clipe ativo pertence a um grupo Mesa, renderiza a composição e
-    // devolve true preenchendo m_frameFull/m_frame (sem a transform de câmera).
+    // Se o clipe ativo pertence a um grupo Mesa, renderiza a composição
+    // (com transform de câmera) e devolve true preenchendo m_frameFull/m_frame.
     bool tryRenderMesa(const Clip* clip);
     Project* m_project = nullptr;
     double m_playhead = 0.0;

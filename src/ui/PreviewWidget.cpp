@@ -1503,23 +1503,9 @@ bool PreviewWidget::tryRenderMesa(const Clip* clip) {
     const MesaComposition* mc = m_project->findMesa(g->mesaId);
     if (!mc) return false;
 
-    // Renderiza o canvas (layers) sem a transform de câmera.
-    const QImage canvas = m_mesaRenderer.renderCanvas(*mc, *m_project, m_playhead);
-    if (canvas.isNull()) return false;
-
-    // Enquadra o canvas no projeto (letterbox) e usa como quadro do preview.
-    const double pw = m_project->width;
-    const double ph = m_project->height;
-    const double fit = qMin(pw / canvas.width(), ph / canvas.height());
-    const int w = qMax(1, (int)std::lround(canvas.width() * fit));
-    const int h = qMax(1, (int)std::lround(canvas.height() * fit));
-    QImage out(pw, ph, QImage::Format_ARGB32);
-    out.fill(Qt::black);
-    {
-        QPainter p(&out);
-        p.setRenderHint(QPainter::SmoothPixmapTransform);
-        p.drawImage(QRect((pw - w) / 2, (ph - h) / 2, w, h), canvas);
-    }
+    // Renderiza o canvas + transform de câmera (saída no tamanho do projeto).
+    const QImage out = m_mesaRenderer.render(*mc, *m_project, m_playhead, clip->pos);
+    if (out.isNull()) return false;
 
     {
         QMutexLocker l(&m_frameMutex);

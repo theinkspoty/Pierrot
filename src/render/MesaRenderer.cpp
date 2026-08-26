@@ -24,6 +24,10 @@ void MesaRenderer::clearCache() {
 }
 
 QImage MesaRenderer::decodeFrame(const QString& filePath, double time, int maxW) {
+    if (m_frameCache.key.path == filePath && qFuzzyCompare(m_frameCache.key.time, time)
+        && m_frameCache.key.maxW == maxW && !m_frameCache.frame.isNull()) {
+        return m_frameCache.frame;
+    }
     FFmpegDecoder* dec = m_decoders.value(filePath);
     if (!dec) {
         dec = new FFmpegDecoder();
@@ -31,6 +35,7 @@ QImage MesaRenderer::decodeFrame(const QString& filePath, double time, int maxW)
         m_decoders.insert(filePath, dec);
     }
     QImage frame = dec->frameAt(time, maxW);
+    m_frameCache = { { filePath, time, maxW }, frame };
     return frame;
 }
 
@@ -157,20 +162,32 @@ void MesaRenderer::drawTrackImage(QPainter& acc, const LayerPrep& prep) {
     const double drawW = prep.drawW;
     const double drawH = prep.drawH;
 
-    if (prep.opacity < 1.0) {
-        QImage scaled = prep.frame.scaled(qMax(1, (int)drawW), qMax(1, (int)drawH),
-                                          Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
-        QPainter ip(&scaled);
-        ip.setCompositionMode(QPainter::CompositionMode_DestinationIn);
-        ip.fillRect(scaled.rect(), QColor(0, 0, 0, (int)(prep.opacity * 255)));
-        ip.end();
-        acc.drawImage(-drawW / 2, -drawH / 2, scaled);
-    } else {
-        acc.drawImage(-drawW / 2, -drawH / 2,
-                     prep.frame.scaled(qMax(1, (int)drawW), qMax(1, (int)drawH),
-                                       Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
-    }
+    acc.setRenderHint(QPainter::SmoothPixmapTransform);
+    if (prep.opacity < 1.0)
+        acc.setOpacity(prep.opacity);
+    acc.drawImage(QRectF(-drawW / 2, -drawH / 2, drawW, drawH), prep.frame);
     acc.restore();
+}
+
+void MesaRenderer::renderToPainter(QPainter& painter, const MesaComposition& mesa,
+                                   const Project& project, double relTime,
+                                   const QString* skipTrackId) {
+    for (const QString& tid : mesa.trackIds) {
+        if (skipTrackId && *skipTrackId == tid) continue;
+
+        const Track* track = nullptr;
+        for (const Track& tr : project.videoTracks) {
+            if (tr.id == tid) { track = &tr; break; }
+        }
+        if (!track) {
+            for (const Track& tr : project.audioTracks) {
+                if (tr.id == tid) { track = &tr; break; }
+            }
+        }
+        if (!track) continue;
+
+        drawTrackLayer(painter, *track, mesa, project, relTime);
+    }
 }
 
 QImage MesaRenderer::renderCanvas(const MesaComposition& mesa, const Project& project,

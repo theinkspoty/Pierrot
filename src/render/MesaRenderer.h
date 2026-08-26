@@ -50,6 +50,13 @@ public:
     // e opacidade). Assume o painter já posicionado no sistema de canvas.
     void drawTrackImage(QPainter& acc, const LayerPrep& prep);
 
+    // Desenha todas as layers diretamente num painter já em canvas-space.
+    // Evita criar QImage intermediária — ideal para canvas infinito.
+    // skipTrackId: omitir essa track (para drag em tempo real).
+    void renderToPainter(QPainter& painter, const MesaComposition& mesa,
+                         const Project& project, double relTime,
+                         const QString* skipTrackId = nullptr);
+
     void clearCache();
 
 private:
@@ -64,4 +71,9 @@ private:
                                 const Project& project, double relTime);
 
     QHash<QString, FFmpegDecoder*> m_decoders;
+
+    // Cache de frames decodificados (evita re-decode no mesmo timestamp)
+    struct FrameKey { QString path; double time; int maxW; };
+    struct FrameCache { FrameKey key; QImage frame; };
+    mutable FrameCache m_frameCache;
 };
