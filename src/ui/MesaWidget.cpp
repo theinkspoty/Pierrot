@@ -68,6 +68,44 @@ QVector<Track*> MesaWidget::mesaTracks() const {
 // Keyframes
 // ═══════════════════════════════════════════════════════════════════════
 
+double MesaWidget::mesaDuration() const {
+    MesaComposition* mc = currentMesa();
+    if (!mc) return 10.0;
+    double maxT = 0.0;
+    auto checkMax = [&](const QVector<Keyframe>& vks) {
+        for (const Keyframe& k : vks)
+            maxT = qMax(maxT, k.time);
+    };
+    checkMax(mc->kfCamX); checkMax(mc->kfCamY);
+    checkMax(mc->kfCamZoom); checkMax(mc->kfCamRotation);
+    for (const QString& tid : mc->trackIds) {
+        Track* t = findTrack(tid);
+        if (!t) continue;
+        checkMax(t->kfMesaX); checkMax(t->kfMesaY);
+        checkMax(t->kfMesaScaleX); checkMax(t->kfMesaScaleY);
+        checkMax(t->kfMesaRotation); checkMax(t->kfMesaOpacity);
+        checkMax(t->kfMesaAnchorX); checkMax(t->kfMesaAnchorY);
+    }
+    return qMax(5.0, maxT + 2.0);
+}
+
+int MesaWidget::timeToX(double t, int rulerW) const {
+    const double dur = mesaDuration();
+    const double pps = qMax(20.0, (rulerW - 20.0) / dur);
+    return 10 + (int)qRound(t * pps);
+}
+
+double MesaWidget::xToTime(int x, int rulerW) const {
+    const double dur = mesaDuration();
+    const double pps = qMax(20.0, (rulerW - 20.0) / dur);
+    return qMax(0.0, (x - 10.0) / pps);
+}
+
+bool MesaWidget::isInMiniTimeline(const QPoint& p) const {
+    const int tlY = height() - propPanelHeight() - 16 - miniTimelineHeight();
+    return p.y() >= tlY && p.y() < tlY + miniTimelineHeight();
+}
+
 void MesaWidget::ensureKeyframesAt(double timeSec) {
     MesaComposition* mc = currentMesa();
     if (!mc) return;
@@ -108,6 +146,140 @@ void MesaWidget::writeAllKeyframes() {
         upsert(t->kfMesaOpacity, t->mesaOpacity);
         upsert(t->kfMesaAnchorX, t->mesaAnchorX);
         upsert(t->kfMesaAnchorY, t->mesaAnchorY);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Mini-timeline (régua de tempo + keyframes + playhead)
+// ═══════════════════════════════════════════════════════════════════════
+
+static double niceStepMini(double raw) {
+    if (raw <= 0) return 1.0;
+    const double mag = qPow(10.0, qFloor(qLn(raw) / qLn(10.0)));
+    const double norm = raw / mag;
+    double nice;
+    if (norm < 1.5)      nice = 1.0;
+    else if (norm < 3.0) nice = 2.0;
+    else if (norm < 7.0) nice = 5.0;
+    else                 nice = 10.0;
+    return nice * mag;
+}
+
+void MesaWidget::drawMiniTimeline(QPainter& p) {
+    MesaComposition* mc = currentMesa();
+    if (!mc) return;
+
+    const int tlH = miniTimelineHeight();
+    const int propH = propPanelHeight();
+    const int infoH = 16;
+    const int tlY = height() - propH - infoH - tlH;
+    const int rulerW = width();
+    m_miniTimelineRect = QRect(0, tlY, rulerW, tlH);
+
+    // Fundo
+    p.fillRect(m_miniTimelineRect, QColor(30, 30, 33));
+
+    // Separador superior
+    p.setPen(QPen(QColor(60, 60, 64), 1));
+    p.drawLine(0, tlY, rulerW, tlY);
+
+    const double dur = mesaDuration();
+    const double pps = qMax(20.0, (rulerW - 20.0) / dur);
+    const int midY = tlY + tlH / 2;
+
+    // ── Régua de tempo (ticks) ──
+    const double tStep = niceStepMini(dur / 8.0);
+    p.setPen(QColor(90, 90, 96));
+    QFont tf = p.font();
+    tf.setPointSizeF(7);
+    p.setFont(tf);
+    for (double t = 0.0; t <= dur + 1e-9; t += tStep) {
+        const int x = 10 + (int)qRound(t * pps);
+        if (x > rulerW - 5) break;
+        // Tick maior
+        p.drawLine(x, tlY + 2, x, tlY + 10);
+        // Label
+        p.setPen(QColor(130, 130, 140));
+        QString label;
+        if (dur <= 10.0)
+            label = QString::number(t, 'f', 1) + "s";
+        else
+            label = QString::number(t, 'g', 3) + "s";
+        p.drawText(x + 2, tlY + 10, label);
+        p.setPen(QColor(90, 90, 96));
+        // Ticks menores
+        const double subStep = tStep / 4.0;
+        for (int s = 1; s < 4; ++s) {
+            const int sx = 10 + (int)qRound((t + s * subStep) * pps);
+            if (sx > rulerW - 5) break;
+            p.drawLine(sx, tlY + 5, sx, tlY + 10);
+        }
+    }
+
+    // ── Keyframe diamonds ──
+    // Camera keyframes
+    auto drawKfDiamonds = [&](const QVector<Keyframe>& vks, const QColor& col) {
+        p.setPen(Qt::NoPen);
+        p.setBrush(col);
+        for (const Keyframe& k : vks) {
+            const int x = 10 + (int)qRound(k.time * pps);
+            if (x < 5 || x > rulerW - 5) continue;
+            const double sz = 4.0;
+            const QPolygonF diamond = QPolygonF()
+                << QPointF(x, midY - sz) << QPointF(x + sz, midY)
+                << QPointF(x, midY + sz) << QPointF(x - sz, midY);
+            p.drawPolygon(diamond);
+        }
+    };
+
+    // Camera keyframes (cor ciano)
+    drawKfDiamonds(mc->kfCamX, QColor(80, 200, 255));
+    drawKfDiamonds(mc->kfCamY, QColor(80, 200, 255));
+    drawKfDiamonds(mc->kfCamZoom, QColor(80, 200, 255));
+    drawKfDiamonds(mc->kfCamRotation, QColor(80, 200, 255));
+
+    // Track keyframes (cor da track ou amarela se agrupada)
+    const QVector<Track*> tracks = mesaTracks();
+    for (int i = 0; i < tracks.size(); ++i) {
+        Track* t = tracks[i];
+        QColor col;
+        const TrackGroup* tg = t->groupId.isEmpty() ? nullptr : m_project->findGroup(t->groupId);
+        if (tg && tg->mesaId == m_mesaId)
+            col = QColor(220, 180, 60);  // amarelo Premier-style
+        else
+            col = QColor::fromHsv((i * 47 + 180) % 360, 60, 80);
+
+        auto draw = [&](const QVector<Keyframe>& vks) {
+            p.setPen(Qt::NoPen);
+            p.setBrush(col);
+            for (const Keyframe& k : vks) {
+                const int x = 10 + (int)qRound(k.time * pps);
+                if (x < 5 || x > rulerW - 5) continue;
+                const double sz = 3.5;
+                const QPolygonF diamond = QPolygonF()
+                    << QPointF(x, midY - sz) << QPointF(x + sz, midY)
+                    << QPointF(x, midY + sz) << QPointF(x - sz, midY);
+                p.drawPolygon(diamond);
+            }
+        };
+        draw(t->kfMesaX); draw(t->kfMesaY);
+        draw(t->kfMesaScaleX); draw(t->kfMesaScaleY);
+        draw(t->kfMesaRotation); draw(t->kfMesaOpacity);
+        draw(t->kfMesaAnchorX); draw(t->kfMesaAnchorY);
+    }
+
+    // ── Playhead (linha vertical) ──
+    const int phX = 10 + (int)qRound(m_playheadTime * pps);
+    if (phX >= 5 && phX <= rulerW - 5) {
+        p.setPen(QPen(QColor(255, 80, 80), 2));
+        p.drawLine(phX, tlY + 1, phX, tlY + tlH - 1);
+        // Cabeça do playhead
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(255, 80, 80));
+        const QPolygonF head = QPolygonF()
+            << QPointF(phX - 5, tlY + 1) << QPointF(phX + 5, tlY + 1)
+            << QPointF(phX, tlY + 8);
+        p.drawPolygon(head);
     }
 }
 
@@ -369,6 +541,7 @@ void MesaWidget::paintEvent(QPaintEvent*) {
 
     // ── UI overlays ──
     if (m_showLayerList) drawLayerList(p);
+    drawMiniTimeline(p);
     drawPropertyPanel(p);
 
     // ── Header bar ──
@@ -393,7 +566,7 @@ void MesaWidget::paintEvent(QPaintEvent*) {
     infof.setPointSizeF(7);
     p.setFont(infof);
     p.setPen(QColor(100, 100, 100));
-    const int infoY = height() - propPanelHeight() - 16;
+    const int infoY = height() - propPanelHeight() - 16 - miniTimelineHeight();
     p.drawText(QRect(6, infoY, width() - 12, 14), Qt::AlignLeft | Qt::AlignVCenter,
                QStringLiteral("Zoom %1%  |  %2\xd7%3  |  %4 layers  |  G: snap %5  |  L: layers")
                    .arg((int)(m_zoom * 100)).arg(mc->canvasW).arg(mc->canvasH)
@@ -410,7 +583,7 @@ void MesaWidget::fitToContent() {
     if (!mc || width() <= 0 || height() <= 0) return;
     const double pad = 40.0;
     const double availW = width() - pad * 2;
-    const double availH = height() - pad * 2 - propPanelHeight() - 22;
+    const double availH = height() - pad * 2 - propPanelHeight() - 22 - miniTimelineHeight();
     if (availW <= 0 || availH <= 0) return;
     const double sx = availW / mc->canvasW;
     const double sy = availH / mc->canvasH;

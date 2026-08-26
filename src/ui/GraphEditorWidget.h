@@ -42,7 +42,21 @@ enum GraphProp {
     GPropScaleX,
     GPropScaleY,
     GPropAnchorX,
-    GPropAnchorY
+    GPropAnchorY,
+    // Mesa track properties
+    GPropMesaX,
+    GPropMesaY,
+    GPropMesaScaleX,
+    GPropMesaScaleY,
+    GPropMesaRotation,
+    GPropMesaOpacity,
+    GPropMesaAnchorX,
+    GPropMesaAnchorY,
+    // Mesa camera properties
+    GPropCamX,
+    GPropCamY,
+    GPropCamZoom,
+    GPropCamRotation
 };
 
 // Gráfico da propriedade selecionada: curva, keyframes (com glifos por
@@ -52,6 +66,8 @@ class GraphCanvas : public QWidget {
 public:
     explicit GraphCanvas(QWidget* parent = nullptr);
     void setData(Clip* clip, GraphProp prop, double playhead, double fps);
+    void setMesaData(Track* track, GraphProp prop, double playhead, double fps);
+    void setCamData(MesaComposition* mc, GraphProp prop, double playhead, double fps);
     QVector<Keyframe>* keys() const;
     double baseValue() const;
     void valueRange(double* lo, double* hi) const;
@@ -72,6 +88,7 @@ public:
     void setZoom(double t0, double t1);
     void setTool(CanvasTool t) { m_tool = t; emit toolChanged(t); update(); }
     void setPlayhead(double t) { m_playhead = t; update(); }
+    bool hasData() const { return m_clip || m_mesaMode || m_camMode; }
 public slots:
     void resetZoom();
     void setSnap(bool on);
@@ -114,6 +131,10 @@ private:
     void marqueeSelect(const QRect& r, bool add);
 
     Clip* m_clip = nullptr;
+    Track* m_mesaTrack = nullptr;
+    MesaComposition* m_mesaCamera = nullptr;
+    bool m_mesaMode = false;
+    bool m_camMode = false;
     GraphProp m_prop = GPropOpacity;
     double m_playhead = 0.0;
     double m_fps = 30.0;
@@ -149,6 +170,8 @@ class KeyframeStrip : public QWidget {
 public:
     explicit KeyframeStrip(QWidget* parent = nullptr);
     void setData(Clip* clip, GraphProp prop, double fps);
+    void setMesaData(Track* track, GraphProp prop, double fps);
+    void setCamData(MesaComposition* mc, GraphProp prop, double fps);
     void setPlayhead(double t);
     QSize sizeHint() const override;
 signals:
@@ -168,6 +191,10 @@ private:
     int hitKey(const QPoint& p) const;
 
     Clip* m_clip = nullptr;
+    Track* m_mesaTrack = nullptr;
+    MesaComposition* m_mesaCamera = nullptr;
+    bool m_mesaMode = false;
+    bool m_camMode = false;
     GraphProp m_prop = GPropOpacity;
     double m_playhead = 0.0;
     double m_fps = 30.0;
@@ -188,6 +215,8 @@ public:
     void setActive(bool on);
     void setValueText(const QString& s);
     void setStripData(Clip* clip, double fps);
+    void setStripMesaData(Track* track, double fps);
+    void setStripCamData(MesaComposition* mc, double fps);
     void setStripPlayhead(double t);
     void setExpanded(bool on);
     KeyframeStrip* strip() const { return m_strip; }
@@ -225,6 +254,8 @@ public:
 
     void setProject(Project* p);
     void setClipId(const QString& id);
+    void setMesaTrack(Track* track);
+    void setMesaCamera(MesaComposition* mc);
     void setPlayhead(double t);
     // Seleciona a curva a exibir (usado também pelo pancrop ao animar).
     void setProperty(GraphProp p);
@@ -244,9 +275,15 @@ private:
     void toggleAnimation(GraphProp p);
     void toggleKeyAtPlayhead(GraphProp p);
     void jumpKeyframe(GraphProp p, int dir);
+    bool isMesaProp(GraphProp p) const;
+    bool isCamProp(GraphProp p) const;
 
     Project* m_project = nullptr;
     QString m_clipId;
+    Track* m_mesaTrack = nullptr;
+    MesaComposition* m_mesaCamera = nullptr;
+    bool m_mesaMode = false;
+    bool m_camMode = false;
     double m_playhead = 0.0;
     GraphProp m_prop = GPropOpacity;
     GraphCanvas* m_canvas = nullptr;

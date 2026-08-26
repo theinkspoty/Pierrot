@@ -4,7 +4,6 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "MesaWidget.h"
-#include <QPainter>
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QKeyEvent>
@@ -32,6 +31,17 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
     }
 
     if (e->button() != Qt::LeftButton) return;
+
+    // Mini-timeline scrub
+    if (isInMiniTimeline(e->pos())) {
+        m_timelineDrag = true;
+        const int rulerW = width();
+        const double t = xToTime(e->pos().x(), rulerW);
+        m_playheadTime = t;
+        emit mesaPlayheadChanged(t);
+        update();
+        return;
+    }
 
     // Layer list flutuante
     if (m_showLayerList && m_layerListRect.contains(e->pos())) {
@@ -64,6 +74,7 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
         const double relC = qMax(0.0, m_playheadTime);
         m_resizeStartZoom = kfValue(mc->kfCamZoom, mc->camZoom, relC);
         m_resizeStartPos = e->position();
+        emit mesaCameraSelected(mc);
         return;
     }
 
@@ -74,6 +85,7 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
         m_cameraDragStart = e->position();
         m_camDragStartX = kfValue(mc->kfCamX, mc->camX, rel);
         m_camDragStartY = kfValue(mc->kfCamY, mc->camY, rel);
+        emit mesaCameraSelected(mc);
         return;
     }
 
@@ -86,6 +98,7 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
 
         QVector<Track*> tracks = mesaTracks();
         Track* t = tracks[hitIdx];
+        emit mesaTrackSelected(t);
         const double rel = qMax(0.0, m_playheadTime);
 
         m_dragTrackId = t->id;
@@ -128,6 +141,8 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
 
     // Nada clicado → desselecionar
     m_selectedIdx = -1;
+    emit mesaTrackSelected(nullptr);
+    emit mesaCameraSelected(nullptr);
     update();
 }
 
@@ -140,6 +155,15 @@ void MesaWidget::mouseMoveEvent(QMouseEvent* e) {
     if (m_draggingCanvas) {
         m_offset += e->position() - m_canvasDragStart;
         m_canvasDragStart = e->position();
+        update();
+        return;
+    }
+
+    if (m_timelineDrag) {
+        const int rulerW = width();
+        const double t = xToTime(e->pos().x(), rulerW);
+        m_playheadTime = t;
+        emit mesaPlayheadChanged(t);
         update();
         return;
     }
@@ -211,19 +235,23 @@ void MesaWidget::mouseMoveEvent(QMouseEvent* e) {
     }
 
     // Cursor feedback
-    if (m_transformOp == TNone && !m_draggingCamera && !m_resizingCamera && !m_draggingCanvas) {
-        int hitIdx = -1;
-        HitZone hz = hitTest(e->position(), hitIdx);
-        switch (hz) {
-            case HitCornerTL: case HitCornerBR: setCursor(Qt::SizeFDiagCursor); break;
-            case HitCornerTR: case HitCornerBL: setCursor(Qt::SizeBDiagCursor); break;
-            case HitEdgeT: case HitEdgeB: setCursor(Qt::SizeVerCursor); break;
-            case HitEdgeL: case HitEdgeR: setCursor(Qt::SizeHorCursor); break;
-            case HitRotate: setCursor(Qt::CrossCursor); break;
-            case HitBody: setCursor(Qt::SizeAllCursor); break;
-            case HitCamera: setCursor(Qt::SizeAllCursor); break;
-            case HitCameraCorner: setCursor(Qt::SizeFDiagCursor); break;
-            default: setCursor(Qt::ArrowCursor); break;
+    if (m_transformOp == TNone && !m_draggingCamera && !m_resizingCamera && !m_draggingCanvas && !m_timelineDrag) {
+        if (isInMiniTimeline(e->pos())) {
+            setCursor(Qt::SizeHorCursor);
+        } else {
+            int hitIdx = -1;
+            HitZone hz = hitTest(e->position(), hitIdx);
+            switch (hz) {
+                case HitCornerTL: case HitCornerBR: setCursor(Qt::SizeFDiagCursor); break;
+                case HitCornerTR: case HitCornerBL: setCursor(Qt::SizeBDiagCursor); break;
+                case HitEdgeT: case HitEdgeB: setCursor(Qt::SizeVerCursor); break;
+                case HitEdgeL: case HitEdgeR: setCursor(Qt::SizeHorCursor); break;
+                case HitRotate: setCursor(Qt::CrossCursor); break;
+                case HitBody: setCursor(Qt::SizeAllCursor); break;
+                case HitCamera: setCursor(Qt::SizeAllCursor); break;
+                case HitCameraCorner: setCursor(Qt::SizeFDiagCursor); break;
+                default: setCursor(Qt::ArrowCursor); break;
+            }
         }
     }
 }
@@ -243,6 +271,7 @@ void MesaWidget::mouseReleaseEvent(QMouseEvent*) {
     m_resizingCamera = false;
     m_resizeCorner = -1;
     m_draggingCanvas = false;
+    m_timelineDrag = false;
     m_dragTrackId.clear();
     m_dragTrackIndex = -1;
     setCursor(Qt::ArrowCursor);

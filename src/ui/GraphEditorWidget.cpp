@@ -72,6 +72,18 @@ QString propName(GraphProp p) {
         case GPropCropB:     return QStringLiteral("Crop Bottom");
         case GPropAnchorX:   return QStringLiteral("Anchor X");
         case GPropAnchorY:   return QStringLiteral("Anchor Y");
+        case GPropMesaX:     return QStringLiteral("Mesa X");
+        case GPropMesaY:     return QStringLiteral("Mesa Y");
+        case GPropMesaScaleX:    return QStringLiteral("Mesa Scale X");
+        case GPropMesaScaleY:    return QStringLiteral("Mesa Scale Y");
+        case GPropMesaRotation:  return QStringLiteral("Mesa Rotation");
+        case GPropMesaOpacity:   return QStringLiteral("Mesa Opacity");
+        case GPropMesaAnchorX:   return QStringLiteral("Mesa Anchor X");
+        case GPropMesaAnchorY:   return QStringLiteral("Mesa Anchor Y");
+        case GPropCamX:          return QStringLiteral("Camera X");
+        case GPropCamY:          return QStringLiteral("Camera Y");
+        case GPropCamZoom:       return QStringLiteral("Camera Zoom");
+        case GPropCamRotation:   return QStringLiteral("Camera Rotation");
     }
     return QString();
 }
@@ -125,6 +137,63 @@ double baseFor(Clip* c, GraphProp p) {
         case GPropCropB:    return c->cropB;
         case GPropAnchorX:  return c->anchorX;
         case GPropAnchorY:  return c->anchorY;
+        default: return 0.0;
+    }
+    return 0.0;
+}
+
+QVector<Keyframe>* keysForTrack(Track* t, GraphProp p) {
+    if (!t) return nullptr;
+    switch (p) {
+        case GPropMesaX:       return &t->kfMesaX;
+        case GPropMesaY:       return &t->kfMesaY;
+        case GPropMesaScaleX:  return &t->kfMesaScaleX;
+        case GPropMesaScaleY:  return &t->kfMesaScaleY;
+        case GPropMesaRotation: return &t->kfMesaRotation;
+        case GPropMesaOpacity:  return &t->kfMesaOpacity;
+        case GPropMesaAnchorX:  return &t->kfMesaAnchorX;
+        case GPropMesaAnchorY:  return &t->kfMesaAnchorY;
+        default: return nullptr;
+    }
+    return nullptr;
+}
+
+double baseForTrack(Track* t, GraphProp p) {
+    if (!t) return 0.0;
+    switch (p) {
+        case GPropMesaX:       return t->mesaX;
+        case GPropMesaY:       return t->mesaY;
+        case GPropMesaScaleX:  return t->mesaScaleX;
+        case GPropMesaScaleY:  return t->mesaScaleY;
+        case GPropMesaRotation: return t->mesaRotation;
+        case GPropMesaOpacity:  return t->mesaOpacity;
+        case GPropMesaAnchorX:  return t->mesaAnchorX;
+        case GPropMesaAnchorY:  return t->mesaAnchorY;
+        default: return 0.0;
+    }
+    return 0.0;
+}
+
+QVector<Keyframe>* keysForCamera(MesaComposition* mc, GraphProp p) {
+    if (!mc) return nullptr;
+    switch (p) {
+        case GPropCamX:        return &mc->kfCamX;
+        case GPropCamY:        return &mc->kfCamY;
+        case GPropCamZoom:     return &mc->kfCamZoom;
+        case GPropCamRotation: return &mc->kfCamRotation;
+        default: return nullptr;
+    }
+    return nullptr;
+}
+
+double baseForCamera(MesaComposition* mc, GraphProp p) {
+    if (!mc) return 0.0;
+    switch (p) {
+        case GPropCamX:        return mc->camX;
+        case GPropCamY:        return mc->camY;
+        case GPropCamZoom:     return mc->camZoom;
+        case GPropCamRotation: return mc->camRotation;
+        default: return 0.0;
     }
     return 0.0;
 }
@@ -144,6 +213,18 @@ void rangeFor(GraphProp p, double* lo, double* hi) {
             *lo = 0.0; *hi = 1.0; return;
         case GPropAnchorX: case GPropAnchorY:
             *lo = -1.0; *hi = 1.0; return;
+        case GPropMesaX: *lo = -2000.0; *hi = 2000.0; return;
+        case GPropMesaY: *lo = -2000.0; *hi = 2000.0; return;
+        case GPropMesaScaleX: case GPropMesaScaleY:
+            *lo = 0.01; *hi = 10.0; return;
+        case GPropMesaRotation: *lo = -360.0; *hi = 360.0; return;
+        case GPropMesaOpacity: *lo = 0.0; *hi = 1.0; return;
+        case GPropMesaAnchorX: case GPropMesaAnchorY:
+            *lo = -1000.0; *hi = 1000.0; return;
+        case GPropCamX: *lo = -2000.0; *hi = 2000.0; return;
+        case GPropCamY: *lo = -2000.0; *hi = 2000.0; return;
+        case GPropCamZoom: *lo = 0.05; *hi = 20.0; return;
+        case GPropCamRotation: *lo = -360.0; *hi = 360.0; return;
     }
     *lo = 0.0; *hi = 1.0;
 }
@@ -285,12 +366,64 @@ GraphCanvas::GraphCanvas(QWidget* parent) : QWidget(parent) {
 
 void GraphCanvas::setData(Clip* clip, GraphProp prop, double playhead, double fps) {
     m_clip = clip;
+    m_mesaTrack = nullptr;
+    m_mesaMode = false;
     m_prop = prop;
     m_playhead = playhead;
     m_fps = (fps > 1.0) ? fps : 30.0;
-    // Garante a ordem por tempo ao carregar/refrescar (defensivo contra
-    // keyframes fora de ordem vindos de outras edições).
-    if (m_clip && keys()) sortKeys();
+    if (hasData() && keys()) sortKeys();
+    valueRange(&m_loProp, &m_hiProp);
+    fitValueRange();
+    m_dragKey = -1;
+    m_dragHandle = -1;
+    m_hoverKey = -1;
+    m_curveNewKey = false;
+    m_playheadDrag = false;
+    m_undoPushed = false;
+    m_selKeys.clear();
+    m_selOrig.clear();
+    m_marqueeActive = false;
+    m_t0 = 0.0;
+    m_t1 = -1.0;
+    update();
+}
+
+void GraphCanvas::setMesaData(Track* track, GraphProp prop, double playhead, double fps) {
+    m_clip = nullptr;
+    m_mesaTrack = track;
+    m_mesaCamera = nullptr;
+    m_mesaMode = (track != nullptr);
+    m_camMode = false;
+    m_prop = prop;
+    m_playhead = playhead;
+    m_fps = (fps > 1.0) ? fps : 30.0;
+    if (m_mesaTrack && keys()) sortKeys();
+    valueRange(&m_loProp, &m_hiProp);
+    fitValueRange();
+    m_dragKey = -1;
+    m_dragHandle = -1;
+    m_hoverKey = -1;
+    m_curveNewKey = false;
+    m_playheadDrag = false;
+    m_undoPushed = false;
+    m_selKeys.clear();
+    m_selOrig.clear();
+    m_marqueeActive = false;
+    m_t0 = 0.0;
+    m_t1 = -1.0;
+    update();
+}
+
+void GraphCanvas::setCamData(MesaComposition* mc, GraphProp prop, double playhead, double fps) {
+    m_clip = nullptr;
+    m_mesaTrack = nullptr;
+    m_mesaCamera = mc;
+    m_mesaMode = false;
+    m_camMode = (mc != nullptr);
+    m_prop = prop;
+    m_playhead = playhead;
+    m_fps = (fps > 1.0) ? fps : 30.0;
+    if (m_mesaCamera && keys()) sortKeys();
     valueRange(&m_loProp, &m_hiProp);
     fitValueRange();
     m_dragKey = -1;
@@ -308,10 +441,18 @@ void GraphCanvas::setData(Clip* clip, GraphProp prop, double playhead, double fp
 }
 
 QVector<Keyframe>* GraphCanvas::keys() const {
+    if (m_camMode && m_mesaCamera)
+        return keysForCamera(m_mesaCamera, m_prop);
+    if (m_mesaMode && m_mesaTrack)
+        return keysForTrack(m_mesaTrack, m_prop);
     return keysFor(m_clip, m_prop);
 }
 
 double GraphCanvas::baseValue() const {
+    if (m_camMode && m_mesaCamera)
+        return baseForCamera(m_mesaCamera, m_prop);
+    if (m_mesaMode && m_mesaTrack)
+        return baseForTrack(m_mesaTrack, m_prop);
     return baseFor(m_clip, m_prop);
 }
 
@@ -352,6 +493,15 @@ double GraphCanvas::timeStart() const {
 }
 
 double GraphCanvas::timeRange() const {
+    if (m_mesaMode || m_camMode) {
+        // Mesa tracks: use the time range from keyframes
+        const QVector<Keyframe>* ks = keys();
+        double maxT = 1.0;
+        if (ks) for (const Keyframe& k : *ks) maxT = qMax(maxT, k.time);
+        const double dur = maxT + 2.0;
+        if (m_t1 > m_t0) return std::clamp(m_t1 - m_t0, 0.001, dur);
+        return dur;
+    }
     const double dur = m_clip ? std::max(0.05, m_clip->dur) : 1.0;
     if (m_t1 > m_t0) return std::clamp(m_t1 - m_t0, 0.001, dur);
     return dur;
@@ -423,7 +573,7 @@ void GraphCanvas::sortKeys() {
 }
 
 int GraphCanvas::addKeyframe(double time, double value) {
-    if (!m_clip) return -1;
+    if (!hasData()) return -1;
     QVector<Keyframe>& K = *keys();
     for (const Keyframe& k : K)
         if (std::fabs(k.time - time) < 1e-9) return -1;
@@ -506,7 +656,7 @@ void GraphCanvas::setZoom(double t0, double t1) {
 }
 
 void GraphCanvas::dragStripTime(int idx, double t) {
-    if (!m_clip) return;
+    if (!hasData()) return;
     QVector<Keyframe>& K = *keys();
     if (idx < 0 || idx >= K.size()) return;
     m_selKeys = { idx };
@@ -593,10 +743,9 @@ void GraphCanvas::marqueeSelect(const QRect& r, bool add) {
 // Move todos os keyframes selecionados pelo mesmo delta, sem deixar que um
 // cruze um vizinho fora da seleção (nem saia do clipe).
 void GraphCanvas::moveSelected(double dT, double dV, bool snap) {
-    if (!m_clip) return;
     QVector<Keyframe>& K = *keys();
     if (K.isEmpty() || m_selKeys.isEmpty() || m_selOrig.size() != m_selKeys.size()) return;
-    const double dur = std::max(0.05, m_clip->dur);
+    const double dur = (m_mesaMode || m_camMode) ? (timeRange() + timeStart()) : std::max(0.05, m_clip ? m_clip->dur : 1.0);
 
     double minT = 1e18, maxT = -1e18;
     for (const Keyframe& o : m_selOrig) {
@@ -628,7 +777,7 @@ void GraphCanvas::moveSelected(double dT, double dV, bool snap) {
 }
 
 void GraphCanvas::updateHover(const QPoint& p) {
-    const int hk = (m_clip && keys()) ? keyframeHit(p) : -1;
+    const int hk = (hasData() && keys()) ? keyframeHit(p) : -1;
     if (hk == m_hoverKey) return;
     m_hoverKey = hk;
     if (m_hoverKey >= 0)
@@ -672,8 +821,9 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
         p.drawLine(x, rr.bottom() - 3, x, rr.bottom());
         p.drawText(x + 2, rr.bottom() - 3, fmtRuler(t, range));
     }
-    if (m_clip) {
-        const double rel = std::clamp(m_playhead - m_clip->pos, 0.0, m_clip->dur);
+    if (hasData()) {
+        const double rel = (m_mesaMode || m_camMode) ? std::max(0.0, m_playhead)
+                                      : std::clamp(m_playhead - m_clip->pos, 0.0, m_clip->dur);
         if (rel >= t0 - 1e-9 && rel <= t0 + range + 1e-9) {
             const int x = tToX(rel);
             QFont f = p.font();
@@ -808,7 +958,8 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
     }
 
     // Keyframes com glifos por interpolação.
-    const double relPh = m_clip ? std::clamp(m_playhead - m_clip->pos, 0.0, m_clip->dur) : -1.0;
+    const double relPh = (m_mesaMode || m_camMode) ? std::max(0.0, m_playhead)
+                                    : (m_clip ? std::clamp(m_playhead - m_clip->pos, 0.0, m_clip->dur) : -1.0);
     for (int i = 0; i < ks->size(); ++i) {
         const Keyframe& k = (*ks)[i];
         const QPointF kp(tToX(k.time), vToY(k.value));
@@ -859,8 +1010,9 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
     }
 
     // Linha do playhead no gráfico (varinha), sem faixa de preenchimento.
-    if (m_clip) {
-        const double rel = std::clamp(m_playhead - m_clip->pos, 0.0, m_clip->dur);
+    if (hasData()) {
+        const double rel = (m_mesaMode || m_camMode) ? std::max(0.0, m_playhead)
+                                      : std::clamp(m_playhead - m_clip->pos, 0.0, m_clip->dur);
         if (rel >= timeStart() - 1e-9 && rel <= timeStart() + timeRange() + 1e-9) {
             const int x = tToX(rel);
             p.setPen(QPen(QColor(190, 220, 255, 230), 2));
@@ -871,7 +1023,7 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
 
 void GraphCanvas::mousePressEvent(QMouseEvent* e) {
     setFocus(); // garante foco para o Delete apagar keyframes, não o clipe
-    if (e->button() != Qt::LeftButton || !m_clip) {
+    if (e->button() != Qt::LeftButton || !hasData()) {
         QWidget::mousePressEvent(e);
         return;
     }
@@ -884,7 +1036,9 @@ void GraphCanvas::mousePressEvent(QMouseEvent* e) {
         m_dragHandle = -1;
         m_marqueeActive = false;
         setCursor(Qt::SizeHorCursor);
-        emit keyframeJump(m_clip->pos + snapTime(xToT(e->pos().x())));
+        const double t = (m_mesaMode || m_camMode) ? snapTime(xToT(e->pos().x()))
+                                    : m_clip->pos + snapTime(xToT(e->pos().x()));
+        emit keyframeJump(t);
         e->accept();
         update();
         return;
@@ -947,15 +1101,17 @@ void GraphCanvas::mousePressEvent(QMouseEvent* e) {
     }
     // Perto da linha do playhead (sem keyframe/handle por cima): arrasta a
     // agulha como nas outras janelas.
-    if (m_tool == ToolSelect && m_clip) {
-        const double rel = std::clamp(m_playhead - m_clip->pos, 0.0, m_clip->dur);
+    if (m_tool == ToolSelect && hasData()) {
+        const double rel = (m_mesaMode || m_camMode) ? std::max(0.0, m_playhead)
+                                      : std::clamp(m_playhead - m_clip->pos, 0.0, m_clip->dur);
         if (std::abs(e->pos().x() - tToX(rel)) <= 5) {
             m_playheadDrag = true;
             m_dragKey = -1;
             m_dragHandle = -1;
             m_marqueeActive = false;
             setCursor(Qt::SizeHorCursor);
-            emit keyframeJump(m_clip->pos + snapTime(xToT(e->pos().x())));
+            const double t = (m_mesaMode || m_camMode) ? m_playhead : m_clip->pos + snapTime(xToT(e->pos().x()));
+            emit keyframeJump(t);
             e->accept();
             update();
             return;
@@ -1015,8 +1171,10 @@ void GraphCanvas::mousePressEvent(QMouseEvent* e) {
 void GraphCanvas::mouseMoveEvent(QMouseEvent* e) {
     m_lastPos = e->pos();
     // Arrasto da agulha: faz scrub do playhead pela régua.
-    if (m_playheadDrag && (e->buttons() & Qt::LeftButton) && m_clip) {
-        emit keyframeJump(m_clip->pos + snapTime(xToT(e->pos().x())));
+    if (m_playheadDrag && (e->buttons() & Qt::LeftButton)) {
+        const double t = (m_mesaMode || m_camMode) ? snapTime(xToT(e->pos().x()))
+                                     : (m_clip ? m_clip->pos + snapTime(xToT(e->pos().x())) : 0.0);
+        emit keyframeJump(t);
         e->accept();
         update();
         return;
@@ -1027,7 +1185,7 @@ void GraphCanvas::mouseMoveEvent(QMouseEvent* e) {
         update();
         return;
     }
-    if (m_dragKey < 0 || !m_clip || !(e->buttons() & Qt::LeftButton)) {
+    if (m_dragKey < 0 || !hasData() || !(e->buttons() & Qt::LeftButton)) {
         updateHover(e->pos());
         QWidget::mouseMoveEvent(e);
         return;
@@ -1140,7 +1298,7 @@ void GraphCanvas::mouseReleaseEvent(QMouseEvent* e) {
 }
 
 void GraphCanvas::mouseDoubleClickEvent(QMouseEvent* e) {
-    if (!m_clip || m_tool != ToolSelect) {
+    if (!hasData() || m_tool != ToolSelect) {
         QWidget::mouseDoubleClickEvent(e);
         return;
     }
@@ -1164,7 +1322,7 @@ void GraphCanvas::mouseDoubleClickEvent(QMouseEvent* e) {
         QDialog dlg(this);
         dlg.setWindowTitle(tr("Editar keyframe"));
         auto* tSpin = new QDoubleSpinBox(&dlg);
-        tSpin->setRange(0.0, m_clip->dur);
+        tSpin->setRange(0.0, (m_mesaMode || m_camMode) ? timeRange() : m_clip->dur);
         tSpin->setDecimals(3);
         tSpin->setSingleStep(1.0 / m_fps);
         tSpin->setSuffix(tr(" s"));
@@ -1212,12 +1370,12 @@ void GraphCanvas::mouseDoubleClickEvent(QMouseEvent* e) {
 }
 
 void GraphCanvas::wheelEvent(QWheelEvent* e) {
-    if (!m_clip || !(e->modifiers() & Qt::ControlModifier)) {
+    if (!hasData() || !(e->modifiers() & Qt::ControlModifier)) {
         QWidget::wheelEvent(e);
         return;
     }
     // Ctrl+roda: zoom horizontal (tempo) em torno do cursor.
-    const double dur = std::max(0.05, m_clip->dur);
+    const double dur = (m_mesaMode || m_camMode) ? timeRange() : std::max(0.05, m_clip->dur);
     const double factor = (e->angleDelta().y() > 0) ? 0.75 : 1.0 / 0.75;
     const double range = timeRange();
     const double tc = xToT(e->position().x());
@@ -1356,7 +1514,7 @@ bool GraphCanvas::snapEnabled() const {
 }
 
 void GraphCanvas::contextMenuEvent(QContextMenuEvent* e) {
-    if (!m_clip) { QWidget::contextMenuEvent(e); return; }
+    if (!hasData()) { QWidget::contextMenuEvent(e); return; }
     QVector<Keyframe>& K = *keys();
     const int hit = keyframeHit(e->pos());
     if (hit < 0) {
@@ -1444,6 +1602,36 @@ QSize KeyframeStrip::sizeHint() const {
 
 void KeyframeStrip::setData(Clip* clip, GraphProp prop, double fps) {
     m_clip = clip;
+    m_mesaTrack = nullptr;
+    m_mesaMode = false;
+    m_mesaCamera = nullptr;
+    m_camMode = false;
+    m_prop = prop;
+    m_fps = (fps > 1.0) ? fps : 30.0;
+    m_dragIdx = -1;
+    m_moved = false;
+    update();
+}
+
+void KeyframeStrip::setMesaData(Track* track, GraphProp prop, double fps) {
+    m_clip = nullptr;
+    m_mesaTrack = track;
+    m_mesaCamera = nullptr;
+    m_mesaMode = (track != nullptr);
+    m_camMode = false;
+    m_prop = prop;
+    m_fps = (fps > 1.0) ? fps : 30.0;
+    m_dragIdx = -1;
+    m_moved = false;
+    update();
+}
+
+void KeyframeStrip::setCamData(MesaComposition* mc, GraphProp prop, double fps) {
+    m_clip = nullptr;
+    m_mesaTrack = nullptr;
+    m_mesaCamera = mc;
+    m_mesaMode = false;
+    m_camMode = (mc != nullptr);
     m_prop = prop;
     m_fps = (fps > 1.0) ? fps : 30.0;
     m_dragIdx = -1;
@@ -1457,20 +1645,40 @@ void KeyframeStrip::setPlayhead(double t) {
 }
 
 double KeyframeStrip::xToT(int x) const {
-    const double dur = m_clip ? std::max(0.05, m_clip->dur) : 1.0;
+    double dur;
+    if (m_mesaMode || m_camMode) {
+        const QVector<Keyframe>* ks = m_camMode ? keysForCamera(m_mesaCamera, m_prop)
+                                                : keysForTrack(m_mesaTrack, m_prop);
+        double maxT = 1.0;
+        if (ks) for (const Keyframe& k : *ks) maxT = qMax(maxT, k.time);
+        dur = maxT + 2.0;
+    } else {
+        dur = m_clip ? std::max(0.05, m_clip->dur) : 1.0;
+    }
     const int w = std::max(1, width() - 8);
     const double f = std::clamp((x - 4) / (double)w, 0.0, 1.0);
     return f * dur;
 }
 
 int KeyframeStrip::tToX(double t) const {
-    const double dur = m_clip ? std::max(0.05, m_clip->dur) : 1.0;
+    double dur;
+    if (m_mesaMode || m_camMode) {
+        const QVector<Keyframe>* ks = m_camMode ? keysForCamera(m_mesaCamera, m_prop)
+                                                : keysForTrack(m_mesaTrack, m_prop);
+        double maxT = 1.0;
+        if (ks) for (const Keyframe& k : *ks) maxT = qMax(maxT, k.time);
+        dur = maxT + 2.0;
+    } else {
+        dur = m_clip ? std::max(0.05, m_clip->dur) : 1.0;
+    }
     const int w = std::max(1, width() - 8);
     return 4 + (int)std::lround(std::clamp(t / dur, 0.0, 1.0) * w);
 }
 
 int KeyframeStrip::hitKey(const QPoint& p) const {
-    const QVector<Keyframe>* ks = keysFor(m_clip, m_prop);
+    const QVector<Keyframe>* ks = m_camMode ? keysForCamera(m_mesaCamera, m_prop)
+                                : m_mesaMode ? keysForTrack(m_mesaTrack, m_prop)
+                                             : keysFor(m_clip, m_prop);
     if (!ks) return -1;
     int best = -1;
     int bestD = 6;
@@ -1483,14 +1691,17 @@ int KeyframeStrip::hitKey(const QPoint& p) const {
 
 void KeyframeStrip::paintEvent(QPaintEvent*) {
     QPainter p(this);
-    const QVector<Keyframe>* ks = keysFor(m_clip, m_prop);
+    const QVector<Keyframe>* ks = m_camMode ? keysForCamera(m_mesaCamera, m_prop)
+                               : m_mesaMode ? keysForTrack(m_mesaTrack, m_prop)
+                                             : keysFor(m_clip, m_prop);
     if (!ks || ks->isEmpty()) return;
 
     const int midY = height() / 2;
     p.setPen(QPen(themeColors().iconMuted, 1));
     p.drawLine(4, midY, width() - 4, midY);
 
-    const double rel = m_clip ? std::clamp(m_playhead - m_clip->pos, 0.0, m_clip->dur) : -1.0;
+    const double rel = (m_mesaMode || m_camMode) ? std::max(0.0, m_playhead)
+                                  : (m_clip ? std::clamp(m_playhead - m_clip->pos, 0.0, m_clip->dur) : -1.0);
     if (rel >= 0.0) {
         const int x = tToX(rel);
         p.setPen(QPen(themeColors().playhead, 1));
@@ -1507,14 +1718,16 @@ void KeyframeStrip::paintEvent(QPaintEvent*) {
 }
 
 void KeyframeStrip::mousePressEvent(QMouseEvent* e) {
-    if (e->button() != Qt::LeftButton || !m_clip) {
+    if (e->button() != Qt::LeftButton || (!m_clip && !m_mesaMode && !m_camMode)) {
         QWidget::mousePressEvent(e);
         return;
     }
     m_dragIdx = hitKey(e->pos());
     m_moved = false;
     if (m_dragIdx >= 0) {
-        const QVector<Keyframe>* ks = keysFor(m_clip, m_prop);
+        const QVector<Keyframe>* ks = m_camMode ? keysForCamera(m_mesaCamera, m_prop)
+                                    : m_mesaMode ? keysForTrack(m_mesaTrack, m_prop)
+                                                 : keysFor(m_clip, m_prop);
         if (ks) m_dragT0 = (*ks)[m_dragIdx].time;
         emit keyClicked(m_dragIdx);
         e->accept();
@@ -1522,13 +1735,23 @@ void KeyframeStrip::mousePressEvent(QMouseEvent* e) {
 }
 
 void KeyframeStrip::mouseMoveEvent(QMouseEvent* e) {
-    if (!m_clip || m_dragIdx < 0 || !(e->buttons() & Qt::LeftButton)) {
+    if ((!m_clip && !m_mesaMode && !m_camMode) || m_dragIdx < 0 || !(e->buttons() & Qt::LeftButton)) {
         QWidget::mouseMoveEvent(e);
         return;
     }
-    QVector<Keyframe>& K = *keysFor(m_clip, m_prop);
+    QVector<Keyframe>& K = m_camMode ? *keysForCamera(m_mesaCamera, m_prop)
+                          : m_mesaMode ? *keysForTrack(m_mesaTrack, m_prop)
+                                      : *keysFor(m_clip, m_prop);
     if (m_dragIdx >= K.size()) return;
-    const double t = std::clamp(xToT(e->pos().x()), 0.0, std::max(0.05, m_clip->dur));
+    double dur;
+    if (m_mesaMode || m_camMode) {
+        double maxT = 1.0;
+        for (const Keyframe& k : K) maxT = qMax(maxT, k.time);
+        dur = maxT + 2.0;
+    } else {
+        dur = std::max(0.05, m_clip->dur);
+    }
+    const double t = std::clamp(xToT(e->pos().x()), 0.0, dur);
     if (!m_moved) {
         if (std::fabs(t - m_dragT0) < 1e-9) return;
         m_moved = true;
@@ -1546,10 +1769,19 @@ void KeyframeStrip::mouseReleaseEvent(QMouseEvent* e) {
 }
 
 void KeyframeStrip::mouseDoubleClickEvent(QMouseEvent* e) {
-    if (!m_clip) { QWidget::mouseDoubleClickEvent(e); return; }
+    if ((!m_clip && !m_mesaMode && !m_camMode)) { QWidget::mouseDoubleClickEvent(e); return; }
     const int hit = hitKey(e->pos());
     if (hit < 0) {
-        const double t = std::clamp(xToT(e->pos().x()), 0.0, std::max(0.05, m_clip->dur));
+        double dur;
+        if (m_mesaMode || m_camMode) {
+            const QVector<Keyframe>* ks = keysForTrack(m_mesaTrack, m_prop);
+            double maxT = 1.0;
+            if (ks) for (const Keyframe& k : *ks) maxT = qMax(maxT, k.time);
+            dur = maxT + 2.0;
+        } else {
+            dur = std::max(0.05, m_clip->dur);
+        }
+        const double t = std::clamp(xToT(e->pos().x()), 0.0, dur);
         emit addKey(t);
     }
     e->accept();
@@ -1676,6 +1908,14 @@ void GraphPropRow::setValueText(const QString& s) {
 
 void GraphPropRow::setStripData(Clip* clip, double fps) {
     m_strip->setData(clip, m_prop, fps);
+}
+
+void GraphPropRow::setStripMesaData(Track* track, double fps) {
+    m_strip->setMesaData(track, m_prop, fps);
+}
+
+void GraphPropRow::setStripCamData(MesaComposition* mc, double fps) {
+    m_strip->setCamData(mc, m_prop, fps);
 }
 
 void GraphPropRow::setStripPlayhead(double t) {
@@ -1809,19 +2049,27 @@ QSize GraphEditorWidget::sizeHint() const {
 void GraphEditorWidget::setProject(Project* p) {
     m_project = p;
     rebuildRows();
-    m_canvas->setData(activeClip(), m_prop, m_playhead,
-                      m_project ? m_project->fps : 30.0);
+    if (m_camMode && m_mesaCamera)
+        m_canvas->setCamData(m_mesaCamera, m_prop, m_playhead,
+                             m_project ? m_project->fps : 30.0);
+    else if (m_mesaMode && m_mesaTrack)
+        m_canvas->setMesaData(m_mesaTrack, m_prop, m_playhead,
+                              m_project ? m_project->fps : 30.0);
+    else
+        m_canvas->setData(activeClip(), m_prop, m_playhead,
+                          m_project ? m_project->fps : 30.0);
 }
 
 void GraphEditorWidget::setClipId(const QString& id) {
     if (m_clipId == id) return;
     m_clipId = id;
+    m_mesaTrack = nullptr;
+    m_mesaMode = false;
+    m_mesaCamera = nullptr;
+    m_camMode = false;
     rebuildRows();
     Clip* c = activeClip();
     if (c) {
-        // Ao (re)selecionar o clipe, se a propriedade ativa não tiver keyframe
-        // mas o clipe tiver em outra, mostra uma propriedade que tenha — assim
-        // o editor não "esquece" os keyframes ao sair e voltar.
         if (keysFor(c, m_prop)->isEmpty()) {
             for (GraphProp p : m_props) {
                 if (!keysFor(c, p)->isEmpty()) { m_prop = p; break; }
@@ -1831,6 +2079,61 @@ void GraphEditorWidget::setClipId(const QString& id) {
     }
     m_canvas->setData(activeClip(), m_prop, m_playhead,
                       m_project ? m_project->fps : 30.0);
+    for (GraphProp p : m_props) {
+        GraphPropRow* row = m_rows.value((int)p);
+        if (row) {
+            row->setActive(p == m_prop);
+            row->setExpanded(p == m_prop);
+        }
+    }
+    syncValueLabels();
+}
+
+void GraphEditorWidget::setMesaTrack(Track* track) {
+    if (m_mesaTrack == track) return;
+    m_mesaTrack = track;
+    m_mesaMode = (track != nullptr);
+    m_mesaCamera = nullptr;
+    m_camMode = false;
+    m_clipId.clear();
+    rebuildRows();
+    if (track) {
+        // Find first property with keyframes
+        for (GraphProp p : m_props) {
+            QVector<Keyframe>* ks = keysForTrack(track, p);
+            if (ks && !ks->isEmpty()) { m_prop = p; break; }
+        }
+        if (!m_props.contains(m_prop)) m_prop = m_props.first();
+    }
+    m_canvas->setMesaData(track, m_prop, m_playhead,
+                          m_project ? m_project->fps : 30.0);
+    for (GraphProp p : m_props) {
+        GraphPropRow* row = m_rows.value((int)p);
+        if (row) {
+            row->setActive(p == m_prop);
+            row->setExpanded(p == m_prop);
+        }
+    }
+    syncValueLabels();
+}
+
+void GraphEditorWidget::setMesaCamera(MesaComposition* mc) {
+    if (m_mesaCamera == mc) return;
+    m_mesaCamera = mc;
+    m_camMode = (mc != nullptr);
+    m_mesaTrack = nullptr;
+    m_mesaMode = false;
+    m_clipId.clear();
+    rebuildRows();
+    if (mc) {
+        for (GraphProp p : m_props) {
+            QVector<Keyframe>* ks = keysForCamera(mc, p);
+            if (ks && !ks->isEmpty()) { m_prop = p; break; }
+        }
+        if (!m_props.contains(m_prop)) m_prop = m_props.first();
+    }
+    m_canvas->setCamData(mc, m_prop, m_playhead,
+                         m_project ? m_project->fps : 30.0);
     for (GraphProp p : m_props) {
         GraphPropRow* row = m_rows.value((int)p);
         if (row) {
@@ -1852,8 +2155,30 @@ void GraphEditorWidget::setPlayhead(double t) {
 }
 
 void GraphEditorWidget::refresh() {
-    // Se o tipo de mídia (vídeo/áudio) mudou, reconstrói a lista; senão só
-    // atualiza os dados preservando zoom e seleção do gráfico.
+    if (m_camMode && m_mesaCamera) {
+        const double zt0 = m_canvas->zoomT0();
+        const double zt1 = m_canvas->zoomT1();
+        const QVector<double> selTimes = m_canvas->selectionTimes();
+        syncRowData();
+        m_canvas->setCamData(m_mesaCamera, m_prop, m_playhead,
+                             m_project ? m_project->fps : 30.0);
+        if (zt1 > zt0) m_canvas->setZoom(zt0, zt1);
+        if (!selTimes.isEmpty()) m_canvas->selectKeysAtTimes(selTimes);
+        return;
+    }
+    if (m_mesaMode && m_mesaTrack) {
+        // Mesa mode: just refresh row data, preserve zoom and selection
+        const double zt0 = m_canvas->zoomT0();
+        const double zt1 = m_canvas->zoomT1();
+        const QVector<double> selTimes = m_canvas->selectionTimes();
+        syncRowData();
+        m_canvas->setMesaData(m_mesaTrack, m_prop, m_playhead,
+                              m_project ? m_project->fps : 30.0);
+        if (zt1 > zt0) m_canvas->setZoom(zt0, zt1);
+        if (!selTimes.isEmpty()) m_canvas->selectKeysAtTimes(selTimes);
+        return;
+    }
+    // Clip mode
     bool changed = false;
     {
         Clip* c = activeClip();
@@ -1861,7 +2186,6 @@ void GraphEditorWidget::refresh() {
         if (c && m_project) {
             const MediaItem* mi = m_project->findMedia(c->mediaId);
             if (mi) { hasVideo = mi->hasVideo; hasAudio = mi->hasAudio; }
-            // Clipe de texto não tem mídia, mas é animável como vídeo.
             if (c->isText) hasVideo = true;
         }
         bool haveVideo = false, haveAudio = false;
@@ -1899,6 +2223,14 @@ Clip* GraphEditorWidget::activeClip() const {
 }
 
 double GraphEditorWidget::propValueAtPlayhead(GraphProp p) const {
+    if (m_camMode && m_mesaCamera) {
+        const QVector<Keyframe>* K = keysForCamera(m_mesaCamera, p);
+        return kfValue(*K, baseForCamera(m_mesaCamera, p), std::max(0.0, m_playhead));
+    }
+    if (m_mesaMode && m_mesaTrack) {
+        const QVector<Keyframe>* K = keysForTrack(m_mesaTrack, p);
+        return kfValue(*K, baseForTrack(m_mesaTrack, p), std::max(0.0, m_playhead));
+    }
     Clip* c = activeClip();
     if (!c) return 0.0;
     const QVector<Keyframe>* K = keysFor(c, p);
@@ -1908,12 +2240,17 @@ double GraphEditorWidget::propValueAtPlayhead(GraphProp p) const {
 
 void GraphEditorWidget::setProperty(GraphProp p) {
     if (!m_props.contains(p)) return;
-    // Se já está mostrando essa curva, não recarrega (evita perder o zoom a
-    // cada movimento de slider no pancrop).
     if (p == m_prop) return;
     m_prop = p;
-    m_canvas->setData(activeClip(), p, m_playhead,
-                      m_project ? m_project->fps : 30.0);
+    if (m_camMode && m_mesaCamera)
+        m_canvas->setCamData(m_mesaCamera, p, m_playhead,
+                             m_project ? m_project->fps : 30.0);
+    else if (m_mesaMode && m_mesaTrack)
+        m_canvas->setMesaData(m_mesaTrack, p, m_playhead,
+                              m_project ? m_project->fps : 30.0);
+    else
+        m_canvas->setData(activeClip(), p, m_playhead,
+                          m_project ? m_project->fps : 30.0);
     for (GraphProp q : m_props) {
         GraphPropRow* row = m_rows.value((int)q);
         if (row) row->setActive(q == p);
@@ -1923,14 +2260,24 @@ void GraphEditorWidget::setProperty(GraphProp p) {
 }
 
 void GraphEditorWidget::syncRowData() {
-    Clip* c = activeClip();
     const double fps = m_project ? m_project->fps : 30.0;
     for (GraphProp p : m_props) {
         GraphPropRow* row = m_rows.value((int)p);
         if (!row) continue;
-        row->setStripData(c, fps);
-        const QVector<Keyframe>* K = keysFor(c, p);
-        row->setAnimated(K && !K->isEmpty());
+        if (m_camMode && m_mesaCamera) {
+            QVector<Keyframe>* K = keysForCamera(m_mesaCamera, p);
+            row->setAnimated(K && !K->isEmpty());
+            row->setStripCamData(m_mesaCamera, fps);
+        } else if (m_mesaMode && m_mesaTrack) {
+            QVector<Keyframe>* K = keysForTrack(m_mesaTrack, p);
+            row->setAnimated(K && !K->isEmpty());
+            row->setStripMesaData(m_mesaTrack, fps);
+        } else {
+            Clip* c = activeClip();
+            row->setStripData(c, fps);
+            const QVector<Keyframe>* K = keysFor(c, p);
+            row->setAnimated(K && !K->isEmpty());
+        }
         row->setActive(p == m_prop);
     }
     syncValueLabels();
@@ -1956,33 +2303,45 @@ void GraphEditorWidget::rebuildRows() {
     m_rows.clear();
     m_props.clear();
 
-    Clip* c = activeClip();
-    if (!c) {
-        m_canvas->setData(nullptr, m_prop, m_playhead,
-                          m_project ? m_project->fps : 30.0);
-        m_noClip->setVisible(true);
-        return;
+    if (m_camMode && m_mesaCamera) {
+        // Mesa camera properties
+        m_props = { GPropCamX, GPropCamY, GPropCamZoom, GPropCamRotation };
+        if (!m_props.contains(m_prop)) m_prop = m_props.first();
+        m_noClip->setVisible(false);
+    } else if (m_mesaMode && m_mesaTrack) {
+        m_props = { GPropMesaX, GPropMesaY, GPropMesaScaleX, GPropMesaScaleY,
+                    GPropMesaRotation, GPropMesaOpacity,
+                    GPropMesaAnchorX, GPropMesaAnchorY };
+        if (!m_props.contains(m_prop)) m_prop = m_props.first();
+        m_noClip->setVisible(false);
+    } else {
+        Clip* c = activeClip();
+        if (!c) {
+            m_canvas->setData(nullptr, m_prop, m_playhead,
+                              m_project ? m_project->fps : 30.0);
+            m_noClip->setVisible(true);
+            return;
+        }
+        bool hasVideo = false, hasAudio = false;
+        if (m_project) {
+            const MediaItem* mi = m_project->findMedia(c->mediaId);
+            if (mi) { hasVideo = mi->hasVideo; hasAudio = mi->hasAudio; }
+            if (c->isText) hasVideo = true;
+        }
+        if (hasVideo) {
+            const QVector<GraphProp> vid = { GPropOpacity, GPropScale, GPropScaleX,
+                                             GPropScaleY,
+                                             GPropRotation,
+                                             GPropTx, GPropTy,
+                                             GPropAnchorX, GPropAnchorY,
+                                             GPropCropL, GPropCropR, GPropCropT, GPropCropB };
+            for (GraphProp p : vid) m_props.append(p);
+        }
+        if (hasAudio) m_props.append(GPropVolume);
+        if (m_props.isEmpty()) m_props.append(GPropOpacity);
+        if (!m_props.contains(m_prop)) m_prop = m_props.first();
+        m_noClip->setVisible(false);
     }
-    bool hasVideo = false, hasAudio = false;
-    if (m_project) {
-        const MediaItem* mi = m_project->findMedia(c->mediaId);
-        if (mi) { hasVideo = mi->hasVideo; hasAudio = mi->hasAudio; }
-        // Clipe de texto não tem mídia, mas é animável como vídeo.
-        if (c->isText) hasVideo = true;
-    }
-    if (hasVideo) {
-        const QVector<GraphProp> vid = { GPropOpacity, GPropScale, GPropScaleX,
-                                         GPropScaleY,
-                                         GPropRotation,
-                                         GPropTx, GPropTy,
-                                         GPropAnchorX, GPropAnchorY,
-                                         GPropCropL, GPropCropR, GPropCropT, GPropCropB };
-        for (GraphProp p : vid) m_props.append(p);
-    }
-    if (hasAudio) m_props.append(GPropVolume);
-    if (m_props.isEmpty()) m_props.append(GPropOpacity);
-    if (!m_props.contains(m_prop)) m_prop = m_props.first();
-    m_noClip->setVisible(false);
 
     for (GraphProp p : m_props) {
         auto* row = new GraphPropRow(p);
@@ -2024,20 +2383,46 @@ void GraphEditorWidget::rebuildRows() {
 }
 
 void GraphEditorWidget::toggleAnimation(GraphProp p) {
-    Clip* c = activeClip();
-    if (!c) return;
-    QVector<Keyframe>& K = *keysFor(c, p);
     emit editStart();
-    if (K.isEmpty()) {
-        const double rel = std::clamp(m_playhead - c->pos, 0.0, c->dur);
-        Keyframe nk;
-        nk.time = rel;
-        nk.value = baseFor(c, p);
-        nk.interp = KfSmooth;
-        K.append(nk);
+    if (m_camMode && m_mesaCamera) {
+        QVector<Keyframe>& K = *keysForCamera(m_mesaCamera, p);
+        if (K.isEmpty()) {
+            Keyframe nk;
+            nk.time = std::max(0.0, m_playhead);
+            nk.value = baseForCamera(m_mesaCamera, p);
+            nk.interp = KfSmooth;
+            K.append(nk);
+        } else {
+            K.clear();
+            m_canvas->clearSelection();
+        }
+    } else if (m_mesaMode && m_mesaTrack) {
+        QVector<Keyframe>& K = *keysForTrack(m_mesaTrack, p);
+        if (K.isEmpty()) {
+            Keyframe nk;
+            nk.time = std::max(0.0, m_playhead);
+            nk.value = baseForTrack(m_mesaTrack, p);
+            nk.interp = KfSmooth;
+            K.append(nk);
+        } else {
+            K.clear();
+            m_canvas->clearSelection();
+        }
     } else {
-        K.clear();
-        m_canvas->clearSelection();
+        Clip* c = activeClip();
+        if (!c) return;
+        QVector<Keyframe>& K = *keysFor(c, p);
+        if (K.isEmpty()) {
+            const double rel = std::clamp(m_playhead - c->pos, 0.0, c->dur);
+            Keyframe nk;
+            nk.time = rel;
+            nk.value = baseFor(c, p);
+            nk.interp = KfSmooth;
+            K.append(nk);
+        } else {
+            K.clear();
+            m_canvas->clearSelection();
+        }
     }
     m_canvas->fitValueRange();
     syncRowData();
@@ -2045,22 +2430,52 @@ void GraphEditorWidget::toggleAnimation(GraphProp p) {
 }
 
 void GraphEditorWidget::toggleKeyAtPlayhead(GraphProp p) {
-    Clip* c = activeClip();
-    if (!c) return;
-    QVector<Keyframe>& K = *keysFor(c, p);
-    const double rel0 = std::clamp(m_playhead - c->pos, 0.0, c->dur);
-    const double fr = 1.0 / std::max(1.0, m_project ? m_project->fps : 30.0);
-    const double rel = std::round(rel0 / fr) * fr;
-    int at = -1;
-    for (int i = 0; i < K.size(); ++i)
-        if (std::fabs(K[i].time - rel) < 1e-9) { at = i; break; }
     emit editStart();
-    if (at >= 0) {
-        K.removeAt(at);
-        m_canvas->clearSelection();
+    const double fr = 1.0 / std::max(1.0, m_project ? m_project->fps : 30.0);
+    if (m_camMode && m_mesaCamera) {
+        QVector<Keyframe>& K = *keysForCamera(m_mesaCamera, p);
+        const double t0 = std::max(0.0, m_playhead);
+        const double rel = std::round(t0 / fr) * fr;
+        int at = -1;
+        for (int i = 0; i < K.size(); ++i)
+            if (std::fabs(K[i].time - rel) < 1e-9) { at = i; break; }
+        if (at >= 0) {
+            K.removeAt(at);
+            m_canvas->clearSelection();
+        } else {
+            const double v = kfValue(K, baseForCamera(m_mesaCamera, p), rel);
+            m_canvas->addKeyframe(rel, v);
+        }
+    } else if (m_mesaMode && m_mesaTrack) {
+        QVector<Keyframe>& K = *keysForTrack(m_mesaTrack, p);
+        const double t0 = std::max(0.0, m_playhead);
+        const double rel = std::round(t0 / fr) * fr;
+        int at = -1;
+        for (int i = 0; i < K.size(); ++i)
+            if (std::fabs(K[i].time - rel) < 1e-9) { at = i; break; }
+        if (at >= 0) {
+            K.removeAt(at);
+            m_canvas->clearSelection();
+        } else {
+            const double v = kfValue(K, baseForTrack(m_mesaTrack, p), rel);
+            m_canvas->addKeyframe(rel, v);
+        }
     } else {
-        const double v = kfValue(K, baseFor(c, p), rel);
-        m_canvas->addKeyframe(rel, v);
+        Clip* c = activeClip();
+        if (!c) return;
+        QVector<Keyframe>& K = *keysFor(c, p);
+        const double rel0 = std::clamp(m_playhead - c->pos, 0.0, c->dur);
+        const double rel = std::round(rel0 / fr) * fr;
+        int at = -1;
+        for (int i = 0; i < K.size(); ++i)
+            if (std::fabs(K[i].time - rel) < 1e-9) { at = i; break; }
+        if (at >= 0) {
+            K.removeAt(at);
+            m_canvas->clearSelection();
+        } else {
+            const double v = kfValue(K, baseFor(c, p), rel);
+            m_canvas->addKeyframe(rel, v);
+        }
     }
     m_canvas->fitValueRange();
     syncRowData();
@@ -2068,6 +2483,40 @@ void GraphEditorWidget::toggleKeyAtPlayhead(GraphProp p) {
 }
 
 void GraphEditorWidget::jumpKeyframe(GraphProp p, int dir) {
+    if (m_camMode && m_mesaCamera) {
+        const QVector<Keyframe>* K = keysForCamera(m_mesaCamera, p);
+        if (!K || K->isEmpty()) return;
+        const double t = std::max(0.0, m_playhead);
+        int best = -1;
+        if (dir < 0) {
+            for (int i = 0; i < K->size(); ++i)
+                if ((*K)[i].time < t - 1e-9) best = i;
+            if (best < 0) best = K->size() - 1;
+        } else {
+            for (int i = K->size() - 1; i >= 0; --i)
+                if ((*K)[i].time > t + 1e-9) best = i;
+            if (best < 0) best = 0;
+        }
+        emit keyframeJump((*K)[best].time);
+        return;
+    }
+    if (m_mesaMode && m_mesaTrack) {
+        const QVector<Keyframe>* K = keysForTrack(m_mesaTrack, p);
+        if (!K || K->isEmpty()) return;
+        const double t = std::max(0.0, m_playhead);
+        int best = -1;
+        if (dir < 0) {
+            for (int i = 0; i < K->size(); ++i)
+                if ((*K)[i].time < t - 1e-9) best = i;
+            if (best < 0) best = K->size() - 1;
+        } else {
+            for (int i = K->size() - 1; i >= 0; --i)
+                if ((*K)[i].time > t + 1e-9) best = i;
+            if (best < 0) best = 0;
+        }
+        emit keyframeJump((*K)[best].time);
+        return;
+    }
     Clip* c = activeClip();
     if (!c) return;
     const QVector<Keyframe>* K = keysFor(c, p);

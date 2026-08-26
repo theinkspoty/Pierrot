@@ -24,6 +24,7 @@ public:
     explicit MesaWidget(QWidget* parent = nullptr);
 
     void setProject(Project* p) { m_project = p; }
+    Project* project() const { return m_project; }
     void setMesaId(const QString& id);
     void setPlayheadPosition(double timeSec) {
         if (!qFuzzyCompare(m_playheadTime, timeSec)) {
@@ -41,6 +42,9 @@ signals:
     void modified();
     void changesCommitted();
     void mesaCreateRequested();
+    void mesaPlayheadChanged(double t);
+    void mesaTrackSelected(Track* track);
+    void mesaCameraSelected(MesaComposition* mc);
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -95,9 +99,17 @@ private:
     // Desenho
     void drawLayerList(QPainter& p);
     void drawPropertyPanel(QPainter& p);
+    void drawMiniTimeline(QPainter& p);
     int propPanelHeight() const { return 36; }
+    int miniTimelineHeight() const { return 64; }
     void fitToContent();
     void throttledUpdate();  // máx ~60fps durante drag
+
+    // Mini-timeline helpers
+    double mesaDuration() const;
+    int timeToX(double t, int rulerW) const;
+    double xToTime(int x, int rulerW) const;
+    bool isInMiniTimeline(const QPoint& p) const;
 
     // Cache de tracks (evita alloc por frame)
     mutable QVector<Track*> m_cachedTracks;
@@ -152,6 +164,11 @@ private:
     // Layer list flutuante
     bool m_showLayerList = false;
     QRect m_layerListRect;
+
+    // Mini-timeline
+    bool m_timelineDrag = false;
+    QRect m_miniTimelineRect;
+    static constexpr double kDefaultPps = 80.0;  // pixels per second
 
     // Snap
     bool m_snapToGrid = false;

@@ -294,6 +294,17 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         m_preview->refreshView();
         m_timeline->update();
     });
+    connect(m_mesa, &MesaWidget::mesaPlayheadChanged, this, [this](double t) {
+        m_timeline->setPlayhead(t);
+        m_preview->seek(t);
+        m_graph->setPlayhead(t);
+    });
+    connect(m_mesa, &MesaWidget::mesaTrackSelected, this, [this](Track* t) {
+        m_graph->setMesaTrack(t);
+    });
+    connect(m_mesa, &MesaWidget::mesaCameraSelected, this, [this](MesaComposition* mc) {
+        m_graph->setMesaCamera(mc);
+    });
     connect(m_mesa, &MesaWidget::mesaCreateRequested, this, [this]() {
         m_timeline->criarMesa();
     });
