@@ -70,10 +70,11 @@ QImage MesaRenderer::applyCameraTransform(const QImage& canvas,
 }
 
 QImage MesaRenderer::render(const MesaComposition& mesa, const Project& project,
-                             double time, double clipPos) {
+                             double time) {
     QImage canvas = renderCanvas(mesa, project, time);
-    const double relTime = time - clipPos;
-    return applyCameraTransform(canvas, mesa, project, relTime);
+    // A câmera é avaliada no mesmo tempo absoluto das layers: os keyframes de
+    // câmera são gravados pelo MesaWidget na posição global do playhead.
+    return applyCameraTransform(canvas, mesa, project, time);
 }
 
 // Desenha uma única track (camada) num painter `acc` já preparado.
@@ -130,7 +131,8 @@ bool MesaRenderer::prepareLayer(LayerPrep& out, const MesaComposition& mesa,
         } else if (!c.mediaId.isEmpty()) {
             const MediaItem* mi = project.findMedia(c.mediaId);
             if (mi && !mi->filePath.isEmpty()) {
-                frame = decodeFrame(mi->filePath, cRel, mesa.canvasW);
+                const double srcT = c.in + cRel * c.speed;
+                frame = decodeFrame(mi->filePath, srcT, mesa.canvasW);
             }
         }
         if (!frame.isNull()) break;

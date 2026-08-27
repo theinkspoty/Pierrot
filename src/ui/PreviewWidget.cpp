@@ -884,11 +884,13 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
         const Clip* topClip = clip;
         for (int tr = (int)m_project->videoTracks.size() - 1; tr >= 0; --tr) {
             const Track& t = m_project->videoTracks[tr];
+            const bool isMesaTrack = m_project->findMesaForTrack(t.id) != nullptr;
             const Clip* c = nullptr;
             for (const Clip& cl : t.clips) {
                 if (m_playhead >= cl.pos && m_playhead < cl.pos + cl.dur && !cl.isText) {
                     const MediaItem* mm = m_project->findMedia(cl.mediaId);
-                    if (mm && mm->hasVideo && (!c || cl.pos > c->pos)) c = &cl;
+                    if ((isMesaTrack || (mm && mm->hasVideo)) && (!c || cl.pos > c->pos))
+                        c = &cl;
                 }
             }
             if (!c) continue;
@@ -898,6 +900,14 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
             QImage clipFrame;
             if (topClip && c->id == topClip->id && !m_frame.isNull()) {
                 clipFrame = m_frame;
+            } else if (isMesaTrack) {
+                // Track Mesa em layers inferiores: frame já renderizado pelo
+                // MesaRenderer e armazenado no layerCache por requestLowerLayers.
+                {
+                    QMutexLocker l(&m_frameMutex);
+                    clipFrame = m_layerCache.value(c->id).img;
+                }
+                if (clipFrame.isNull()) continue;
             } else {
                 const MediaItem* mm = m_project->findMedia(c->mediaId);
                 if (!mm || !mm->hasVideo) continue;
@@ -1473,11 +1483,16 @@ void PreviewWidget::tick() {
 const Clip* PreviewWidget::clipAt(double t) const {
     if (!m_project) return nullptr;
     for (int tr = 0; tr < (int)m_project->videoTracks.size(); ++tr) {
+        const Track& track = m_project->videoTracks[tr];
+        // Track de Mesa gera quadro mesmo sem mídia própria (a composição é a
+        // fonte de vídeo).
+        const bool mesaTrack = m_project->findMesaForTrack(track.id) != nullptr;
         const Clip* best = nullptr;
-        for (const Clip& c : m_project->videoTracks[tr].clips) {
+        for (const Clip& c : track.clips) {
             if (t >= c.pos && t < c.pos + c.dur && !c.isText) {
                 const MediaItem* m = m_project->findMedia(c.mediaId);
-                if (m && m->hasVideo && (!best || c.pos > best->pos)) best = &c;
+                const bool hasVideo = mesaTrack || (m && m->hasVideo);
+                if (hasVideo && (!best || c.pos > best->pos)) best = &c;
             }
         }
         if (best) return best;
@@ -1488,23 +1503,23 @@ const Clip* PreviewWidget::clipAt(double t) const {
 bool PreviewWidget::tryRenderMesa(const Clip* clip) {
     if (!m_project || !clip) return false;
 
-    // Encontra a faixa do clipe ativo e o grupo dela.
+    // Encontra a faixa do clipe ativo.
     const Track* track = nullptr;
     for (const Track& tr : m_project->videoTracks) {
         for (const Clip& c : tr.clips)
             if (c.id == clip->id) { track = &tr; break; }
     }
     if (!track) return false;
-    if (track->groupId.isEmpty()) return false;
 
-    const TrackGroup* g = m_project->findGroup(track->groupId);
-    if (!g || g->mesaId.isEmpty()) return false;
-
-    const MesaComposition* mc = m_project->findMesa(g->mesaId);
+    // A Mesa dona da track é descoberta via mesa.trackIds (fonte da verdade,
+    // a mesma usada pelo MesaWidget/MesaRenderer). O caminho antigo
+    // track.groupId→group.mesaId quebrava quando a pasta da Mesa era
+    // excluída/desagrupada: a composição sumia do preview ao reabrir.
+    const MesaComposition* mc = m_project->findMesaForTrack(track->id);
     if (!mc) return false;
 
     // Renderiza o canvas + transform de câmera (saída no tamanho do projeto).
-    const QImage out = m_mesaRenderer.render(*mc, *m_project, m_playhead, clip->pos);
+    const QImage out = m_mesaRenderer.render(*mc, *m_project, m_playhead);
     if (out.isNull()) return false;
 
     {
@@ -1784,6 +1799,12 @@ void PreviewWidget::updateFrame() {
     // Clipe pertence a um grupo Mesa → renderiza a composição inteira
     // (todas as camadas), sem a transform de câmera.
     if (tryRenderMesa(clip)) {
+        // Mesmo com Mesa no topo, tracks inferiores precisam ser decodificadas
+        // para que paintEvent possa compô-las por baixo (transparência, blend).
+        const int pdBase = qMin(PreviewWidget::maxDecodeWidth(),
+                                m_videoRect.width() > 0 ? m_videoRect.width() : 960);
+        const int decW = qMax(160, (int)std::lround(pdBase * m_previewQuality));
+        requestLowerLayers(decW);
         m_underFrame = QImage();
         m_underRequested = false;
         m_transAlpha = -1.0;
@@ -2069,6 +2090,33 @@ void PreviewWidget::requestLowerLayers(int decW) {
                 continue; // já em cache
         }
         requestFrame(c->id, m->filePath, srcT, decW);
+    }
+
+    // Tracks Mesa: decodifica o frame individual de cada track via MesaRenderer
+    // e armazena no layerCache, para que paintEvent possa compô-las por baixo
+    // da composição Mesa do topo (transparência, blend entre faixas).
+    for (const Track& tr : m_project->videoTracks) {
+        const MesaComposition* mc = m_project->findMesaForTrack(tr.id);
+        if (!mc) continue;
+        const Clip* c = nullptr;
+        for (const Clip& cl : tr.clips) {
+            if (m_playhead >= cl.pos && m_playhead < cl.pos + cl.dur && !cl.isText) {
+                if (!c || cl.pos > c->pos) c = &cl;
+            }
+        }
+        if (!c || (top && c->id == top->id)) continue;
+        // Cache hit: já renderizado nesta frame.
+        {
+            QMutexLocker l(&m_frameMutex);
+            if (m_layerCache.contains(c->id)) continue;
+        }
+        MesaRenderer::LayerPrep prep;
+        if (m_mesaRenderer.prepareLayer(prep, *mc, *m_project, m_playhead, tr) && prep.valid) {
+            QMutexLocker l(&m_frameMutex);
+            m_layerCache[c->id] = {prep.frame,
+                                   QStringLiteral("mesa:") + tr.id,
+                                   m_playhead, decW};
+        }
     }
 }
 

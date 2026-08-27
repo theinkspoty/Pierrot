@@ -10,9 +10,12 @@
 #include <QTimer>
 #include <QHash>
 #include <QSize>
+#include <QPointer>
 #include <QElapsedTimer>
 #include "models/Project.h"
 #include "render/MesaRenderer.h"
+
+class QLineEdit;
 
 // Dock Mesa — canvas infinito estilo After Effects Composition Panel.
 // Tudo é desenhado no canvas: tracks como camadas, câmera, grid.
@@ -97,8 +100,11 @@ private:
                          QPointF corners[4], QPointF& rotateHandle) const;
 
     // Keyframes
-    void ensureKeyframesAt(double timeSec);
-    void writeAllKeyframes();
+    void ensureKeyframesAt(double timeSec);      // câmera no tempo dado
+    void writeTrackKeyframes(Track* t);          // só a track dada (auto-key)
+    bool m_autoKey = true;                       // toggle estilo AE (botão/K)
+    QRect m_autoKeyBtnRect;
+    void nudgeSelection(double dx, double dy);
 
     // Desenho
     void drawLayerList(QPainter& p);
@@ -106,6 +112,15 @@ private:
     void drawMiniTimeline(QPainter& p);
     int propPanelHeight() const { return 36; }
     int miniTimelineHeight() const { return 64; }
+
+    // Campos editáveis do painel de propriedades (clique → digita o valor).
+    enum PropKind { PL_X, PL_Y, PL_S, PL_R, PL_O, PC_X, PC_Y, PC_Z, PC_R };
+    struct PropField { QRect rect; int kind; };
+    QVector<PropField> m_propFields;   // preenchido no drawPropertyPanel
+    QPointer<QLineEdit> m_propEdit;
+    double propFieldValue(int kind) const;
+    void startPropEdit(const PropField& f);
+    void commitPropEdit(int kind, const QString& text);
     void fitToContent();
     void throttledUpdate();  // máx ~60fps durante drag
 

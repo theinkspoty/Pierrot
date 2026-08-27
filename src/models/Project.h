@@ -185,6 +185,22 @@ inline double kfValue(const QVector<Keyframe>& keys, double base, double t) {
     }
 }
 
+// Insere (ou atualiza) um keyframe no instante `time`, mantendo o vetor
+// ORDENADO por tempo — kfValue usa busca binária e exige a ordem. Inserir sem
+// ordenar (append) deixava a animação errada até reabrir o projeto.
+inline void upsertKeyframe(QVector<Keyframe>& keys, double time, double value,
+                           int interp = KfLinear) {
+    for (Keyframe& k : keys)
+        if (qFuzzyIsNull(k.time - time)) { k.value = value; return; }
+    Keyframe k;
+    k.time = time;
+    k.value = value;
+    k.interp = interp;
+    auto it = std::lower_bound(keys.begin(), keys.end(), time,
+        [](const Keyframe& kf, double t) { return kf.time < t; });
+    keys.insert(it, k);
+}
+
 // Estilo do texto/título sobreposto de um clipe (usado no preview e na
 // exportação). Também é o conteúdo de um TextResource compartilhado.
 struct TextStyle {
@@ -491,6 +507,16 @@ public:
     const MesaComposition* findMesa(const QString& id) const {
         for (const auto& m : mesas)
             if (m.id == id) return &m;
+        return nullptr;
+    }
+
+    // Mesa que contém a track `trackId` (via mesa.trackIds, a fonte da
+    // verdade). Retorna nulo se a track não pertence a nenhuma Mesa. Não usa
+    // o vínculo track.groupId→group.mesaId, que pode se perder se a pasta for
+    // excluída/desagrupada.
+    const MesaComposition* findMesaForTrack(const QString& trackId) const {
+        for (const auto& m : mesas)
+            if (m.trackIds.contains(trackId)) return &m;
         return nullptr;
     }
 

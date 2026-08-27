@@ -20,9 +20,11 @@ public:
     MesaRenderer();
     ~MesaRenderer();
 
-    // Renderiza a composição no instante `time` (segundos da timeline).
+    // Renderiza a composição no instante `time` (segundos absolutos da
+    // timeline). Layers e câmera usam o mesmo tempo absoluto — os keyframes
+    // são gravados pelo MesaWidget na posição global do playhead.
     QImage render(const MesaComposition& mesa, const Project& project,
-                  double time, double clipPos);
+                  double time);
 
     // Renderiza apenas o canvas (layers composadas) sem a transform de câmera.
     // Útil para o editor visual (MesaWidget).

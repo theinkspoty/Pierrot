@@ -12,6 +12,8 @@
 #include <QAction>
 #include <QtMath>
 #include <QCursor>
+#include <QLineEdit>
+#include <QShortcut>
 
 // ═══════════════════════════════════════════════════════════════════════
 // Mouse
@@ -47,6 +49,21 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
     }
 
     if (e->button() != Qt::LeftButton) return;
+
+    // Botão AUTO KEY (header)
+    if (!m_autoKeyBtnRect.isNull() && m_autoKeyBtnRect.contains(e->pos())) {
+        m_autoKey = !m_autoKey;
+        update();
+        return;
+    }
+
+    // Campos do painel de propriedades (clique → editar valor)
+    for (const PropField& f : m_propFields) {
+        if (f.rect.contains(e->pos())) {
+            startPropEdit(f);
+            return;
+        }
+    }
 
     // Mini-timeline
     if (isInMiniTimeline(e->pos())) {
@@ -197,7 +214,7 @@ void MesaWidget::mouseMoveEvent(QMouseEvent* e) {
         const QPointF d = e->position() - m_resizeStartPos;
         const double delta = (d.x() + d.y()) / 2.0;
         mc->camZoom = qBound(0.05, m_resizeStartZoom * (1.0 + delta * 0.005), 20.0);
-        ensureKeyframesAt(m_playheadTime);
+        if (m_autoKey) ensureKeyframesAt(m_playheadTime);
         throttledUpdate();
         return;
     }
@@ -206,7 +223,7 @@ void MesaWidget::mouseMoveEvent(QMouseEvent* e) {
         const QPointF d = e->position() - m_cameraDragStart;
         mc->camX = m_camDragStartX + d.x() / m_zoom;
         mc->camY = m_camDragStartY + d.y() / m_zoom;
-        ensureKeyframesAt(m_playheadTime);
+        if (m_autoKey) ensureKeyframesAt(m_playheadTime);
         throttledUpdate();
         return;
     }
@@ -280,10 +297,16 @@ void MesaWidget::mouseReleaseEvent(QMouseEvent*) {
     const bool wasTransforming = (m_transformOp != TNone);
     const bool camChanged = m_draggingCamera || m_resizingCamera;
 
-    if (wasTransforming)
-        writeAllKeyframes();
-    if (camChanged)
-        ensureKeyframesAt(m_playheadTime);
+    // Auto-key (estilo AE): grava keyframe no playhead só do que foi mexido.
+    if (m_autoKey) {
+        if (wasTransforming && m_transformTrackIdx >= 0) {
+            const QVector<Track*> tracks = mesaTracks();
+            if (m_transformTrackIdx < tracks.size())
+                writeTrackKeyframes(tracks[m_transformTrackIdx]);
+        }
+        if (camChanged)
+            ensureKeyframesAt(m_playheadTime);
+    }
 
     m_transformOp = TNone;
     m_transformTrackIdx = -1;
@@ -302,7 +325,14 @@ void MesaWidget::mouseReleaseEvent(QMouseEvent*) {
 
 void MesaWidget::wheelEvent(QWheelEvent* e) {
     const double factor = e->angleDelta().y() > 0 ? 1.12 : 1.0 / 1.12;
-    m_zoom = qBound(0.02, m_zoom * factor, 20.0);
+    const double newZoom = qBound(0.02, m_zoom * factor, 20.0);
+    if (qFuzzyCompare(newZoom, m_zoom)) return;
+    // Zoom ancorado no cursor: o ponto do canvas sob o mouse fica parado,
+    // em vez de a vista "fugir" para longe do ponteiro.
+    const QPointF canvasPt = screenToCanvas(e->position());
+    m_zoom = newZoom;
+    const QPointF center(width() / 2.0, height() / 2.0);
+    m_offset = e->position() - center - canvasPt * m_zoom;
     update();
 }
 
@@ -330,6 +360,18 @@ void MesaWidget::keyPressEvent(QKeyEvent* e) {
     } else if (e->key() == Qt::Key_G) {
         m_snapToGrid = !m_snapToGrid;
         update();
+    } else if (e->key() == Qt::Key_K) {
+        m_autoKey = !m_autoKey;
+        update();
+    } else if (e->key() == Qt::Key_Left || e->key() == Qt::Key_Right ||
+               e->key() == Qt::Key_Up || e->key() == Qt::Key_Down) {
+        // Nudge estilo AE: setas movem 1px, Shift+setas 10px.
+        const double step = (e->modifiers() & Qt::ShiftModifier) ? 10.0 : 1.0;
+        const double dx = (e->key() == Qt::Key_Left) ? -step
+                        : (e->key() == Qt::Key_Right) ? step : 0.0;
+        const double dy = (e->key() == Qt::Key_Up) ? -step
+                        : (e->key() == Qt::Key_Down) ? step : 0.0;
+        nudgeSelection(dx, dy);
     } else {
         QWidget::keyPressEvent(e);
     }
@@ -362,10 +404,7 @@ void MesaWidget::mouseDoubleClickEvent(QMouseEvent* e) {
     const QVector<Track*> tracks = mesaTracks();
     for (Track* track : tracks) {
         auto upsert = [&](QVector<Keyframe>& vks, double val) {
-            for (Keyframe& k : vks)
-                if (qFuzzyIsNull(k.time - rel)) { k.value = val; return; }
-            Keyframe k; k.time = rel; k.value = val; k.interp = KfSmooth;
-            vks.append(k);
+            upsertKeyframe(vks, rel, val, KfSmooth);
         };
         upsert(track->kfMesaX, kfValue(track->kfMesaX, track->mesaX, rel));
         upsert(track->kfMesaY, kfValue(track->kfMesaY, track->mesaY, rel));
@@ -393,4 +432,85 @@ void MesaWidget::throttledUpdate() {
         m_lastUpdateTimer.restart();
         update();
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Edição dos campos do painel de propriedades (clique → digita o valor)
+// ═══════════════════════════════════════════════════════════════════════
+
+void MesaWidget::startPropEdit(const PropField& f) {
+    if (m_propEdit) {
+        m_propEdit->disconnect();
+        m_propEdit->deleteLater();
+        m_propEdit = nullptr;
+    }
+    QLineEdit* ed = new QLineEdit(this);
+    m_propEdit = ed;
+    ed->setGeometry(f.rect.adjusted(-1, -2, 1, 2));
+    ed->setText(QString::number(propFieldValue(f.kind), 'f', 2));
+    ed->setStyleSheet(QStringLiteral(
+        "QLineEdit{background:#1e1e1e;color:#f0f0f0;border:1px solid #5a9fff;"
+        "padding:1px 3px;}"));
+    ed->show();
+    ed->setFocus();
+    ed->selectAll();
+
+    QShortcut* esc = new QShortcut(QKeySequence(Qt::Key_Escape), ed);
+    connect(esc, &QShortcut::activated, this, [ed]() {
+        ed->disconnect();
+        ed->deleteLater();
+    });
+    connect(ed, &QLineEdit::editingFinished, this, [this, kind = f.kind, ed]() {
+        ed->disconnect();
+        commitPropEdit(kind, ed->text());
+        ed->deleteLater();
+    });
+}
+
+void MesaWidget::commitPropEdit(int kind, const QString& text) {
+    m_propEdit = nullptr;
+    QString s = text.trimmed();
+    s.replace(',', '.');
+    bool ok = false;
+    const double v = s.toDouble(&ok);
+    if (!ok) { update(); return; }
+
+    MesaComposition* mc = currentMesa();
+    if (!mc) return;
+    const double rel = qMax(0.0, m_playheadTime);
+    const QVector<Track*> tracks = mesaTracks();
+    Track* t = (m_selectedIdx >= 0 && m_selectedIdx < tracks.size())
+                   ? tracks[m_selectedIdx] : nullptr;
+
+    auto setTrack = [&](double Track::*base, QVector<Keyframe> Track::*kfs, double val) {
+        if (!t) return;
+        t->*base = val;
+        if (m_autoKey) upsertKeyframe(t->*kfs, rel, val);
+    };
+    auto setCam = [&](QVector<Keyframe> MesaComposition::*kfs,
+                      double MesaComposition::*base, double val) {
+        mc->*base = val;
+        if (m_autoKey) upsertKeyframe(mc->*kfs, rel, val);
+    };
+
+    switch (kind) {
+        case PL_X: setTrack(&Track::mesaX, &Track::kfMesaX, v); break;
+        case PL_Y: setTrack(&Track::mesaY, &Track::kfMesaY, v); break;
+        case PL_S:
+            setTrack(&Track::mesaScaleX, &Track::kfMesaScaleX, qMax(0.001, v));
+            setTrack(&Track::mesaScaleY, &Track::kfMesaScaleY, qMax(0.001, v));
+            break;
+        case PL_R: setTrack(&Track::mesaRotation, &Track::kfMesaRotation, v); break;
+        case PL_O: setTrack(&Track::mesaOpacity, &Track::kfMesaOpacity,
+                            qBound(0.0, v, 1.0)); break;
+        case PC_X: setCam(&MesaComposition::kfCamX, &MesaComposition::camX, v); break;
+        case PC_Y: setCam(&MesaComposition::kfCamY, &MesaComposition::camY, v); break;
+        case PC_Z: setCam(&MesaComposition::kfCamZoom, &MesaComposition::camZoom,
+                          qBound(0.05, v, 20.0)); break;
+        case PC_R: setCam(&MesaComposition::kfCamRotation, &MesaComposition::camRotation,
+                          v); break;
+    }
+    emit modified();
+    emit changesCommitted();
+    update();
 }

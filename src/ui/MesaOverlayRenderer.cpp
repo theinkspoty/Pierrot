@@ -97,12 +97,15 @@ void MesaWidget::drawPropertyPanel(QPainter& p) {
     const QVector<Track*> tracks = mesaTracks();
     const bool hasSel = m_selectedIdx >= 0 && m_selectedIdx < tracks.size();
 
-    auto drawField = [&](int x, const QString& label, const QString& value, int fieldW = 68) {
+    m_propFields.clear();
+    auto drawField = [&](int x, int kind, const QString& label, const QString& value,
+                         int fieldW = 68) {
         p.setPen(QColor(140, 140, 140));
         p.drawText(QRect(x, y + 2, 36, 14), Qt::AlignLeft | Qt::AlignVCenter, label);
         p.fillRect(x + 36, y + 4, fieldW, 24, QColor(45, 45, 45));
         p.setPen(QColor(210, 210, 210));
         p.drawText(QRect(x + 38, y + 4, fieldW - 4, 24), Qt::AlignLeft | Qt::AlignVCenter, value);
+        m_propFields.append({QRect(x + 36, y + 4, fieldW, 24), kind});
     };
 
     if (hasSel) {
@@ -120,11 +123,11 @@ void MesaWidget::drawPropertyPanel(QPainter& p) {
         p.setPen(QColor(70, 70, 70));
         p.drawLine(120, y + 6, 120, y + ph - 6);
 
-        drawField(128, "X:",  QString::number(tx, 'f', 1));
-        drawField(254, "Y:",  QString::number(ty, 'f', 1));
-        drawField(380, "S:",  QString::number(ts, 'f', 2));
-        drawField(490, "R:",  QString::number(tr, 'f', 1));
-        drawField(600, "O:",  QString::number(to, 'f', 2));
+        drawField(128, PL_X, "X:",  QString::number(tx, 'f', 1));
+        drawField(254, PL_Y, "Y:",  QString::number(ty, 'f', 1));
+        drawField(380, PL_S, "S:",  QString::number(ts, 'f', 2));
+        drawField(490, PL_R, "R:",  QString::number(tr, 'f', 1));
+        drawField(600, PL_O, "O:",  QString::number(to, 'f', 2));
     } else if (MesaComposition* mc = currentMesa()) {
         const double rel = qMax(0.0, m_playheadTime);
         const double cx = kfValue(mc->kfCamX, mc->camX, rel);
@@ -138,10 +141,10 @@ void MesaWidget::drawPropertyPanel(QPainter& p) {
         p.setPen(QColor(70, 70, 70));
         p.drawLine(120, y + 6, 120, y + ph - 6);
 
-        drawField(128, "X:", QString::number(cx, 'f', 1));
-        drawField(254, "Y:", QString::number(cy, 'f', 1));
-        drawField(380, "Z:", QString::number(cz, 'f', 2));
-        drawField(510, "R:", QString::number(cr, 'f', 1));
+        drawField(128, PC_X, "X:", QString::number(cx, 'f', 1));
+        drawField(254, PC_Y, "Y:", QString::number(cy, 'f', 1));
+        drawField(380, PC_Z, "Z:", QString::number(cz, 'f', 2));
+        drawField(510, PC_R, "R:", QString::number(cr, 'f', 1));
     } else {
         p.setPen(QColor(90, 90, 90));
         p.drawText(QRect(8, y + 2, w - 16, ph - 4),

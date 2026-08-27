@@ -243,10 +243,7 @@ void MesaWidget::ensureKeyframesAt(double timeSec) {
     if (!mc) return;
     const double rel = qMax(0.0, timeSec);
     auto upsert = [&](QVector<Keyframe>& vks, double val) {
-        for (Keyframe& k : vks)
-            if (qFuzzyIsNull(k.time - rel)) { k.value = val; return; }
-        Keyframe k; k.time = rel; k.value = val; k.interp = KfLinear;
-        vks.append(k);
+        upsertKeyframe(vks, rel, val, KfLinear);
     };
     upsert(mc->kfCamX, mc->camX);
     upsert(mc->kfCamY, mc->camY);
@@ -254,31 +251,78 @@ void MesaWidget::ensureKeyframesAt(double timeSec) {
     upsert(mc->kfCamRotation, mc->camRotation);
 }
 
-void MesaWidget::writeAllKeyframes() {
-    MesaComposition* mc = currentMesa();
-    if (!mc || !m_project) return;
+// Grava keyframes APENAS da track editada (como no AE: auto-key afeta só as
+// propriedades mexidas). Antes, writeAllKeyframes() gravava câmera + todas as
+// layers no playhead a cada transform, poluindo tudo de keyframes.
+void MesaWidget::writeTrackKeyframes(Track* t) {
+    if (!t || !m_project) return;
     const double rel = qMax(0.0, m_playheadTime);
     auto upsert = [&](QVector<Keyframe>& vks, double val) {
-        for (Keyframe& k : vks)
-            if (qFuzzyIsNull(k.time - rel)) { k.value = val; return; }
-        Keyframe k; k.time = rel; k.value = val; k.interp = KfLinear;
-        vks.append(k);
+        upsertKeyframe(vks, rel, val, KfLinear);
     };
-    upsert(mc->kfCamX, mc->camX);
-    upsert(mc->kfCamY, mc->camY);
-    upsert(mc->kfCamZoom, mc->camZoom);
-    upsert(mc->kfCamRotation, mc->camRotation);
+    upsert(t->kfMesaX, t->mesaX);
+    upsert(t->kfMesaY, t->mesaY);
+    upsert(t->kfMesaScaleX, t->mesaScaleX);
+    upsert(t->kfMesaScaleY, t->mesaScaleY);
+    upsert(t->kfMesaRotation, t->mesaRotation);
+    upsert(t->kfMesaOpacity, t->mesaOpacity);
+    upsert(t->kfMesaAnchorX, t->mesaAnchorX);
+    upsert(t->kfMesaAnchorY, t->mesaAnchorY);
+}
+
+void MesaWidget::nudgeSelection(double dx, double dy) {
+    MesaComposition* mc = currentMesa();
+    if (!mc) return;
     const QVector<Track*> tracks = mesaTracks();
-    for (Track* t : tracks) {
-        upsert(t->kfMesaX, t->mesaX);
-        upsert(t->kfMesaY, t->mesaY);
-        upsert(t->kfMesaScaleX, t->mesaScaleX);
-        upsert(t->kfMesaScaleY, t->mesaScaleY);
-        upsert(t->kfMesaRotation, t->mesaRotation);
-        upsert(t->kfMesaOpacity, t->mesaOpacity);
-        upsert(t->kfMesaAnchorX, t->mesaAnchorX);
-        upsert(t->kfMesaAnchorY, t->mesaAnchorY);
+    const double rel = qMax(0.0, m_playheadTime);
+    auto snap = [&](double v) {
+        return m_snapToGrid ? qRound(v / kGridSize) * kGridSize : v;
+    };
+    if (m_selectedIdx >= 0 && m_selectedIdx < tracks.size()) {
+        Track* t = tracks[m_selectedIdx];
+        t->mesaX = snap(t->mesaX + dx);
+        t->mesaY = snap(t->mesaY + dy);
+        if (m_autoKey) {
+            upsertKeyframe(t->kfMesaX, rel, t->mesaX);
+            upsertKeyframe(t->kfMesaY, rel, t->mesaY);
+        }
+    } else {
+        mc->camX = snap(mc->camX + dx);
+        mc->camY = snap(mc->camY + dy);
+        if (m_autoKey) {
+            upsertKeyframe(mc->kfCamX, rel, mc->camX);
+            upsertKeyframe(mc->kfCamY, rel, mc->camY);
+        }
     }
+    emit modified();
+    emit changesCommitted();
+    update();
+}
+
+double MesaWidget::propFieldValue(int kind) const {
+    const double rel = qMax(0.0, m_playheadTime);
+    if (kind >= PC_X) {
+        const MesaComposition* mc = currentMesa();
+        if (!mc) return 0.0;
+        switch (kind) {
+            case PC_X: return kfValue(mc->kfCamX, mc->camX, rel);
+            case PC_Y: return kfValue(mc->kfCamY, mc->camY, rel);
+            case PC_Z: return kfValue(mc->kfCamZoom, mc->camZoom, rel);
+            case PC_R: return kfValue(mc->kfCamRotation, mc->camRotation, rel);
+        }
+        return 0.0;
+    }
+    const QVector<Track*> tracks = mesaTracks();
+    if (m_selectedIdx < 0 || m_selectedIdx >= tracks.size()) return 0.0;
+    const Track* t = tracks[m_selectedIdx];
+    switch (kind) {
+        case PL_X: return kfValue(t->kfMesaX, t->mesaX, rel);
+        case PL_Y: return kfValue(t->kfMesaY, t->mesaY, rel);
+        case PL_S: return kfValue(t->kfMesaScaleX, t->mesaScaleX, rel);
+        case PL_R: return kfValue(t->kfMesaRotation, t->mesaRotation, rel);
+        case PL_O: return kfValue(t->kfMesaOpacity, t->mesaOpacity, rel);
+    }
+    return 0.0;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -508,6 +552,22 @@ void MesaWidget::paintEvent(QPaintEvent*) {
         p.drawLine(QPointF(0, origin.y()), QPointF(width(), origin.y()));
     }
 
+    // ── Frame da composição (estilo AE: área útil destacada, fora escurecido) ──
+    {
+        const QPointF c0 = canvasToScreen(QPointF(0, 0));
+        const QPointF c1 = canvasToScreen(QPointF(mc->canvasW, mc->canvasH));
+        const QRectF compRect = QRectF(c0, c1).normalized();
+        QPainterPath outside;
+        outside.addRect(QRectF(rect()));
+        outside.addRect(compRect);
+        outside.setFillRule(Qt::OddEvenFill);
+        p.setPen(Qt::NoPen);
+        p.fillPath(outside, QColor(0, 0, 0, 96));
+        p.setPen(QPen(QColor(255, 255, 255, 110), 1.0));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(compRect);
+    }
+
     // ── Desenha layers diretamente no canvas infinito ──
     // Configura transformação canvas→screen no painter
     p.save();
@@ -698,7 +758,18 @@ void MesaWidget::paintEvent(QPaintEvent*) {
         const QString label = mc->name.isEmpty()
             ? QStringLiteral("Mesa \xe2\x80\x94 %1\xd7%2").arg(mc->canvasW).arg(mc->canvasH)
             : QStringLiteral("%1 \xe2\x80\x94 %2\xd7%3").arg(mc->name).arg(mc->canvasW).arg(mc->canvasH);
-        p.drawText(QRect(8, 0, width() - 16, hh), Qt::AlignLeft | Qt::AlignVCenter, label);
+        p.drawText(QRect(8, 0, width() - 16 - 92, hh), Qt::AlignLeft | Qt::AlignVCenter, label);
+
+        // Botão AUTO KEY (toggle, estilo AE): ligado = grava keyframe ao editar.
+        const QRect akRect(width() - 88, 3, 80, 16);
+        m_autoKeyBtnRect = akRect;
+        p.setPen(QPen(m_autoKey ? QColor(230, 70, 70) : QColor(100, 100, 100), 1));
+        p.setBrush(m_autoKey ? QColor(230, 70, 70, 35) : QColor(80, 80, 80, 60));
+        p.drawRoundedRect(akRect, 3, 3);
+        p.setPen(m_autoKey ? QColor(255, 120, 120) : QColor(150, 150, 150));
+        p.drawText(akRect, Qt::AlignCenter,
+                   m_autoKey ? QStringLiteral("\xe2\x97\x8f AUTO KEY")
+                             : QStringLiteral("\xe2\x97\x8b AUTO KEY"));
     }
 
     // ── Info bar ──
