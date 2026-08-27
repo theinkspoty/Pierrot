@@ -1,4 +1,4 @@
-# Funcionalidades do Pierrot v0.4.3
+# Funcionalidades do Pierrot v0.5
 
 ## Media Pool
 

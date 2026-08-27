@@ -127,7 +127,7 @@ OfxHostImpl::OfxHostImpl() {
     hostProps->setString(kOfxPropType, 0, kOfxTypeImageEffectHost);
     hostProps->setString(kOfxPropName, 0, "Pierrot");
     hostProps->setInt(kOfxPropVersion, 0, 1);
-    hostProps->setString(kOfxPropVersionLabel, 0, "0.4");
+    hostProps->setString(kOfxPropVersionLabel, 0, "0.5");
     hostProps->setInt(kOfxImageEffectHostPropIsBackground, 0, 0);
     hostProps->setInt(kOfxImageEffectPropSupportsMultiResolution, 0, 0);
     hostProps->setInt(kOfxImageEffectPropSupportsTiles, 0, 0);
