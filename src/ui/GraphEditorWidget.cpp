@@ -28,6 +28,7 @@
 #include <QDoubleSpinBox>
 #include <QScrollArea>
 #include <QSplitter>
+#include <QTimer>
 #include <QFrame>
 #include <QPixmap>
 #include <QIcon>
@@ -362,9 +363,24 @@ GraphCanvas::GraphCanvas(QWidget* parent) : QWidget(parent) {
     setMinimumHeight(84);
     setFocusPolicy(Qt::ClickFocus);
     setMouseTracking(true);
+
+    // Coalesce o `modified()` durante arrastos: o pipeline ligado a esse sinal
+    // (re-render do preview, sync do pancrop, timeline) é pesado; disparar por
+    // movimento de mouse travava o arraste horizontal do keyframe. Aqui ele é
+    // agrupado em ~30Hz, mantendo a repintura local imediata.
+    m_modifiedTimer = new QTimer(this);
+    m_modifiedTimer->setSingleShot(true);
+    m_modifiedTimer->setInterval(33);
+    connect(m_modifiedTimer, &QTimer::timeout, this, [this]() {
+        if (m_modifiedPending) {
+            m_modifiedPending = false;
+            emit modified();
+        }
+    });
 }
 
 void GraphCanvas::setData(Clip* clip, GraphProp prop, double playhead, double fps) {
+    cancelModified();
     m_clip = clip;
     m_mesaTrack = nullptr;
     m_mesaMode = false;
@@ -389,6 +405,7 @@ void GraphCanvas::setData(Clip* clip, GraphProp prop, double playhead, double fp
 }
 
 void GraphCanvas::setMesaData(Track* track, GraphProp prop, double playhead, double fps) {
+    cancelModified();
     m_clip = nullptr;
     m_mesaTrack = track;
     m_mesaCamera = nullptr;
@@ -415,6 +432,7 @@ void GraphCanvas::setMesaData(Track* track, GraphProp prop, double playhead, dou
 }
 
 void GraphCanvas::setCamData(MesaComposition* mc, GraphProp prop, double playhead, double fps) {
+    cancelModified();
     m_clip = nullptr;
     m_mesaTrack = nullptr;
     m_mesaCamera = mc;
@@ -676,8 +694,18 @@ void GraphCanvas::commitChange() {
             if ((*ks)[i].time < (*ks)[i - 1].time - 1e-9) { sortKeys(); break; }
         }
     }
-    emit modified();
+    // Repinta na hora para o arraste ficar responsivo; o sinal pesado
+    // `modified()` é coalescido pelo timer para não travar o movimento.
     update();
+    if (!m_modifiedPending) {
+        m_modifiedPending = true;
+        m_modifiedTimer->start();
+    }
+}
+
+void GraphCanvas::cancelModified() {
+    if (m_modifiedTimer) m_modifiedTimer->stop();
+    m_modifiedPending = false;
 }
 
 // Ajusta a faixa vertical visível aos valores atuais (com folga), mantendo-se

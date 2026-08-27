@@ -1561,8 +1561,6 @@ void MainWindow::openSettings() {
     SettingsDialog dlg(this);
     if (dlg.exec() != QDialog::Accepted) return;
 
-    PreviewWidget::setMaxDecodeWidth(dlg.decodeWidth());
-
     // Re-renderiza o conteúdo dos clipes se o modo de miniatura mudou.
     m_timeline->refreshSettings();
 

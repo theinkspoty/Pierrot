@@ -33,22 +33,8 @@
 #include <QFileDialog>
 #include <QLineEdit>
 
-// Presets de qualidade do preview: rótulo amigável + largura máxima de
-// decodificação. Menor = menos RAM/CPU no preview.
-namespace {
-constexpr int kPreviewPresets[4] = { 480, 720, 1080, 1920 };
-
-int nearestPresetIndex(int w) {
-    int best = 0;
-    for (int i = 1; i < 4; ++i)
-        if (qAbs(kPreviewPresets[i] - w) < qAbs(kPreviewPresets[best] - w)) best = i;
-    return best;
-}
-int presetWidth(int index) {
-    return kPreviewPresets[qBound(0, index, 3)];
-}
-
 // Registro dos atalhos remapeáveis (id, rótulo, padrão, categoria).
+namespace {
 struct ShortcutDef { const char* id; const char* label; const char* def; const char* cat; };
 const ShortcutDef kShortcutDefs[] = {
     { "new",     "Novo projeto",        "Ctrl+N",            "Projeto" },
@@ -95,10 +81,6 @@ bool SettingsDialog::warn4kEnabled() {
     return QSettings().value("warn4k", true).toBool();
 }
 
-int SettingsDialog::maxDecodeWidth() {
-    return QSettings().value("maxDecodeWidth", 1920).toInt();
-}
-
 int SettingsDialog::thumbMode() {
     return QSettings().value("timelineThumbMode", 0).toInt();
 }
@@ -139,14 +121,6 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
     m_autoInterval->setRange(1, 1440);
     m_autoInterval->setSuffix(tr(" min"));
     m_autoInterval->setValue(s.value("autosaveMinutes", 10).toInt());
-
-    m_decodeWidth = new QComboBox(this);
-    m_decodeWidth->addItem(tr("Baixa (480p)"));
-    m_decodeWidth->addItem(tr("Média (720p)"));
-    m_decodeWidth->addItem(tr("Alta (1080p)"));
-    m_decodeWidth->addItem(tr("Máxima (1920p)"));
-    m_decodeWidth->setCurrentIndex(
-        nearestPresetIndex(s.value("maxDecodeWidth", 1920).toInt()));
 
     m_thumbMode = new QComboBox(this);
     m_thumbMode->addItem(tr("Todas (contínuas)"));
@@ -212,15 +186,6 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
         auto* page = new QWidget;
         auto* v = new QVBoxLayout(page);
         v->setContentsMargins(4, 4, 4, 4);
-        auto* perfBox = new QGroupBox(tr("Qualidade do preview"), page);
-        auto* perfLay = new QFormLayout(perfBox);
-        perfLay->addRow(tr("Qualidade:"), m_decodeWidth);
-        auto* perfHint = new QLabel(tr("Qualidades mais baixas usam menos RAM/CPU no "
-                                       "preview e no scrub. Recomendado em projetos "
-                                       "grandes com muitos cortes."), perfBox);
-        perfHint->setStyleSheet(QStringLiteral("color: %1;").arg(themeColors().placeholderText.name()));
-        perfHint->setWordWrap(true);
-        perfLay->addRow(perfHint);
         auto* tlBox = new QGroupBox(tr("Timeline"), page);
         auto* tlLay = new QFormLayout(tlBox);
         tlLay->addRow(tr("Miniaturas nos clipes:"), m_thumbMode);
@@ -241,7 +206,6 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
         tlHint->setStyleSheet(QStringLiteral("color: %1;").arg(themeColors().placeholderText.name()));
         tlHint->setWordWrap(true);
         tlLay->addRow(tlHint);
-        v->addWidget(perfBox);
         v->addWidget(tlBox);
         v->addStretch(1);
         m_stack->addWidget(page);
@@ -497,14 +461,12 @@ bool SettingsDialog::eventFilter(QObject* o, QEvent* e) {
 bool SettingsDialog::autoSaveEnabled() const { return m_autoSave->isChecked(); }
 int SettingsDialog::autoSaveMinutes() const { return m_autoInterval->value(); }
 bool SettingsDialog::mkvWarning() const { return m_mkvWarn->isChecked(); }
-int SettingsDialog::decodeWidth() const { return presetWidth(m_decodeWidth->currentIndex()); }
 
 void SettingsDialog::accept() {
     QSettings s;
     s.setValue("mkvWarning", m_mkvWarn->isChecked());
     s.setValue("autosaveEnabled", m_autoSave->isChecked());
     s.setValue("autosaveMinutes", m_autoInterval->value());
-    s.setValue("maxDecodeWidth", presetWidth(m_decodeWidth->currentIndex()));
     s.setValue("timelineThumbMode", m_thumbMode->currentIndex());
     s.setValue("timelineRippleDelete", m_rippleDelete->isChecked());
     s.setValue("graphSensitivity", m_graphSens->value());

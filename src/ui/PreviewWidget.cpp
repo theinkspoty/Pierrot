@@ -49,8 +49,6 @@
 #include <QHash>
 #include <QMutex>
 
-static int s_maxDecodeWidth = -1;
-
 // Diagnóstico do caminho de áudio do preview: ligue com PIERROT_AUDIO_DEBUG=1.
 static bool audioDbg() {
     static const bool on = qEnvironmentVariableIsSet("PIERROT_AUDIO_DEBUG");
@@ -61,16 +59,6 @@ static bool audioDbg() {
 static bool composeDbg() {
     static const bool on = qEnvironmentVariableIsSet("PIERROT_COMPOSE_DEBUG");
     return on;
-}
-
-int PreviewWidget::maxDecodeWidth() {
-    if (s_maxDecodeWidth < 0)
-        s_maxDecodeWidth = qMax(320, SettingsDialog::maxDecodeWidth());
-    return s_maxDecodeWidth;
-}
-
-void PreviewWidget::setMaxDecodeWidth(int w) {
-    s_maxDecodeWidth = qMax(320, w);
 }
 
 // Decodifica quadros de vídeo na própria thread (com dois FFmpegDecoder dedicados:
@@ -592,12 +580,13 @@ QPainter::CompositionMode blendModeToQt(const QString& mode) {
 }
 }
 
-struct PreviewQOpt { double q; const char* label; const char* code; };
+struct PreviewQOpt { int width; const char* label; const char* code; };
 static const PreviewQOpt kPreviewQualities[] = {
-    {1.0,   "Completa (100%)", "100%"},
-    {0.5,   "Metade (50%)",    "50%"},
-    {0.25,  "Quarto (25%)",    "25%"},
-    {0.125, "Rascunho (12%)",  "12%"},
+    {360,  "360p",  "360p"},
+    {480,  "480p",  "480p"},
+    {720,  "720p",  "720p"},
+    {1080, "1080p", "1080p"},
+    {3840, "4K",    "4K"},
 };
 
 PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
@@ -620,12 +609,17 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     for (const PreviewQOpt& o : kPreviewQualities) {
         QAction* a = m_qualityMenu->addAction(QString::fromUtf8(o.label));
         a->setCheckable(true);
-        a->setData(o.q);
-        if (std::fabs(o.q - m_previewQuality) < 1e-6) a->setChecked(true);
-        connect(a, &QAction::triggered, this, [this, o]() { setPreviewQuality(o.q); });
+        a->setData(o.width);
+        if (o.width == m_previewQuality) a->setChecked(true);
+        connect(a, &QAction::triggered, this, [this, o]() { setPreviewQuality(o.width); });
     }
     m_qualityBtn->setMenu(m_qualityMenu);
-    m_qualityBtn->setText(QString::fromUtf8(kPreviewQualities[0].code));
+    // Mostra a qualidade atual no botão.
+    for (const PreviewQOpt& o : kPreviewQualities)
+        if (o.width == m_previewQuality) {
+            m_qualityBtn->setText(QString::fromUtf8(o.code));
+            break;
+        }
     bar->addWidget(m_qualityBtn);
 
     // Grade visual (estilo Vegas): botão ao lado da qualidade.
@@ -1364,8 +1358,8 @@ void PreviewWidget::setZoom(double z) {
     update();
 }
 
-void PreviewWidget::setPreviewQuality(double q) {
-    m_previewQuality = q;
+void PreviewWidget::setPreviewQuality(int width) {
+    m_previewQuality = width;
     // Invalida o quadro atual e força a reconversão na nova resolução.
     {
         QMutexLocker l(&m_frameMutex);
@@ -1374,9 +1368,9 @@ void PreviewWidget::setPreviewQuality(double q) {
     m_shownW = -1;
     m_lastDecodeW = -1;
     for (QAction* a : m_qualityMenu->actions())
-        a->setChecked(std::fabs(a->data().toDouble() - q) < 1e-6);
+        a->setChecked(a->data().toInt() == width);
     for (const PreviewQOpt& o : kPreviewQualities)
-        if (std::fabs(o.q - q) < 1e-6) {
+        if (o.width == width) {
             if (m_qualityBtn) m_qualityBtn->setText(QString::fromUtf8(o.code));
             break;
         }
@@ -1812,9 +1806,8 @@ void PreviewWidget::updateFrame() {
     if (tryRenderMesa(clip)) {
         // Mesmo com Mesa no topo, tracks inferiores precisam ser decodificadas
         // para que paintEvent possa compô-las por baixo (transparência, blend).
-        const int pdBase = qMin(PreviewWidget::maxDecodeWidth(),
-                                m_videoRect.width() > 0 ? m_videoRect.width() : 960);
-        const int decW = qMax(160, (int)std::lround(pdBase * m_previewQuality));
+        const int widgetW = m_videoRect.width() > 0 ? m_videoRect.width() : 960;
+        const int decW = qMax(160, qMax(m_previewQuality, widgetW));
         requestLowerLayers(decW);
         m_underFrame = QImage();
         m_underRequested = false;
@@ -1884,13 +1877,11 @@ void PreviewWidget::updateFrame() {
             m_lainkaQuantizedTime = srcT;
         }
     }
-    // Decodifica no tamanho de exibição: muito mais rápido que 4K/1080p.
-    // Qualidade do preview (estilo Vegas/FCP): quanto menor o fator, menor a
-    // resolução decodificada (mais rápido, mais suave). A exibição mantém o
-    // tamanho — só a nitidez muda.
-    const int pdBase = qMin(PreviewWidget::maxDecodeWidth(),
-                            m_videoRect.width() > 0 ? m_videoRect.width() : 960);
-    const int decW = qMax(160, (int)std::lround(pdBase * m_previewQuality));
+    // Decodifica na maior entre a qualidade escolhida e a largura exibida:
+    // nunca abaixo do tamanho de tela (evita pixelização ao esticar), e nem
+    // além do que o monitor precisa, exceto quando a qualidade pede mais.
+    const int widgetW = m_videoRect.width() > 0 ? m_videoRect.width() : 960;
+    const int decW = qMax(160, qMax(m_previewQuality, widgetW));
 
     // Camadas inferiores (empilhamento multi-faixa): pede os quadros dos
     // clipes de vídeo que estão por baixo do topo, para compor transparência
@@ -2282,12 +2273,9 @@ void PreviewWidget::updatePrefetch() {
     if (!nextMedia || !nextMedia->hasVideo) return;
 
     const double srcT = nextClip->in;
-    // Qualidade do preview (estilo Vegas/FCP): quanto menor o fator, menor a
-    // resolução decodificada (mais rápido, mais suave). A exibição mantém o
-    // tamanho — só a nitidez muda.
-    const int pdBase = qMin(PreviewWidget::maxDecodeWidth(),
-                            m_videoRect.width() > 0 ? m_videoRect.width() : 960);
-    const int decW = qMax(160, (int)std::lround(pdBase * m_previewQuality));
+    // Prefetch no mesmo tamanho do quadro com qualidade (nunca abaixo da tela).
+    const int widgetW = m_videoRect.width() > 0 ? m_videoRect.width() : 960;
+    const int decW = qMax(160, qMax(m_previewQuality, widgetW));
 
     {
         QMutexLocker l(&m_frameMutex);

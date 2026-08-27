@@ -50,8 +50,6 @@ public:
         float masterRms = 0.0;
     };
     AudioLevels audioLevels() const;
-    static int maxDecodeWidth();
-    static void setMaxDecodeWidth(int w);
 public slots:
     void seek(double t);
     void togglePlay();
@@ -60,7 +58,7 @@ public slots:
     void setLoopRange(double in, double out);
     void setLoopEnabled(bool enabled); // "Q": liga/desliga o loop de reprodução
     void setZoom(double z);
-    void setPreviewQuality(double q); // qualidade de decodificação do preview
+    void setPreviewQuality(int width); // largura máxima de decodificação (360/480/720/1080/3840)
 signals:
     void playheadMoved(double t);
     void stateChanged(bool playing);
@@ -131,7 +129,7 @@ private:
     QComboBox* m_zoomCombo = nullptr;
     QWidget* m_topBar = nullptr;
     double m_zoom = 0.0; // 0 = ajustar à área; senão fração (1.0 = 100%)
-    double m_previewQuality = 1.0; // fator de resolução de decodificação (0..1)
+    int m_previewQuality = 720; // largura máxima de decodificação (360/480/720/1080/3840)
     QToolButton* m_qualityBtn = nullptr;
     QMenu* m_qualityMenu = nullptr;
     QRect m_videoRect;

@@ -18,6 +18,7 @@ class QLabel;
 class QToolButton;
 class QScrollArea;
 class QSplitter;
+class QTimer;
 class QVBoxLayout;
 
 // Ferramenta ativa do gráfico (como na barra de ferramentas do Premiere).
@@ -129,6 +130,8 @@ private:
     void emitKeyInfo(int idx);
     void moveSelected(double dT, double dV, bool snap);
     void marqueeSelect(const QRect& r, bool add);
+    // Cancela um `modified()` pendente (troca de dados / fim de gesto).
+    void cancelModified();
 
     Clip* m_clip = nullptr;
     Track* m_mesaTrack = nullptr;
@@ -161,6 +164,11 @@ private:
     QRect m_marqueeRect;
     CanvasTool m_tool = ToolSelect;
     bool m_curveNewKey = false;
+    // Coalesce o sinal pesado `modified()`: durante o arrasto um evento de
+    // mouse por vez dispararia re-render do preview a cada movimento, travando
+    // o arraste. O timer agrupa as atualizações em ~30Hz.
+    QTimer* m_modifiedTimer = nullptr;
+    bool m_modifiedPending = false;
 };
 
 // Minifaixa de keyframes de uma propriedade (a linha que abre com o chevron

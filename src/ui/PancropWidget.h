@@ -146,6 +146,7 @@ private:
     bool m_showGrid = true;
 
     DragMode m_dragMode = DragNone;
+    DragMode m_hoverMode = DragNone;  // Handle sob o mouse (para highlight)
     QPointF m_grabOffset{0.0, 0.0};
     QPoint m_lastDrag;
     // Arraste de keyframes na faixa de tempo.

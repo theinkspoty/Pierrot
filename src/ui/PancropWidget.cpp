@@ -27,6 +27,7 @@
 #include <QFontMetricsF>
 #include <QShortcut>
 #include <QKeySequence>
+#include <QScrollArea>
 #include <functional>
 #include <algorithm>
 #include <cmath>
@@ -174,7 +175,7 @@ void applyEasePreset(QVector<Keyframe>& kf, int i, int preset) {
 class PancropWidget::Viewport : public QWidget {
 public:
     explicit Viewport(PancropWidget* owner) : QWidget(owner), m_owner(owner) {
-        setMinimumSize(220, 200);
+        setMinimumSize(180, 150);
     }
 protected:
     void paintEvent(QPaintEvent*) override { m_owner->paintViewfinder(this); }
@@ -183,6 +184,13 @@ protected:
     void mouseReleaseEvent(QMouseEvent* e) override { m_owner->viewportRelease(this, e); }
     void wheelEvent(QWheelEvent* e) override { m_owner->viewportWheel(this, e); }
     void contextMenuEvent(QContextMenuEvent* e) override { m_owner->viewportContextMenu(this, e); }
+    void leaveEvent(QEvent*) override {
+        if (m_owner->m_hoverMode != DragNone) {
+            m_owner->m_hoverMode = DragNone;
+            update();
+        }
+        setCursor(Qt::ArrowCursor);
+    }
 private:
     PancropWidget* m_owner;
 };
@@ -228,12 +236,12 @@ private:
 };
 
 PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
-    setMinimumSize(480, 360);
+    setMinimumSize(360, 280);
 
     auto makeSlider = [this](int min, int max) {
         auto* s = new QSlider(Qt::Horizontal, this);
         s->setRange(min, max);
-        s->setMinimumWidth(90);
+        s->setMinimumWidth(70);
         return s;
     };
     auto makeSpinBox = [this](double min, double max, int decimals, const QString& suffix) {
@@ -241,7 +249,7 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
         sb->setRange(min, max);
         sb->setDecimals(decimals);
         sb->setSuffix(suffix);
-        sb->setFixedWidth(62);
+        sb->setFixedWidth(70);
         sb->setButtonSymbols(QAbstractSpinBox::NoButtons);
         sb->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         sb->setStyleSheet(QStringLiteral(
@@ -254,7 +262,7 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     };
     auto makeDiamond = [this](int prop) {
         auto* b = new QPushButton(QStringLiteral("◆"), this);
-        b->setFixedSize(22, 22);
+        b->setFixedSize(24, 24);
         b->setCursor(Qt::PointingHandCursor);
         b->setToolTip(tr("Alternar keyframe no playhead"));
         b->setStyleSheet(QStringLiteral(
@@ -269,7 +277,7 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     auto makeReset = [this](int prop) {
         auto* b = new QToolButton(this);
         b->setText(QStringLiteral("↺"));
-        b->setFixedSize(20, 20);
+        b->setFixedSize(24, 24);
         b->setCursor(Qt::PointingHandCursor);
         b->setToolTip(tr("Redefinir esta propriedade"));
         b->setStyleSheet(QStringLiteral(
@@ -313,7 +321,7 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     auto addValRow = [&](QGridLayout* g, int r, const QString& label,
                          QSlider* s, QDoubleSpinBox* sb, int prop) {
         auto* lab = new QLabel(label, this);
-        lab->setFixedWidth(58);
+        lab->setFixedWidth(65);
         lab->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         g->addWidget(lab, r, 0);
         g->addWidget(s, r, 1);
@@ -543,11 +551,19 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     ctlLay->addWidget(hint);
     ctlLay->addStretch(1);
 
+    // QScrollArea: permite scroll quando os controles não cabem na dock.
+    auto* scroll = new QScrollArea(this);
+    scroll->setWidget(controls);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setMinimumWidth(220);
+
     auto* lay = new QHBoxLayout(this);
     lay->setContentsMargins(4, 4, 4, 4);
     lay->setSpacing(6);
     lay->addWidget(m_view, 1);
-    lay->addWidget(controls);
+    lay->addWidget(scroll);
 
     // Atalhos de teclado (setas para ajustar valores).
     auto* snapLeft = new QShortcut(QKeySequence(Qt::Key_Left), this);
@@ -1121,9 +1137,10 @@ void PancropWidget::applyPan(double sx, double sy) {
 
 void PancropWidget::paintViewfinder(QWidget* view) {
     QPainter p(view);
-    p.fillRect(view->rect(), QColor(14, 15, 18));
-    // Borda discreta do "monitor" (como o programa monitor do Premiere).
-    p.setPen(QPen(QColor(38, 41, 48), 1));
+    // Fundo estilo Premiere Pro (cinza escuro uniforme).
+    p.fillRect(view->rect(), QColor(30, 30, 30));
+    // Borda sutil do monitor.
+    p.setPen(QPen(QColor(51, 51, 51), 1));
     p.drawRect(view->rect().adjusted(0, 0, -1, -1));
     if (m_frame.isNull()) {
         p.setPen(QColor(140, 140, 150));
@@ -1167,37 +1184,35 @@ void PancropWidget::paintViewfinder(QWidget* view) {
     };
 
     p.save();
-    // Gira a cena inteira (imagem + recorte + alças + janela de saída) em
-    // torno do centro da área de exibição. Sem clipRect para os cantos da
-    // imagem girada aparecerem sobre o fundo escuro.
+    // Gira a cena inteira em torno do centro da área de exibição.
     const double rot = m_rotation->value();
     p.translate(disp.center());
     p.rotate(rot);
     p.translate(-disp.center());
     p.drawImage(QRectF(disp.left(), disp.top(), disp.width(), disp.height()), m_frame);
 
-    // Escurece fora da JANELA DE SAÍDA (o que será exportado). Antes escurecia
-    // em volta do recorte, então clipes com aspecto diferente do projeto (ex.:
-    // quadrados) mostravam o conteúdo que o "cover" corta como se estivesse
-    // "estourando" para fora da tela.
+    // Escurece fora da JANELA DE SAÍDA — máscara escura (estilo Premiere).
     QPainterPath shp;
     shp.addRect(disp);
     QPainterPath hole;
     hole.addRect(QRectF(toDisp(outS.left(), outS.top()),
                         toDisp(outS.right(), outS.bottom())));
-    p.fillPath(shp.subtracted(hole), QColor(0, 0, 0, 150));
+    p.fillPath(shp.subtracted(hole), QColor(0, 0, 0, 180));
 
-    // Contorno do crop (branco tracejado, como o Premiere).
-    p.setPen(QPen(QColor(235, 238, 242), 1, Qt::DashLine));
+    // Contorno do crop (azul-ciano tracejado).
+    p.setPen(QPen(QColor(0, 163, 224), 1, Qt::DashLine));
     p.setBrush(Qt::NoBrush);
     const QRectF cropDisp(toDisp(cropS.left(), cropS.top()),
                           toDisp(cropS.right(), cropS.bottom()));
     p.drawRect(cropDisp);
 
-    // Alças de redimensionamento do crop (quadrados brancos).
-    p.setPen(QPen(QColor(18, 20, 24), 1));
-    p.setBrush(QColor(235, 238, 242));
-    const double hd = 6.0;
+    // Alças de redimensionamento do crop (azuis, arredondadas).
+    const bool hasHover = (m_hoverMode != DragNone && m_dragMode == DragNone);
+    const double hd = hasHover ? 9.0 : 7.0;
+    const QColor handleFill = hasHover ? QColor(0, 163, 224) : QColor(0, 163, 224, 200);
+    const QColor handleBorder(18, 20, 24);
+    p.setPen(QPen(handleBorder, 1));
+    p.setBrush(handleFill);
     const QPointF tl(cropDisp.left(), cropDisp.top());
     const QPointF tr(cropDisp.right(), cropDisp.top());
     const QPointF bl(cropDisp.left(), cropDisp.bottom());
@@ -1208,20 +1223,20 @@ void PancropWidget::paintViewfinder(QWidget* view) {
     const QPointF mr(cropDisp.right(), cropDisp.center().y());
     const QPointF handles[8] = { tl, tr, bl, br, mt, mb, ml, mr };
     for (const QPointF& h : handles)
-        p.drawRect(QRectF(h.x() - hd / 2.0, h.y() - hd / 2.0, hd, hd));
+        p.drawRoundedRect(QRectF(h.x() - hd / 2.0, h.y() - hd / 2.0, hd, hd), 2.0, 2.0);
 
-    // Janela de saída (o que o quadro final mostra).
+    // Janela de saída (borda azul-ciano fina, sem fill).
     const QRectF outDisp(toDisp(outS.left(), outS.top()),
                          toDisp(outS.right(), outS.bottom()));
-    p.setPen(QPen(QColor(255, 255, 255), 2));
-    p.setBrush(QColor(255, 255, 255, 18));
+    p.setPen(QPen(QColor(0, 163, 224), 1.5));
+    p.setBrush(Qt::NoBrush);
     p.drawRect(outDisp);
 
     p.restore();
 
-    // Grade de terços (rule of thirds) sobre a janela de saída.
+    // Grade de terços (linhas sólidas azul-ciano translúcidas).
     if (m_showGrid) {
-        p.setPen(QPen(QColor(255, 255, 255, 55), 1, Qt::DotLine));
+        p.setPen(QPen(QColor(0, 163, 224, 60), 1));
         for (int i = 1; i <= 2; ++i) {
             const double fx = i / 3.0;
             const double fy = i / 3.0;
@@ -1232,25 +1247,29 @@ void PancropWidget::paintViewfinder(QWidget* view) {
         }
     }
 
-    // Safe margins (title-safe/action-safe) relativas à janela de saída,
-    // como no monitor do Premiere.
+    // Safe margins — cinza discreto (mais sutil que o Premiere).
     p.setBrush(Qt::NoBrush);
-    p.setPen(QPen(QColor(255, 255, 255, 45), 1));
+    p.setPen(QPen(QColor(255, 255, 255, 35), 1));
     p.drawRect(outDisp.adjusted(outDisp.width() * 0.05, outDisp.height() * 0.05,
                                 -outDisp.width() * 0.05, -outDisp.height() * 0.05));
-    p.setPen(QColor(255, 255, 255, 28));
+    p.setPen(QColor(255, 255, 255, 22));
     p.drawRect(outDisp.adjusted(outDisp.width() * 0.10, outDisp.height() * 0.10,
                                 -outDisp.width() * 0.10, outDisp.height() * 0.10));
 
-    // Gizmo de ponto de ancoragem (círculo branco vazio e sutil).
+    // Gizmo de ponto de ancoragem (círculo azul-ciano vazio).
     const double axPct = m_anchorX->value() / 100.0;
     const double ayPct = m_anchorY->value() / 100.0;
     const double anchorSrcX = w0 * 0.5 + axPct * w0 * 0.5;
     const double anchorSrcY = h0 * 0.5 + ayPct * h0 * 0.5;
     const QPointF anchorDisp = toDisp(anchorSrcX, anchorSrcY);
-    p.setPen(QPen(QColor(255, 255, 255, 120), 1.5));
+    p.setPen(QPen(QColor(0, 163, 224, 180), 1.5));
     p.setBrush(Qt::NoBrush);
     p.drawEllipse(anchorDisp, 7.0, 7.0);
+    // Linha de cruz no centro da âncora.
+    p.drawLine(QPointF(anchorDisp.x() - 4.0, anchorDisp.y()),
+               QPointF(anchorDisp.x() + 4.0, anchorDisp.y()));
+    p.drawLine(QPointF(anchorDisp.x(), anchorDisp.y() - 4.0),
+               QPointF(anchorDisp.x(), anchorDisp.y() + 4.0));
 }
 
 void PancropWidget::viewportPress(QWidget* view, QMouseEvent* e) {
@@ -1371,6 +1390,85 @@ void PancropWidget::viewportPress(QWidget* view, QMouseEvent* e) {
 }
 
 void PancropWidget::viewportMove(QWidget* view, QMouseEvent* e) {
+    // Hover tracking: atualiza m_hoverMode quando não está arrastando.
+    if (m_dragMode == DragNone && !m_frame.isNull()) {
+        double sx, sy;
+        screenToSource(view->rect(), e->pos(), &sx, &sy);
+        const int w0 = m_frame.width();
+        const int h0 = m_frame.height();
+        const double W = m_project ? m_project->width : 1920.0;
+        const double H = m_project ? m_project->height : 1080.0;
+        const double s = std::clamp(m_scale->value() / 100.0, kMinScale, kMaxScale);
+        const double tx = m_panX->value() / 100.0 * W;
+        const double ty = m_panY->value() / 100.0 * H;
+        QRectF cropS, outS;
+        computeView(s, tx, ty, w0, h0, &cropS, &outS);
+        const int M = 12;
+        const QRectF screen = QRectF(view->rect()).adjusted(M, M, -M, -M);
+        const double fr = (double)h0 / w0;
+        const double sr = screen.height() / screen.width();
+        QRectF disp;
+        if (fr < sr) {
+            disp.setWidth(screen.width());
+            disp.setHeight(screen.width() * fr);
+            disp.moveLeft(screen.left());
+            disp.moveTop(screen.top() + (screen.height() - disp.height()) / 2.0);
+        } else {
+            disp.setHeight(screen.height());
+            disp.setWidth(screen.height() / fr);
+            disp.moveTop(screen.top());
+            disp.moveLeft(screen.left() + (screen.width() - disp.width()) / 2.0);
+        }
+        auto toDisp = [&](double cx, double cy) {
+            return QPointF(disp.left() + cx / w0 * disp.width(),
+                           disp.top() + cy / h0 * disp.height());
+        };
+        const QPointF tl = toDisp(cropS.left(), cropS.top());
+        const QPointF tr = toDisp(cropS.right(), cropS.top());
+        const QPointF bl = toDisp(cropS.left(), cropS.bottom());
+        const QPointF br = toDisp(cropS.right(), cropS.bottom());
+        const QPointF mt = toDisp(cropS.center().x(), cropS.top());
+        const QPointF mb = toDisp(cropS.center().x(), cropS.bottom());
+        const QPointF ml = toDisp(cropS.left(), cropS.center().y());
+        const QPointF mr = toDisp(cropS.right(), cropS.center().y());
+        const QPointF pos = rotatedViewPos(view->rect(), e->pos());
+        const double tol = 8.0;
+        auto near = [&](const QPointF& a, const QPointF& b) {
+            return std::hypot(a.x() - b.x(), a.y() - b.y()) <= tol;
+        };
+        DragMode newHover = DragNone;
+        if (near(pos, tl)) newHover = DragCropTL;
+        else if (near(pos, tr)) newHover = DragCropTR;
+        else if (near(pos, bl)) newHover = DragCropBL;
+        else if (near(pos, br)) newHover = DragCropBR;
+        else if (pos.x() >= ml.x() - tol && pos.x() <= ml.x() + tol &&
+                 pos.y() >= mt.y() && pos.y() <= mb.y())
+            newHover = DragCropL;
+        else if (pos.x() >= mr.x() - tol && pos.x() <= mr.x() + tol &&
+                 pos.y() >= mt.y() && pos.y() <= mb.y())
+            newHover = DragCropR;
+        else if (pos.y() >= mt.y() - tol && pos.y() <= mt.y() + tol &&
+                 pos.x() >= ml.x() && pos.x() <= mr.x())
+            newHover = DragCropT;
+        else if (pos.y() >= mb.y() - tol && pos.y() <= mb.y() + tol &&
+                 pos.x() >= ml.x() && pos.x() <= mr.x())
+            newHover = DragCropB;
+
+        if (newHover != m_hoverMode) {
+            m_hoverMode = newHover;
+            view->update();
+        }
+        // Cursor contextual.
+        switch (newHover) {
+            case DragCropTL: case DragCropBR: view->setCursor(Qt::SizeFDiagCursor); break;
+            case DragCropTR: case DragCropBL: view->setCursor(Qt::SizeBDiagCursor); break;
+            case DragCropL:  case DragCropR:  view->setCursor(Qt::SizeHorCursor); break;
+            case DragCropT:  case DragCropB:  view->setCursor(Qt::SizeVerCursor); break;
+            default: view->setCursor(Qt::ArrowCursor); break;
+        }
+        e->ignore();
+        return;
+    }
     if (m_dragMode == DragNone) {
         e->ignore();
         return;
