@@ -7,6 +7,7 @@
 #include "models/Project.h"
 #include "ffmpeg/FFmpegDecoder.h"
 #include "ui/SettingsDialog.h"
+#include "ui/TrimmerDialog.h"
 #include "util.h"
 
 #include <QMouseEvent>
@@ -19,6 +20,7 @@
 #include <QFileInfo>
 #include <QApplication>
 #include <QInputDialog>
+#include <QDialog>
 #include <QScrollBar>
 #include <QTimer>
 #include <QLineEdit>
@@ -1398,6 +1400,24 @@ void TimelineWidget::dropMediaAt(const QStringList& mediaIds, const QPoint& glob
 
 void TimelineWidget::finishDrop(const QStringList& mediaIds, const QPoint& dropPos) {
     if (!m_project || mediaIds.isEmpty()) return;
+
+    // Trimmer (estilo Vegas): ao soltar UMA mídia de arquivo com vídeo, oferece
+    // definir in/out antes de inserir. Cancelar aborta a soltura; multi-seleção
+    // insere direto (sem diálogo).
+    double trimIn = 0.0;
+    double trimDur = -1.0;
+    if (mediaIds.size() == 1) {
+        const MediaItem* m = m_project->findMedia(mediaIds.first());
+        if (m && m->hasVideo && !m->filePath.isEmpty() && m->duration > 0.5) {
+            TrimmerDialog dlg(*m, this);
+            if (dlg.exec() != QDialog::Accepted) return;
+            trimIn = dlg.trimIn();
+            const double out = dlg.trimOut();
+            trimDur = out - trimIn;
+            if (trimDur <= 0.0) return;
+        }
+    }
+
     int row = -1;
     bool audio = false;
     if (!rowFromY(dropPos.y(), row, audio)) {
@@ -1446,7 +1466,7 @@ void TimelineWidget::finishDrop(const QStringList& mediaIds, const QPoint& dropP
         // Arquivos multicanal (OBS/câmera): um clipe de áudio POR stream, cada
         // um na sua faixa. O número de streams pode ser 0 mesmo com hasAudio.
         const int aStreams = m->hasAudio ? qMax(1, m->audioStreams) : 0;
-        const double dur = mediaInsertDur(*m);
+        const double dur = trimDur > 0.0 ? trimDur : mediaInsertDur(*m);
 
         // Vídeo primeiro: decide a faixa de vídeo e a posição.
         int vRow = -1;
@@ -1467,7 +1487,7 @@ void TimelineWidget::finishDrop(const QStringList& mediaIds, const QPoint& dropP
             c.groupId = gid;
             c.mediaId = mid;
             c.pos = t;
-            c.in = 0.0;
+            c.in = trimIn;
             c.dur = vDur;
             c.name = m->name;
             auto& clips = m_project->videoTracks[vRow].clips;
@@ -1485,7 +1505,7 @@ void TimelineWidget::finishDrop(const QStringList& mediaIds, const QPoint& dropP
             c.mediaId = mid;
             c.audioStreamIndex = k;
             c.pos = t;
-            c.in = 0.0;
+            c.in = trimIn;
             c.dur = dur;
             c.name = aStreams > 1 ? QString("%1 (faixa %2)").arg(m->name).arg(k + 1)
                                   : m->name;

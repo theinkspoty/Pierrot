@@ -6,6 +6,7 @@
 #include "TimelineWidget.h"
 #include "TimelineCommands.h"
 #include "util.h"
+#include "clipattrs.h"
 
 #include "ffmpeg/MediaCache.h"
 #include "ffmpeg/FFmpegDecoder.h"
@@ -40,6 +41,7 @@
 #include <QPolygon>
 #include <QDialog>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QSlider>
@@ -48,6 +50,8 @@
 #include <QDialogButtonBox>
 #include <QRadioButton>
 #include <QInputDialog>
+#include <QSettings>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QCheckBox>
 #include <QColorDialog>
@@ -723,12 +727,14 @@ void TimelineWidget::copySelected() {
 
 void TimelineWidget::cutSelected() {
     if (m_selected.isEmpty()) return;
+    emit undoLabel(tr("Recortar"));
     copySelected();
     deleteSelected();
 }
 
 void TimelineWidget::pasteClips() {
     if (m_clipboard.isEmpty() || !m_project) return;
+    emit undoLabel(tr("Colar"));
     emit editStart();
     double minPos = 1e18;
     for (const ClipboardEntry& e : m_clipboard) minPos = std::min(minPos, e.clip.pos);
@@ -791,10 +797,66 @@ void TimelineWidget::pasteClips() {
     emit selectionChanged(m_selected.last());
 }
 
+void TimelineWidget::saveClipPreset() {
+    if (m_selected.isEmpty() || !m_project) return;
+    // Captura os atributos a partir do primeiro clipe selecionado.
+    Clip* src = findClipById(expandToGroups(m_selected).first());
+    if (!src || trackLocked(src)) return;
+
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, tr("Salvar Preset"),
+                                               tr("Nome do preset:"), QLineEdit::Normal,
+                                               QString(), &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+
+    const QJsonDocument doc(clipattrs::toJson(*src));
+    QSettings s;
+    s.beginGroup(QStringLiteral("clipPresets"));
+    s.setValue(name.trimmed(), QString::fromUtf8(doc.toJson(QJsonDocument::Compact)));
+    s.endGroup();
+}
+
+void TimelineWidget::applyClipPreset() {
+    if (m_selected.isEmpty() || !m_project) return;
+
+    QSettings s;
+    s.beginGroup(QStringLiteral("clipPresets"));
+    const QStringList names = s.childKeys();
+    s.endGroup();
+    if (names.isEmpty()) {
+        QMessageBox::information(this, tr("Aplicar Preset"),
+                                 tr("Nenhum preset salvo ainda. Use\n"
+                                    "“Salvar Preset…” em um clipe para criar um."));
+        return;
+    }
+
+    bool ok = false;
+    const QString sel = QInputDialog::getItem(this, tr("Aplicar Preset"),
+                                              tr("Preset:"), names, 0, false, &ok);
+    if (!ok || sel.isEmpty()) return;
+
+    QSettings s2;
+    s2.beginGroup(QStringLiteral("clipPresets"));
+    const QJsonObject obj = QJsonDocument::fromJson(
+        s2.value(sel).toString().toUtf8()).object();
+    s2.endGroup();
+    if (obj.isEmpty()) return;
+
+    emit editStart();
+    for (const QString& id : expandToGroups(m_selected)) {
+        Clip* dst = findClipById(id);
+        if (!dst || trackLocked(dst)) continue;
+        clipattrs::applyJson(*dst, obj);
+    }
+    invalidateScene();
+    update();
+    emit modified();
+}
+
 void TimelineWidget::pasteAttributes() {
     if (m_clipboard.isEmpty() || m_selected.isEmpty() || !m_project) return;
+    emit undoLabel(tr("Colar atributos"));
     const Clip& src = m_clipboard.first().clip;
-
     // Diálogo de seleção de atributos (estilo Vegas: Colar Propriedades).
     QDialog dlg(this);
     dlg.setWindowTitle(tr("Colar Atributos"));
@@ -906,6 +968,7 @@ void TimelineWidget::duplicateSelected() {
         if (!seen.contains(key)) { seen.insert(key); reps.append(c->id); }
     }
     if (reps.isEmpty()) return;
+    emit undoLabel(tr("Duplicar clipe"));
     emit editStart();
     for (const QString& id : reps) {
         Clip* c = findClipById(id);
@@ -944,6 +1007,7 @@ void TimelineWidget::ungroupSelected() {
         if (c && !c->groupId.isEmpty()) gids.insert(c->groupId);
     }
     if (gids.isEmpty()) return;
+    emit undoLabel(tr("Desagrupar"));
     emit editStart();
     for (const QString& gid : gids)
         for (Clip* m : groupMembers(gid))
@@ -966,6 +1030,7 @@ void TimelineWidget::groupSelected() {
         else if (gid != c->groupId) allSame = false;
     }
     if (allSame && !gid.isEmpty()) return; // já agrupados
+    emit undoLabel(tr("Agrupar"));
     emit editStart();
     const QString ng = newId();
     for (const QString& id : m_selected) {
@@ -1236,18 +1301,23 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         QAction* pasteAttr = menu.addAction(tr("Colar Atributos…"));
         pasteAttr->setEnabled(!m_clipboard.isEmpty());
         menu.addSeparator();
+        QAction* savePreset = menu.addAction(tr("Salvar Preset…"));
+        QAction* applyPreset = menu.addAction(tr("Aplicar Preset…"));
+        menu.addSeparator();
         QAction* props = menu.addAction(tr("Propriedades…"));
         QAction* speedAct = menu.addAction(tr("Velocidade…"));
         QAction* unlink = nullptr;
         if (!clip->groupId.isEmpty())
             unlink = menu.addAction(tr("Desvincular grupo"));
         QAction* fx = nullptr;
+        QAction* grade = nullptr;
         QAction* audioFx = nullptr;
         QAction* transform = nullptr;
         QAction* textAction = nullptr;
         QAction* panCrop = nullptr;
         if (!audio) {
             fx = menu.addAction(tr("Efeitos de vídeo…"));
+            grade = menu.addAction(tr("Correção de cor…"));
             transform = menu.addAction(tr("Transformar…"));
             textAction = menu.addAction(tr("Texto…"));
             panCrop = menu.addAction(tr("Pancrop…"));
@@ -1263,6 +1333,10 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         QAction* transWipeR = nullptr;
         QAction* transWipeU = nullptr;
         QAction* transWipeD = nullptr;
+        QAction* transWipeTL = nullptr;
+        QAction* transWipeTR = nullptr;
+        QAction* transWipeBL = nullptr;
+        QAction* transWipeBR = nullptr;
         if (!audio) {
             menu.addSeparator();
             transMenu = menu.addMenu(tr("Transição de saída"));
@@ -1291,6 +1365,24 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
             transWipeD->setCheckable(true);
             transWipeD->setChecked(cur == QStringLiteral("wipedown"));
             transGrp->addAction(transWipeD);
+            transMenu->addSeparator();
+            QMenu* diagMenu = transMenu->addMenu(tr("Wipes diagonais"));
+            transWipeTL = diagMenu->addAction(tr("↖ Wipe (próximo vem de baixo-direita)"));
+            transWipeTL->setCheckable(true);
+            transWipeTL->setChecked(cur == QStringLiteral("wipetl"));
+            transGrp->addAction(transWipeTL);
+            transWipeTR = diagMenu->addAction(tr("↗ Wipe (próximo vem de baixo-esquerda)"));
+            transWipeTR->setCheckable(true);
+            transWipeTR->setChecked(cur == QStringLiteral("wipetr"));
+            transGrp->addAction(transWipeTR);
+            transWipeBR = diagMenu->addAction(tr("↘ Wipe (próximo vem de cima-esquerda)"));
+            transWipeBR->setCheckable(true);
+            transWipeBR->setChecked(cur == QStringLiteral("wipebr"));
+            transGrp->addAction(transWipeBR);
+            transWipeBL = diagMenu->addAction(tr("↙ Wipe (próximo vem de cima-direita)"));
+            transWipeBL->setCheckable(true);
+            transWipeBL->setChecked(cur == QStringLiteral("wipebl"));
+            transGrp->addAction(transWipeBL);
             transMenu->setEnabled([&]() {
                 // Só faz sentido se o clipe seguinte da faixa se sobrepõe a ele.
                 const Track* tr = trackOf(clip);
@@ -1312,6 +1404,8 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         else if (act == ccut) cutSelected();
         else if (act == paste) pasteClips();
         else if (act == pasteAttr) pasteAttributes();
+        else if (act == savePreset) saveClipPreset();
+        else if (act == applyPreset) applyClipPreset();
         else if (act == props) showProperties(clip);
         else if (act == speedAct) showSpeedDialog(clip);
         else if (act == unlink) {
@@ -1322,18 +1416,25 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
             emit modified();
         }
         else if (act == fx) showEffectsDialog(clip);
+        else if (act == grade) showGradingDialog(clip);
         else if (act == audioFx) showAudioEffectsDialog(clip);
         else if (act == transform) showTransformDialog(clip);
         else if (act == textAction) showTextEditorDialog(clip);
         else if (act == panCrop) emit pancropRequested(clip->id);
         else if (act == transDissolve || act == transWipeL || act == transWipeR
-                 || act == transWipeU || act == transWipeD) {
+                 || act == transWipeU || act == transWipeD
+                 || act == transWipeTL || act == transWipeTR
+                 || act == transWipeBL || act == transWipeBR) {
             emit editStart();
             if (act == transDissolve) clip->transitionType = QStringLiteral("dissolve");
             else if (act == transWipeL) clip->transitionType = QStringLiteral("wipeleft");
             else if (act == transWipeR) clip->transitionType = QStringLiteral("wiperight");
             else if (act == transWipeU) clip->transitionType = QStringLiteral("wipeup");
             else if (act == transWipeD) clip->transitionType = QStringLiteral("wipedown");
+            else if (act == transWipeTL) clip->transitionType = QStringLiteral("wipetl");
+            else if (act == transWipeTR) clip->transitionType = QStringLiteral("wipetr");
+            else if (act == transWipeBL) clip->transitionType = QStringLiteral("wipebl");
+            else if (act == transWipeBR) clip->transitionType = QStringLiteral("wipebr");
             invalidateScene();
             emit modified();
         }
@@ -1529,10 +1630,12 @@ void TimelineWidget::refreshSettings() {
 // finishDrop — implementado em TimelineDrag.cpp
 
 void TimelineWidget::cutAtPlayhead() {
+    emit undoLabel(tr("Dividir no playhead"));
     TimelineCommands::cutAtPlayhead(this);
 }
 
 void TimelineWidget::cutAndDelete() {
+    emit undoLabel(tr("Dividir e excluir"));
     TimelineCommands::cutAndDelete(this);
 }
 
@@ -1576,6 +1679,7 @@ void TimelineWidget::splitClipAt(Clip* c, double t, QStringList* newIds) {
 
 void TimelineWidget::duplicateClip(Clip* c) {
     if (!c) return;
+    emit undoLabel(tr("Duplicar clipe"));
     const double shift = c->dur;
     // Usa ids (não ponteiros): push_back pode realocar o vetor e invalidar
     // os ponteiros ainda não processados.
@@ -1899,6 +2003,83 @@ void TimelineWidget::showEffectsDialog(Clip* c) {
     emit modified();
 }
 
+void TimelineWidget::showGradingDialog(Clip* c) {
+    if (!c) return;
+
+    QDialog dlg(this);
+    dlg.setWindowTitle(tr("Correção de cor (Lift / Gamma / Gain)"));
+
+    struct Row { QSlider* r = nullptr; QSlider* g = nullptr; QSlider* b = nullptr; };
+    QVector<Row> rows(3);
+    const struct { int min; int max; int def; } cfg[3] = {
+        { -100, 100, 0 },    // Lift (neutro 0, exibido em -100..100)
+        {   10, 400, 100 },  // Gamma (neutro 100%)
+        { -100, 100, 0 },    // Gain (neutro 0)
+    };
+    const QString names[3] = { tr("Lift (sombras)"), tr("Gamma (meios)"), tr("Gain (realces)") };
+
+    auto* grid = new QGridLayout;
+    grid->addWidget(new QLabel(tr("R"), &dlg), 0, 1, Qt::AlignCenter);
+    grid->addWidget(new QLabel(tr("G"), &dlg), 0, 2, Qt::AlignCenter);
+    grid->addWidget(new QLabel(tr("B"), &dlg), 0, 3, Qt::AlignCenter);
+    for (int i = 0; i < 3; ++i) {
+        Row& row = rows[i];
+        row.r = new QSlider(Qt::Horizontal, &dlg);
+        row.g = new QSlider(Qt::Horizontal, &dlg);
+        row.b = new QSlider(Qt::Horizontal, &dlg);
+        for (QSlider* s : { row.r, row.g, row.b }) {
+            s->setRange(cfg[i].min, cfg[i].max);
+            s->setValue(cfg[i].def);
+        }
+        grid->addWidget(new QLabel(names[i], &dlg), i + 1, 0);
+        grid->addWidget(row.r, i + 1, 1);
+        grid->addWidget(row.g, i + 1, 2);
+        grid->addWidget(row.b, i + 1, 3);
+    }
+
+    // Valores atuais do clipe (gamma em %, lift/gain em -100..100).
+    rows[0].r->setValue((int)llround(c->liftR * 100.0));
+    rows[0].g->setValue((int)llround(c->liftG * 100.0));
+    rows[0].b->setValue((int)llround(c->liftB * 100.0));
+    rows[1].r->setValue((int)llround(c->gammaR * 100.0));
+    rows[1].g->setValue((int)llround(c->gammaG * 100.0));
+    rows[1].b->setValue((int)llround(c->gammaB * 100.0));
+    rows[2].r->setValue((int)llround(c->gainR * 100.0));
+    rows[2].g->setValue((int)llround(c->gainG * 100.0));
+    rows[2].b->setValue((int)llround(c->gainB * 100.0));
+
+    auto* reset = new QPushButton(tr("Resetar"), &dlg);
+    connect(reset, &QPushButton::clicked, &dlg, [&rows]() {
+        for (int i = 0; i < 3; ++i)
+            for (QSlider* s : { rows[i].r, rows[i].g, rows[i].b })
+                s->setValue((i == 1) ? 100 : 0);
+    });
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    auto* lay = new QVBoxLayout(&dlg);
+    lay->addLayout(grid);
+    lay->addWidget(reset);
+    lay->addWidget(buttons);
+
+    if (dlg.exec() != QDialog::Accepted) return;
+
+    emit editStart();
+    c->liftR = rows[0].r->value() / 100.0;
+    c->liftG = rows[0].g->value() / 100.0;
+    c->liftB = rows[0].b->value() / 100.0;
+    c->gammaR = rows[1].r->value() / 100.0;
+    c->gammaG = rows[1].g->value() / 100.0;
+    c->gammaB = rows[1].b->value() / 100.0;
+    c->gainR = rows[2].r->value() / 100.0;
+    c->gainG = rows[2].g->value() / 100.0;
+    c->gainB = rows[2].b->value() / 100.0;
+    update();
+    emit modified();
+}
+
 void TimelineWidget::showTransformDialog(Clip* c) {
     if (!c) return;
     TransformDialog dlg(c, this);
@@ -1922,18 +2103,22 @@ void TimelineWidget::removeClipsByIds(const QStringList& ids) {
 }
 
 void TimelineWidget::deleteSelected() {
+    emit undoLabel(tr("Excluir clipes"));
     TimelineCommands::deleteSelected(this);
 }
 
 void TimelineWidget::deleteSelectedLeaveGap() {
+    emit undoLabel(tr("Excluir clipes (deixando espaço)"));
     TimelineCommands::deleteSelectedLeaveGap(this);
 }
 
 void TimelineWidget::deleteLoopRipple() {
+    emit undoLabel(tr("Excluir região de loop (ripple)"));
     TimelineCommands::deleteLoopRipple(this);
 }
 
 void TimelineWidget::deleteLoopLeaveGap() {
+    emit undoLabel(tr("Excluir região de loop"));
     TimelineCommands::deleteLoopLeaveGap(this);
 }
 
@@ -2242,6 +2427,7 @@ QStringList TimelineWidget::expandToGroups(const QStringList& ids) {
 
 void TimelineWidget::razorSplitAt(double t) {
     if (!m_project) return;
+    emit undoLabel(tr("Dividir clipes"));
     emit editStart();
     QStringList toSplit;
     auto consider = [&](const Clip& c) {

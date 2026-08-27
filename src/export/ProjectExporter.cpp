@@ -5,6 +5,7 @@
 
 #include "ProjectExporter.h"
 #include "util.h"
+#include "generators.h"
 
 #include <QColor>
 #include <QFile>
@@ -456,10 +457,11 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     if (project.duration() <= 0)
         return fail(QStringLiteral("Timeline vazia — nada para exportar."));
 
-    // Limpa PNGs de texto temporários de exportações anteriores.
+    // Limpa PNGs temporários (texto e geradores) de exportações anteriores.
     const QDir tmp(QDir::tempPath());
-    for (const QFileInfo& fi : tmp.entryInfoList(QStringList{QStringLiteral("pierrot-text-*.png")},
-                                                 QDir::Files))
+    for (const QFileInfo& fi : tmp.entryInfoList(
+             {QStringLiteral("pierrot-text-*.png"), QStringLiteral("pierrot-gen-*.png")},
+             QDir::Files))
         QFile::remove(fi.absoluteFilePath());
 
     const double total = std::max(project.duration(), 0.5);
@@ -592,14 +594,42 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                                     .arg(W).arg(H).arg(FPS).arg(num(v.c->dur * v.c->speed));
             }
         } else if (v.m->isSolid) {
-            // Cor sólida (gerador estilo Vegas): input lavfi com a cor sólida.
-            args << "-f" << "lavfi"
-                 << "-i" << QString("color=c=%1:s=%2x%3:r=%4:d=%5")
-                                .arg(hexColor(v.m->solidColor))
-                                .arg(v.m->width > 0 ? v.m->width : W)
-                                .arg(v.m->height > 0 ? v.m->height : H)
-                                .arg(FPS)
-                                .arg(num(v.c->dur * v.c->speed));
+            const int gw = v.m->width > 0 ? v.m->width : W;
+            const int gh = v.m->height > 0 ? v.m->height : H;
+            if (v.m->generator == QStringLiteral("noise")) {
+                // Ruído animado via lavfi: grão muda a cada quadro.
+                args << "-f" << "lavfi"
+                     << "-i" << QString("nullsrc=s=%1x%2:r=%3:d=%4,"
+                                        "geq=lum=random(1)*255:cb=128:cr=128")
+                                    .arg(gw).arg(gh).arg(FPS).arg(num(v.c->dur * v.c->speed));
+            } else if (v.m->generator.isEmpty()) {
+                // Cor sólida (gerador estilo Vegas): input lavfi com a cor.
+                args << "-f" << "lavfi"
+                     << "-i" << QString("color=c=%1:s=%2x%3:r=%4:d=%5")
+                                    .arg(hexColor(v.m->solidColor))
+                                    .arg(gw).arg(gh).arg(FPS)
+                                    .arg(num(v.c->dur * v.c->speed));
+            } else {
+                // Gradiente/checkerboard: gera um PNG estático e faz loop
+                // (o padrão não muda com o tempo), consistente com o preview.
+                QImage img = generatorFrame(*v.m, W, H);
+                QTemporaryFile tmp;
+                tmp.setAutoRemove(false);
+                tmp.setFileTemplate(QDir::tempPath() + "/pierrot-gen-XXXXXX.png");
+                if (tmp.open()) {
+                    img.save(tmp.fileName(), "PNG");
+                    textPngs[i] = tmp.fileName();
+                    args << "-loop" << "1" << "-framerate" << num(FPS)
+                         << "-t" << num(v.c->dur * v.c->speed) << "-i" << textPngs[i];
+                } else {
+                    // Fallback: cor sólida da base.
+                    args << "-f" << "lavfi"
+                         << "-i" << QString("color=c=%1:s=%2x%3:r=%4:d=%5")
+                                        .arg(hexColor(v.m->solidColor))
+                                        .arg(gw).arg(gh).arg(FPS)
+                                        .arg(num(v.c->dur * v.c->speed));
+                }
+            }
         } else if (isImageFile(v.m->filePath)) {
             // Imagem estática: loop contínuo na taxa do projeto, limitado à
             // duração do clipe.
@@ -857,6 +887,25 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                                      .arg(num(std::clamp(v.c->brightness, -1.0, 1.0)))
                                      .arg(num(std::clamp(v.c->contrast, 0.0, 2.0)))
                                      .arg(num(std::clamp(v.c->saturation, 0.0, 2.0))));
+            // ── Correção de cor Lift/Gamma/Gain ─────────────────────────────
+            // O colorbalance espelha o modelo do preview: lift nas sombras
+            // (rs/gs/bs) e gain nos realces (rh/gh/bh); o eq aplica a curva
+            // gama nos meios (mesma semântica de pow(v/255, 1/gamma)).
+            if (v.c->hasColorGrade()) {
+                fc.last().append(QStringLiteral(",colorbalance=rs=%1:gs=%2:bs=%3"
+                                                ":rm=0:gm=0:bm=0"
+                                                ":rh=%4:gh=%5:bh=%6")
+                                     .arg(num(std::clamp(v.c->liftR, -1.0, 1.0)))
+                                     .arg(num(std::clamp(v.c->liftG, -1.0, 1.0)))
+                                     .arg(num(std::clamp(v.c->liftB, -1.0, 1.0)))
+                                     .arg(num(std::clamp(v.c->gainR, -1.0, 1.0)))
+                                     .arg(num(std::clamp(v.c->gainG, -1.0, 1.0)))
+                                     .arg(num(std::clamp(v.c->gainB, -1.0, 1.0))));
+                fc.last().append(QStringLiteral(",eq=gamma_r=%1:gamma_g=%2:gamma_b=%3")
+                                     .arg(num(std::clamp(v.c->gammaR, 0.1, 4.0)))
+                                     .arg(num(std::clamp(v.c->gammaG, 0.1, 4.0)))
+                                     .arg(num(std::clamp(v.c->gammaB, 0.1, 4.0))));
+            }
             if (v.c->grayscale)
                 fc.last().append(QStringLiteral(
                     ",colorchannelmixer=rr=0.299:rg=0.587:rb=0.114"
@@ -952,6 +1001,10 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                 else if (transType == QStringLiteral("wiperight")) slideX = QString("-main_w*%1").arg(s);
                 else if (transType == QStringLiteral("wipeup")) slideY = QString("+main_h*%1").arg(s);
                 else if (transType == QStringLiteral("wipedown")) slideY = QString("-main_h*%1").arg(s);
+                else if (transType == QStringLiteral("wipetl")) { slideX = QString("+main_w*%1").arg(s); slideY = QString("+main_h*%1").arg(s); }
+                else if (transType == QStringLiteral("wipetr")) { slideX = QString("-main_w*%1").arg(s); slideY = QString("+main_h*%1").arg(s); }
+                else if (transType == QStringLiteral("wipebr")) { slideX = QString("-main_w*%1").arg(s); slideY = QString("-main_h*%1").arg(s); }
+                else if (transType == QStringLiteral("wipebl")) { slideX = QString("+main_w*%1").arg(s); slideY = QString("-main_h*%1").arg(s); }
             }
             if (hasT) {
                 QString x = QString("main_w/2-overlay_w/2+%1").arg(txExpr);

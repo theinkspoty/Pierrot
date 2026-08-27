@@ -24,6 +24,9 @@ static QJsonObject mediaToJson(const MediaItem& m) {
     o["audioChannels"] = ch;
     o["isSolid"] = m.isSolid;
     o["solidColor"] = m.solidColor.name(QColor::HexArgb);
+    o["generator"] = m.generator;
+    o["solidColor2"] = m.solidColor2.name(QColor::HexArgb);
+    o["genCells"] = m.genCells;
     return o;
 }
 
@@ -43,6 +46,10 @@ static MediaItem mediaFromJson(const QJsonObject& o) {
     m.isSolid = o["isSolid"].toBool();
     const QString sc = o["solidColor"].toString();
     if (QColor::isValidColorName(sc)) m.solidColor = QColor(sc);
+    m.generator = o["generator"].toString();
+    const QString sc2 = o["solidColor2"].toString();
+    if (QColor::isValidColorName(sc2)) m.solidColor2 = QColor(sc2);
+    m.genCells = o["genCells"].toInt(8);
     return m;
 }
 
@@ -211,6 +218,9 @@ static QJsonObject clipToJson(const Clip& c) {
     o["chromaKey"] = c.chromaKey;
     o["chromaKeyColor"] = c.chromaKeyColor.name();
     o["chromaKeySimilarity"] = c.chromaKeySimilarity;
+    o["liftR"] = c.liftR; o["liftG"] = c.liftG; o["liftB"] = c.liftB;
+    o["gammaR"] = c.gammaR; o["gammaG"] = c.gammaG; o["gammaB"] = c.gammaB;
+    o["gainR"] = c.gainR; o["gainG"] = c.gainG; o["gainB"] = c.gainB;
     o["lainkaEnabled"] = c.lainkaEnabled;
     o["lainkaSkip"] = c.lainkaSkip;
     o["lainkaJitterPos"] = c.lainkaJitterPos;
@@ -322,6 +332,15 @@ static Clip clipFromJson(const QJsonObject& o) {
     const QString ckc = o["chromaKeyColor"].toString();
     if (QColor::isValidColorName(ckc)) c.chromaKeyColor = QColor(ckc);
     c.chromaKeySimilarity = o["chromaKeySimilarity"].toDouble(0.15);
+    c.liftR = o["liftR"].toDouble(0.0);
+    c.liftG = o["liftG"].toDouble(0.0);
+    c.liftB = o["liftB"].toDouble(0.0);
+    c.gammaR = o["gammaR"].toDouble(1.0);
+    c.gammaG = o["gammaG"].toDouble(1.0);
+    c.gammaB = o["gammaB"].toDouble(1.0);
+    c.gainR = o["gainR"].toDouble(0.0);
+    c.gainG = o["gainG"].toDouble(0.0);
+    c.gainB = o["gainB"].toDouble(0.0);
     c.lainkaEnabled = o["lainkaEnabled"].toBool(false);
     c.lainkaSkip = o["lainkaSkip"].toInt(2);
     c.lainkaJitterPos = o["lainkaJitterPos"].toDouble(0.0);

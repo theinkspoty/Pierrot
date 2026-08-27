@@ -1085,6 +1085,14 @@ void TimelineWidget::drawTransitionIndicator(QPainter& p, const QRect& r,
         glyph = QStringLiteral("\u2191");
     else if (type == QStringLiteral("wipedown"))
         glyph = QStringLiteral("\u2193");
+    else if (type == QStringLiteral("wipetl"))
+        glyph = QStringLiteral("\u2196");
+    else if (type == QStringLiteral("wipetr"))
+        glyph = QStringLiteral("\u2197");
+    else if (type == QStringLiteral("wipebl"))
+        glyph = QStringLiteral("\u2199");
+    else if (type == QStringLiteral("wipebr"))
+        glyph = QStringLiteral("\u2198");
     else
         glyph = QStringLiteral("\u2715");
     const QRect symRect(r.left(), r.top(), r.width(), fm.height());

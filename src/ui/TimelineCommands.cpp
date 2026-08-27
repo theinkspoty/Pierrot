@@ -595,11 +595,6 @@ void TimelineCommands::removeClipsByIds(TimelineWidget* tl, const QStringList& i
     doRemoveClipsByIds(tl, ids);
 }
 
-void TimelineCommands::duplicateClip(TimelineWidget* tl, Clip* c) {
-    if (!c || !tl || !tl->project()) return;
-    // TODO: implementar duplicação completa (estava no TimelineWidget)
-}
-
 void TimelineCommands::nudgeSelected(TimelineWidget* tl, int dir) {
     if (!tl || !tl->project()) return;
     const double step = dir * (1.0 / tl->project()->fps);

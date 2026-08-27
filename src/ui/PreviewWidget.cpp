@@ -11,6 +11,7 @@
 #include "ofx/OfxPluginManager.h"
 #include "export/LainkaFx.h"
 #include "ui/Theme.h"
+#include "generators.h"
 
 #include <QPainter>
 #include <QTimer>
@@ -752,6 +753,13 @@ void PreviewWidget::refreshView() {
     update();
 }
 
+QImage PreviewWidget::scopesFrame() const {
+    const QImage src = m_compositedCache.isNull() ? m_frame : m_compositedCache;
+    if (src.isNull() || src.width() < 2 || src.height() < 2) return QImage();
+    return src.scaled(160, 90, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+               .convertToFormat(QImage::Format_ARGB32);
+}
+
 PreviewWidget::AudioLevels PreviewWidget::audioLevels() const {
     if (!m_audioFeed) return {};
     const AudioMixer::TrackLevels tl = m_audioFeed->currentLevels();
@@ -911,8 +919,7 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
                     const int h = qMax(1, mm->height > 0 ? mm->height : m_project->height);
                     const int sw = 64;
                     const int sh = qMax(1, sw * h / w);
-                    clipFrame = QImage(sw, sh, QImage::Format_ARGB32);
-                    clipFrame.fill(mm->solidColor);
+                    clipFrame = generatorFrame(*mm, sw, sh);
                     if (c->lainkaEnabled) {
                         const double srcT = c->in + (m_playhead - c->pos) * c->speed;
                         clipFrame = lainkaApplyFx(clipFrame, c->id, srcT,
@@ -963,6 +970,10 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
                 else if (m_transType == QStringLiteral("wiperight")) L.ox = -pw * (1.0 - m_transAlpha);
                 else if (m_transType == QStringLiteral("wipeup")) L.oy = ph * (1.0 - m_transAlpha);
                 else if (m_transType == QStringLiteral("wipedown")) L.oy = -ph * (1.0 - m_transAlpha);
+                else if (m_transType == QStringLiteral("wipetl")) { L.ox = pw * (1.0 - m_transAlpha); L.oy = ph * (1.0 - m_transAlpha); }
+                else if (m_transType == QStringLiteral("wipetr")) { L.ox = -pw * (1.0 - m_transAlpha); L.oy = ph * (1.0 - m_transAlpha); }
+                else if (m_transType == QStringLiteral("wipebr")) { L.ox = -pw * (1.0 - m_transAlpha); L.oy = -ph * (1.0 - m_transAlpha); }
+                else if (m_transType == QStringLiteral("wipebl")) { L.ox = pw * (1.0 - m_transAlpha); L.oy = -ph * (1.0 - m_transAlpha); }
             }
             L.alpha = alpha;
             L.alpha *= std::clamp(t.opacity, 0.0, 1.0);
@@ -1070,6 +1081,10 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
             else if (m_transType == QStringLiteral("wiperight")) ox = -pw * (1.0 - m_transAlpha);
             else if (m_transType == QStringLiteral("wipeup")) oy = ph * (1.0 - m_transAlpha);
             else if (m_transType == QStringLiteral("wipedown")) oy = -ph * (1.0 - m_transAlpha);
+            else if (m_transType == QStringLiteral("wipetl")) { ox = pw * (1.0 - m_transAlpha); oy = ph * (1.0 - m_transAlpha); }
+            else if (m_transType == QStringLiteral("wipetr")) { ox = -pw * (1.0 - m_transAlpha); oy = ph * (1.0 - m_transAlpha); }
+            else if (m_transType == QStringLiteral("wipebr")) { ox = -pw * (1.0 - m_transAlpha); oy = -ph * (1.0 - m_transAlpha); }
+            else if (m_transType == QStringLiteral("wipebl")) { ox = pw * (1.0 - m_transAlpha); oy = -ph * (1.0 - m_transAlpha); }
             double a = clipAlpha;
             if (m_transType == QStringLiteral("dissolve")) a *= m_transAlpha;
             drawLayer(p, singleFrame, S, rot, tx, ty, a, SX, SY, k,
@@ -1305,6 +1320,7 @@ void PreviewWidget::togglePlay() {
     m_currentFrameIndex = std::llround(m_playhead * fps);
     m_playStart = m_playhead;
     m_clock.start();
+    m_playRate = 1.0;
     m_audioClockOn = false; // sink novo: reancora no primeiro tick
     m_playing = true;
     // Dispara em metade do período do frame: o tick calcula o frame alvo pelo
@@ -1317,6 +1333,40 @@ void PreviewWidget::togglePlay() {
     emit stateChanged(true);
 }
 
+void PreviewWidget::shuttle(int dir) {
+    if (dir == 0) { // K: pausa (zera a taxa — o próximo Espaço toca 1x normal)
+        stopPlayback();
+        return;
+    }
+    // J/L repetidos aceleram (1x→2x→4x); a direção oposta reinicia em 1x.
+    if (m_playing) {
+        if (dir > 0)
+            m_playRate = (m_playRate > 0.0) ? std::min(4.0, m_playRate * 2.0) : 1.0;
+        else
+            m_playRate = (m_playRate < 0.0) ? std::max(-4.0, m_playRate * 2.0) : -1.0;
+    } else {
+        m_playRate = (dir > 0) ? 1.0 : -1.0;
+    }
+    // Áudio só em 1x dianteiro: ré/acelerado deixa o sink mudo (o relógio de
+    // áudio não representa velocidade ≠1 e rolaria dessincronizado).
+    if (m_playRate == 1.0)
+        startAudio(m_playhead);
+    else
+        stopAudio();
+    if (m_playing) return;
+    if (!m_project || m_project->duration() <= 0) return;
+    const double fps = projFps(m_project);
+    m_currentFrameIndex = std::llround(m_playhead * fps);
+    m_playStart = m_playhead;
+    m_clock.start();
+    m_audioClockOn = false;
+    m_playing = true;
+    m_timer->setInterval(fps > 0.0 ? qBound(8, (int)std::lround(1000.0 / fps / 2.0), 40) : 33);
+    m_timer->start();
+    m_playBtn->setText(tr("Pausar"));
+    emit stateChanged(true);
+}
+
 void PreviewWidget::playFrom(double t) {
     // Enter (estilo Vegas): busca para a posição e começa a reproduzir dali,
     // mesmo se já estivesse tocando.
@@ -1326,6 +1376,7 @@ void PreviewWidget::playFrom(double t) {
     m_currentFrameIndex = std::llround(m_playhead * fps);
     m_playStart = m_playhead;
     m_clock.start();
+    m_playRate = 1.0;
     m_audioClockOn = false; // sink novo: reancora no primeiro tick
     m_playing = true;
     m_timer->setInterval(fps > 0.0 ? qBound(8, (int)std::lround(1000.0 / fps / 2.0), 40) : 33);
@@ -1380,6 +1431,7 @@ void PreviewWidget::setPreviewQuality(int width) {
 
 void PreviewWidget::stopPlayback() {
     m_playing = false;
+    m_playRate = 1.0;
     m_timer->stop();
     m_playBtn->setText(tr("Reproduzir"));
     m_currentFrameIndex = -1;
@@ -1400,7 +1452,7 @@ void PreviewWidget::tick() {
 
     // Tempo esperado pelo relógio de parede…
     const double elapsed = m_clock.elapsed() / 1000.0;
-    double t = m_playStart + elapsed;
+    double t = m_playStart + elapsed * m_playRate;
 
     // …corrigido pelo relógio do áudio (o que se ouve de verdade). Em
     // reproduções longas o relógio de parede desvia do consumo real do sink;
@@ -1412,7 +1464,7 @@ void PreviewWidget::tick() {
     // relógio parado fazia a agulha saltar DE VOLTA (muitas vezes para perto
     // do início). Se o áudio não avançou desde o tick anterior, confia no
     // relógio de parede até ele voltar a correr.
-    const double raw = audioClockSec();
+    const double raw = (m_playRate == 1.0) ? audioClockSec() : -1.0;
     if (raw >= 0.0) {
         const bool audioAdvanced = m_audioLastRaw < 0.0 || raw > m_audioLastRaw + 1e-6;
         m_audioLastRaw = raw;
@@ -1453,33 +1505,54 @@ void PreviewWidget::tick() {
     // Determina o índice de frame com base no clock de alta precisão
     const qint64 targetFrame = std::llround(t * fps);
 
-    // Se o timer acordou ligeiramente antes de 1 frame inteiro passar, não repete nem duplica o frame
-    if (targetFrame <= m_currentFrameIndex) {
-        return;
+    // Se o timer acordou ligeiramente antes de 1 frame inteiro passar, não
+    // repete nem duplica o frame. No shuttle o frame anda para trás (ré):
+    // avança só quando o alvo cruzou o frame atual na direção da taxa.
+    if (m_playRate >= 0.0) {
+        if (targetFrame <= m_currentFrameIndex) return;
+    } else {
+        if (targetFrame >= m_currentFrameIndex) return;
     }
 
     m_currentFrameIndex = targetFrame;
-    if (fps <= 0.0) t = m_playStart + elapsed;
+    if (fps <= 0.0) t = m_playStart + elapsed * m_playRate;
 
-    if (m_loopEnabled && m_loopOut > m_loopIn && t >= m_loopOut - 1e-9) {
-        m_playStart = m_loopIn;
-        m_currentFrameIndex = std::llround(m_loopIn * fps);
-        m_clock.restart();
-        anchorAudioClock(m_loopIn); // o sink continua rodando: compensa no anchor
-        applySeek(m_loopIn);
-        updateMixAudio(m_loopIn, true);
-        return;
+    if (m_loopEnabled && m_loopOut > m_loopIn) {
+        if (t >= m_loopOut - 1e-9) {
+            m_playStart = m_loopIn;
+            m_currentFrameIndex = std::llround(m_loopIn * fps);
+            m_clock.restart();
+            anchorAudioClock(m_loopIn); // o sink continua rodando: compensa no anchor
+            applySeek(m_loopIn);
+            if (m_playRate == 1.0) updateMixAudio(m_loopIn, true);
+            return;
+        }
+        if (t <= m_loopIn + 1e-9) {
+            // Ré/negativo alcançou o início do loop: volta ao fim.
+            m_playStart = m_loopOut;
+            m_currentFrameIndex = std::llround(m_loopOut * fps);
+            m_clock.restart();
+            anchorAudioClock(m_loopOut);
+            applySeek(m_loopOut);
+            return;
+        }
     }
     if (t >= dur) {
         applySeek(dur);
         stopPlayback();
         return;
     }
+    if (t <= 0.0) {
+        applySeek(0.0);
+        stopPlayback();
+        return;
+    }
     applySeek(t);
     updatePrefetch();
     // Mixer acompanha o playhead: volumes/fades e troca de clipes acontecem
-    // aqui, sem reiniciar o sink a cada transição.
-    updateMixAudio(t, false);
+    // aqui, sem reiniciar o sink a cada transição. No shuttle (≠1x) o sink
+    // fica mudo (stopAudio) e não deve ser reposicionado por frame.
+    if (m_playRate == 1.0) updateMixAudio(t, false);
 }
 
 // Clipe de vídeo (com mídia) no topo em `t`. Clipes de texto independentes são
@@ -1888,15 +1961,14 @@ void PreviewWidget::updateFrame() {
     // e blend no preview (antes só o clipe do topo aparecia).
     requestLowerLayers(decW);
 
-    // Cor sólida (gerador estilo Vegas): gera o quadro preenchido com a cor,
-    // sem passar pelo decoder (não há arquivo).
+    // Mídia gerada (gerador estilo Vegas): gera o quadro (cor, gradiente,
+    // checkerboard ou ruído), sem passar pelo decoder (não há arquivo).
     if (m->isSolid) {
         const int w = qMax(1, m->width > 0 ? m->width
                           : (m_project ? m_project->width : 1920));
         const int h = qMax(1, m->height > 0 ? m->height
                           : (m_project ? m_project->height : 1080));
-        QImage img(w, h, QImage::Format_ARGB32);
-        img.fill(m->solidColor);
+        QImage img = generatorFrame(*m, w, h);
         {
             QMutexLocker l(&m_frameMutex);
             m_frameFull = img;
@@ -2530,6 +2602,38 @@ void PreviewWidget::applyBasicEffectsOn(QImage& img, const Clip& c) {
                 line[si + 2] = (uchar)std::clamp((int)std::lround(r), 0, 255);
                 line[si + 1] = (uchar)std::clamp((int)std::lround(g), 0, 255);
                 line[si + 0] = (uchar)std::clamp((int)std::lround(b), 0, 255);
+            }
+        }
+    }
+// Correção de cor Lift/Gamma/Gain (aplicada DEPOIS do brilho/contraste).
+    if (c.hasColorGrade()) {
+        const double liftR = std::clamp(c.liftR, -1.0, 1.0);
+        const double liftG = std::clamp(c.liftG, -1.0, 1.0);
+        const double liftB = std::clamp(c.liftB, -1.0, 1.0);
+        const double ginR = std::clamp(c.gammaR, 0.1, 4.0);
+        const double ginG = std::clamp(c.gammaG, 0.1, 4.0);
+        const double ginB = std::clamp(c.gammaB, 0.1, 4.0);
+        const double gaiR = std::clamp(c.gainR, -1.0, 1.0);
+        const double gaiG = std::clamp(c.gainG, -1.0, 1.0);
+        const double gaiB = std::clamp(c.gainB, -1.0, 1.0);
+        for (int y = 0; y < img.height(); ++y) {
+            uchar* line = img.scanLine(y);
+            for (int x = 0; x < img.width(); ++x) {
+                const int si = x * 4;
+                int ch[3] = { line[si + 2], line[si + 1], line[si + 0] };
+                const double li[3] = { liftR, liftG, liftB };
+                const double gi[3] = { ginR, ginG, ginB };
+                const double ga[3] = { gaiR, gaiG, gaiB };
+                for (int chI = 0; chI < 3; ++chI) {
+                    double v = ch[chI];
+                    v += li[chI] * (255.0 - v);                                  // lift (sombras)
+                    v = 255.0 * std::pow(std::max(v, 0.0) / 255.0, 1.0 / gi[chI]); // gamma (meios)
+                    v += ga[chI] * v;                                            // gain (realces)
+                    ch[chI] = (int)std::lround(std::clamp(v, 0.0, 255.0));
+                }
+                line[si + 2] = (uchar)ch[0];
+                line[si + 1] = (uchar)ch[1];
+                line[si + 0] = (uchar)ch[2];
             }
         }
     }

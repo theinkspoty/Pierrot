@@ -129,6 +129,10 @@ signals:
     // Enter (estilo Vegas): tocar a partir da posição da agulha/ponteiro.
     void playFromCursor();
     void editStart();
+    // Rótulo da próxima operação (para o painel de histórico undo/redo).
+    // Emitido ANTES do editStart correspondente; se vazio, a entrada vira
+    // "Edição".
+    void undoLabel(const QString& label);
     void toolChanged(int tool);
     void loopChanged(double in, double out);
     void loopEnabledChanged(bool enabled); // "Q" liga/desliga o loop de reprodução
@@ -230,6 +234,7 @@ private:
     void showProperties(Clip* c);
     void showSpeedDialog(Clip* c);
     void showEffectsDialog(Clip* c);
+    void showGradingDialog(Clip* c);
     void showTransformDialog(Clip* c);
     void showAudioEffectsDialog(Clip* c);
     void showTextEditorDialog(Clip* c);
@@ -244,6 +249,8 @@ private:
     void cutSelected();
     void pasteClips();
     void pasteAttributes();
+    void saveClipPreset();
+    void applyClipPreset();
     void duplicateSelected();
     void selectAllClips();
     // Vegas: U separa os clipes selecionados do grupo (groupId limpo);

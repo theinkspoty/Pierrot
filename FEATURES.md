@@ -5,7 +5,11 @@
 - Importe vídeos, áudios e imagens por arraste do sistema ou pelo botão **Importar**.
 - Múltiplos arquivos simultâneos com análise assíncrona (não trava a interface).
 - Miniaturas com tamanho ajustável.
-- **Gerador de cor sólida** (estilo Vegas): mídia virtual sem arquivo, funciona como fundo/camada.
+- **Geradores de mídia** (estilo Vegas): mídia virtual sem arquivo, funciona como fundo/camada — **cor sólida**, **gradiente**, **checkboard** e **ruído (grão)**.
+- **Trimmer (in/out)**: ao soltar uma mídia de vídeo na timeline, abre o diálogo Trimmer para escolher o trecho (scrubber, `I`/`O` para marcar in/out, prévia de quadro, tocar). Cancelar aborta a soltura; multi-seleção insere direto.
+- **Fila de render**: várias exportações (formatos/resoluções/fps diferentes) na fila, rodando em sequência (menu Arquivo ▸ Fila de render…).
+- **Correção de cor (Lift/Gamma/Gain)**: por clipe (menu de contexto ▸ Correção de cor…), aplicada no preview e na exportação (`colorbalance` + `eq` do ffmpeg).
+- **Analisadores (Scopes)**: painel com waveform, histograma RGB e vectorscope, seguindo o quadro composto do preview (menu Exibir ▸ Analisadores).
 - **Explorador de arquivos** integrado (dock): Lugares (Início + SSDs externos), importação por duplo clique, "Importar pasta" ou arraste, modo miniaturas.
 
 ## Timeline
@@ -32,6 +36,7 @@
 - **Cantos de fade**: arraste canto superior esquerdo/direito para fade in/out.
 - **Opacidade do clipe** (estilo Vegas): arraste parte superior do clipe de vídeo para cima/baixo.
 - **Velocidade do clipe**: ajuste por diálogo (0,1×–4×), com barra de velocidade no cabeçalho.
+- **Presets de clipe** (estilo Vegas): menu de contexto do clipe — **Salvar Preset…** guarda efeitos/transform/pan-crop/keyframes/áudio num preset nomeado persistente; **Aplicar Preset…** aplica o preset salvo a todos os clipes selecionados.
 
 ## Ferramentas da Timeline
 
@@ -86,9 +91,10 @@
 ## Preview e Reprodução
 
 - Reprodução em tempo real com seek frame-a-frame.
+- **Shuttle JKL** (Vegas): `J` retrocede, `K` pausa, `L` avança; repetir acelera (1×→2×→4×). Áudio silencia fora de 1× dianteiro.
 - **Áudio** (Qt Multimedia, via libswresample).
 - Composição multi-faixa no preview (blend, opacidade, fades, cor sólida).
-- **Transições** (dissolve, wipe) no preview e exportação.
+- **Transições** (dissolve, wipes 4 direções + 4 diagonais) no preview e exportação.
 - **Barra de transporte** abaixo do preview (Início, ← frame, Play/Pause, → frame, Fim).
 - Qualidade de preview configurável (resolução de decodificação).
 - Sincronização A/V pelo relógio do áudio (slew suave, correção de drift).
@@ -110,6 +116,7 @@
 | Tecla | Ação |
 |-------|------|
 | `Espaço` | Reproduzir / pausar |
+| `J` / `K` / `L` | Shuttle JKL: retroceder / pausar / avançar (repetir acelera) |
 | `Enter` | Pausar e voltar ao cursor |
 | `S` | Dividir clipe no playhead |
 | `Delete` | Excluir clipe selecionado |
@@ -131,6 +138,7 @@
 ## Undo/Redo
 
 - Ilimitado (snapshots, Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y).
+- **Painel Histórico de Edições** (Exibir ▸ Histórico de Edições): lista os passos com nome da operação (dividir, excluir, colar, agrupar…); clicar em um passo salta o histórico para ele (undo/redo em bloco).
 
 ## Salvar/Abrir
 

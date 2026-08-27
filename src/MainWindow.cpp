@@ -17,6 +17,8 @@
 #include "ui/MixerWidget.h"
 #include "ui/MesaWidget.h"
 #include "ui/ExportDialog.h"
+#include "ui/RenderQueueDialog.h"
+#include "ui/ScopeWidget.h"
 #include "ui/ProjectSettingsDialog.h"
 #include "ui/SettingsDialog.h"
 #include "ui/Theme.h"
@@ -34,6 +36,7 @@ static QKeySequence appKey(const char* id, const QKeySequence& fallback) {
 #include <QApplication>
 #include <QPointer>
 #include <QDockWidget>
+#include <QListWidget>
 #include <QMenuBar>
 #include <QToolBar>
 #include <QStatusBar>
@@ -59,6 +62,7 @@ static QKeySequence appKey(const char* id, const QKeySequence& fallback) {
 #include <QShortcut>
 #include <QPainterPath>
 #include <QPolygonF>
+#include <QComboBox>
 #include <QTimer>
 #include <QTime>
 #include <QProgressBar>
@@ -254,6 +258,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     qApp->installEventFilter(this);
 
     m_undoStack.append(snapshotState());
+    m_undoLabels.append(tr("Início"));
     m_undoIndex = 0;
     updateUndoActions();
 
@@ -344,6 +349,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             m_timeline->dropMediaAt(ids, g);
     });
     connect(m_timeline, &TimelineWidget::editStart, this, &MainWindow::pushUndo);
+    connect(m_timeline, &TimelineWidget::undoLabel, this, &MainWindow::setUndoLabel);
     connect(m_timeline, &TimelineWidget::loopChanged, m_preview, &PreviewWidget::setLoopRange);
     connect(m_timeline, &TimelineWidget::loopEnabledChanged, m_preview, &PreviewWidget::setLoopEnabled);    connect(m_pool, &MediaPoolWidget::editStart, this, &MainWindow::pushUndo);
     connect(m_pool, &MediaPoolWidget::importStarted, this, [this]() {
@@ -707,13 +713,69 @@ void MainWindow::createDocks() {
     tabifyDockWidget(m_pancropDock, m_mesaDock);
     m_mesaDock->hide();
 
+    // Histórico de edições (undo/redo) — dock no canto inferior direito,
+    // agrupado com o Mixer.
+    m_histList = new QListWidget(this);
+    m_histList->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_histList->setMinimumWidth(180);
+    connect(m_histList, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
+        jumpToUndo(item->data(Qt::UserRole).toInt());
+    });
+    m_histDock = new QDockWidget(tr("Histórico de Edições"), this);
+    m_histDock->setObjectName(QStringLiteral("historyDock"));
+    m_histDock->setWidget(m_histList);
+    m_histDock->setAllowedAreas(Qt::AllDockWidgetAreas);
+    m_histDock->setFeatures(QDockWidget::DockWidgetMovable
+                            | QDockWidget::DockWidgetFloatable
+                            | QDockWidget::DockWidgetClosable);
+    addDockWidget(Qt::RightDockWidgetArea, m_histDock);
+    tabifyDockWidget(m_mixerDock, m_histDock);
+    m_histDock->hide();
+    updateHistoryList();
+
+    // Analisadores de vídeo (waveform/histograma/vectorscope) — dock à direita,
+    // seguindo o preview. Um timer discreto (~15 fps) copia o quadro composto;
+    // a cópia é minúscula (160×90) e só acontece com o dock visível.
+    m_scopes = new ScopeWidget(this);
+    m_scopeMode = new QComboBox(this);
+    m_scopeMode->addItem(tr("Waveform"), (int)ScopeWidget::Waveform);
+    m_scopeMode->addItem(tr("Histograma"), (int)ScopeWidget::Histogram);
+    m_scopeMode->addItem(tr("Vectorscope"), (int)ScopeWidget::Vectorscope);
+    connect(m_scopeMode, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int idx) {
+        m_scopes->setMode((ScopeWidget::Mode)m_scopeMode->itemData(idx).toInt());
+        m_scopes->refreshFrom(m_preview->scopesFrame());
+    });
+    auto* scopeBox = new QWidget(this);
+    auto* scopeLay = new QVBoxLayout(scopeBox);
+    scopeLay->setContentsMargins(6, 6, 6, 6);
+    scopeLay->addWidget(m_scopeMode);
+    scopeLay->addWidget(m_scopes, 1);
+    m_scopesDock = new QDockWidget(tr("Analisadores"), this);
+    m_scopesDock->setObjectName(QStringLiteral("scopesDock"));
+    m_scopesDock->setWidget(scopeBox);
+    m_scopesDock->setAllowedAreas(Qt::AllDockWidgetAreas);
+    m_scopesDock->setFeatures(QDockWidget::DockWidgetMovable
+                              | QDockWidget::DockWidgetFloatable
+                              | QDockWidget::DockWidgetClosable);
+    addDockWidget(Qt::RightDockWidgetArea, m_scopesDock);
+    tabifyDockWidget(m_histDock, m_scopesDock);
+    m_scopesDock->hide();
+    auto* scopeTimer = new QTimer(this);
+    scopeTimer->setInterval(70);
+    connect(scopeTimer, &QTimer::timeout, this, [this]() {
+        if (!m_scopesDock->isVisible()) return;
+        m_scopes->refreshFrom(m_preview->scopesFrame());
+    });
+    scopeTimer->start();
+
     // Visual das barras de título dos painéis dockáveis.
     setStyleSheet(globalStyleSheet(savedTheme()));
 
     // Qualquer mudança de arranjo dos painéis agenda o salvamento do layout.
     for (QDockWidget* dock : {m_poolDock, m_timelineDock, m_pancropDock, m_graphDock,
                               m_effectsDock, m_expressDock, m_fileBrowserDock,
-                              m_mixerDock, m_mesaDock}) {
+                              m_mixerDock, m_mesaDock, m_histDock, m_scopesDock}) {
         connect(dock, &QDockWidget::topLevelChanged, this, &MainWindow::scheduleLayoutSave);
         connect(dock, &QDockWidget::visibilityChanged, this, &MainWindow::scheduleLayoutSave);
     }
@@ -735,6 +797,12 @@ void MainWindow::createActions() {
     exportAct->setIcon(iconExport());
     exportAct->setToolTip(tr("Exportar vídeo… (Ctrl+E)"));
     connect(exportAct, &QAction::triggered, this, &MainWindow::exportVideo);
+    QAction* queueAct = new QAction(tr("Fila de render…"), this);
+    queueAct->setToolTip(tr("Várias exportações em sequência (formatos/resoluções diferentes)"));
+    connect(queueAct, &QAction::triggered, this, [this]() {
+        RenderQueueDialog dlg(&m_project, this);
+        dlg.exec();
+    });
 
     QAction* quit = new QAction(tr("Sair"), this);
     quit->setShortcut(QKeySequence::Quit);
@@ -745,6 +813,36 @@ void MainWindow::createActions() {
     m_playAction->setIcon(stdIcon(QStyle::SP_MediaPlay));
     m_playAction->setToolTip(tr("Reproduzir/Pausar (Espaço)"));
     connect(m_playAction, &QAction::triggered, m_preview, &PreviewWidget::togglePlay);
+
+    // Shuttle JKL (estilo Vegas): L avança, J retrocede, K pausa; repetir
+    // acelera (1x→2x→4x). Contexto WidgetWithChildrenShortcut nas duas
+    // áreas de edição para não roubar o L/K do MesaCanvas (toggle de camadas
+    // e autokey) quando ele estiver focado.
+    QAction* shuttleRev = new QAction(tr("Retroceder (JKL)"), this);
+    shuttleRev->setShortcut(appKey("shuttleRev", QKeySequence(Qt::Key_J)));
+    shuttleRev->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    shuttleRev->setToolTip(tr("Reproduzir para trás (J); repetir acelera"));
+    connect(shuttleRev, &QAction::triggered, m_preview, [this]() { m_preview->shuttle(-1); });
+
+    QAction* shuttleFwd = new QAction(tr("Avançar (JKL)"), this);
+    shuttleFwd->setShortcut(appKey("shuttleFwd", QKeySequence(Qt::Key_L)));
+    shuttleFwd->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    shuttleFwd->setToolTip(tr("Reproduzir para frente (L); repetir acelera"));
+    connect(shuttleFwd, &QAction::triggered, m_preview, [this]() { m_preview->shuttle(1); });
+
+    QAction* shuttlePause = new QAction(tr("Pausar (JKL)"), this);
+    shuttlePause->setShortcut(appKey("shuttlePause", QKeySequence(Qt::Key_K)));
+    shuttlePause->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    shuttlePause->setToolTip(tr("Pausar (K)"));
+    connect(shuttlePause, &QAction::triggered, m_preview, [this]() { m_preview->shuttle(0); });
+    if (m_timeline) {
+        m_timeline->addAction(shuttleRev);
+        m_timeline->addAction(shuttleFwd);
+        m_timeline->addAction(shuttlePause);
+    }
+    m_preview->addAction(shuttleRev);
+    m_preview->addAction(shuttleFwd);
+    m_preview->addAction(shuttlePause);
 
     QAction* cutAction = new QAction(tr("Dividir no playhead"), this);
     cutAction->setShortcut(appKey("cut", QKeySequence(Qt::Key_S)));
@@ -822,6 +920,7 @@ void MainWindow::createActions() {
     fileMenu->addAction(addMedia);
     fileMenu->addSeparator();
     fileMenu->addAction(exportAct);
+    fileMenu->addAction(queueAct);
     fileMenu->addSeparator();
     fileMenu->addAction(quit);
 
@@ -886,6 +985,8 @@ void MainWindow::createActions() {
     viewMenu->addAction(m_fileBrowserDock->toggleViewAction());
     viewMenu->addAction(m_mixerDock->toggleViewAction());
     viewMenu->addAction(m_mesaDock->toggleViewAction());
+    viewMenu->addAction(m_histDock->toggleViewAction());
+    viewMenu->addAction(m_scopesDock->toggleViewAction());
     viewMenu->addSeparator();
     viewMenu->addAction(m_lockAction);
 
@@ -1012,7 +1113,7 @@ void MainWindow::createActions() {
 void MainWindow::setDockLocked(bool locked) {
     for (QDockWidget* dock : {m_poolDock, m_timelineDock, m_pancropDock, m_graphDock,
                               m_effectsDock, m_expressDock, m_fileBrowserDock,
-                              m_mixerDock, m_mesaDock}) {
+                              m_mixerDock, m_mesaDock, m_histDock, m_scopesDock}) {
         if (locked) {
             if (!m_originalFeatures.contains(dock))
                 m_originalFeatures.insert(dock, dock->features());
@@ -1337,15 +1438,27 @@ QIcon MainWindow::iconExport() const {
 }
 
 void MainWindow::pushUndo() {
-    if (m_undoIndex < m_undoStack.size() - 1)
+    if (m_undoIndex < m_undoStack.size() - 1) {
         m_undoStack.resize(m_undoIndex + 1);
+        m_undoLabels.resize(m_undoIndex + 1);
+    }
     m_undoStack.append(snapshotState());
+    m_undoLabels.append(m_pendingUndoLabel.isEmpty() ? tr("Edição") : m_pendingUndoLabel);
+    m_pendingUndoLabel.clear();
     m_undoIndex = m_undoStack.size() - 1;
     while (m_undoStack.size() > 60) {
         m_undoStack.removeAt(0);
+        m_undoLabels.removeAt(0);
         --m_undoIndex;
     }
     setModified();
+    updateHistoryList();
+}
+
+void MainWindow::setUndoLabel(const QString& label) {
+    // Guarda o RÓTULO, não o snapshot: o pushUndo é emitido pelo widget logo
+    // em seguida (via editStart) e é quem agrega a entrada.
+    m_pendingUndoLabel = label;
 }
 
 // Serializa o projeto (JSON compacto + compressão). A pilha de undo guarda
@@ -1395,6 +1508,7 @@ void MainWindow::applyUndoState() {
     m_mesa->refresh();
     m_mesa->autoSelectMesa();
     updateUndoActions();
+    updateHistoryList();
 }
 
 void MainWindow::setModified() {
@@ -1406,6 +1520,36 @@ void MainWindow::setModified() {
 void MainWindow::updateUndoActions() {
     m_undoAction->setEnabled(m_undoIndex > 0);
     m_redoAction->setEnabled(m_undoIndex < m_undoStack.size() - 1);
+}
+
+// Painel de histórico (estilo Vegas): cada entrada = estado da timeline ANTES
+// de uma edição. Clicar salta o índice de undo para aquele ponto (undo/redo
+// em bloco, sem precisar dar N Ctrl+Z).
+void MainWindow::updateHistoryList() {
+    if (!m_histList || m_undoLabels.size() != m_undoStack.size()) return;
+    m_histList->blockSignals(true);
+    m_histList->clear();
+    for (int i = 0; i < m_undoLabels.size(); ++i) {
+        auto* item = new QListWidgetItem(QString::number(i + 1) + QLatin1String(". ") + m_undoLabels[i]);
+        item->setData(Qt::UserRole, i);
+        if (i == m_undoIndex)
+            item->setForeground(QColor(110, 210, 255));
+        m_histList->addItem(item);
+    }
+    m_histList->setCurrentRow(m_undoIndex);
+    m_histList->scrollToItem(m_histList->currentItem());
+    m_histList->blockSignals(false);
+}
+
+void MainWindow::jumpToUndo(int index) {
+    if (index < 0 || index >= m_undoStack.size() || index == m_undoIndex) return;
+    const QString sel = m_timeline->lastSelectedId();
+    QPointer<QWidget> fw = focusWidget();
+    m_undoIndex = index;
+    applyUndoState();
+    if (!sel.isEmpty()) m_timeline->selectClip(sel);
+    if (fw) fw->setFocus();
+    setModified();
 }
 
 void MainWindow::updateTitle() {
@@ -1425,7 +1569,10 @@ void MainWindow::newProject() {
     m_pancropDock->hide();
     m_undoStack.clear();
     m_undoStack.append(snapshotState());
+    m_undoLabels.clear();
+    m_undoLabels.append(tr("Início"));
     m_undoIndex = 0;
+    updateHistoryList();
     m_currentFile.clear();
     m_modified = false;
     applyUndoState();
@@ -1475,7 +1622,10 @@ void MainWindow::openProjectFile(const QString& path) {
 
     m_undoStack.clear();
     m_undoStack.append(snapshotState());
+    m_undoLabels.clear();
+    m_undoLabels.append(tr("Início"));
     m_undoIndex = 0;
+    updateHistoryList();
     m_currentFile = path;
     m_modified = false;
     applyUndoState();

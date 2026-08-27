@@ -44,6 +44,10 @@ public:
     AudioMixer* audioMixer() const { return m_audioFeed; }
     double playhead() const { return m_playhead; }
 
+    // Retorna uma cópia REDUZIDA (160×90) do quadro composto atual, para os
+    // analisadores (waveform/vectorscope/histograma). Vazio se sem quadro.
+    QImage scopesFrame() const;
+
     // Níveis de áudio para o MixerWidget (thread-safe).
     struct AudioLevels {
         QHash<QPair<bool,int>, float> rms; // (isAudio, trackIndex) → RMS 0..1
@@ -53,6 +57,9 @@ public:
 public slots:
     void seek(double t);
     void togglePlay();
+    // Shuttle JKL (estilo Vegas): dir > 0 = frente (L), dir < 0 = ré (J),
+    // dir == 0 = pausa (K). Pressionar de novo acelera (1x→2x→4x).
+    void shuttle(int dir);
     // Toca a partir de uma posição (Enter: início no ponteiro da timeline).
     void playFrom(double t);
     void setLoopRange(double in, double out);
@@ -124,6 +131,10 @@ private:
     std::atomic<int> m_audioGen{0};
     qint64 m_currentFrameIndex = -1;
     bool m_playing = true;
+    // Velocidade de reprodução do shuttle JKL: 1.0 normal, negativa = ré,
+    // >1 (até 4) = acelerado. Ajusta o avanço do tick e silencia o áudio
+    // fora de 1x dianteiro (o sink não acompanha velocidade/reverso).
+    double m_playRate = 1.0;
     QPushButton* m_playBtn = nullptr;
     QLabel* m_timeLabel = nullptr;
     QComboBox* m_zoomCombo = nullptr;

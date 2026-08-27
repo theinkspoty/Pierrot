@@ -76,11 +76,17 @@ struct MediaItem {
     int audioStreams = 0;
     // Canais por stream de áudio (índice = stream; usado p/ exibir e validar).
     QVector<int> audioChannels;
-    // Mídia gerada (sem arquivo): cor sólida (gerador estilo Vegas). Quando
-    // true, filePath fica vazio e o clipe é renderizado/exportado como um
-    // quadro preenchido com solidColorValue.
+    // Mídia gerada (sem arquivo): gerador estilo Vegas. Quando true,
+    // filePath fica vazio e o clipe é renderizado/exportado como um quadro
+    // gerado por `generatorFrame()`.
     bool isSolid = false;
     QColor solidColor{Qt::black};
+    // Tipo do gerador quando isSolid: "" = cor sólida, "gradient" (gradiente
+    // linear vertical sólida→solidColor2), "checkerboard" (tabuleiro com
+    // genCells células por lado) ou "noise" (grão aleatório entre as cores).
+    QString generator;
+    QColor solidColor2{Qt::white};
+    int genCells = 8;
 };
 
 struct Marker {
@@ -251,7 +257,8 @@ struct MesaComposition {
 // Tipos de transição de saída de um clipe (aplicada quando ele se sobrepõe ao
 // próximo clipe da mesma faixa de vídeo; a duração é o tamanho da sobreposição).
 //  ""/"dissolve" = crossfade; "wipeleft"/"wiperight"/"wipeup"/"wipedown" = o
-//  próximo clipe desliza de um dos lados sobre o atual.
+//  próximo clipe desliza de um dos lados sobre o atual; "wipetl"/"wipetr"/
+//  "wipebr"/"wipebl" = variações diagonais (canto de onde o próximo entra).
 inline bool isTransition(const QString& type) {
     return !type.isEmpty();
 }
@@ -289,6 +296,25 @@ struct Clip {
     bool chromaKey = false;
     QColor chromaKeyColor{Qt::green};
     double chromaKeySimilarity = 0.15;
+
+    // ── Correção de cor (estilo vegas: Lift/Gamma/Gain) ─────────────────
+    // Lift: afeta os PRETOS (escala com 255 - pixel). Gamma: curva de poder
+    // nos meios (1.0 = neutro). Gain: afeta os BRANCOS (escala com o pixel).
+    // Faixas típicas: lift/gain em [-1, 1], gamma em [0.1, 4].
+    double liftR = 0.0;
+    double liftG = 0.0;
+    double liftB = 0.0;
+    double gammaR = 1.0;
+    double gammaG = 1.0;
+    double gammaB = 1.0;
+    double gainR = 0.0;
+    double gainG = 0.0;
+    double gainB = 0.0;
+    bool hasColorGrade() const {
+        return liftR != 0.0 || liftG != 0.0 || liftB != 0.0
+            || gammaR != 1.0 || gammaG != 1.0 || gammaB != 1.0
+            || gainR != 0.0 || gainG != 0.0 || gainB != 0.0;
+    }
 
     // ── Efeito Pierrot: LAINKA (stop motion) ─────────────────────────────
     bool lainkaEnabled = false;

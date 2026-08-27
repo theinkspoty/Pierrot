@@ -56,6 +56,9 @@ set(SOURCES
     src/ui/ClickLogger.cpp
     src/ui/EffectsWidget.cpp
     src/ui/ExpressWidget.cpp
+    src/ui/TrimmerDialog.cpp
+    src/ui/RenderQueueDialog.cpp
+    src/ui/ScopeWidget.cpp
     src/ui/FileBrowserWidget.cpp
     src/ui/MixerWidget.cpp
     src/ui/TitleBar.cpp
@@ -71,6 +74,11 @@ set(HEADERS
     src/MainWindow.h
     src/CrashReporter.h
     src/version.h
+    src/generators.h
+    src/clipattrs.h
+    src/ui/TrimmerDialog.h
+    src/ui/RenderQueueDialog.h
+    src/ui/ScopeWidget.h
     src/models/Project.h
     src/ffmpeg/FFmpegDecoder.h
     src/ffmpeg/MediaCache.h

@@ -28,9 +28,10 @@
 #include <QDateTime>
 #include <QMessageBox>
 
-ExportDialog::ExportDialog(Project* project, QWidget* parent)
-    : QDialog(parent), m_project(project) {
-    setWindowTitle(tr("Exportar vídeo"));
+ExportDialog::ExportDialog(Project* project, QWidget* parent, Mode mode)
+    : QDialog(parent), m_project(project), m_mode(mode) {
+    setWindowTitle(mode == Configure ? tr("Configurar exportação")
+                                     : tr("Exportar vídeo"));
     setMinimumWidth(580);
 
     m_outEdit = new QLineEdit(this);
@@ -110,10 +111,19 @@ ExportDialog::ExportDialog(Project* project, QWidget* parent)
     m_logEdit->setReadOnly(true);
     m_logEdit->setMaximumHeight(120);
 
-    m_startBtn = new QPushButton(tr("Exportar"), this);
+    m_startBtn = new QPushButton(mode == Configure ? tr("Adicionar à fila")
+                                                   : tr("Exportar"), this);
     auto* cancelBtn = new QPushButton(tr("Fechar"), this);
     connect(cancelBtn, &QPushButton::clicked, this, &ExportDialog::requestCancel);
-    connect(m_startBtn, &QPushButton::clicked, this, &ExportDialog::startExport);
+    if (mode == Configure) {
+        // Em modo de configuração não renderiza: apenas aceita (a fila de
+        // render lê as configurações escolhidas).
+        connect(m_startBtn, &QPushButton::clicked, this, &QDialog::accept);
+        m_progress->hide();
+        m_logEdit->hide();
+    } else {
+        connect(m_startBtn, &QPushButton::clicked, this, &ExportDialog::startExport);
+    }
 
     // Copia todo o log para a área de transferência (útil para reportar erros).
     auto* copyBtn = new QPushButton(tr("Copiar tudo"), this);
@@ -144,6 +154,7 @@ ExportDialog::~ExportDialog() {
 }
 
 void ExportDialog::requestCancel() {
+    if (m_mode == Configure) { reject(); return; }
     if (!m_process || m_process->state() == QProcess::NotRunning) {
         reject();
         return;
@@ -205,7 +216,16 @@ ExportSettings ExportDialog::currentSettings() const {
     return s;
 }
 
+ExportSettings ExportDialog::askSettings(Project* project, QWidget* parent) {
+    ExportDialog dlg(project, parent, Configure);
+    ExportSettings s;
+    if (dlg.exec() == QDialog::Accepted)
+        s = dlg.currentSettings();
+    return s;
+}
+
 void ExportDialog::startExport() {
+    if (m_mode == Configure) return;
     if (m_process) { log(tr("Já há uma exportação em andamento.")); return; }
 
     const ExportSettings s = currentSettings();

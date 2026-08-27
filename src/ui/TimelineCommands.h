@@ -74,8 +74,6 @@ void rateStretch(TimelineWidget* tl, Clip* c, double origDur, double origSpeed, 
 bool moveClipToTrack(TimelineWidget* tl, const QString& id, int row, bool audio);
 // Remove clipes por IDs.
 void removeClipsByIds(TimelineWidget* tl, const QStringList& ids);
-// Duplica um clipe.
-void duplicateClip(TimelineWidget* tl, Clip* c);
 // Desloca clipes selecionados (nudge).
 void nudgeSelected(TimelineWidget* tl, int dir);
 

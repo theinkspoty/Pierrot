@@ -22,8 +22,13 @@ class QProcess;
 class ExportDialog : public QDialog {
     Q_OBJECT
 public:
-    explicit ExportDialog(Project* project, QWidget* parent = nullptr);
+    enum Mode { Render = 0, Configure = 1 };
+    explicit ExportDialog(Project* project, QWidget* parent = nullptr, Mode mode = Render);
     ~ExportDialog() override;
+    // Abre o diálogo só para configurar uma exportação (usado pela fila de
+    // render): retorna as configurações escolhidas quando o usuário aceitar,
+    // ou settings com outputPath vazio se cancelar.
+    static ExportSettings askSettings(Project* project, QWidget* parent);
 private slots:
     void browseOutput();
     void startExport();
@@ -35,6 +40,7 @@ private:
     void log(const QString& line);
     void restoreLainkaMedia();
     Project* m_project = nullptr;
+    Mode m_mode = Render;
     QLineEdit* m_outEdit = nullptr;
     QComboBox* m_resCombo = nullptr;
     QComboBox* m_fpsCombo = nullptr;

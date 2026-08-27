@@ -8,6 +8,7 @@
 #include "ffmpeg/MediaCache.h"
 #include "ui/TimelineWidget.h"
 #include "ui/SettingsDialog.h"
+#include "generators.h"
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -40,6 +41,7 @@
 #include <QDropEvent>
 #include <QMenu>
 #include <QColorDialog>
+#include <QInputDialog>
 #include <QCursor>
 #include <cmath>
 #include <algorithm>
@@ -440,7 +442,7 @@ MediaPoolWidget::MediaPoolWidget(QWidget* parent) : QWidget(parent) {
     genBtn->setToolTip(tr("Criar mídia gerada (cor sólida, como no Vegas)"));
     connect(m_addBtn, &QPushButton::clicked, this, &MediaPoolWidget::addFiles);
     connect(m_removeBtn, &QPushButton::clicked, this, &MediaPoolWidget::removeSelected);
-    connect(genBtn, &QPushButton::clicked, this, &MediaPoolWidget::addSolidColor);
+    connect(genBtn, &QPushButton::clicked, this, &MediaPoolWidget::addGenerator);
     connect(&MediaCache::instance(), &MediaCache::thumbnailReady,
             this, &MediaPoolWidget::onThumbReady);
     // Duplo clique: adiciona a mídia na timeline no playhead (fallback para o
@@ -508,13 +510,12 @@ void MediaPoolWidget::refresh() {
             tags += QString("[MKV experimental]  ·  ");
         item->setText(QString("%1\n%2%3").arg(m.name, tags, formatDuration(m.duration)));
         item->setData(Qt::UserRole, m.id);
-        item->setToolTip(m.isSolid ? tr("Cor sólida (gerador)") : m.filePath);
+        item->setToolTip(m.isSolid ? tr("Mídia gerada (gerador)") : m.filePath);
         if (m.isSolid) {
-            // Gerador de cor: ícone preenchido com a cor sólida, sem thumb.
+            // Gerador de mídia: ícone com o padrão gerado, sem thumb.
             const int iw = qBound(16, m.width > 0 ? m.width : 96, 96);
             const int ih = qBound(9, m.height > 0 ? m.height : 54, 54);
-            QImage ic(iw, ih, QImage::Format_ARGB32);
-            ic.fill(m.solidColor);
+            QImage ic = generatorFrame(m, iw, ih);
             setThumb(m.id, ic);
             item->setIcon(QIcon(QPixmap::fromImage(ic)));
         } else if (m.hasVideo) {
@@ -638,9 +639,10 @@ void MediaPoolWidget::importPaths(const QStringList& files) {
     watcher->setFuture(QtConcurrent::mapped(files, probeFile));
 }
 
-// Gerador de mídia (estilo Vegas): cria uma mídia de COR SÓLIDA (sem arquivo)
-// que pode ser arrastada para a timeline. Menu com cores rápidas + personalizada.
-void MediaPoolWidget::addSolidColor() {
+// Geradores de mídia (estilo Vegas): cria mídia virtual sem arquivo que pode
+// ser arrastada para a timeline — cor sólida, gradiente, checkerboard ou
+// ruído (grão). Menu com cores rápidas + personalizadas.
+void MediaPoolWidget::addGenerator() {
     if (!m_project) return;
     QMenu menu(this);
     struct Quick { QString name; QColor color; };
@@ -653,35 +655,79 @@ void MediaPoolWidget::addSolidColor() {
         {tr("Preto"), QColor(0, 0, 0)},
         {tr("Laranja"), QColor(255, 130, 0)},
     };
-    QAction* pick = menu.addAction(tr("Personalizada…"));
+    QMenu* solidMenu = menu.addMenu(tr("Cor sólida"));
+    QAction* pick = solidMenu->addAction(tr("Personalizada…"));
     QHash<QAction*, QColor> actions;
     for (const Quick& q : quicks) {
-        QAction* a = menu.addAction(q.name);
+        QAction* a = solidMenu->addAction(q.name);
         actions.insert(a, q.color);
     }
+    QAction* gradAct = menu.addAction(tr("Gradiente…"));
+    QAction* checkAct = menu.addAction(tr("Checkboard…"));
+    QAction* noiseAct = menu.addAction(tr("Ruído (grão)…"));
     QAction* chosen = menu.exec(QCursor::pos());
-    QColor color;
-    if (chosen == pick) {
-        color = QColorDialog::getColor(Qt::black, this, tr("Cor da mídia"));
-        if (!color.isValid()) return;
-        color.setAlpha(255);
-    } else if (actions.contains(chosen)) {
-        color = actions.value(chosen);
+
+    MediaItem m;
+    auto setupBase = [this, &m]() {
+        m.id = newId();
+        m.isSolid = true;
+        m.hasVideo = true;
+        m.width = m_project->width;
+        m.height = m_project->height;
+        m.duration = m_project->duration() > 0 ? m_project->duration() : 5.0;
+    };
+
+    if (chosen == pick || actions.contains(chosen)) {
+        QColor color;
+        if (chosen == pick) {
+            color = QColorDialog::getColor(Qt::black, this, tr("Cor da mídia"));
+            if (!color.isValid()) return;
+            color.setAlpha(255);
+        } else {
+            color = actions.value(chosen);
+        }
+        QString hex = color.name().toUpper();
+        m.generator = QString();
+        m.solidColor = color;
+        m.name = tr("Cor %1").arg(hex.startsWith(QLatin1Char('#')) ? hex.mid(1) : hex);
+    } else if (chosen == gradAct) {
+        QColor a = QColorDialog::getColor(QColor(255, 255, 255), this, tr("Cor inicial do gradiente"));
+        if (!a.isValid()) return;
+        QColor b = QColorDialog::getColor(Qt::black, this, tr("Cor final do gradiente"));
+        if (!b.isValid()) return;
+        m.generator = QStringLiteral("gradient");
+        m.solidColor = a;
+        m.solidColor2 = b;
+        m.name = tr("Gradiente");
+    } else if (chosen == checkAct) {
+        QColor a = QColorDialog::getColor(Qt::black, this, tr("Cor 1 do checkboard"));
+        if (!a.isValid()) return;
+        QColor b = QColorDialog::getColor(Qt::white, this, tr("Cor 2 do checkboard"));
+        if (!b.isValid()) return;
+        bool ok = false;
+        const int cells = QInputDialog::getInt(this, tr("Checkboard"),
+                                               tr("Células por lado:"), 8, 2, 64, 1, &ok);
+        if (!ok) return;
+        m.generator = QStringLiteral("checkerboard");
+        m.solidColor = a;
+        m.solidColor2 = b;
+        m.genCells = cells;
+        m.name = tr("Checkboard %1×%1").arg(cells);
+    } else if (chosen == noiseAct) {
+        QColor a = QColorDialog::getColor(Qt::black, this, tr("Cor do ruído"));
+        if (!a.isValid()) return;
+        QColor b = QColorDialog::getColor(Qt::white, this, tr("Cor do grão"));
+        if (!b.isValid()) return;
+        m.generator = QStringLiteral("noise");
+        m.solidColor = a;
+        m.solidColor2 = b;
+        m.name = tr("Ruído");
     } else {
         return;
     }
 
+    setupBase();
     emit editStart();
-    MediaItem m;
-    m.id = newId();
-    QString hex = color.name().toUpper();
-    m.name = tr("Cor %1").arg(hex.startsWith(QLatin1Char('#')) ? hex.mid(1) : hex);
-    m.isSolid = true;
-    m.solidColor = color;
-    m.hasVideo = true;
-    m.width = m_project->width;
-    m.height = m_project->height;
-    m.duration = m_project->duration() > 0 ? m_project->duration() : 5.0;
     m_project->media.append(m);
     refresh();
     emit mediaAdded(m.id);

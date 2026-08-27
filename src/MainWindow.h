@@ -9,6 +9,7 @@
 #include <QVector>
 #include <QHash>
 #include <QByteArray>
+#include <QStringList>
 #include <QJsonDocument>
 #include <QIcon>
 #include <QDockWidget>
@@ -27,11 +28,14 @@ class FileBrowserWidget;
 class MixerWidget;
 class MesaWidget;
 class OfxPluginManager;
+class QListWidget;
 class QAction;
 class QColor;
 class QPainter;
 class QTimer;
 class QProgressBar;
+class QComboBox;
+class ScopeWidget;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -49,6 +53,9 @@ private slots:
     void setModified();
     void autoSave();
 private:
+    void setUndoLabel(const QString& label);
+    void jumpToUndo(int index);
+    void updateHistoryList();
     void createDocks();
     void createActions();
     void saveSettings();
@@ -103,6 +110,10 @@ private:
     // Project inteiro faria a RAM explodir em projetos com muitos cortes.
     QVector<QByteArray> m_undoStack;
     int m_undoIndex = 0;
+    QStringList m_undoLabels;      // paralelo a m_undoStack (descrição do passo)
+    QString m_pendingUndoLabel;    // rótulo do PRÓXIMO pushUndo (definido pela ação)
+    QListWidget* m_histList = nullptr;   // painel de histórico undo/redo
+    QDockWidget* m_histDock = nullptr;
     QString m_currentFile;
     bool m_modified = false;
 
@@ -125,6 +136,9 @@ private:
     QDockWidget* m_fileBrowserDock = nullptr;
     QDockWidget* m_mixerDock = nullptr;
     QDockWidget* m_mesaDock = nullptr;
+    ScopeWidget* m_scopes = nullptr;      // analisadores (waveform/histograma/vectorscope)
+    QComboBox* m_scopeMode = nullptr;
+    QDockWidget* m_scopesDock = nullptr;
     QVBoxLayout* m_centralLay = nullptr;
     QHash<QDockWidget*, QDockWidget::DockWidgetFeatures> m_originalFeatures;
     QAction* m_lockAction = nullptr;
