@@ -74,7 +74,7 @@ QString propName(GraphProp p) {
         case GPropAnchorY:   return QStringLiteral("Anchor Y");
         case GPropMesaX:     return QStringLiteral("Mesa X");
         case GPropMesaY:     return QStringLiteral("Mesa Y");
-        case GPropMesaScaleX:    return QStringLiteral("Mesa Scale X");
+        case GPropMesaScaleX:    return QStringLiteral("Mesa Escala");
         case GPropMesaScaleY:    return QStringLiteral("Mesa Scale Y");
         case GPropMesaRotation:  return QStringLiteral("Mesa Rotation");
         case GPropMesaOpacity:   return QStringLiteral("Mesa Opacity");
@@ -2309,7 +2309,7 @@ void GraphEditorWidget::rebuildRows() {
         if (!m_props.contains(m_prop)) m_prop = m_props.first();
         m_noClip->setVisible(false);
     } else if (m_mesaMode && m_mesaTrack) {
-        m_props = { GPropMesaX, GPropMesaY, GPropMesaScaleX, GPropMesaScaleY,
+        m_props = { GPropMesaX, GPropMesaY, GPropMesaScaleX,
                     GPropMesaRotation, GPropMesaOpacity,
                     GPropMesaAnchorX, GPropMesaAnchorY };
         if (!m_props.contains(m_prop)) m_prop = m_props.first();

@@ -110,8 +110,7 @@ void MesaWidget::drawPropertyPanel(QPainter& p) {
         const double rel = qMax(0.0, m_playheadTime);
         const double tx = kfValue(t->kfMesaX, t->mesaX, rel);
         const double ty = kfValue(t->kfMesaY, t->mesaY, rel);
-        const double tsx = kfValue(t->kfMesaScaleX, t->mesaScaleX, rel);
-        const double tsy = kfValue(t->kfMesaScaleY, t->mesaScaleY, rel);
+        const double ts = kfValue(t->kfMesaScaleX, t->mesaScaleX, rel);
         const double tr = kfValue(t->kfMesaRotation, t->mesaRotation, rel);
         const double to = kfValue(t->kfMesaOpacity, t->mesaOpacity, rel);
 
@@ -121,12 +120,11 @@ void MesaWidget::drawPropertyPanel(QPainter& p) {
         p.setPen(QColor(70, 70, 70));
         p.drawLine(120, y + 6, 120, y + ph - 6);
 
-        drawField(128, "X:", QString::number(tx, 'f', 1));
-        drawField(254, "Y:", QString::number(ty, 'f', 1));
-        drawField(380, "SX:", QString::number(tsx, 'f', 2));
-        drawField(490, "SY:", QString::number(tsy, 'f', 2));
-        drawField(608, "R:", QString::number(tr, 'f', 1));
-        drawField(718, "O:", QString::number(to, 'f', 2));
+        drawField(128, "X:",  QString::number(tx, 'f', 1));
+        drawField(254, "Y:",  QString::number(ty, 'f', 1));
+        drawField(380, "S:",  QString::number(ts, 'f', 2));
+        drawField(490, "R:",  QString::number(tr, 'f', 1));
+        drawField(600, "O:",  QString::number(to, 'f', 2));
     } else if (MesaComposition* mc = currentMesa()) {
         const double rel = qMax(0.0, m_playheadTime);
         const double cx = kfValue(mc->kfCamX, mc->camX, rel);

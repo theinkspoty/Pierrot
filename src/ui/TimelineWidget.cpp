@@ -418,6 +418,30 @@ void TimelineWidget::criarMesa() {
     update();
 }
 
+void TimelineWidget::addTrackToMesa(const QString& mesaId) {
+    if (!m_project || mesaId.isEmpty()) return;
+    MesaComposition* mc = m_project->findMesa(mesaId);
+    if (!mc) return;
+
+    emit editStart();
+
+    // Cria nova track de vídeo
+    m_project->addTrack(false);
+    Track& newTrack = m_project->videoTracks.last();
+    newTrack.name = tr("Mesa %1 · Track %2").arg(mc->name).arg(mc->trackIds.size() + 1);
+
+    // Vincula à mesma pasta/grupo da Mesa
+    TrackGroup* grp = m_project->findGroup(mesaId);
+    if (grp) newTrack.groupId = grp->id;
+
+    // Adiciona à lista de tracks da Mesa
+    mc->trackIds.append(newTrack.id);
+
+    emit modified();
+    invalidateScene();
+    update();
+}
+
 void TimelineWidget::resizeEvent(QResizeEvent*) {
     const int bar = m_vbar->sizeHint().width();
     const int hbarH = m_hbar->sizeHint().height();

@@ -37,6 +37,8 @@ public:
     void refresh();
     // Seleciona a primeira Mesa disponível no projeto (usado ao abrir/undo).
     void autoSelectMesa();
+    bool hasSelectedKeyframes() const { return !m_selectedKfs.isEmpty(); }
+    void deleteSelectedKfs();
 
 signals:
     void modified();
@@ -45,10 +47,12 @@ signals:
     void mesaPlayheadChanged(double t);
     void mesaTrackSelected(Track* track);
     void mesaCameraSelected(MesaComposition* mc);
+    void mesaAddTrackRequested();
 
 protected:
     void paintEvent(QPaintEvent*) override;
     void mousePressEvent(QMouseEvent* e) override;
+    void mouseDoubleClickEvent(QMouseEvent* e) override;
     void mouseMoveEvent(QMouseEvent* e) override;
     void mouseReleaseEvent(QMouseEvent* e) override;
     void wheelEvent(QWheelEvent* e) override;
@@ -107,6 +111,7 @@ private:
 
     // Mini-timeline helpers
     double mesaDuration() const;
+    double contentStartTime() const;
     int timeToX(double t, int rulerW) const;
     double xToTime(int x, int rulerW) const;
     bool isInMiniTimeline(const QPoint& p) const;
@@ -168,7 +173,24 @@ private:
     // Mini-timeline
     bool m_timelineDrag = false;
     QRect m_miniTimelineRect;
+    mutable double m_contentStart = 0.0;
     static constexpr double kDefaultPps = 80.0;  // pixels per second
+
+    // Mini-timeline keyframe selection
+    struct KfRef {
+        enum Source { Cam, MesaTrack } source;
+        QString trackId;       // empty for Cam
+        double time = 0.0;
+        bool operator==(const KfRef& o) const {
+            return source == o.source && trackId == o.trackId
+                   && qFuzzyCompare(time, o.time);
+        }
+    };
+    friend uint qHash(const KfRef& r);
+    QSet<int> m_selectedKfs;  // hash of KfRef
+    KfRef hitTestKf(const QPoint& pos) const;
+    bool isKfSelected(const KfRef& r) const;
+    void toggleKfSelection(const KfRef& r, bool ctrl);
 
     // Snap
     bool m_snapToGrid = false;

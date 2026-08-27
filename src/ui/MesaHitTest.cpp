@@ -40,7 +40,7 @@ MesaWidget::LayerBounds MesaWidget::layerBounds(const Track* t, int trackIdx) co
     lb.anchorY = kfValue(t->kfMesaAnchorY, t->mesaAnchorY, rel);
 
     double scX = kfValue(t->kfMesaScaleX, t->mesaScaleX, rel);
-    double scY = kfValue(t->kfMesaScaleY, t->mesaScaleY, rel);
+    double scY = t->kfMesaScaleY.isEmpty() ? scX : kfValue(t->kfMesaScaleY, t->mesaScaleY, rel);
 
     double frameW = mc->canvasW;
     double frameH = mc->canvasH;

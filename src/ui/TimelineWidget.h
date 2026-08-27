@@ -110,6 +110,7 @@ public slots:
     void addTextClipAt(int row, double t);
     // Cria um clipe Mesa (composição 2D) numa faixa de vídeo.
     void criarMesa();
+    void addTrackToMesa(const QString& mesaId);
     // Arrasto manual vindo da pool de mídia (não depende do DnD do
     // compositor, que falha em alguns ambientes/Wayland).
     void showDropHover(const QPoint& globalPos);

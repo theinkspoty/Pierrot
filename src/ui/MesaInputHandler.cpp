@@ -8,6 +8,8 @@
 #include <QWheelEvent>
 #include <QKeyEvent>
 #include <QResizeEvent>
+#include <QMenu>
+#include <QAction>
 #include <QtMath>
 #include <QCursor>
 
@@ -30,11 +32,34 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
         return;
     }
 
+    // Right-click context menu
+    if (e->button() == Qt::RightButton) {
+        MesaComposition* mc = currentMesa();
+        if (mc && isInMiniTimeline(e->pos())) {
+            QMenu menu(this);
+            QAction* addAct = menu.addAction(tr("Adicionar track"));
+            QAction* sel = menu.exec(e->globalPosition().toPoint());
+            if (sel == addAct) {
+                emit mesaAddTrackRequested();
+            }
+        }
+        return;
+    }
+
     if (e->button() != Qt::LeftButton) return;
 
-    // Mini-timeline scrub
+    // Mini-timeline
     if (isInMiniTimeline(e->pos())) {
+        // Check if clicking on a keyframe (selection)
+        const KfRef hit = hitTestKf(e->pos());
+        if (hit.time >= 0) {
+            toggleKfSelection(hit, e->modifiers() & Qt::ControlModifier);
+            update();
+            return;
+        }
+        // Otherwise: scrub
         m_timelineDrag = true;
+        m_selectedKfs.clear();
         const int rulerW = width();
         const double t = xToTime(e->pos().x(), rulerW);
         m_playheadTime = t;
@@ -172,6 +197,7 @@ void MesaWidget::mouseMoveEvent(QMouseEvent* e) {
         const QPointF d = e->position() - m_resizeStartPos;
         const double delta = (d.x() + d.y()) / 2.0;
         mc->camZoom = qBound(0.05, m_resizeStartZoom * (1.0 + delta * 0.005), 20.0);
+        ensureKeyframesAt(m_playheadTime);
         throttledUpdate();
         return;
     }
@@ -180,6 +206,7 @@ void MesaWidget::mouseMoveEvent(QMouseEvent* e) {
         const QPointF d = e->position() - m_cameraDragStart;
         mc->camX = m_camDragStartX + d.x() / m_zoom;
         mc->camY = m_camDragStartY + d.y() / m_zoom;
+        ensureKeyframesAt(m_playheadTime);
         throttledUpdate();
         return;
     }
@@ -203,16 +230,9 @@ void MesaWidget::mouseMoveEvent(QMouseEvent* e) {
                 const double dist = QLineF(anchor, e->position()).length();
                 if (m_transformStartDist > 1.0) {
                     const double factor = dist / m_transformStartDist;
-                    if (m_scaleUniform || (e->modifiers() & Qt::ShiftModifier)) {
-                        t->mesaScaleX = qMax(0.01, m_transformStartSX * factor);
-                        t->mesaScaleY = t->mesaScaleX;
-                    } else {
-                        const QPointF d = e->position() - m_transformStart;
-                        const double sx = m_transformStartSX * (1.0 + d.x() / 200.0);
-                        const double sy = m_transformStartSY * (1.0 + d.y() / 200.0);
-                        t->mesaScaleX = qMax(0.01, sx);
-                        t->mesaScaleY = qMax(0.01, sy);
-                    }
+                    const double s = qMax(0.01, m_transformStartSX * factor);
+                    t->mesaScaleX = s;
+                    t->mesaScaleY = s;
                 }
 
             } else if (m_transformOp == TRotate) {
@@ -294,6 +314,8 @@ void MesaWidget::keyPressEvent(QKeyEvent* e) {
     if (e->key() == Qt::Key_L) {
         m_showLayerList = !m_showLayerList;
         update();
+    } else if (e->key() == Qt::Key_Delete && !m_selectedKfs.isEmpty()) {
+        deleteSelectedKfs();
     } else if (e->key() == Qt::Key_Delete && m_selectedIdx >= 0) {
         MesaComposition* mc = currentMesa();
         if (mc && m_selectedIdx < mc->trackIds.size()) {
@@ -321,6 +343,44 @@ void MesaWidget::resizeEvent(QResizeEvent*) {
 // ═══════════════════════════════════════════════════════════════════════
 // Throttle
 // ═══════════════════════════════════════════════════════════════════════
+
+void MesaWidget::mouseDoubleClickEvent(QMouseEvent* e) {
+    if (e->button() != Qt::LeftButton) return;
+    if (!isInMiniTimeline(e->pos())) return;
+
+    MesaComposition* mc = currentMesa();
+    if (!mc || !m_project) return;
+
+    const int rulerW = width();
+    const double t = xToTime(e->pos().x(), rulerW);
+    m_playheadTime = t;
+
+    ensureKeyframesAt(t);
+
+    // Also create keyframes for all tracks in this Mesa
+    const double rel = qMax(0.0, t);
+    const QVector<Track*> tracks = mesaTracks();
+    for (Track* track : tracks) {
+        auto upsert = [&](QVector<Keyframe>& vks, double val) {
+            for (Keyframe& k : vks)
+                if (qFuzzyIsNull(k.time - rel)) { k.value = val; return; }
+            Keyframe k; k.time = rel; k.value = val; k.interp = KfSmooth;
+            vks.append(k);
+        };
+        upsert(track->kfMesaX, kfValue(track->kfMesaX, track->mesaX, rel));
+        upsert(track->kfMesaY, kfValue(track->kfMesaY, track->mesaY, rel));
+        upsert(track->kfMesaScaleX, kfValue(track->kfMesaScaleX, track->mesaScaleX, rel));
+        upsert(track->kfMesaScaleY, kfValue(track->kfMesaScaleY, track->mesaScaleY, rel));
+        upsert(track->kfMesaRotation, kfValue(track->kfMesaRotation, track->mesaRotation, rel));
+        upsert(track->kfMesaOpacity, kfValue(track->kfMesaOpacity, track->mesaOpacity, rel));
+        upsert(track->kfMesaAnchorX, kfValue(track->kfMesaAnchorX, track->mesaAnchorX, rel));
+        upsert(track->kfMesaAnchorY, kfValue(track->kfMesaAnchorY, track->mesaAnchorY, rel));
+    }
+
+    emit modified();
+    emit mesaPlayheadChanged(t);
+    update();
+}
 
 void MesaWidget::throttledUpdate() {
     if (!m_lastUpdateTimer.isValid()) {

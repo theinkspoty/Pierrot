@@ -11,6 +11,17 @@
 #include <QtMath>
 
 // ═══════════════════════════════════════════════════════════════════════
+// KfRef — identificador de keyframe no mini-timeline
+// ═══════════════════════════════════════════════════════════════════════
+
+uint qHash(const MesaWidget::KfRef& r) {
+    uint h = qHash(r.source);
+    h ^= qHash(r.trackId) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    h ^= qHash(qRound(r.time * 1000.0)) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    return h;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // Construtor
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -70,40 +81,161 @@ QVector<Track*> MesaWidget::mesaTracks() const {
 
 double MesaWidget::mesaDuration() const {
     MesaComposition* mc = currentMesa();
-    if (!mc) return 10.0;
-    double maxT = 0.0;
-    auto checkMax = [&](const QVector<Keyframe>& vks) {
-        for (const Keyframe& k : vks)
+    if (!mc) { m_contentStart = 0.0; return 10.0; }
+    double minT = 1e18, maxT = 0.0;
+    auto checkKf = [&](const QVector<Keyframe>& vks) {
+        for (const Keyframe& k : vks) {
+            minT = qMin(minT, k.time);
             maxT = qMax(maxT, k.time);
+        }
     };
-    checkMax(mc->kfCamX); checkMax(mc->kfCamY);
-    checkMax(mc->kfCamZoom); checkMax(mc->kfCamRotation);
+    checkKf(mc->kfCamX); checkKf(mc->kfCamY);
+    checkKf(mc->kfCamZoom); checkKf(mc->kfCamRotation);
     for (const QString& tid : mc->trackIds) {
         Track* t = findTrack(tid);
         if (!t) continue;
-        checkMax(t->kfMesaX); checkMax(t->kfMesaY);
-        checkMax(t->kfMesaScaleX); checkMax(t->kfMesaScaleY);
-        checkMax(t->kfMesaRotation); checkMax(t->kfMesaOpacity);
-        checkMax(t->kfMesaAnchorX); checkMax(t->kfMesaAnchorY);
+        for (const Clip& c : t->clips) {
+            minT = qMin(minT, c.pos);
+            maxT = qMax(maxT, c.pos + c.dur);
+        }
+        checkKf(t->kfMesaX); checkKf(t->kfMesaY);
+        checkKf(t->kfMesaScaleX); checkKf(t->kfMesaScaleY);
+        checkKf(t->kfMesaRotation); checkKf(t->kfMesaOpacity);
+        checkKf(t->kfMesaAnchorX); checkKf(t->kfMesaAnchorY);
     }
-    return qMax(5.0, maxT + 2.0);
+    if (minT > maxT) { m_contentStart = 0.0; return qMax(5.0, maxT + 2.0); }
+    m_contentStart = minT;
+    return qMax(5.0, (maxT - minT) + 2.0);
+}
+
+double MesaWidget::contentStartTime() const {
+    mesaDuration();  // ensure m_contentStart is computed
+    return m_contentStart;
 }
 
 int MesaWidget::timeToX(double t, int rulerW) const {
     const double dur = mesaDuration();
+    const double start = m_contentStart;
     const double pps = qMax(20.0, (rulerW - 20.0) / dur);
-    return 10 + (int)qRound(t * pps);
+    return 10 + (int)qRound((t - start) * pps);
 }
 
 double MesaWidget::xToTime(int x, int rulerW) const {
     const double dur = mesaDuration();
+    const double start = m_contentStart;
     const double pps = qMax(20.0, (rulerW - 20.0) / dur);
-    return qMax(0.0, (x - 10.0) / pps);
+    return qMax(0.0, start + (x - 10.0) / pps);
 }
 
 bool MesaWidget::isInMiniTimeline(const QPoint& p) const {
     const int tlY = height() - propPanelHeight() - 16 - miniTimelineHeight();
     return p.y() >= tlY && p.y() < tlY + miniTimelineHeight();
+}
+
+bool MesaWidget::isKfSelected(const KfRef& r) const {
+    return m_selectedKfs.contains(qHash(r));
+}
+
+void MesaWidget::toggleKfSelection(const KfRef& r, bool ctrl) {
+    const uint h = qHash(r);
+    if (!ctrl) {
+        if (m_selectedKfs.size() == 1 && m_selectedKfs.contains(h))
+            return; // already sole selection
+        m_selectedKfs.clear();
+        m_selectedKfs.insert(h);
+    } else {
+        if (m_selectedKfs.contains(h))
+            m_selectedKfs.remove(h);
+        else
+            m_selectedKfs.insert(h);
+    }
+}
+
+void MesaWidget::deleteSelectedKfs() {
+    MesaComposition* mc = currentMesa();
+    if (!mc) return;
+    auto removeSelected = [&](QVector<Keyframe>& vks, KfRef::Source src, const QString& tid) {
+        for (int i = vks.size() - 1; i >= 0; --i) {
+            KfRef r{src, tid, vks[i].time};
+            if (isKfSelected(r)) vks.remove(i);
+        }
+    };
+    const QString camTid;
+    removeSelected(mc->kfCamX, KfRef::Cam, camTid);
+    removeSelected(mc->kfCamY, KfRef::Cam, camTid);
+    removeSelected(mc->kfCamZoom, KfRef::Cam, camTid);
+    removeSelected(mc->kfCamRotation, KfRef::Cam, camTid);
+    for (const QString& tid : mc->trackIds) {
+        Track* t = findTrack(tid);
+        if (!t) continue;
+        removeSelected(t->kfMesaX, KfRef::MesaTrack, tid);
+        removeSelected(t->kfMesaY, KfRef::MesaTrack, tid);
+        removeSelected(t->kfMesaScaleX, KfRef::MesaTrack, tid);
+        removeSelected(t->kfMesaScaleY, KfRef::MesaTrack, tid);
+        removeSelected(t->kfMesaRotation, KfRef::MesaTrack, tid);
+        removeSelected(t->kfMesaOpacity, KfRef::MesaTrack, tid);
+        removeSelected(t->kfMesaAnchorX, KfRef::MesaTrack, tid);
+        removeSelected(t->kfMesaAnchorY, KfRef::MesaTrack, tid);
+    }
+    m_selectedKfs.clear();
+    emit modified();
+    update();
+}
+
+MesaWidget::KfRef MesaWidget::hitTestKf(const QPoint& pos) const {
+    KfRef miss{KfRef::Cam, QString(), -1.0};
+    if (!isInMiniTimeline(pos)) return miss;
+    MesaComposition* mc = currentMesa();
+    if (!mc) return miss;
+    const int tlY = height() - propPanelHeight() - 16 - miniTimelineHeight();
+    const int midY = tlY + miniTimelineHeight() / 2;
+    const int rulerW = width();
+    const double dur = mesaDuration();
+    const double start = m_contentStart;
+    const double pps = qMax(20.0, (rulerW - 20.0) / dur);
+    const int hitR = 6;  // pixels radius for hit
+
+    auto checkKf = [&](const QVector<Keyframe>& vks, KfRef::Source src, const QString& tid) -> KfRef {
+        for (const Keyframe& k : vks) {
+            const int x = 10 + (int)qRound((k.time - start) * pps);
+            if (std::abs(pos.x() - x) <= hitR && std::abs(pos.y() - midY) <= hitR)
+                return {src, tid, k.time};
+        }
+        return miss;
+    };
+
+    // Camera
+    KfRef r = checkKf(mc->kfCamX, KfRef::Cam, QString());
+    if (r.time >= 0) return r;
+    r = checkKf(mc->kfCamY, KfRef::Cam, QString());
+    if (r.time >= 0) return r;
+    r = checkKf(mc->kfCamZoom, KfRef::Cam, QString());
+    if (r.time >= 0) return r;
+    r = checkKf(mc->kfCamRotation, KfRef::Cam, QString());
+    if (r.time >= 0) return r;
+
+    // Tracks
+    for (const QString& tid : mc->trackIds) {
+        Track* t = findTrack(tid);
+        if (!t) continue;
+        r = checkKf(t->kfMesaX, KfRef::MesaTrack, tid);
+        if (r.time >= 0) return r;
+        r = checkKf(t->kfMesaY, KfRef::MesaTrack, tid);
+        if (r.time >= 0) return r;
+        r = checkKf(t->kfMesaScaleX, KfRef::MesaTrack, tid);
+        if (r.time >= 0) return r;
+        r = checkKf(t->kfMesaScaleY, KfRef::MesaTrack, tid);
+        if (r.time >= 0) return r;
+        r = checkKf(t->kfMesaRotation, KfRef::MesaTrack, tid);
+        if (r.time >= 0) return r;
+        r = checkKf(t->kfMesaOpacity, KfRef::MesaTrack, tid);
+        if (r.time >= 0) return r;
+        r = checkKf(t->kfMesaAnchorX, KfRef::MesaTrack, tid);
+        if (r.time >= 0) return r;
+        r = checkKf(t->kfMesaAnchorY, KfRef::MesaTrack, tid);
+        if (r.time >= 0) return r;
+    }
+    return miss;
 }
 
 void MesaWidget::ensureKeyframesAt(double timeSec) {
@@ -112,7 +244,7 @@ void MesaWidget::ensureKeyframesAt(double timeSec) {
     const double rel = qMax(0.0, timeSec);
     auto upsert = [&](QVector<Keyframe>& vks, double val) {
         for (Keyframe& k : vks)
-            if (qFuzzyCompare(k.time, rel)) { k.value = val; return; }
+            if (qFuzzyIsNull(k.time - rel)) { k.value = val; return; }
         Keyframe k; k.time = rel; k.value = val; k.interp = KfLinear;
         vks.append(k);
     };
@@ -128,7 +260,7 @@ void MesaWidget::writeAllKeyframes() {
     const double rel = qMax(0.0, m_playheadTime);
     auto upsert = [&](QVector<Keyframe>& vks, double val) {
         for (Keyframe& k : vks)
-            if (qFuzzyCompare(k.time, rel)) { k.value = val; return; }
+            if (qFuzzyIsNull(k.time - rel)) { k.value = val; return; }
         Keyframe k; k.time = rel; k.value = val; k.interp = KfLinear;
         vks.append(k);
     };
@@ -176,106 +308,114 @@ void MesaWidget::drawMiniTimeline(QPainter& p) {
     const int rulerW = width();
     m_miniTimelineRect = QRect(0, tlY, rulerW, tlH);
 
-    // Fundo
-    p.fillRect(m_miniTimelineRect, QColor(30, 30, 33));
+    // Fundo com gradiente sutil
+    QLinearGradient bgGrad(0, tlY, 0, tlY + tlH);
+    bgGrad.setColorAt(0.0, QColor(34, 34, 38));
+    bgGrad.setColorAt(1.0, QColor(26, 26, 30));
+    p.fillRect(m_miniTimelineRect, bgGrad);
 
-    // Separador superior
-    p.setPen(QPen(QColor(60, 60, 64), 1));
+    // Separador superior com glow
+    p.setPen(QPen(QColor(70, 70, 76), 1));
     p.drawLine(0, tlY, rulerW, tlY);
+    p.setPen(QPen(QColor(50, 50, 56), 1));
+    p.drawLine(0, tlY + 1, rulerW, tlY + 1);
 
     const double dur = mesaDuration();
+    const double start = m_contentStart;
     const double pps = qMax(20.0, (rulerW - 20.0) / dur);
     const int midY = tlY + tlH / 2;
 
     // ── Régua de tempo (ticks) ──
     const double tStep = niceStepMini(dur / 8.0);
-    p.setPen(QColor(90, 90, 96));
     QFont tf = p.font();
     tf.setPointSizeF(7);
     p.setFont(tf);
-    for (double t = 0.0; t <= dur + 1e-9; t += tStep) {
-        const int x = 10 + (int)qRound(t * pps);
+    for (double t = start; t <= start + dur + 1e-9; t += tStep) {
+        const int x = 10 + (int)qRound((t - start) * pps);
         if (x > rulerW - 5) break;
         // Tick maior
-        p.drawLine(x, tlY + 2, x, tlY + 10);
+        p.setPen(QPen(QColor(80, 80, 88), 1));
+        p.drawLine(x, tlY + 3, x, tlY + 12);
         // Label
-        p.setPen(QColor(130, 130, 140));
+        p.setPen(QColor(160, 160, 172));
         QString label;
         if (dur <= 10.0)
             label = QString::number(t, 'f', 1) + "s";
         else
             label = QString::number(t, 'g', 3) + "s";
-        p.drawText(x + 2, tlY + 10, label);
-        p.setPen(QColor(90, 90, 96));
+        p.drawText(x + 3, tlY + 11, label);
         // Ticks menores
         const double subStep = tStep / 4.0;
+        p.setPen(QColor(60, 60, 66));
         for (int s = 1; s < 4; ++s) {
-            const int sx = 10 + (int)qRound((t + s * subStep) * pps);
+            const int sx = 10 + (int)qRound((t + s * subStep - start) * pps);
             if (sx > rulerW - 5) break;
-            p.drawLine(sx, tlY + 5, sx, tlY + 10);
+            p.drawLine(sx, tlY + 7, sx, tlY + 12);
         }
     }
 
     // ── Keyframe diamonds ──
-    // Camera keyframes
-    auto drawKfDiamonds = [&](const QVector<Keyframe>& vks, const QColor& col) {
-        p.setPen(Qt::NoPen);
-        p.setBrush(col);
+    auto drawKfDiamonds = [&](const QVector<Keyframe>& vks, const QColor& col,
+                              KfRef::Source src, const QString& tid) {
         for (const Keyframe& k : vks) {
-            const int x = 10 + (int)qRound(k.time * pps);
+            const int x = 10 + (int)qRound((k.time - start) * pps);
             if (x < 5 || x > rulerW - 5) continue;
             const double sz = 4.0;
             const QPolygonF diamond = QPolygonF()
                 << QPointF(x, midY - sz) << QPointF(x + sz, midY)
                 << QPointF(x, midY + sz) << QPointF(x - sz, midY);
+            KfRef ref{src, tid, k.time};
+            const bool sel = isKfSelected(ref);
+            // Selection glow
+            if (sel) {
+                p.setPen(QPen(QColor(255, 255, 255, 180), 2.0));
+                p.setBrush(Qt::NoBrush);
+                p.drawPolygon(diamond);
+            }
+            p.setPen(Qt::NoPen);
+            p.setBrush(sel ? col.lighter(150) : col);
             p.drawPolygon(diamond);
         }
     };
 
     // Camera keyframes (cor ciano)
-    drawKfDiamonds(mc->kfCamX, QColor(80, 200, 255));
-    drawKfDiamonds(mc->kfCamY, QColor(80, 200, 255));
-    drawKfDiamonds(mc->kfCamZoom, QColor(80, 200, 255));
-    drawKfDiamonds(mc->kfCamRotation, QColor(80, 200, 255));
+    const QString camTid;
+    drawKfDiamonds(mc->kfCamX, QColor(80, 200, 255), KfRef::Cam, camTid);
+    drawKfDiamonds(mc->kfCamY, QColor(80, 200, 255), KfRef::Cam, camTid);
+    drawKfDiamonds(mc->kfCamZoom, QColor(80, 200, 255), KfRef::Cam, camTid);
+    drawKfDiamonds(mc->kfCamRotation, QColor(80, 200, 255), KfRef::Cam, camTid);
 
-    // Track keyframes (cor da track ou amarela se agrupada)
+    // Track keyframes
     const QVector<Track*> tracks = mesaTracks();
     for (int i = 0; i < tracks.size(); ++i) {
         Track* t = tracks[i];
         QColor col;
         const TrackGroup* tg = t->groupId.isEmpty() ? nullptr : m_project->findGroup(t->groupId);
         if (tg && tg->mesaId == m_mesaId)
-            col = QColor(220, 180, 60);  // amarelo Premier-style
+            col = QColor(220, 180, 60);
         else
             col = QColor::fromHsv((i * 47 + 180) % 360, 60, 80);
 
-        auto draw = [&](const QVector<Keyframe>& vks) {
-            p.setPen(Qt::NoPen);
-            p.setBrush(col);
-            for (const Keyframe& k : vks) {
-                const int x = 10 + (int)qRound(k.time * pps);
-                if (x < 5 || x > rulerW - 5) continue;
-                const double sz = 3.5;
-                const QPolygonF diamond = QPolygonF()
-                    << QPointF(x, midY - sz) << QPointF(x + sz, midY)
-                    << QPointF(x, midY + sz) << QPointF(x - sz, midY);
-                p.drawPolygon(diamond);
-            }
-        };
-        draw(t->kfMesaX); draw(t->kfMesaY);
-        draw(t->kfMesaScaleX); draw(t->kfMesaScaleY);
-        draw(t->kfMesaRotation); draw(t->kfMesaOpacity);
-        draw(t->kfMesaAnchorX); draw(t->kfMesaAnchorY);
+        drawKfDiamonds(t->kfMesaX, col, KfRef::MesaTrack, t->id);
+        drawKfDiamonds(t->kfMesaY, col, KfRef::MesaTrack, t->id);
+        drawKfDiamonds(t->kfMesaScaleX, col, KfRef::MesaTrack, t->id);
+        drawKfDiamonds(t->kfMesaScaleY, col, KfRef::MesaTrack, t->id);
+        drawKfDiamonds(t->kfMesaRotation, col, KfRef::MesaTrack, t->id);
+        drawKfDiamonds(t->kfMesaOpacity, col, KfRef::MesaTrack, t->id);
+        drawKfDiamonds(t->kfMesaAnchorX, col, KfRef::MesaTrack, t->id);
+        drawKfDiamonds(t->kfMesaAnchorY, col, KfRef::MesaTrack, t->id);
     }
 
-    // ── Playhead (linha vertical) ──
-    const int phX = 10 + (int)qRound(m_playheadTime * pps);
+    // ── Playhead (linha vertical com gradiente) ──
+    const int phX = 10 + (int)qRound((m_playheadTime - start) * pps);
     if (phX >= 5 && phX <= rulerW - 5) {
-        p.setPen(QPen(QColor(255, 80, 80), 2));
+        QPen phPen(QColor(255, 70, 70), 2);
+        phPen.setCapStyle(Qt::RoundCap);
+        p.setPen(phPen);
         p.drawLine(phX, tlY + 1, phX, tlY + tlH - 1);
         // Cabeça do playhead
         p.setPen(Qt::NoPen);
-        p.setBrush(QColor(255, 80, 80));
+        p.setBrush(QColor(255, 70, 70));
         const QPolygonF head = QPolygonF()
             << QPointF(phX - 5, tlY + 1) << QPointF(phX + 5, tlY + 1)
             << QPointF(phX, tlY + 8);

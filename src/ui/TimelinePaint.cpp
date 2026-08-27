@@ -1148,9 +1148,15 @@ void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& 
 
     if (selected)
         p.fillRect(0, y, 3, rowH, themeColors().accent);
-    p.fillRect(0, y, 3, rowH,
-               tr.locked ? QColor(200, 90, 90)
-                         : (tr.audio ? QColor(70, 160, 120) : QColor(90, 140, 210)));
+    // Accent stripe: locked=red, audio=green, Mesa group=teal, else blue
+    QColor accentColor = QColor(90, 140, 210);
+    if (tr.locked) accentColor = QColor(200, 90, 90);
+    else if (tr.audio) accentColor = QColor(70, 160, 120);
+    else if (!tr.groupId.isEmpty() && m_project) {
+        const TrackGroup* g = m_project->findGroup(tr.groupId);
+        if (g && !g->mesaId.isEmpty()) accentColor = QColor(60, 170, 190);
+    }
+    p.fillRect(0, y, 3, rowH, accentColor);
 
     // ── Layout proporcional ─────────────────────────────────────────────
     const int resizeH = kResizeHandleH;  // 5px
@@ -1269,14 +1275,23 @@ void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& 
 void TimelineWidget::drawFolderStrip(QPainter& p, const TrackGroup& g) {
     const QRect r = folderStripRect(g);
     if (r.isEmpty()) return;
+    const bool isMesa = !g.mesaId.isEmpty();
     p.setPen(Qt::NoPen);
-    p.setBrush(QColor(150, 118, 60));
-    p.drawRect(r);
-    p.setPen(QColor(120, 92, 46));
-    p.drawLine(r.left(), r.bottom(), r.right(), r.bottom());
+    // Mesa groups: teal/dark cyan; regular groups: brown/amber
+    if (isMesa) {
+        p.setBrush(QColor(50, 110, 120));
+        p.drawRect(r);
+        p.setPen(QColor(38, 85, 95));
+        p.drawLine(r.left(), r.bottom(), r.right(), r.bottom());
+    } else {
+        p.setBrush(QColor(150, 118, 60));
+        p.drawRect(r);
+        p.setPen(QColor(120, 92, 46));
+        p.drawLine(r.left(), r.bottom(), r.right(), r.bottom());
+    }
     const QRect ar = folderArrowRect(g);
     p.setRenderHint(QPainter::Antialiasing, true);
-    p.setBrush(QColor(235, 220, 180));
+    p.setBrush(isMesa ? QColor(140, 220, 230) : QColor(235, 220, 180));
     p.setPen(Qt::NoPen);
     QPolygon tri;
     const int cx = ar.center().x();
@@ -1287,10 +1302,10 @@ void TimelineWidget::drawFolderStrip(QPainter& p, const TrackGroup& g) {
         tri << QPoint(cx - 5, cy - 4) << QPoint(cx + 5, cy - 4) << QPoint(cx, cy + 4);
     p.drawPolygon(tri);
     p.setRenderHint(QPainter::Antialiasing, false);
-    p.setBrush(QColor(224, 192, 112));
+    p.setBrush(isMesa ? QColor(100, 190, 200) : QColor(224, 192, 112));
     p.drawRect(QRect(r.left() + 24, r.top() + 5, 11, 5));
     p.drawRect(QRect(r.left() + 22, r.top() + 8, 17, 12));
-    p.setPen(QColor(245, 235, 210));
+    p.setPen(isMesa ? QColor(200, 240, 245) : QColor(245, 235, 210));
     QFont f = p.font();
     f.setBold(true);
     f.setPointSizeF(8.5);

@@ -308,6 +308,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_mesa, &MesaWidget::mesaCreateRequested, this, [this]() {
         m_timeline->criarMesa();
     });
+    connect(m_mesa, &MesaWidget::mesaAddTrackRequested, this, [this]() {
+        m_timeline->addTrackToMesa(m_mesa->mesaId());
+    });
     connect(m_timeline, &TimelineWidget::mesaOpenRequested, this, [this](const QString& mesaId) {
         m_mesa->setMesaId(mesaId);
         m_mesaDock->show();
@@ -553,6 +556,10 @@ void MainWindow::restoreSettings() {
         m_lockAction->setChecked(settings.value("layoutLocked").toBool());
     setDockLocked(m_lockAction->isChecked());
     m_restoringSettings = false;
+
+    // Garante que a Mesa encontra suas tracks mesmo quando o dock é restaurado
+    // como visível — autoSelectMesa() precisa rodar após restoreState().
+    m_mesa->autoSelectMesa();
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
@@ -751,7 +758,13 @@ void MainWindow::createActions() {
     deleteAction->setShortcut(appKey("delete", QKeySequence(Qt::Key_Delete)));
     deleteAction->setIcon(stdIcon(QStyle::SP_TrashIcon));
     deleteAction->setToolTip(tr("Excluir faixas selecionadas ou, se não houver, os clipes selecionados (Delete)"));
-    connect(deleteAction, &QAction::triggered, m_timeline, &TimelineWidget::deleteSelection);
+    connect(deleteAction, &QAction::triggered, this, [this]() {
+        if (m_mesa && m_mesa->hasSelectedKeyframes()) {
+            m_mesa->deleteSelectedKfs();
+        } else {
+            m_timeline->deleteSelection();
+        }
+    });
 
     m_undoAction = new QAction(tr("Desfazer"), this);
     m_undoAction->setShortcut(appKey("undo", QKeySequence::Undo));
