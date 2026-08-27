@@ -4,6 +4,7 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "MediaCache.h"
+#include "util.h"
 
 #include <QThread>
 #include <QMetaType>
@@ -20,16 +21,6 @@ constexpr int kMaxPeakCache = 32;
 constexpr int kMaxThumbCache = 512;
 constexpr int kMaxThumbPending = 192;
 constexpr int kMaxPeakPending = 32;
-
-bool isImageFile(const QString& path) {
-    const QString ext = QFileInfo(path).suffix().toLower();
-    static const QStringList exts = {
-        QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"),
-        QStringLiteral("bmp"), QStringLiteral("gif"), QStringLiteral("webp"),
-        QStringLiteral("tif"), QStringLiteral("tiff"), QStringLiteral("svg")
-    };
-    return exts.contains(ext);
-}
 
 QImage loadImageThumb(const QString& path, int maxWidth) {
     QImage img(path);

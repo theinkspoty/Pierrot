@@ -4,6 +4,7 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "ProjectExporter.h"
+#include "util.h"
 
 #include <QColor>
 #include <QFile>
@@ -26,19 +27,12 @@
 
 namespace {
 
+// Regex compartilhada para normalização de nomes de fonte.
+static const QRegularExpression kFontNameKeep(QStringLiteral("[^a-z0-9]"));
+
 // Imagens estáticas precisam de "-loop 1" para virarem um fluxo contínuo de
 // quadros (senão o ffmpeg lê um único frame e a imagem "pisca" ou quebra o
 // gráfico de filtros).
-bool isImageFile(const QString& path) {
-    const QString ext = QFileInfo(path).suffix().toLower();
-    static const QStringList exts = {
-        QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"),
-        QStringLiteral("bmp"), QStringLiteral("gif"), QStringLiteral("webp"),
-        QStringLiteral("tif"), QStringLiteral("tiff"), QStringLiteral("svg")
-    };
-    return exts.contains(ext);
-}
-
 struct VideoClipRef {
     const Clip* c;
     const MediaItem* m;
@@ -345,6 +339,7 @@ QString cropFilter(const Clip& c, double pos) {
 }
 
 // Fonte TTF disponível no sistema para o drawtext (com fallback fontconfig).
+// Busca em diretórios padrão + ~/.local/share/fonts + XDG_DATA_HOME/fonts.
 QString fontFilePath() {
     const QStringList candidates = {
         QStringLiteral("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
@@ -352,9 +347,49 @@ QString fontFilePath() {
         QStringLiteral("/usr/share/fonts/TTF/DejaVuSans-Bold.ttf"),
         QStringLiteral("/usr/share/fonts/noto/NotoSans-Bold.ttf"),
         QStringLiteral("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
+        QStringLiteral("/usr/share/fonts/google-noto/NotoSans-Bold.ttf"),
+        QStringLiteral("/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttf"),
     };
     for (const QString& f : candidates)
         if (QFile::exists(f)) return f;
+
+    // Busca genérica em diretórios de fontes conhecidos (NixOS, Arch, Void, etc.)
+    const QStringList searchDirs = {
+        QStringLiteral("/usr/share/fonts"),
+        QStringLiteral("/usr/local/share/fonts"),
+        QString::fromLocal8Bit(qgetenv("HOME")) + QStringLiteral("/.fonts"),
+        QString::fromLocal8Bit(qgetenv("HOME")) + QStringLiteral("/.local/share/fonts"),
+        QString::fromLocal8Bit(qgetenv("XDG_DATA_HOME")) + QStringLiteral("/fonts"),
+    };
+    for (const QString& dir : searchDirs) {
+        QDir d(dir);
+        if (!d.exists()) continue;
+        const QFileInfoList entries = d.entryInfoList(
+            QDir::Files | QDir::NoDotAndDotDot,
+            QDir::Name);
+        for (const QFileInfo& e : entries) {
+            const QString suf = e.suffix().toLower();
+            if (suf == QLatin1String("ttf") || suf == QLatin1String("otf")
+                || suf == QLatin1String("ttc")) {
+                const QString fname = e.completeBaseName().toLower();
+                if (fname.contains(QStringLiteral("dejavusans")))
+                    return e.absoluteFilePath();
+            }
+        }
+    }
+    // Último recurso: qualquer .ttf encontrado
+    for (const QString& dir : searchDirs) {
+        QDir d(dir);
+        if (!d.exists()) continue;
+        const QFileInfoList entries = d.entryInfoList(
+            QDir::Files | QDir::NoDotAndDotDot,
+            QDir::Name);
+        for (const QFileInfo& e : entries) {
+            const QString suf = e.suffix().toLower();
+            if (suf == QLatin1String("ttf") || suf == QLatin1String("otf"))
+                return e.absoluteFilePath();
+        }
+    }
     return QString();
 }
 
@@ -363,14 +398,14 @@ QString fontFilePath() {
 // a fonte padrão se a família não for encontrada.
 QString fontFileForFamily(const QString& family) {
     if (family.isEmpty()) return fontFilePath();
-    static const QRegularExpression keep(QStringLiteral("[^a-z0-9]"));
-    const QString safe = family.toLower().remove(keep);
+    const QString safe = family.toLower().remove(kFontNameKeep);
     if (safe.isEmpty()) return fontFilePath();
     const QStringList dirs = {
         QStringLiteral("/usr/share/fonts"),
         QStringLiteral("/usr/local/share/fonts"),
         QString::fromLocal8Bit(qgetenv("HOME")) + QStringLiteral("/.fonts"),
         QString::fromLocal8Bit(qgetenv("HOME")) + QStringLiteral("/.local/share/fonts"),
+        QString::fromLocal8Bit(qgetenv("XDG_DATA_HOME")) + QStringLiteral("/fonts"),
     };
     QStringList stack;
     for (const QString& d : dirs) stack.append(d);
@@ -389,7 +424,7 @@ QString fontFileForFamily(const QString& family) {
                 const QString suf = e.suffix().toLower();
                 if (suf == QLatin1String("ttf") || suf == QLatin1String("otf")
                     || suf == QLatin1String("ttc")) {
-                    const QString fname = e.completeBaseName().toLower().remove(keep);
+                    const QString fname = e.completeBaseName().toLower().remove(kFontNameKeep);
                     if (fname.contains(safe)) return e.absoluteFilePath();
                 }
             }
@@ -881,10 +916,13 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                 }
             }
             if (v.c->motionEnabled && v.c->motionAmount > 0.0) {
-                const int r = std::clamp((int)std::lround(v.c->motionAmount * 0.4), 1, 40);
-                const int p = std::clamp(v.c->motionSamples / 4, 1, 8);
-                fc.last().append(QStringLiteral(",boxblur=luma_radius=%1:luma_power=%2")
-                                     .arg(num(r)).arg(num(p)));
+                const int len = std::clamp((int)std::lround(v.c->motionAmount * 0.4), 1, 40);
+                const double angle = std::fmod(v.c->motionAngle, 360.0);
+                const int samples = std::clamp(v.c->motionSamples, 1, 32);
+                if (len > 0) {
+                    fc.last().append(QStringLiteral(",motionblur=length=%1:angle=%2:samples=%3")
+                                         .arg(num(len)).arg(num(angle)).arg(num(samples)));
+                }
             }
             if (v.c->kfOpacity.isEmpty()) {
                 if (v.c->opacity < 1.0)
@@ -1083,16 +1121,24 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     else args << "-an";
 
     args << "-c:v" << codecFor(s.format, true);
-    if (s.format == ExportSettings::WEBM) {
-        args << "-crf" << "32" << "-b:v" << "0" << "-cpu-used" << "4";
+    if (s.videoBitrateKbps > 0) {
+        // Bitrate fixo
+        args << "-b:v" << QStringLiteral("%1k").arg(s.videoBitrateKbps);
     } else {
-        args << "-preset" << "medium" << "-crf" << "18";
+        // CRF (qualidade variável)
+        const int crf = std::clamp(s.crf, 0, 51);
+        if (s.format == ExportSettings::WEBM) {
+            args << "-crf" << QString::number(crf) << "-b:v" << "0" << "-cpu-used" << "4";
+        } else {
+            args << "-preset" << "medium" << "-crf" << QString::number(crf);
+        }
     }
     args << "-pix_fmt" << "yuv420p";
 
     if (!aout.isEmpty()) {
         args << "-c:a" << codecFor(s.format, false);
-        args << "-b:a" << (s.format == ExportSettings::WEBM ? "128k" : "192k");
+        const int abr = std::clamp(s.audioBitrateKbps, 32, 640);
+        args << "-b:a" << QStringLiteral("%1k").arg(abr);
     }
 
     args << "-max_muxing_queue_size" << "1024";

@@ -15,6 +15,9 @@ struct ExportSettings {
     int fps = 30;
     enum Format { MP4 = 0, MKV, WEBM };
     Format format = MP4;
+    int crf = 18;              // 0–51 (0 = lossless, 51 = pior qualidade)
+    int videoBitrateKbps = 0;  // 0 = usar CRF (VBR), >0 = usar -b:v
+    int audioBitrateKbps = 192; // bit rate do áudio em kbps
 };
 
 namespace ProjectExporter {

@@ -45,9 +45,9 @@
 #include <climits>
 #include <cstring>
 #include <memory>
+#include <vector>
 #include <QHash>
 #include <QMutex>
-#include <QDebug>
 
 static int s_maxDecodeWidth = -1;
 
@@ -728,6 +728,7 @@ void PreviewWidget::setProject(Project* p) {
     stopPlayback();
     m_frame = QImage();
     m_frameFull = QImage();
+    m_compositedCache = QImage();  // invalida cache do frame composto
     m_lastSrcT = -1.0;
     m_lastDecodeW = -1;
     m_lastFile.clear();
@@ -1004,6 +1005,13 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
     // screen…) produzem o mesmo resultado da exportação, e não dependem do
     // fundo do monitor.
     if (layers.size() >= 2 || (m_frame.isNull() && !layers.isEmpty())) {
+        // Cache: reutiliza se playhead e camadas não mudaram.
+        if (!m_compositedCache.isNull() && m_compositedEpoch == m_currentFrameIndex
+            && m_compositedCache.size() == canvas.size()
+            && m_compositedLayerCount == layers.size()) {
+            p.drawImage(canvas.topLeft(), m_compositedCache);
+            return;
+        }
         QImage acc(canvas.size(), QImage::Format_ARGB32);
         acc.fill(Qt::black);
         QPainter ap(&acc);
@@ -1032,6 +1040,9 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
         if (clip && !clip->isText)
             drawClipText(ap, acc.rect(), clip, k);
         ap.end();
+        m_compositedCache = acc;
+        m_compositedEpoch = m_currentFrameIndex;
+        m_compositedLayerCount = layers.size();
         p.drawImage(canvas.topLeft(), acc);
         return;
     }
@@ -1672,7 +1683,7 @@ void PreviewWidget::startAudio(double t) {
         QPointer<PreviewWidget> selfGuard(this);
         QPointer<AudioMixer> mixerGuard(mixer);
         const int gen = m_audioGen.load();
-        QtConcurrent::run([selfGuard, mixerGuard, sources, gen]() {
+        (void)QtConcurrent::run([selfGuard, mixerGuard, sources, gen]() {
             if (!selfGuard || !mixerGuard) return;
             mixerGuard->updateSources(sources, true);
             if (!selfGuard || !mixerGuard) return;
@@ -2367,29 +2378,128 @@ void PreviewWidget::applyBasicEffectsOn(QImage& img, const Clip& c) {
         img = result;
     }
 
-    // Desfoque: box blur simples.
+    // Desfoque: box blur separável com sliding window — O(W·H) independente do raio.
     if (c.blur > 0.5) {
         const int radius = std::clamp((int)std::lround(c.blur * 0.5), 1, 30);
-        QImage blurred = ImgPool::get(img.format(), img.width(), img.height());
         const int w = img.width();
         const int h = img.height();
+
+        // Buffers estáticos por thread (reutilizados entre frames).
+        static thread_local std::vector<int> s_rowR, s_rowG, s_rowB, s_rowA;
+        if ((int)s_rowR.size() < w) {
+            s_rowR.resize(w);
+            s_rowG.resize(w);
+            s_rowB.resize(w);
+            s_rowA.resize(w);
+        }
+
+        // Passada horizontal com sliding window: resultado em temp.
+        QImage temp(w, h, img.format());
         for (int y = 0; y < h; ++y) {
+            const uchar* src = img.constScanLine(y);
+            uchar* dst = temp.scanLine(y);
+
+            // Inicializa a soma da janela [0, radius].
+            int sr = 0, sg = 0, sb = 0, sa = 0;
+            const int initEnd = std::min(radius, w - 1);
+            for (int sx = 0; sx <= initEnd; ++sx) {
+                const int si = sx * 4;
+                sr += src[si]; sg += src[si + 1]; sb += src[si + 2]; sa += src[si + 3];
+            }
+            int cnt = initEnd + 1;
+
             for (int x = 0; x < w; ++x) {
-                int r = 0, g = 0, b = 0, a = 0, cnt = 0;
-                for (int dy = -radius; dy <= radius; ++dy) {
-                    const int sy = std::clamp(y + dy, 0, h - 1);
-                    for (int dx = -radius; dx <= radius; ++dx) {
-                        const int sx = std::clamp(x + dx, 0, w - 1);
-                        const QRgb px = img.pixel(sx, sy);
-                        r += qRed(px); g += qGreen(px); b += qBlue(px); a += qAlpha(px);
-                        ++cnt;
-                    }
+                // Escreve o pixel médio.
+                const int di = x * 4;
+                dst[di]     = (uchar)(sr / cnt);
+                dst[di + 1] = (uchar)(sg / cnt);
+                dst[di + 2] = (uchar)(sb / cnt);
+                dst[di + 3] = (uchar)(sa / cnt);
+
+                // Sliding window: adiciona o pixel que entra, remove o que sai.
+                const int addX = x + radius + 1;
+                const int remX = x - radius;
+                if (addX < w) {
+                    const int ai = addX * 4;
+                    sr += src[ai]; sg += src[ai + 1]; sb += src[ai + 2]; sa += src[ai + 3];
+                    ++cnt;
                 }
-                blurred.setPixel(x, y, qRgba(r / cnt, g / cnt, b / cnt, a / cnt));
+                if (remX >= 0) {
+                    const int ri = remX * 4;
+                    sr -= src[ri]; sg -= src[ri + 1]; sb -= src[ri + 2]; sa -= src[ri + 3];
+                    --cnt;
+                }
             }
         }
-        ImgPool::release(img);
-        img = blurred;
+
+        // Passada vertical com sliding window: resultado de volta em img.
+        int* rowR = s_rowR.data();
+        int* rowG = s_rowG.data();
+        int* rowB = s_rowB.data();
+        int* rowA = s_rowA.data();
+
+        // Inicializa as somas com a banda [0, radius] para cada coluna.
+        {
+            const uchar* firstRow = temp.constScanLine(0);
+            for (int x = 0; x < w; ++x) {
+                const int si = x * 4;
+                rowR[x] = firstRow[si];
+                rowG[x] = firstRow[si + 1];
+                rowB[x] = firstRow[si + 2];
+                rowA[x] = firstRow[si + 3];
+            }
+        }
+        const int initEndV = std::min(radius, h - 1);
+        for (int sy = 1; sy <= initEndV; ++sy) {
+            const uchar* src = temp.constScanLine(sy);
+            for (int x = 0; x < w; ++x) {
+                const int si = x * 4;
+                rowR[x] += src[si];
+                rowG[x] += src[si + 1];
+                rowB[x] += src[si + 2];
+                rowA[x] += src[si + 3];
+            }
+        }
+        int cntV = initEndV + 1;
+
+        for (int y = 0; y < h; ++y) {
+            uchar* dst = img.scanLine(y);
+
+            // Escreve pixel médio para esta linha.
+            for (int x = 0; x < w; ++x) {
+                const int di = x * 4;
+                dst[di]     = (uchar)(rowR[x] / cntV);
+                dst[di + 1] = (uchar)(rowG[x] / cntV);
+                dst[di + 2] = (uchar)(rowB[x] / cntV);
+                dst[di + 3] = (uchar)(rowA[x] / cntV);
+            }
+
+            // Sliding window: adiciona a linha que entra, remove a que sai.
+            const int addY = y + radius + 1;
+            const int remY = y - radius;
+            if (addY < h) {
+                const uchar* addRow = temp.constScanLine(addY);
+                for (int x = 0; x < w; ++x) {
+                    const int si = x * 4;
+                    rowR[x] += addRow[si];
+                    rowG[x] += addRow[si + 1];
+                    rowB[x] += addRow[si + 2];
+                    rowA[x] += addRow[si + 3];
+                }
+                ++cntV;
+            }
+            if (remY >= 0) {
+                const uchar* remRow = temp.constScanLine(remY);
+                for (int x = 0; x < w; ++x) {
+                    const int si = x * 4;
+                    rowR[x] -= remRow[si];
+                    rowG[x] -= remRow[si + 1];
+                    rowB[x] -= remRow[si + 2];
+                    rowA[x] -= remRow[si + 3];
+                }
+                --cntV;
+            }
+        }
     }
 
     // Preto e branco.

@@ -51,7 +51,11 @@ QImage MesaRenderer::applyCameraTransform(const QImage& canvas,
     const double rot = kfValue(mesa.kfCamRotation, mesa.camRotation, relTime);
 
     QImage out(outW, outH, QImage::Format_ARGB32);
-    out.fill(Qt::black);
+    // Transparente (não preto opaco): as áreas do canvas sem conteúdo deixam
+    // passar as faixas de VÍDEO INFERIORES no empilhamento (clipes com corte
+    // por baixo da composição). No preview sem camadas abaixo, o fundo escuro
+    // do monitor assume — visual idêntico ao preto.
+    out.fill(Qt::transparent);
     QPainter p(&out);
     p.setRenderHint(QPainter::SmoothPixmapTransform);
 

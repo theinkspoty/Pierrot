@@ -9,6 +9,7 @@
 
 #include <QLineEdit>
 #include <QComboBox>
+#include <QSpinBox>
 #include <QProgressBar>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -68,6 +69,25 @@ ExportDialog::ExportDialog(Project* project, QWidget* parent)
     m_formatCombo->addItem("MKV (H.264 + AAC)", (int)ExportSettings::MKV);
     m_formatCombo->addItem("WebM (VP9 + Opus)", (int)ExportSettings::WEBM);
 
+    m_crfSpin = new QSpinBox(this);
+    m_crfSpin->setRange(0, 51);
+    m_crfSpin->setValue(18);
+    m_crfSpin->setToolTip(tr("CRF (Constant Rate Factor): 0 = sem perda, 51 = pior qualidade.\nValores típicos: 18 (bom), 23 (padrão), 28 (rápido)."));
+
+    m_vbitrateSpin = new QSpinBox(this);
+    m_vbitrateSpin->setRange(0, 100000);
+    m_vbitrateSpin->setValue(0);
+    m_vbitrateSpin->setSuffix(tr(" kbps"));
+    m_vbitrateSpin->setSpecialValueText(tr("Auto (CRF)"));
+    m_vbitrateSpin->setToolTip(tr("Bitrate de vídeo em kbps.\n0 = usar CRF (recomendado), >0 = bitrate fixo."));
+
+    m_abitrateSpin = new QSpinBox(this);
+    m_abitrateSpin->setRange(32, 640);
+    m_abitrateSpin->setValue(192);
+    m_abitrateSpin->setSingleStep(32);
+    m_abitrateSpin->setSuffix(tr(" kbps"));
+    m_abitrateSpin->setToolTip(tr("Bitrate do áudio em kbps.\nTípicos: 128k (WebM), 192k (MP4/MKV)."));
+
     auto* outRow = new QHBoxLayout;
     outRow->setContentsMargins(0, 0, 0, 0);
     outRow->addWidget(m_outEdit, 1);
@@ -78,6 +98,9 @@ ExportDialog::ExportDialog(Project* project, QWidget* parent)
     form->addRow(tr("Resolução:"), m_resCombo);
     form->addRow(tr("Quadros/s:"), m_fpsCombo);
     form->addRow(tr("Formato:"), m_formatCombo);
+    form->addRow(tr("Qualidade (CRF):"), m_crfSpin);
+    form->addRow(tr("Bitrate vídeo:"), m_vbitrateSpin);
+    form->addRow(tr("Bitrate áudio:"), m_abitrateSpin);
 
     m_progress = new QProgressBar(this);
     m_progress->setRange(0, 100);
@@ -176,6 +199,9 @@ ExportSettings ExportDialog::currentSettings() const {
     }
     s.fps = m_fpsCombo->currentData().toInt();
     s.format = (ExportSettings::Format)m_formatCombo->currentData().toInt();
+    s.crf = m_crfSpin->value();
+    s.videoBitrateKbps = m_vbitrateSpin->value();
+    s.audioBitrateKbps = m_abitrateSpin->value();
     return s;
 }
 

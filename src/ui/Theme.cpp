@@ -11,12 +11,12 @@ static ThemeColors s_current;
 
 static ThemeColors makeDarkPalette() {
     ThemeColors c;
-    c.window            = QColor(37, 37, 38);
+    c.window            = QColor(33, 33, 35);
     c.windowText        = QColor(220, 220, 220);
-    c.base              = QColor(30, 30, 31);
-    c.alternateBase     = QColor(40, 40, 42);
+    c.base              = QColor(38, 38, 41);
+    c.alternateBase     = QColor(43, 43, 46);
     c.text              = QColor(220, 220, 220);
-    c.button            = QColor(60, 60, 62);
+    c.button            = QColor(58, 58, 61);
     c.buttonText        = QColor(230, 230, 230);
     c.brightText        = Qt::red;
     c.link              = QColor(80, 160, 255);
@@ -33,39 +33,39 @@ static ThemeColors makeDarkPalette() {
     c.canvasBorder      = QColor(70, 70, 78);
     c.monitorLabel      = QColor(175, 175, 185);
 
-    c.timelineBg        = QColor(25, 25, 28);
+    c.timelineBg        = QColor(24, 24, 27);
     c.timelineGrid      = QColor(55, 55, 60);
-    c.rulerBg           = QColor(30, 30, 33);
+    c.rulerBg           = QColor(28, 28, 31);
     c.rulerText         = QColor(160, 160, 170);
     c.rulerTick         = QColor(55, 55, 60);
     c.rulerTickMajor    = QColor(80, 80, 88);
-    c.trackBg           = QColor(38, 38, 42);
-    c.trackBgAlt        = QColor(28, 28, 32);
-    c.trackBorder       = QColor(50, 50, 55);
-    c.trackLabelBg      = QColor(28, 28, 31);
+    c.trackBg           = QColor(41, 41, 45);
+    c.trackBgAlt        = QColor(33, 33, 37);
+    c.trackBorder       = QColor(55, 55, 60);
+    c.trackLabelBg      = QColor(30, 30, 33);
     c.trackLabelText    = QColor(160, 160, 170);
     c.clipBg            = QColor(55, 80, 110);
     c.clipBorder        = QColor(70, 95, 125);
-    c.clipBorderSelect  = QColor(255, 160, 0);
-    c.clipBorderSecondary = QColor(255, 160, 0, 120);
+    c.clipBorderSelect  = QColor(147, 195, 255);
+    c.clipBorderSecondary = QColor(147, 195, 255, 110);
     c.clipText          = QColor(230, 230, 235);
     c.clipThumbBorder   = QColor(40, 40, 45);
-    c.playhead          = QColor(255, 60, 60);
-    c.playheadHandle    = QColor(255, 80, 80);
+    c.playhead          = QColor(255, 166, 38);
+    c.playheadHandle    = QColor(255, 187, 90);
     c.selectionRect     = QColor(0, 120, 215, 60);
     c.selectionFill     = QColor(0, 120, 215, 30);
 
     c.transportBg       = QColor(26, 28, 34);
     c.transportBorder   = QColor(42, 45, 52);
 
-    c.dockTitleBg       = QColor(40, 42, 47);
-    c.dockTitleBgHover  = QColor(46, 49, 55);
-    c.dockTitleText     = QColor(207, 211, 217);
-    c.dockBorder        = QColor(23, 25, 28);
+    c.dockTitleBg       = QColor(45, 47, 52);
+    c.dockTitleBgHover  = QColor(51, 54, 60);
+    c.dockTitleText     = QColor(212, 216, 222);
+    c.dockBorder        = QColor(21, 22, 25);
     c.dockCloseHover    = QColor(90, 28, 28);
 
-    c.inputBg           = QColor(30, 30, 31);
-    c.inputBorder       = QColor(60, 60, 65);
+    c.inputBg           = QColor(31, 31, 33);
+    c.inputBorder       = QColor(62, 62, 66);
     c.inputFocus        = QColor(0, 120, 215);
     c.spinText          = QColor(156, 196, 240);
 
@@ -79,8 +79,8 @@ static ThemeColors makeDarkPalette() {
     c.iconNormal        = QColor(160, 160, 170);
     c.iconMuted         = QColor(95, 103, 114);
 
-    c.tabBg             = QColor(43, 45, 49);
-    c.tabSelected       = QColor(35, 37, 40);
+    c.tabBg             = QColor(44, 46, 51);
+    c.tabSelected       = QColor(38, 40, 44);
     c.tabBorder         = QColor(59, 89, 152);
 
     c.scrollbarBg       = QColor(30, 30, 33);
@@ -155,8 +155,8 @@ static ThemeColors makeLightPalette() {
     c.clipBorderSecondary = QColor(0, 100, 225, 120);
     c.clipText          = QColor(10, 10, 10);
     c.clipThumbBorder   = QColor(158, 158, 163);
-    c.playhead          = QColor(230, 40, 40);
-    c.playheadHandle    = QColor(230, 60, 60);
+    c.playhead          = QColor(230, 158, 24);
+    c.playheadHandle    = QColor(235, 176, 54);
     c.selectionRect     = QColor(0, 100, 225, 40);
     c.selectionFill     = QColor(0, 100, 225, 18);
 

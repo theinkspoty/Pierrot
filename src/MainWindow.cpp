@@ -66,8 +66,6 @@ static QKeySequence appKey(const char* id, const QKeySequence& fallback) {
 #include <QScreen>
 #include <QDataStream>
 
-#include "ffmpeg/MediaCache.h"
-
 namespace {
 // Versão do arranjo de painéis (docks/toolbar). Aumente para descartar
 // estados salvos antigos que estejam com o layout deslocado.

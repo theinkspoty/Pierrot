@@ -5,6 +5,7 @@
 
 #include "TimelineWidget.h"
 #include "TimelineCommands.h"
+#include "util.h"
 
 #include "ffmpeg/MediaCache.h"
 #include "ffmpeg/FFmpegDecoder.h"
@@ -88,15 +89,7 @@ enum Tool {
     ToolRipple = 5, ToolRolling = 6, ToolSlip = 7, ToolSlide = 8, ToolRateStretch = 9
 };
 
-bool isImageFile(const QString& path) {
-    const QString ext = QFileInfo(path).suffix().toLower();
-    static const QStringList exts = {
-        QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"),
-        QStringLiteral("bmp"), QStringLiteral("gif"), QStringLiteral("webp"),
-        QStringLiteral("tif"), QStringLiteral("tiff"), QStringLiteral("svg")
-    };
-    return exts.contains(ext);
-}
+
 
 // Duração efetiva ao inserir uma mídia na timeline: imagens usam o padrão
 // próprio; vídeo/áudio usam a duração real (ou 1s como fallback).
@@ -218,6 +211,7 @@ void TimelineWidget::invalidateScene() {
     // onda/thumb/envelope sejam re-renderizados na próxima passada.
     ++m_clipEpoch;
     m_staticDirty = true;
+    rebuildClipIndex();
     update();
 }
 
@@ -234,7 +228,9 @@ void TimelineWidget::setProject(Project* p) {
     m_clipPix.clear();
     m_clipBytes = 0;
     m_cursorT = -1.0;
+    m_lastMax = -1;
     emit selectionChanged(QString());
+    rebuildClipIndex();
     invalidateScene();
     updateScrollRanges();
 }
@@ -488,12 +484,11 @@ void TimelineWidget::updateScrollRanges() {
 
     // Mudança grande no alcance horizontal (edição, zoom, resize) entra no
     // registro — ajuda a correlacionar com cliques que "voltam pro início".
-    static int lastMax = -1;
-    if (lastMax >= 0 && std::abs(newMax - lastMax) > 2000)
+    if (m_lastMax >= 0 && std::abs(newMax - m_lastMax) > 2000)
         TlLog::note(QStringLiteral("range: max %1 -> %2 (dur=%3 pps=%4)")
-                        .arg(lastMax).arg(newMax)
+                        .arg(m_lastMax).arg(newMax)
                         .arg(total, 0, 'f', 2).arg(m_pps, 0, 'f', 2));
-    lastMax = newMax;
+    m_lastMax = newMax;
 
     m_viewStart = m_hbar->value() / m_pps;
     m_viewTop = m_vbar->value();
@@ -544,13 +539,21 @@ void TimelineWidget::applyTrackPreset(int preset) {
 
 Clip* TimelineWidget::findClipById(const QString& id) {
     if (!m_project) return nullptr;
+    auto it = m_clipIndex.find(id);
+    if (it != m_clipIndex.end())
+        return *it;
+    return nullptr;
+}
+
+void TimelineWidget::rebuildClipIndex() {
+    m_clipIndex.clear();
+    if (!m_project) return;
     for (Track& t : m_project->videoTracks)
         for (Clip& c : t.clips)
-            if (c.id == id) return &c;
+            m_clipIndex.insert(c.id, &c);
     for (Track& t : m_project->audioTracks)
         for (Clip& c : t.clips)
-            if (c.id == id) return &c;
-    return nullptr;
+            m_clipIndex.insert(c.id, &c);
 }
 
 Track* TimelineWidget::trackOf(Clip* c) {
@@ -1531,55 +1534,6 @@ void TimelineWidget::cutAtPlayhead() {
 
 void TimelineWidget::cutAndDelete() {
     TimelineCommands::cutAndDelete(this);
-}
-
-void TimelineWidget::splitClipAt(Clip* c, double t) {
-    if (!c || !m_project) return;
-    // Usa ids (não ponteiros): inserir clipes pode realocar o vetor e
-    // invalidar ponteiros coletados antes do split.
-    QStringList ids;
-    if (!c->groupId.isEmpty()) {
-        for (Clip* m : groupMembers(c->groupId)) ids.append(m->id);
-    } else {
-        ids.append(c->id);
-    }
-
-    // Precisão do corte: o corte cai EXATAMENTE na posição do playhead/tesoura
-    // (t), sem re-snap para a grade de frames da mídia. Assim a borda do clipe
-    // bate 100% onde o usuário posicionou o corte, sem deslocamento visual.
-    // Todos os membros do grupo recebem o MESMO t, mantendo vídeo+áudio
-    // sincronizados.
-
-    const bool grouped = ids.size() > 1;
-    // Cada metade vira um grupo próprio (vídeo+áudio da frente ficam
-    // juntos, e os de trás juntos), para que excluir um lado não apague o outro.
-    const QString fg = grouped ? newId() : QString();
-    const QString bg = grouped ? newId() : QString();
-    for (const QString& id : ids) {
-        Clip* cc = findClipById(id);
-        if (!cc) continue;
-        if (t <= cc->pos + 1e-6 || t >= cc->pos + cc->dur - 1e-6) {
-            // Membro do grupo que não cruza o playhead: vira grupo próprio,
-            // para que excluir uma das metades não arraste o clipe inteiro.
-            if (grouped) cc->groupId = newId();
-            continue;
-        }
-        Clip b = *cc;
-        b.id = newId();
-        b.pos = t;
-        b.in = cc->in + (t - cc->pos);
-        b.dur = cc->dur - (t - cc->pos);
-        cc->dur = t - cc->pos;
-        cc->groupId = fg;
-        b.groupId = bg;
-        Track* tr = trackOf(cc);
-        if (tr) {
-            int idx = -1;
-            for (int i = 0; i < tr->clips.size(); ++i)
-                if (tr->clips[i].id == cc->id) { idx = i; break; }
-            if (idx >= 0) tr->clips.insert(idx + 1, b);
-        }
-    }
 }
 
 void TimelineWidget::splitClipAt(Clip* c, double t, QStringList* newIds) {

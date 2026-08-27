@@ -193,13 +193,15 @@ static inline QImage lainkaApplyFx(const QImage& src, const QString& clipId, dou
             }
         }
 
-        QImage warped = ImgPool::get(QImage::Format_ARGB32_Premultiplied, sw, sh);
+        // Usa o mesmo formato do source para evitar conversão profunda por frame.
+        QImage warped = ImgPool::get(src.format(), sw, sh);
         warped.fill(Qt::transparent);
 
         for (int y = 0; y < sh; ++y) {
             const double fy = (double)y / cellH;
             const int gy0 = std::clamp((int)fy, 0, rows - 2);
             const double ty = fy - gy0;
+            uchar* dst = warped.scanLine(y);
             for (int x = 0; x < sw; ++x) {
                 const double fx = (double)x / cellW;
                 const int gx0 = std::clamp((int)fx, 0, cols - 2);
@@ -218,8 +220,13 @@ static inline QImage lainkaApplyFx(const QImage& src, const QString& clipId, dou
                                 + ty * ((1 - tx) * d01y + tx * d11y);
                 const int sx = std::clamp((int)std::lround(x + dx * cellW), 0, sw - 1);
                 const int sy = std::clamp((int)std::lround(y + dy * cellH), 0, sh - 1);
-                const QRgb px = src.pixel(sx, sy);
-                warped.setPixel(x, y, px);
+                const uchar* srcLine = src.constScanLine(sy);
+                const int si = sx * 4;
+                const int di = x * 4;
+                dst[di]     = srcLine[si];
+                dst[di + 1] = srcLine[si + 1];
+                dst[di + 2] = srcLine[si + 2];
+                dst[di + 3] = srcLine[si + 3];
             }
         }
         ImgPool::release(out);

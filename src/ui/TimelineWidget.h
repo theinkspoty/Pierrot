@@ -211,9 +211,7 @@ private:
     void drawKeyframeDiamonds(QPainter& p, const QRect& r, const Clip& c, bool audio);
     void drawEnvelope(QPainter& p, const QRect& r, const Clip& c, bool audio);
     void finishDrop(const QStringList& mediaIds, const QPoint& dropPos);
-    void splitClipAt(Clip* c, double t);
-    // Versão com saída: retorna IDs dos clipes criados (metade direita) em newIds.
-    void splitClipAt(Clip* c, double t, QStringList* newIds);
+    void splitClipAt(Clip* c, double t, QStringList* newIds = nullptr);
     void duplicateClip(Clip* c);
     void selectInMarquee(bool add);
     void razorSplitAt(double t);
@@ -372,6 +370,10 @@ private:
     qint64 m_clipBytes = 0;
     quint64 m_clipEpoch = 0;
 
+    // Índice para buscas O(1) por ID de clipe.
+    QHash<QString, Clip*> m_clipIndex;
+    void rebuildClipIndex();
+
     // Zoom com easing linear: mantém o pixel-âncora fixo durante a transição.
     // No modo "retângulo" (ferramenta de zoom) anima pps e viewStart juntos
     // para que o trecho selecionado termine preenchendo a view.
@@ -386,4 +388,5 @@ private:
     QTimer* m_autoScroll = nullptr;
     int m_autoScrollDir = 0; // -1 esquerda, +1 direita (px por tick)
     QPoint m_autoScrollMouse;
+    int m_lastMax = -1; // último newMax de updateScrollRanges (para log)
 };

@@ -220,6 +220,11 @@ private:
     double m_shownT = -1.0;
     int m_shownW = -1;
 
+    // Cache do frame composto (evita recomposição a cada paintEvent).
+    QImage m_compositedCache;
+    quint64 m_compositedEpoch = 0;      // frame index quando o cache foi gerado
+    int m_compositedLayerCount = 0;     // número de camadas quando o cache foi gerado
+
     // Transição ativa: quadro do clipe de trás (A) para compor com o da frente
     // (B) durante a sobreposição. m_transAlpha = progresso 0..1 (-1 = nenhuma).
     QImage m_underFrame;

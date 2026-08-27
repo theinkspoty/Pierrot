@@ -13,6 +13,7 @@
 
 class QLineEdit;
 class QComboBox;
+class QSpinBox;
 class QProgressBar;
 class QPlainTextEdit;
 class QPushButton;
@@ -38,6 +39,9 @@ private:
     QComboBox* m_resCombo = nullptr;
     QComboBox* m_fpsCombo = nullptr;
     QComboBox* m_formatCombo = nullptr;
+    QSpinBox* m_crfSpin = nullptr;
+    QSpinBox* m_vbitrateSpin = nullptr;
+    QSpinBox* m_abitrateSpin = nullptr;
     QProgressBar* m_progress = nullptr;
     QPlainTextEdit* m_logEdit = nullptr;
     QPushButton* m_startBtn = nullptr;

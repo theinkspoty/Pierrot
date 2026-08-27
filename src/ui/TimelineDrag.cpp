@@ -7,6 +7,7 @@
 #include "models/Project.h"
 #include "ffmpeg/FFmpegDecoder.h"
 #include "ui/SettingsDialog.h"
+#include "util.h"
 
 #include <QMouseEvent>
 #include <QDragEnterEvent>
@@ -38,16 +39,6 @@ enum Tool {
     ToolSelect = 0, ToolMove = 1, ToolScissors = 2, ToolEnvelope = 3, ToolZoom = 4,
     ToolRipple = 5, ToolRolling = 6, ToolSlip = 7, ToolSlide = 8, ToolRateStretch = 9
 };
-
-bool isImageFile(const QString& path) {
-    const QString ext = QFileInfo(path).suffix().toLower();
-    static const QStringList exts = {
-        QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"),
-        QStringLiteral("bmp"), QStringLiteral("gif"), QStringLiteral("webp"),
-        QStringLiteral("tif"), QStringLiteral("tiff"), QStringLiteral("svg")
-    };
-    return exts.contains(ext);
-}
 
 double mediaInsertDur(const MediaItem& m) {
     if (isImageFile(m.filePath)) return 3.0;

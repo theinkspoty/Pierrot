@@ -9,9 +9,12 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstdarg>
+#include <vector>
 #include <QDebug>
 #include <QThread>
+#include <QThreadPool>
 #include <QMutexLocker>
+#include <QtConcurrent/QtConcurrent>
 
 // OfxPropSet — implementation
 // ──────────────────────────────────────────────────────────────────────────
@@ -724,9 +727,26 @@ const OfxMultiThreadSuiteV1 OfxHostImpl::s_multiThreadSuite = {
 };
 
 OfxStatus OfxHostImpl::mtMultiThread(OfxThreadFunctionV1 func, unsigned int n, void* arg) {
-    // Executa sequencialmente (simples e seguro)
-    for (unsigned int i = 0; i < n; ++i)
+    if (n <= 1) {
+        for (unsigned int i = 0; i < n; ++i)
+            func(i, n, arg);
+        return kOfxStatOK;
+    }
+    // Para n pequeno (2-4), executa sequencialmente — o overhead de dispatch
+    // para o thread pool supera o ganho de paralelismo.
+    if (n <= 4) {
+        for (unsigned int i = 0; i < n; ++i)
+            func(i, n, arg);
+        return kOfxStatOK;
+    }
+    // Executa em paralelo usando QtConcurrent::map.
+    std::vector<unsigned int> indices(n);
+    for (unsigned int i = 0; i < n; ++i) indices[i] = i;
+
+    QtConcurrent::map(indices, [&](unsigned int& i) {
         func(i, n, arg);
+    }).waitForFinished();
+
     return kOfxStatOK;
 }
 
