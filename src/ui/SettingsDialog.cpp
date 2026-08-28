@@ -92,6 +92,10 @@ bool SettingsDialog::rippleDeleteEnabled() {
     return QSettings().value("timelineRippleDelete", true).toBool();
 }
 
+bool SettingsDialog::trimmerEnabled() {
+    return QSettings().value("timelineTrimmer", false).toBool();
+}
+
 double SettingsDialog::graphSensitivity() {
     return QSettings().value("graphSensitivity", 1.0).toDouble();
 }
@@ -139,6 +143,9 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
 
     m_rippleDelete = new QCheckBox(tr("Fechar o vão automaticamente ao excluir (ripple)"), this);
     m_rippleDelete->setChecked(s.value("timelineRippleDelete", true).toBool());
+
+    m_trimmer = new QCheckBox(tr("Abrir o trimmer ao soltar uma mídia na timeline"), this);
+    m_trimmer->setChecked(s.value("timelineTrimmer", false).toBool());
 
     // Navegação por categorias (sidebar vertical estilo DaVinci Resolve).
     m_catList = new QListWidget(this);
@@ -193,6 +200,7 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
         auto* tlLay = new QFormLayout(tlBox);
         tlLay->addRow(tr("Miniaturas nos clipes:"), m_thumbMode);
         tlLay->addRow(m_rippleDelete);
+        tlLay->addRow(m_trimmer);
         m_graphSens = new QDoubleSpinBox(page);
         m_graphSens->setRange(0.5, 5.0);
         m_graphSens->setSingleStep(0.1);
@@ -472,6 +480,7 @@ void SettingsDialog::accept() {
     s.setValue("autosaveMinutes", m_autoInterval->value());
     s.setValue("timelineThumbMode", m_thumbMode->currentIndex());
     s.setValue("timelineRippleDelete", m_rippleDelete->isChecked());
+    s.setValue("timelineTrimmer", m_trimmer->isChecked());
     s.setValue("graphSensitivity", m_graphSens->value());
     saveTheme(m_themeCombo->currentIndex() == 1 ? AppTheme::Light : AppTheme::Dark);
     QStringList ofxPaths;

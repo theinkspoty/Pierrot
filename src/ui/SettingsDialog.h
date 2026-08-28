@@ -30,6 +30,8 @@ public:
     static int  thumbMode();
     // Ao excluir, fecha o vão automaticamente (ripple). Desativável.
     static bool rippleDeleteEnabled();
+    // Abre o trimmer (in/out) ao soltar uma única mídia na timeline. Desativável.
+    static bool trimmerEnabled();
     // Sensibilidade do arraste vertical no editor de curvas (1.0 = padrão).
     static double graphSensitivity();
     // Caminhos extras de plugins OFX configurados pelo usuário.
@@ -59,6 +61,7 @@ private:
     QSpinBox*  m_autoInterval = nullptr;
     QComboBox* m_thumbMode = nullptr;
     QCheckBox* m_rippleDelete = nullptr;
+    QCheckBox* m_trimmer = nullptr;
     QDoubleSpinBox* m_graphSens = nullptr;
     // Navegação por categorias (sidebar estilo DaVinci).
     QListWidget*   m_catList = nullptr;

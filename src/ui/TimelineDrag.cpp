@@ -1403,10 +1403,10 @@ void TimelineWidget::finishDrop(const QStringList& mediaIds, const QPoint& dropP
 
     // Trimmer (estilo Vegas): ao soltar UMA mídia de arquivo com vídeo, oferece
     // definir in/out antes de inserir. Cancelar aborta a soltura; multi-seleção
-    // insere direto (sem diálogo).
+    // insere direto (sem diálogo). Ativável nas configurações (padrão: sem trimmer).
     double trimIn = 0.0;
     double trimDur = -1.0;
-    if (mediaIds.size() == 1) {
+    if (mediaIds.size() == 1 && SettingsDialog::trimmerEnabled()) {
         const MediaItem* m = m_project->findMedia(mediaIds.first());
         if (m && m->hasVideo && !m->filePath.isEmpty() && m->duration > 0.5) {
             TrimmerDialog dlg(*m, this);
