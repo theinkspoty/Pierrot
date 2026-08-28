@@ -78,6 +78,17 @@ private:
     QIcon iconMagnet() const;
     QIcon iconImport() const;
     QIcon iconExport() const;
+    QIcon iconPlay() const;
+    QIcon iconPause() const;
+    QIcon iconStepBack() const;
+    QIcon iconStepFwd() const;
+    QIcon iconSkipBack() const;
+    QIcon iconSkipFwd() const;
+    QIcon iconLoopClear() const;
+    QIcon iconRippleDelete() const;
+    QIcon iconTrackStyle() const;
+    QIcon iconGrid() const;
+    QIcon iconRuler() const;
     void exportVideo();
     void newProject();
     void openProject();

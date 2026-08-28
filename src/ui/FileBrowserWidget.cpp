@@ -21,12 +21,139 @@
 #include <QItemSelectionModel>
 #include <QSortFilterProxyModel>
 #include <QListWidget>
-#include <QStyle>
 #include <QMimeData>
 #include <QUrl>
 #include <QSet>
 #include <QWheelEvent>
+#include <QPainter>
+#include <QPainterPath>
+#include <QPixmap>
+#include <functional>
 #include "ffmpeg/MediaCache.h"
+
+// Mesma lógica de FileBrowserWidget::isMediaFile, local ao provider.
+static bool isMediaFileExt(const QString& path) {
+    static const QStringList exts = {
+        QStringLiteral("mp4"), QStringLiteral("mkv"), QStringLiteral("mov"),
+        QStringLiteral("avi"), QStringLiteral("webm"), QStringLiteral("m4v"),
+        QStringLiteral("mp3"), QStringLiteral("wav"), QStringLiteral("aac"),
+        QStringLiteral("flac"), QStringLiteral("ogg"), QStringLiteral("m4a"),
+        QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"),
+        QStringLiteral("bmp"), QStringLiteral("gif"), QStringLiteral("webp"),
+        QStringLiteral("tif"), QStringLiteral("tiff"), QStringLiteral("svg")
+    };
+    return exts.contains(QFileInfo(path).suffix().toLower());
+}
+
+// Glifos monocromáticos estilo Premiere (ícones da árvore/places).
+static QPixmap makeGlyph(int w, int h, const std::function<void(QPainter&)>& draw) {
+    QPixmap pm(w * 2, h * 2);
+    pm.setDevicePixelRatio(2.0);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    draw(p);
+    return pm;
+}
+
+static QPixmap folderGlyph() {
+    return makeGlyph(22, 16, [](QPainter& p) {
+        QPen pen(QColor(122, 126, 136), 1.2);
+        p.setPen(pen);
+        p.setBrush(QColor(166, 170, 179));
+        QPainterPath tab;
+        tab.moveTo(1.5, 4.5);
+        tab.lineTo(7.5, 4.5);
+        tab.lineTo(9.5, 6.5);
+        tab.lineTo(20.2, 6.5);
+        tab.lineTo(20.5, 14.5);
+        tab.lineTo(1.5, 14.5);
+        tab.closeSubpath();
+        p.drawPath(tab);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(20, 20, 22));
+        p.drawRoundedRect(QRectF(7, 7, 9, 2), 1, 1);
+    });
+}
+
+static QPixmap driveGlyph() {
+    return makeGlyph(22, 16, [](QPainter& p) {
+        QPen pen(QColor(122, 126, 136), 1.2);
+        p.setPen(pen);
+        p.setBrush(QColor(166, 170, 179));
+        p.drawRoundedRect(QRectF(1.5, 4, 19, 9), 1.5, 1.5);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(90, 176, 150));
+        p.drawEllipse(QPointF(17.5, 8.5), 1.4, 1.4);
+    });
+}
+
+static QPixmap fileGlyph() {
+    return makeGlyph(16, 20, [](QPainter& p) {
+        QPen pen(QColor(122, 126, 136), 1.2);
+        p.setPen(pen);
+        p.setBrush(QColor(166, 170, 179));
+        QPainterPath page;
+        page.moveTo(2, 1.5);
+        page.lineTo(10, 1.5);
+        page.lineTo(14, 5.5);
+        page.lineTo(14, 18.5);
+        page.lineTo(2, 18.5);
+        page.closeSubpath();
+        p.drawPath(page);
+        p.setPen(QPen(QColor(122, 126, 136), 1));
+        p.drawLine(10, 1.5, 10, 5.5);
+        p.drawLine(10, 5.5, 14, 5.5);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(20, 20, 22));
+        p.drawRoundedRect(QRectF(4.5, 8, 7, 2), 1, 1);
+        p.drawRoundedRect(QRectF(4.5, 12, 5, 2), 1, 1);
+    });
+}
+
+static QPixmap mediaGlyph() {
+    return makeGlyph(16, 20, [](QPainter& p) {
+        QPen pen(QColor(122, 126, 136), 1.2);
+        p.setPen(pen);
+        p.setBrush(QColor(166, 170, 179));
+        QPainterPath page;
+        page.moveTo(2, 1.5);
+        page.lineTo(10, 1.5);
+        page.lineTo(14, 5.5);
+        page.lineTo(14, 18.5);
+        page.lineTo(2, 18.5);
+        page.closeSubpath();
+        p.drawPath(page);
+        p.setPen(QPen(QColor(122, 126, 136), 1));
+        p.drawLine(10, 1.5, 10, 5.5);
+        p.drawLine(10, 5.5, 14, 5.5);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(102, 110, 120));
+        QPainterPath tri;
+        tri.moveTo(6, 9.5);
+        tri.lineTo(12.5, 12);
+        tri.lineTo(6, 14.5);
+        tri.closeSubpath();
+        p.drawPath(tri);
+    });
+}
+
+class MutedIconProvider : public QFileIconProvider {
+public:
+    QIcon icon(IconType type) const override {
+        switch (type) {
+        case Folder:   return QIcon(folderGlyph());
+        case Drive:    return QIcon(driveGlyph());
+        case Computer: return QIcon(driveGlyph());
+        default:       return QIcon(fileGlyph());
+        }
+    }
+    QIcon icon(const QFileInfo& info) const override {
+        if (info.isDir()) return QIcon(folderGlyph());
+        if (isMediaFileExt(info.absoluteFilePath())) return QIcon(mediaGlyph());
+        return QIcon(fileGlyph());
+    }
+};
 
 // Esconde diretórios do sistema (boot, dev, etc.) da lista.
 class SystemDirFilterProxy : public QSortFilterProxyModel {
@@ -124,6 +251,7 @@ FileBrowserWidget::FileBrowserWidget(QWidget* parent) : QWidget(parent) {
     m_model = new QFileSystemModel(this);
     m_model->setFilter(QDir::AllDirs | QDir::Files | QDir::NoDotAndDotDot | QDir::NoSymLinks);
     m_model->setRootPath(QStringLiteral("/"));
+    m_model->setIconProvider(new MutedIconProvider);
 
     m_proxy = new SystemDirFilterProxy(this);
     m_proxy->setSourceModel(m_model);
@@ -154,6 +282,8 @@ FileBrowserWidget::FileBrowserWidget(QWidget* parent) : QWidget(parent) {
     m_path->setPlaceholderText(tr("Caminho da pasta…"));
     m_path->setClearButtonEnabled(true);
     m_upBtn = new QPushButton(tr("↑"), this);
+    m_upBtn->setIcon(QIcon(QStringLiteral(":/icons/arrow-up.png")));
+    m_upBtn->setText(QString());
     m_upBtn->setToolTip(tr("Subir uma pasta"));
     m_viewBtn = new QPushButton(tr("Miniaturas"), this);
     m_viewBtn->setCheckable(true);
@@ -172,6 +302,7 @@ FileBrowserWidget::FileBrowserWidget(QWidget* parent) : QWidget(parent) {
     // Lista de arquivos da pasta atual (arrastável para o Media Pool).
     m_fileList = new QTreeView(this);
     m_fileList->setModel(m_proxy);
+    m_fileList->setIconSize(QSize(18, 14));
     m_fileList->setRootIsDecorated(true);
     m_fileList->setUniformRowHeights(true);
     m_fileList->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -281,8 +412,8 @@ void FileBrowserWidget::goTo(const QString& path) {
 void FileBrowserWidget::populatePlaces() {
     if (!m_places) return;
     m_places->clear();
-    const QIcon dirIcon = style()->standardIcon(QStyle::SP_DirIcon);
-    const QIcon driveIcon = style()->standardIcon(QStyle::SP_DriveHDIcon);
+    const QIcon dirIcon(folderGlyph());
+    const QIcon driveIcon(driveGlyph());
     auto addPlace = [&](const QString& label, const QString& path, const QIcon& ic) {
         if (path.isEmpty() || !QDir(path).exists()) return;
         auto* it = new QListWidgetItem(ic, label, m_places);

@@ -294,9 +294,11 @@ QIcon makeStopwatchIcon(bool on) {
     pm.fill(Qt::transparent);
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing, true);
-    const QColor c = on ? QColor(82, 168, 255) : QColor(150, 155, 165);
+    const QColor c = on ? themeColors().accent : themeColors().iconMuted;
     p.setPen(QPen(c, 1.4));
-    p.setBrush(on ? QColor(82, 168, 255, 40) : Qt::NoBrush);
+    QColor fill = themeColors().accent;
+    fill.setAlpha(40);
+    p.setBrush(on ? fill : Qt::NoBrush);
     p.drawEllipse(QPointF(8, 8), 5.2, 5.2);
     p.drawRect(QRectF(7, 0, 2, 2.6));
     p.drawLine(QPointF(8, 8), QPointF(8, 4.6));
@@ -839,11 +841,11 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
 
     // Régua de tempo no topo.
     const QRect rr = rulerRect();
-    p.fillRect(rr, QColor(24, 24, 27));
-    p.setPen(QColor(58, 58, 66));
+    p.fillRect(rr, themeColors().graphRuler);
+    p.setPen(QPen(themeColors().graphAxis, 1));
     p.drawLine(rr.left(), rr.bottom(), rr.right(), rr.bottom());
     const double tStep = niceStep(range / 6.0);
-    p.setPen(QColor(150, 152, 160));
+    p.setPen(themeColors().graphRulerText);
     for (double t = std::ceil(t0 / tStep) * tStep; t <= t0 + range + 1e-9; t += tStep) {
         const int x = tToX(t);
         p.drawLine(x, rr.bottom() - 3, x, rr.bottom());
@@ -857,7 +859,7 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
             QFont f = p.font();
             f.setBold(true);
             p.setFont(f);
-            p.setPen(QColor(170, 200, 235));
+            p.setPen(themeColors().graphRulerText);
             p.drawText(x + 7, rr.bottom() - 3,
                        tr("%1 · f%2").arg(fmtRuler(rel, range))
                                       .arg((int)std::lround(rel * m_fps)));
@@ -893,9 +895,12 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
         // Sem keyframes: linha horizontal padrão da propriedade, sincronizada
         // com a duração do clipe (o usuário vê onde os pontos vão nascer).
         const int y = vToY(baseValue());
-        p.setPen(QPen(QColor(130, 170, 200, 190), 1.6));
+        QColor dv = themeColors().graphLine;
+        dv.setAlpha(190);
+        p.setPen(QPen(dv, 1.6));
         p.drawLine(r.left(), y, r.right(), y);
-        p.setPen(QColor(130, 170, 200, 90));
+        dv.setAlpha(90);
+        p.setPen(dv);
         p.drawText(r.left() + 4, y - 4, tr("valor padrão"));
     } else {
         const double win0 = timeStart();
@@ -975,10 +980,10 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
                     if (!bezierHandle(*ks, i, s == 0, &ht, &hv)) continue;
                     const QPointF hp(tToX(k.time + (s == 0 ? ht : -ht)),
                                      vToY(k.value + hv));
-                    p.setPen(QPen(QColor(140, 200, 255, 220), 1.5, Qt::DashLine));
+                    p.setPen(QPen(themeColors().graphHandle, 1.5, Qt::DashLine));
                     p.drawLine(kp, hp);
                     p.setPen(QPen(QColor(255, 255, 255), 1.5));
-                    p.setBrush(QColor(90, 150, 220));
+                    p.setBrush(themeColors().graphHandle);
                     p.drawEllipse(hp, 4.5, 4.5);
                 }
             }
@@ -1031,8 +1036,11 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
     if (m_marqueeActive) {
         const QRect mr = m_marqueeRect.normalized();
         if (!mr.isEmpty()) {
-            p.fillRect(mr, QColor(120, 180, 255, 40));
-            p.setPen(QPen(QColor(150, 200, 255, 230), 1, Qt::DashLine));
+            QColor mf = themeColors().graphHandle;
+            mf.setAlpha(40);
+            p.fillRect(mr, mf);
+            mf.setAlpha(200);
+            p.setPen(QPen(mf, 1, Qt::DashLine));
             p.drawRect(mr);
         }
     }
@@ -1043,7 +1051,9 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
                                       : std::clamp(m_playhead - m_clip->pos, 0.0, m_clip->dur);
         if (rel >= timeStart() - 1e-9 && rel <= timeStart() + timeRange() + 1e-9) {
             const int x = tToX(rel);
-            p.setPen(QPen(QColor(190, 220, 255, 230), 2));
+            QColor ph = themeColors().graphHandle;
+            ph.setAlpha(230);
+            p.setPen(QPen(ph, 2));
             p.drawLine(x, rr.bottom() + 1, x, r.bottom());
         }
     }
@@ -1719,20 +1729,30 @@ int KeyframeStrip::hitKey(const QPoint& p) const {
 
 void KeyframeStrip::paintEvent(QPaintEvent*) {
     QPainter p(this);
+    // Mini-timeline estilo Effect Controls do Premiere: área sempre escura,
+    // separada da linha do nome por um traço fino.
+    p.fillRect(rect(), themeColors().graphBg);
+    p.setPen(QPen(themeColors().graphGrid, 1));
+    p.drawLine(0, 0, width(), 0);
+
     const QVector<Keyframe>* ks = m_camMode ? keysForCamera(m_mesaCamera, m_prop)
                                : m_mesaMode ? keysForTrack(m_mesaTrack, m_prop)
                                              : keysFor(m_clip, m_prop);
     if (!ks || ks->isEmpty()) return;
 
     const int midY = height() / 2;
-    p.setPen(QPen(themeColors().iconMuted, 1));
+    QColor ln = themeColors().graphGrid;
+    ln.setAlpha(190);
+    p.setPen(QPen(ln, 1));
     p.drawLine(4, midY, width() - 4, midY);
 
     const double rel = (m_mesaMode || m_camMode) ? std::max(0.0, m_playhead)
                                   : (m_clip ? std::clamp(m_playhead - m_clip->pos, 0.0, m_clip->dur) : -1.0);
     if (rel >= 0.0) {
         const int x = tToX(rel);
-        p.setPen(QPen(themeColors().playhead, 1));
+        QColor ph = themeColors().graphHandle;
+        ph.setAlpha(200);
+        p.setPen(QPen(ph, 1));
         p.drawLine(x, 2, x, height() - 2);
     }
 
@@ -1802,7 +1822,9 @@ void KeyframeStrip::mouseDoubleClickEvent(QMouseEvent* e) {
     if (hit < 0) {
         double dur;
         if (m_mesaMode || m_camMode) {
-            const QVector<Keyframe>* ks = keysForTrack(m_mesaTrack, m_prop);
+            const QVector<Keyframe>* ks = m_camMode
+                ? keysForCamera(m_mesaCamera, m_prop)
+                : keysForTrack(m_mesaTrack, m_prop);
             double maxT = 1.0;
             if (ks) for (const Keyframe& k : *ks) maxT = qMax(maxT, k.time);
             dur = maxT + 2.0;
@@ -1863,6 +1885,18 @@ GraphPropRow::GraphPropRow(GraphProp p, QWidget* parent) : QFrame(parent), m_pro
     m_next->setCursor(Qt::PointingHandCursor);
     m_next->setToolTip(tr("Ir para o próximo keyframe"));
 
+    // Botões planos do Effect Controls: sem borda, hover sutil.
+    const QString flatBtn = QStringLiteral(
+        "QToolButton { background:transparent; border:none; padding:2px;"
+        " color:%1; font-size:11px; border-radius:3px; }"
+        "QToolButton:hover { background:%2; }")
+        .arg(themeColors().iconNormal.name(), themeColors().btnHover.name());
+    m_expand->setStyleSheet(flatBtn);
+    m_stopwatch->setStyleSheet(flatBtn);
+    m_prev->setStyleSheet(flatBtn);
+    m_add->setStyleSheet(flatBtn);
+    m_next->setStyleSheet(flatBtn);
+
     m_navBox = new QWidget(this);
     auto* navLay = new QHBoxLayout(m_navBox);
     navLay->setContentsMargins(0, 0, 0, 0);
@@ -1920,14 +1954,17 @@ void GraphPropRow::setAnimated(bool on) {
 }
 
 void GraphPropRow::setActive(bool on) {
-    if (on)
+    if (on) {
+        QColor sel = themeColors().accent;
+        sel.setAlpha(28);
         setStyleSheet(QStringLiteral(
-            "#propRow { background:%1; border:1px solid %2; border-radius:3px; }")
-            .arg(themeColors().highlight.name(),
-                 themeColors().highlight.lighter(130).name()));
-    else
+            "#propRow { background:%1; border-left:2px solid %2; }")
+            .arg(sel.name(QColor::HexArgb),
+                 themeColors().accent.name()));
+    } else {
         setStyleSheet(QStringLiteral(
-            "#propRow { background:transparent; border:1px solid transparent; border-radius:3px; }"));
+            "#propRow { background:transparent; border-left:2px solid transparent; }"));
+    }
 }
 
 void GraphPropRow::setValueText(const QString& s) {

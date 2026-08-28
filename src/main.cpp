@@ -66,6 +66,7 @@ int main(int argc, char** argv) {
 
     app.setStyle(QStyleFactory::create("Fusion"));
     applyAppPalette(&app, savedTheme());
+    app.setStyleSheet(flatControlStyleSheet(savedTheme()));
 
     // O editor é criado somente após a janela de boas-vindas, como no fluxo
     // original. Fechar a boas-vindas (X) encerra o exec() com Rejected e abre

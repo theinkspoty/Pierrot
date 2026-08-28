@@ -122,6 +122,10 @@ struct ThemeColors {
     QColor graphLine;         // linhas de curva
     QColor graphKeyframe;     // keyframes
     QColor graphLabel;        // labels de valor
+    QColor graphRuler;        // régua de tempo do editor
+    QColor graphAxis;         // linha dos eixos e ticks da régua
+    QColor graphRulerText;    // texto da régua e do label do playhead
+    QColor graphHandle;       // alças bezier, marquee e linha do playhead
 
     // ── Pancrop ─────────────────────────────────────────────────
     QColor pancropBg;         // fundo do pan/crop
@@ -149,3 +153,7 @@ void saveTheme(AppTheme theme);
 
 // Retorna um stylesheet global para a aplicação (dock titles, etc.).
 QString globalStyleSheet(AppTheme theme);
+
+// Retorna o stylesheet flat estilo Premiere para os controles padrão
+// (botões, campos, combos, menus, tabs, scrollbars...) aplicado ao app.
+QString flatControlStyleSheet(AppTheme theme);

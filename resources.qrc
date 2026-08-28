@@ -1,10 +1,15 @@
 <RCC>
     <qresource prefix="/">
-        <file alias="pierrot.jpg">imagens/pierrot.jpg</file>
-        <file alias="pierrot.ico">imagens/Pierrot.ico</file>
+        <file alias="pierrot.ico">imagens/pierrot.ico</file>
+        <file alias="pierrot.png">imagens/pierrot.png</file>
         <file alias="fx/lainka.ico">imagens/efeitos/Lainka.ico</file>
         <file alias="fx/motion.ico">imagens/efeitos/Motion.ico</file>
         <file alias="fx/focus.ico">imagens/efeitos/Focus.ico</file>
         <file alias="imagens/audio.svg">imagens/audio.svg</file>
+        <file alias="icons/arrow-down.png">imagens/icons/arrow-down.png</file>
+        <file alias="icons/arrow-up.png">imagens/icons/arrow-up.png</file>
+        <file alias="icons/arrow-left.png">imagens/icons/arrow-left.png</file>
+        <file alias="icons/check.png">imagens/icons/check.png</file>
+        <file alias="icons/radio.png">imagens/icons/radio.png</file>
     </qresource>
 </RCC>

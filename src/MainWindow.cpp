@@ -205,7 +205,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         "QToolBar{spacing:2px; background:%1; border-top:1px solid %2;}")
         .arg(themeColors().transportBg.name(), themeColors().transportBorder.name()));
 
-    QAction* goToStart = new QAction(style()->standardIcon(QStyle::SP_MediaSkipBackward), tr("Início"), this);
+    QAction* goToStart = new QAction(iconSkipBack(), tr("Início"), this);
     goToStart->setToolTip(tr("Ir para o início (Home)"));
     goToStart->setShortcut(QKeySequence(Qt::Key_Home));
     connect(goToStart, &QAction::triggered, this, [this]() {
@@ -215,7 +215,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     transportBar->addAction(goToStart);
 
-    QAction* stepBack = new QAction(style()->standardIcon(QStyle::SP_MediaSeekBackward), tr("Voltar 1 frame"), this);
+    QAction* stepBack = new QAction(iconStepBack(), tr("Voltar 1 frame"), this);
     stepBack->setToolTip(tr("Voltar 1 frame (←)"));
     connect(stepBack, &QAction::triggered, this, [this]() {
         Project* p = m_timeline->project();
@@ -228,7 +228,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     transportBar->addAction(m_playAction);
 
-    QAction* stepFwd = new QAction(style()->standardIcon(QStyle::SP_MediaSeekForward), tr("Avançar 1 frame"), this);
+    QAction* stepFwd = new QAction(iconStepFwd(), tr("Avançar 1 frame"), this);
     stepFwd->setToolTip(tr("Avançar 1 frame (→)"));
     connect(stepFwd, &QAction::triggered, this, [this]() {
         Project* p = m_timeline->project();
@@ -240,7 +240,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     transportBar->addAction(stepFwd);
 
-    QAction* goToEnd = new QAction(style()->standardIcon(QStyle::SP_MediaSkipForward), tr("Fim"), this);
+    QAction* goToEnd = new QAction(iconSkipFwd(), tr("Fim"), this);
     goToEnd->setToolTip(tr("Ir para o fim (End)"));
     goToEnd->setShortcut(QKeySequence(Qt::Key_End));
     connect(goToEnd, &QAction::triggered, this, [this]() {
@@ -275,8 +275,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     connect(m_preview, &PreviewWidget::stateChanged, this, [this](bool playing) {
         m_playAction->setText(playing ? tr("Pausar") : tr("Reproduzir"));
-        m_playAction->setIcon(style()->standardIcon(
-            playing ? QStyle::SP_MediaPause : QStyle::SP_MediaPlay));
+        m_playAction->setIcon(playing ? iconPause() : iconPlay());
         // Durante a reprodução os thumbs ficam adiados (ver MediaCache).
         MediaCache::instance().setPlaybackActive(playing);
     });
@@ -296,6 +295,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_mesa, &MesaWidget::modified, this, [this]() {
         m_preview->refreshView();
         m_timeline->update();
+        m_graph->refresh();
     });
     connect(m_mesa, &MesaWidget::mesaPlayheadChanged, this, [this](double t) {
         m_timeline->setPlayhead(t);
@@ -810,7 +810,7 @@ void MainWindow::createActions() {
 
     m_playAction = new QAction(tr("Reproduzir"), this);
     m_playAction->setShortcut(appKey("play", QKeySequence(Qt::Key_Space)));
-    m_playAction->setIcon(stdIcon(QStyle::SP_MediaPlay));
+    m_playAction->setIcon(iconPlay());
     m_playAction->setToolTip(tr("Reproduzir/Pausar (Espaço)"));
     connect(m_playAction, &QAction::triggered, m_preview, &PreviewWidget::togglePlay);
 
@@ -1028,7 +1028,7 @@ void MainWindow::createActions() {
 
     QToolBar* toolTb = new QToolBar(tr("Ferramentas da timeline"), tlContainer);
     toolTb->setMovable(false);
-    toolTb->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    toolTb->setToolButtonStyle(Qt::ToolButtonIconOnly);
     const QStringList toolNames = {
         tr("Selecionar (0)"), tr("Mover (M)"), tr("Tesoura (R)"),
         tr("Envelope (E)"), tr("Lupa (Z)"),
@@ -1071,11 +1071,11 @@ void MainWindow::createActions() {
     connect(m_snapAction, &QAction::triggered, m_timeline, &TimelineWidget::setSnap);
     toolTb->addAction(m_snapAction);
     toolTb->addSeparator();
-    QAction* clearLoopTb = new QAction(stdIcon(QStyle::SP_BrowserReload), tr("Limpar loop"), this);
+    QAction* clearLoopTb = new QAction(iconLoopClear(), tr("Limpar loop"), this);
     clearLoopTb->setToolTip(tr("Limpar região de loop"));
     connect(clearLoopTb, &QAction::triggered, m_timeline, &TimelineWidget::clearLoop);
     toolTb->addAction(clearLoopTb);
-    QAction* rippleTb = new QAction(tr("Ripple"), this);
+    QAction* rippleTb = new QAction(iconRippleDelete(), tr("Ripple"), this);
     rippleTb->setCheckable(true);
     rippleTb->setChecked(SettingsDialog::rippleDeleteEnabled());
     rippleTb->setToolTip(tr("Fechar o vão automaticamente ao excluir (ripple). "
@@ -1085,19 +1085,19 @@ void MainWindow::createActions() {
         s.setValue("timelineRippleDelete", on);
     });
     toolTb->addAction(rippleTb);
-    QAction* styleAct = new QAction(tr("Estilo"), this);
+    QAction* styleAct = new QAction(iconTrackStyle(), tr("Estilo"), this);
     styleAct->setToolTip(tr("Estilo das faixas: minimizada, normal ou grande (experimental)"));
     connect(styleAct, &QAction::triggered, m_timeline, &TimelineWidget::showTrackPresetMenu);
     toolTb->addAction(styleAct);
     toolTb->addSeparator();
     // Botões de grid e régua (estilo Vegas).
-    QAction* gridAct = new QAction(tr("Grid"), this);
+    QAction* gridAct = new QAction(iconGrid(), tr("Grid"), this);
     gridAct->setCheckable(true);
     gridAct->setChecked(true);
     gridAct->setToolTip(tr("Mostrar/ocultar grade vertical na timeline"));
     connect(gridAct, &QAction::toggled, m_timeline, &TimelineWidget::setGridVisible);
     toolTb->addAction(gridAct);
-    QAction* rulerAct = new QAction(tr("Régua"), this);
+    QAction* rulerAct = new QAction(iconRuler(), tr("Régua"), this);
     rulerAct->setCheckable(true);
     rulerAct->setChecked(true);
     rulerAct->setToolTip(tr("Mostrar/ocultar régua de tempo na timeline"));
@@ -1193,25 +1193,18 @@ QIcon MainWindow::iconCursor() const {
 
 QIcon MainWindow::iconMove() const {
     return makeIcon([](QPainter& p, const QColor& c) {
-        QPen pen(c, 2.0);
-        pen.setCapStyle(Qt::RoundCap);
-        pen.setJoinStyle(Qt::RoundJoin);
-        p.setPen(pen);
+        // Track Select do Premiere: trilho de filme perfurado + seta à direita.
+        p.setPen(Qt::NoPen);
         p.setBrush(c);
-        p.drawLine(QPointF(16, 8), QPointF(16, 24));
-        p.drawLine(QPointF(8, 16), QPointF(24, 16));
-        QPolygonF up;
-        up << QPointF(16, 3) << QPointF(11, 9) << QPointF(21, 9);
-        p.drawPolygon(up);
-        QPolygonF down;
-        down << QPointF(16, 29) << QPointF(11, 23) << QPointF(21, 23);
-        p.drawPolygon(down);
-        QPolygonF left;
-        left << QPointF(3, 16) << QPointF(9, 11) << QPointF(9, 21);
-        p.drawPolygon(left);
-        QPolygonF right;
-        right << QPointF(29, 16) << QPointF(23, 11) << QPointF(23, 21);
-        p.drawPolygon(right);
+        p.drawRect(QRectF(6, 6, 22, 3.2));
+        p.drawRect(QRectF(6, 13.8, 22, 3.2));
+        const double xs[] = {8.5, 13.5, 18.5, 23.5};
+        for (double x : xs)
+            p.drawRect(QRectF(x, 9, 3.2, 6.5));
+        QPolygonF head;
+        head << QPointF(19, 19) << QPointF(19, 28) << QPointF(27, 23.5);
+        p.drawPolygon(head);
+        p.drawRect(QRectF(11, 20.5, 8, 3.4));
     });
 }
 
@@ -1230,17 +1223,17 @@ QIcon MainWindow::iconScissors() const {
 
 QIcon MainWindow::iconRazor() const {
     return makeIcon([](QPainter& p, const QColor& c) {
+        // Lâmina diagonal clássica do Premiere (Razor) com cabo.
         QPen pen(c, 2.0);
         pen.setCapStyle(Qt::RoundCap);
         pen.setJoinStyle(Qt::RoundJoin);
         p.setPen(pen);
         p.setBrush(c);
         QPolygonF blade;
-        blade << QPointF(6, 7) << QPointF(17, 5) << QPointF(15, 22) << QPointF(8, 24);
+        blade << QPointF(8.5, 9) << QPointF(11.5, 6.5)
+              << QPointF(27.5, 22.5) << QPointF(24.5, 25);
         p.drawPolygon(blade);
-        p.setBrush(Qt::NoBrush);
-        p.drawLine(QPointF(17, 5), QPointF(15, 22));
-        p.drawLine(QPointF(11, 23), QPointF(19, 31));
+        p.drawRoundedRect(QRectF(5, 12, 4, 12), 2, 2);
     });
 }
 
@@ -1268,114 +1261,113 @@ QIcon MainWindow::iconEnvelope() const {
 
 QIcon MainWindow::iconZoom() const {
     return makeIcon([](QPainter& p, const QColor& c) {
-        QPen pen(c, 2.0);
+        // Lupa do Premiere: lente vazia (sem "+") + cabo diagonal.
+        QPen pen(c, 2.6);
         pen.setCapStyle(Qt::RoundCap);
+        pen.setJoinStyle(Qt::RoundJoin);
         p.setPen(pen);
         p.setBrush(Qt::NoBrush);
-        p.drawEllipse(QPointF(12, 12), 8, 8);
-        p.drawLine(QPointF(18, 18), QPointF(28, 28));
-        p.drawLine(QPointF(12, 7), QPointF(12, 17));
-        p.drawLine(QPointF(7, 12), QPointF(17, 12));
+        p.drawEllipse(QPointF(12, 13), 7.5, 7.5);
+        p.drawLine(QPointF(17.5, 18.5), QPointF(27, 28));
     });
 }
 
 QIcon MainWindow::iconRipple() const {
     return makeIcon([](QPainter& p, const QColor& c) {
+        // Ripple do Premiere: três ondulações verticais.
         QPen pen(c, 2.0);
         pen.setCapStyle(Qt::RoundCap);
         pen.setJoinStyle(Qt::RoundJoin);
         p.setPen(pen);
-        p.setBrush(c);
-        // Setas de ripple (deslocamento)
-        p.drawLine(QPointF(8, 16), QPointF(24, 16));
-        QPolygonF arrow;
-        arrow << QPointF(24, 16) << QPointF(18, 10) << QPointF(18, 22);
-        p.drawPolygon(arrow);
-        // Linhas de corte
-        p.setPen(QPen(c, 1.5));
-        p.drawLine(QPointF(12, 8), QPointF(12, 24));
-        p.drawLine(QPointF(20, 8), QPointF(20, 24));
+        p.setBrush(Qt::NoBrush);
+        const double cx[] = {9.5, 16.0, 22.5};
+        for (double xc : cx) {
+            QPolygonF w;
+            const double amp[7] = {1.8, -1.8, 1.8, -1.8, 1.8, -1.8, 1.8};
+            for (int k = 0; k < 7; ++k)
+                w << QPointF(xc + amp[k], 8.0 + k * 2.45);
+            p.drawPolyline(w);
+        }
     });
 }
 
 QIcon MainWindow::iconRolling() const {
     return makeIcon([](QPainter& p, const QColor& c) {
+        // Rolling do Premiere: setas opostas (→|←) com divisória central.
         QPen pen(c, 2.0);
         pen.setCapStyle(Qt::RoundCap);
         pen.setJoinStyle(Qt::RoundJoin);
         p.setPen(pen);
         p.setBrush(c);
-        // Duas setas opostas (ajuste de fronteira)
-        p.drawLine(QPointF(8, 16), QPointF(24, 16));
-        QPolygonF left;
-        left << QPointF(8, 16) << QPointF(14, 10) << QPointF(14, 22);
-        p.drawPolygon(left);
-        QPolygonF right;
-        right << QPointF(24, 16) << QPointF(18, 10) << QPointF(18, 22);
-        p.drawPolygon(right);
-        // Linha central
-        p.setPen(QPen(c, 1.5));
-        p.drawLine(QPointF(16, 8), QPointF(16, 24));
+        p.drawLine(QPointF(5, 16), QPointF(14, 16));
+        QPolygonF l;
+        l << QPointF(11, 12.5) << QPointF(15.5, 16) << QPointF(11, 19.5);
+        p.drawPolygon(l);
+        p.drawLine(QPointF(27, 16), QPointF(18, 16));
+        QPolygonF r;
+        r << QPointF(21, 12.5) << QPointF(16.5, 16) << QPointF(21, 19.5);
+        p.drawPolygon(r);
+        p.setPen(QPen(c, 1.4));
+        p.drawLine(QPointF(16, 9), QPointF(16, 23));
     });
 }
 
 QIcon MainWindow::iconSlip() const {
     return makeIcon([](QPainter& p, const QColor& c) {
+        // Slip do Premiere: quadro de filme com seta deslizando ao centro.
         QPen pen(c, 2.0);
         pen.setCapStyle(Qt::RoundCap);
         pen.setJoinStyle(Qt::RoundJoin);
         p.setPen(pen);
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(QRectF(6, 7, 20, 18));
+        p.setPen(Qt::NoPen);
         p.setBrush(c);
-        // Retângulo (clip) com setas internas
-        p.drawRect(QRectF(6, 10, 20, 12));
-        // Setas horizontais dentro
-        p.drawLine(QPointF(10, 16), QPointF(22, 16));
-        QPolygonF left;
-        left << QPointF(10, 16) << QPointF(14, 12) << QPointF(14, 20);
-        p.drawPolygon(left);
-        QPolygonF right;
-        right << QPointF(22, 16) << QPointF(18, 12) << QPointF(18, 20);
-        p.drawPolygon(right);
+        QPolygonF head;
+        head << QPointF(18, 13.5) << QPointF(18, 18.5) << QPointF(25, 16);
+        p.drawPolygon(head);
+        p.drawRect(QRectF(9, 14.6, 8, 2.8));
     });
 }
 
 QIcon MainWindow::iconSlide() const {
     return makeIcon([](QPainter& p, const QColor& c) {
+        // Slide do Premiere: quadro de filme com setas em cima e embaixo.
         QPen pen(c, 2.0);
         pen.setCapStyle(Qt::RoundCap);
         pen.setJoinStyle(Qt::RoundJoin);
         p.setPen(pen);
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(QRectF(7, 10, 18, 12));
+        p.setPen(Qt::NoPen);
         p.setBrush(c);
-        // Retângulo central com setas para fora
-        p.drawRect(QRectF(10, 10, 12, 12));
-        // Setas para esquerda e direita
-        p.drawLine(QPointF(8, 16), QPointF(2, 16));
-        QPolygonF left;
-        left << QPointF(2, 16) << QPointF(6, 12) << QPointF(6, 20);
-        p.drawPolygon(left);
-        p.drawLine(QPointF(24, 16), QPointF(30, 16));
-        QPolygonF right;
-        right << QPointF(30, 16) << QPointF(26, 12) << QPointF(26, 20);
-        p.drawPolygon(right);
+        QPolygonF top;
+        top << QPointF(13, 6.5) << QPointF(13, 11) << QPointF(21, 8.75);
+        p.drawPolygon(top);
+        p.drawRect(QRectF(8, 7.8, 5.5, 1.9));
+        QPolygonF bot;
+        bot << QPointF(13, 21) << QPointF(13, 25.5) << QPointF(21, 23.25);
+        p.drawPolygon(bot);
+        p.drawRect(QRectF(8, 22.3, 5.5, 1.9));
     });
 }
 
 QIcon MainWindow::iconRateStretch() const {
     return makeIcon([](QPainter& p, const QColor& c) {
+        // Rate Stretch do Premiere: relógio + seta de velocidade.
         QPen pen(c, 2.0);
         pen.setCapStyle(Qt::RoundCap);
         pen.setJoinStyle(Qt::RoundJoin);
         p.setPen(pen);
+        p.setBrush(Qt::NoBrush);
+        p.drawEllipse(QPointF(11, 16), 7, 7);
+        p.drawLine(QPointF(11, 16), QPointF(11, 10.5));
+        p.drawLine(QPointF(11, 16), QPointF(15.5, 16));
+        p.setPen(Qt::NoPen);
         p.setBrush(c);
-        // Relógio (velocidade)
-        p.drawEllipse(QPointF(16, 16), 10, 10);
-        p.drawLine(QPointF(16, 16), QPointF(16, 10));
-        p.drawLine(QPointF(16, 16), QPointF(22, 16));
-        // Seta de velocidade
-        p.setPen(QPen(c, 1.5));
-        p.drawLine(QPointF(4, 28), QPointF(28, 28));
+        p.drawRect(QRectF(20, 13.7, 4.5, 4.6));
         QPolygonF arrow;
-        arrow << QPointF(28, 28) << QPointF(22, 24) << QPointF(22, 32);
+        arrow << QPointF(24, 12) << QPointF(24, 20) << QPointF(29.5, 16);
         p.drawPolygon(arrow);
     });
 }
@@ -1434,6 +1426,151 @@ QIcon MainWindow::iconExport() const {
         p.drawLine(QPointF(6, 21), QPointF(6, 27));
         p.drawLine(QPointF(6, 27), QPointF(26, 27));
         p.drawLine(QPointF(26, 27), QPointF(26, 21));
+    });
+}
+
+QIcon MainWindow::iconPlay() const {
+    return makeIcon([](QPainter& p, const QColor& c) {
+        p.setPen(Qt::NoPen);
+        p.setBrush(c);
+        QPolygonF tri;
+        tri << QPointF(9, 6) << QPointF(9, 22) << QPointF(22, 14);
+        p.drawPolygon(tri);
+    });
+}
+
+QIcon MainWindow::iconPause() const {
+    return makeIcon([](QPainter& p, const QColor& c) {
+        p.setPen(Qt::NoPen);
+        p.setBrush(c);
+        p.drawRoundedRect(QRectF(9.5, 6, 3.5, 16), 1, 1);
+        p.drawRoundedRect(QRectF(17.5, 6, 3.5, 16), 1, 1);
+    });
+}
+
+QIcon MainWindow::iconSkipBack() const {
+    return makeIcon([](QPainter& p, const QColor& c) {
+        p.setPen(Qt::NoPen);
+        p.setBrush(c);
+        QPolygonF t1;
+        t1 << QPointF(13, 7) << QPointF(13, 21) << QPointF(5, 14);
+        p.drawPolygon(t1);
+        QPolygonF t2;
+        t2 << QPointF(22, 7) << QPointF(22, 21) << QPointF(14, 14);
+        p.drawPolygon(t2);
+    });
+}
+
+QIcon MainWindow::iconSkipFwd() const {
+    return makeIcon([](QPainter& p, const QColor& c) {
+        p.setPen(Qt::NoPen);
+        p.setBrush(c);
+        QPolygonF t1;
+        t1 << QPointF(10, 7) << QPointF(10, 21) << QPointF(18, 14);
+        p.drawPolygon(t1);
+        QPolygonF t2;
+        t2 << QPointF(19, 7) << QPointF(19, 21) << QPointF(27, 14);
+        p.drawPolygon(t2);
+    });
+}
+
+QIcon MainWindow::iconStepBack() const {
+    return makeIcon([](QPainter& p, const QColor& c) {
+        p.setPen(Qt::NoPen);
+        p.setBrush(c);
+        p.drawRoundedRect(QRectF(9.5, 6.5, 2.2, 15), 1, 1);
+        QPolygonF tri;
+        tri << QPointF(19, 7) << QPointF(19, 21) << QPointF(11, 14);
+        p.drawPolygon(tri);
+    });
+}
+
+QIcon MainWindow::iconStepFwd() const {
+    return makeIcon([](QPainter& p, const QColor& c) {
+        p.setPen(Qt::NoPen);
+        p.setBrush(c);
+        QPolygonF tri;
+        tri << QPointF(10, 7) << QPointF(10, 21) << QPointF(19, 14);
+        p.drawPolygon(tri);
+        p.drawRoundedRect(QRectF(20.5, 6.5, 2.2, 15), 1, 1);
+    });
+}
+
+QIcon MainWindow::iconLoopClear() const {
+    return makeIcon([](QPainter& p, const QColor& c) {
+        QPen pen(c, 1.8);
+        pen.setCapStyle(Qt::RoundCap);
+        p.setPen(pen);
+        p.setBrush(Qt::NoBrush);
+        QPainterPath br;
+        br.moveTo(4, 21);
+        br.lineTo(4, 9);
+        br.lineTo(10, 9);
+        p.drawPath(br);
+        QPainterPath br2;
+        br2.moveTo(28, 21);
+        br2.lineTo(28, 9);
+        br2.lineTo(22, 9);
+        p.drawPath(br2);
+        QPen xpen(c, 2.2);
+        xpen.setCapStyle(Qt::RoundCap);
+        p.setPen(xpen);
+        p.drawLine(QPointF(13, 12), QPointF(20, 19));
+        p.drawLine(QPointF(20, 12), QPointF(13, 19));
+    });
+}
+
+QIcon MainWindow::iconRippleDelete() const {
+    return makeIcon([](QPainter& p, const QColor& c) {
+        QPen pen(c, 1.8);
+        pen.setCapStyle(Qt::RoundCap);
+        p.setPen(pen);
+        p.drawRoundedRect(QRectF(9, 9, 14, 3), 1, 1);
+        QPainterPath body;
+        body.moveTo(10.5, 13);
+        body.lineTo(12, 26);
+        body.lineTo(20, 26);
+        body.lineTo(21.5, 13);
+        p.drawPath(body);
+        p.drawLine(QPointF(14, 16), QPointF(14, 23));
+        p.drawLine(QPointF(18, 16), QPointF(18, 23));
+    });
+}
+
+QIcon MainWindow::iconTrackStyle() const {
+    return makeIcon([](QPainter& p, const QColor& c) {
+        QPen pen(c, 1.6);
+        pen.setCapStyle(Qt::RoundCap);
+        p.setPen(pen);
+        p.setBrush(Qt::NoBrush);
+        p.drawRoundedRect(QRectF(7, 6, 18, 4), 1, 1);
+        p.drawRoundedRect(QRectF(7, 12.5, 18, 5), 1, 1);
+        p.drawRoundedRect(QRectF(7, 20.5, 18, 7), 1, 1);
+    });
+}
+
+QIcon MainWindow::iconGrid() const {
+    return makeIcon([](QPainter& p, const QColor& c) {
+        QPen pen(c, 1.2);
+        pen.setStyle(Qt::DotLine);
+        p.setPen(pen);
+        for (int x = 8; x <= 24; x += 4)
+            p.drawLine(QPointF(x, 6), QPointF(x, 26));
+        for (int y = 12; y <= 20; y += 8)
+            p.drawLine(QPointF(6, y), QPointF(26, y));
+    });
+}
+
+QIcon MainWindow::iconRuler() const {
+    return makeIcon([](QPainter& p, const QColor& c) {
+        QPen pen(c, 1.6);
+        pen.setCapStyle(Qt::RoundCap);
+        p.setPen(pen);
+        p.drawLine(QPointF(5, 21), QPointF(27, 21));
+        for (int x = 7; x <= 25; x += 2) {
+            const int h = (x % 4 == 3) ? 8 : 4;
+            p.drawLine(QPointF(x, 21), QPointF(x, 21 - h));
+        }
     });
 }
 

@@ -112,9 +112,9 @@ WelcomeWindow::WelcomeWindow(QWidget* parent) : QDialog(parent) {
 void WelcomeWindow::buildLayout() {
     // Imagem da marca com bordas arredondadas (moldura), no lado esquerdo.
     QPixmap pm;
-    if (pm.load(":/pierrot.jpg")
-        || pm.load("imagens/pierrot.jpg")
-        || pm.load(QCoreApplication::applicationDirPath() + "/imagens/pierrot.jpg")) {
+    if (pm.load(":/pierrot.png")
+        || pm.load("imagens/pierrot.png")
+        || pm.load(QCoreApplication::applicationDirPath() + "/imagens/pierrot.png")) {
         m_img = pm;
     } else {
         m_img = QPixmap(360, 480);

@@ -1149,22 +1149,17 @@ void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& 
 
     // ── Fundo ───────────────────────────────────────────────────────────
     QColor base = selected
-        ? (tr.audio ? QColor(42, 48, 62) : QColor(44, 50, 64))
-        : (tr.audio ? themeColors().trackLabelBg : themeColors().trackLabelBg);
-    if (tr.locked) base = selected ? QColor(58, 46, 46) : QColor(46, 38, 38);
+        ? (tr.audio ? QColor(38, 43, 54) : QColor(40, 45, 56))
+        : themeColors().trackLabelBg;
+    if (tr.locked) base = selected ? QColor(50, 41, 41) : QColor(40, 37, 37);
     p.fillRect(0, y, H, rowH, base);
 
-    if (selected)
-        p.fillRect(0, y, 3, rowH, themeColors().accent);
-    // Accent stripe: locked=red, audio=green, Mesa group=teal, else blue
-    QColor accentColor = QColor(90, 140, 210);
-    if (tr.locked) accentColor = QColor(200, 90, 90);
-    else if (tr.audio) accentColor = QColor(70, 160, 120);
-    else if (!tr.groupId.isEmpty() && m_project) {
-        const TrackGroup* g = m_project->findGroup(tr.groupId);
-        if (g && !g->mesaId.isEmpty()) accentColor = QColor(60, 170, 190);
+    // Left accent: seleção em ciano (como no editor de curvas); lock em vermelho suave
+    if (tr.locked) {
+        p.fillRect(0, y, 2, rowH, QColor(126, 82, 82));
+    } else if (selected) {
+        p.fillRect(0, y, 2, rowH, themeColors().accent);
     }
-    p.fillRect(0, y, 3, rowH, accentColor);
 
     // ── Layout proporcional ─────────────────────────────────────────────
     const int resizeH = kResizeHandleH;  // 5px
@@ -1187,7 +1182,7 @@ void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& 
     // ── Ícone (audio/vídeo) ─────────────────────────────────────────────
     p.setRenderHint(QPainter::Antialiasing, true);
     if (tr.audio) {
-        const QColor c = tr.locked ? QColor(215, 150, 150) : QColor(70, 160, 120);
+        const QColor c = tr.locked ? QColor(178, 132, 132) : QColor(84, 142, 118);
         QPainterPath sp;
         sp.moveTo(4.5, y + 8);
         sp.lineTo(9.0, y + 5);
@@ -1200,7 +1195,7 @@ void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& 
         p.setPen(QPen(c, 1));
         p.drawArc(QRectF(11.5, y + 5, 4.5, 6), 0, 180 * 16);
     } else {
-        const QColor c = tr.locked ? QColor(215, 150, 150) : QColor(90, 140, 210);
+        const QColor c = tr.locked ? QColor(178, 132, 132) : QColor(98, 130, 172);
         p.setPen(Qt::NoPen);
         p.setBrush(c);
         p.drawRoundedRect(QRectF(3, y + 4.5, 10.5, 7), 1.6, 1.6);
@@ -1220,13 +1215,13 @@ void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& 
         if (tr.audio) {
             // Áudio: percentual de volume centralizado na área disponível.
             const QString pct = QString("%1%").arg((int)llround(tr.volume * 100.0));
-            p.setPen(QColor(120, 190, 150));
+            p.setPen(QColor(98, 150, 124));
             p.drawText(QRect(6, contentTop, H - 12, contentH),
                        Qt::AlignRight | Qt::AlignVCenter, pct);
         } else {
             // Vídeo: percentual + barra de opacidade.
             const QString pct = QString("%1%").arg((int)llround(tr.opacity * 100.0));
-            p.setPen(QColor(130, 170, 230));
+            p.setPen(QColor(110, 136, 176));
             // Texto na metade de cima da área de conteúdo.
             const int textH = contentH / 2;
             p.drawText(QRect(6, contentTop, H - 12, textH),
@@ -1250,7 +1245,7 @@ void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& 
 
     // ── Botões M / S / L ────────────────────────────────────────────────
     const bool audible = !tr.muted && !(anySolo && !tr.solo);
-    const QColor dim(110, 110, 120);
+    const QColor dim(128, 128, 138);
     const int size = 18;
     const int bx0 = 6;
     auto drawBtn = [&](int idx, const QString& label, bool active, const QColor& on) {
@@ -1267,9 +1262,9 @@ void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& 
         p.drawText(r, Qt::AlignCenter, label);
         p.setFont(basef);
     };
-    drawBtn(0, QStringLiteral("M"), tr.muted || !audible, QColor(200, 90, 70));
-    drawBtn(1, QStringLiteral("S"), tr.solo, QColor(215, 170, 50));
-    drawBtn(2, QStringLiteral("L"), tr.locked, QColor(90, 160, 210));
+    drawBtn(0, QStringLiteral("M"), tr.muted || !audible, QColor(168, 84, 72));
+    drawBtn(1, QStringLiteral("S"), tr.solo, QColor(184, 152, 64));
+    drawBtn(2, QStringLiteral("L"), tr.locked, QColor(86, 138, 188));
 
     // ── Alça de redimensionamento ────────────────────────────────────────
     const int gy0 = y + rowH - resizeH;
