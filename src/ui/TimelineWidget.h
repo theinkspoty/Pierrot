@@ -150,6 +150,7 @@ protected:
     void wheelEvent(QWheelEvent*) override;
     void leaveEvent(QEvent*) override;
     void keyPressEvent(QKeyEvent*) override;
+    bool eventFilter(QObject*, QEvent*) override;
     void contextMenuEvent(QContextMenuEvent*) override;
     void dragEnterEvent(QDragEnterEvent*) override;
     void dragMoveEvent(QDragMoveEvent*) override;
@@ -295,6 +296,8 @@ private:
     TrackSel m_selAnchor;
     bool m_hasAnchor = false;
     int m_tool = 0;
+    // Ferramenta anterior salva ao segurar R (corte momentâneo) p/ restaurar.
+    int m_tempToolStore = -1;
     bool m_snap = true;
     bool m_showGrid = true;
     bool m_showRuler = true;

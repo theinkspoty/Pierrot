@@ -56,13 +56,14 @@ double mediaInsertDur(const MediaItem& m) {
 void TimelineWidget::startAutoScroll(QMouseEvent* e) {
     if (!m_project) return;
     m_autoScrollMouse = e->pos();
-    const int edge = 32;
+    const int leftEdge = 32;
+    const int rightEdge = 16; // lado direito menor (menos área de "varredura")
     const int vw = width() - m_vbar->sizeHint().width();
     const int mx = m_autoScrollMouse.x();
     int dir = 0;
-    if (mx >= kHeaderW && mx <= kHeaderW + edge)
+    if (mx >= kHeaderW && mx <= kHeaderW + leftEdge)
         dir = -1;
-    else if (mx >= vw - edge)
+    else if (mx >= vw - rightEdge)
         dir = +1;
     if (dir != 0) {
         m_autoScrollDir = dir;
@@ -424,10 +425,9 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
     if (rowFromY(y, row, audio)) {
         const double t = xToTime(x);
         Clip* clip = clipAt(row, audio, t);
-        // Clique na timeline move a agulha para onde o mouse clicou — mas
-        // SOMENTE em espaço vazio. Se há um clipe sob o cursor, o usuário
-        // provavelmente quer movê-lo/redimensionar, e a agulha não deve pular.
-        if (!clip && !(e->modifiers() & Qt::ControlModifier)) {
+        // Clique na timeline move a agulha para onde o mouse clicou — inclusive
+        // sobre clipes (estilo Vegas). Ctrl preserva o playhead (soma seleção).
+        if (!(e->modifiers() & Qt::ControlModifier)) {
             setPlayhead(std::max(0.0, snapTime(t)));
             emit playheadChanged(std::max(0.0, snapTime(t)));
         }

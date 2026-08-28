@@ -25,6 +25,15 @@
 #include <QApplication>
 #include <QMouseEvent>
 #include <QTimer>
+#include <QSettings>
+#include <QKeySequence>
+#include <QLineEdit>
+#include <QTextEdit>
+#include <QPlainTextEdit>
+#include <QSpinBox>
+#include <QDoubleSpinBox>
+#include <QComboBox>
+#include <QKeySequenceEdit>
 #include <QWheelEvent>
 #include <QContextMenuEvent>
 #include <QDragEnterEvent>
@@ -145,6 +154,7 @@ void rippleDeleteInTrack(Track& t, const QStringList& sel) {
 
 TimelineWidget::TimelineWidget(QWidget* parent) : QWidget(parent) {
     setFocusPolicy(Qt::StrongFocus);
+    qApp->installEventFilter(this);
     setAcceptDrops(true);
     setMinimumHeight(180);
     // A cena é totalmente opaca: evitar a limpeza de fundo da backing store
@@ -1076,6 +1086,20 @@ void TimelineWidget::wheelEvent(QWheelEvent* e) {
     e->accept();
 }
 
+// Tecla configurada para a Tesoura (atalho "tool2", default R), usada no modo
+// hold-to-use (segurar ativa a tesoura, soltar restaura a ferramenta).
+static Qt::Key razorHoldKey() {
+    const QString v = QSettings().value("shortcuts/tool2").toString();
+    if (!v.isEmpty()) {
+        const QKeySequence ks(v, QKeySequence::PortableText);
+        if (ks.count() == 1) {
+            const int k = ks[0] & ~int(Qt::KeyboardModifierMask);
+            if (k > 0 && k < 0x1000000) return Qt::Key(k);
+        }
+    }
+    return Qt::Key_R;
+}
+
 void TimelineWidget::keyPressEvent(QKeyEvent* e) {
     const bool ctrl = e->modifiers() & Qt::ControlModifier;
     const bool shift = e->modifiers() & Qt::ShiftModifier;
@@ -1223,6 +1247,35 @@ void TimelineWidget::keyPressEvent(QKeyEvent* e) {
     default:
         QWidget::keyPressEvent(e);
     }
+}
+
+// Captura a tecla da Tesoura (default R) globalmente, inclusive quando o foco
+// do teclado está fora da timeline (preview, toolbar etc.). Não interfere na
+// digitação em campos de texto.
+bool TimelineWidget::eventFilter(QObject* o, QEvent* ev) {
+    if (ev->type() == QEvent::KeyPress || ev->type() == QEvent::KeyRelease) {
+        auto* ke = static_cast<QKeyEvent*>(ev);
+        if (ke->key() == razorHoldKey()) {
+            if (qobject_cast<QLineEdit*>(o) || qobject_cast<QTextEdit*>(o)
+                || qobject_cast<QPlainTextEdit*>(o) || qobject_cast<QSpinBox*>(o)
+                || qobject_cast<QDoubleSpinBox*>(o) || qobject_cast<QComboBox*>(o)
+                || qobject_cast<QKeySequenceEdit*>(o))
+                return false;
+            if (ev->type() == QEvent::KeyPress) {
+                if (m_tool != ToolScissors && m_tempToolStore < 0) {
+                    m_tempToolStore = m_tool;
+                    setTool(ToolScissors);
+                }
+            } else if (m_tempToolStore >= 0) {
+                // Se o usuário trocou de ferramenta na toolbar durante o
+                // tecla segurada, respeita a escolha; senão restaura.
+                if (m_tool == ToolScissors) setTool(m_tempToolStore);
+                m_tempToolStore = -1;
+            }
+            return true; // consome: não vaza p/ outros widgets/atalhos
+        }
+    }
+    return QWidget::eventFilter(o, ev);
 }
 
 void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {

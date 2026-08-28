@@ -539,7 +539,10 @@ void TimelineWidget::renderOverlays(QPainter& p) {
         opt.opaque = false;
         style()->drawControl(QStyle::CE_RubberBand, &opt, &p, this);
     } else if (m_dragMode == Marquee) {
-        const QRect mr = m_marqueeRect.normalized();
+        // Recorta a caixa à área do timeline (não deve cobrir o cabeçalho
+        // das faixas nem a régua).
+        const QRect mr = m_marqueeRect.normalized().intersected(
+            QRect(H, R, qMax(1, width() - H), qMax(1, height() - R)));
         if (!mr.isEmpty()) {
             QStyleOptionRubberBand opt;
             opt.initFrom(this);

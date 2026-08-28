@@ -1049,7 +1049,10 @@ void MainWindow::createActions() {
     for (int i = 0; i < toolNames.size(); ++i) {
         QAction* a = new QAction(toolIcons[i], toolNames[i], this);
         a->setCheckable(true);
-        a->setShortcut(appKey(("tool" + QString::number(i)).toLatin1().constData(), toolKeys[i]));
+        // A Tesoura (i==2) não ganha atalho fixo: a tecla (default R) é tratada
+        // no TimelineWidget em modo hold-to-use (segurar ativa, soltar restaura).
+        if (i != 2)
+            a->setShortcut(appKey(("tool" + QString::number(i)).toLatin1().constData(), toolKeys[i]));
         a->setToolTip(toolNames[i]);
         a->setChecked(i == 0);
         toolGroup->addAction(a);
