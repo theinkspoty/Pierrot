@@ -27,6 +27,7 @@
 #include <QMimeData>
 #include <cmath>
 #include <functional>
+#include <algorithm>
 #include <QSpinBox>
 #include <QDoubleSpinBox>
 #include <QLineEdit>
@@ -122,6 +123,12 @@ void ExpressWidget::rebuildTabs()
     if (m_currentClip->saturation != 1.0) createBuiltInTab("pierrot_saturation");
     if (m_currentClip->blur != 0.0)       createBuiltInTab("pierrot_blur");
 
+    // Efeitos de áudio (abas próprias no Express).
+    if (m_currentClip->eqLow != 0.0 || m_currentClip->eqMid != 0.0
+        || m_currentClip->eqHigh != 0.0)
+        createBuiltInTab("pierrot_audio_eq");
+    if (m_currentClip->reverb)         createBuiltInTab("pierrot_audio_reverb");
+
     // Abas de plugins OFX.
     for (const OfxPluginInstance& fx : m_currentClip->ofxFx)
         createOfxTab(fx.pluginId);
@@ -179,6 +186,21 @@ void ExpressWidget::addEffect(const QString& effectId)
     } else if (effectId == "pierrot_blur" && m_currentClip->blur == 0.0) {
         m_currentClip->blur = 5.0;
         emit modified();
+    } else if (effectId == "pierrot_audio_eq") {
+        if (std::fabs(m_currentClip->eqLow) <= 0.01
+            && std::fabs(m_currentClip->eqMid) <= 0.01
+            && std::fabs(m_currentClip->eqHigh) <= 0.01) {
+            // EQ Express: preset inicial sutil (presença nos médios/agudos).
+            m_currentClip->eqLow = 0.0;
+            m_currentClip->eqMid = 1.5;
+            m_currentClip->eqHigh = 1.0;
+            emit modified();
+        }
+    } else if (effectId == "pierrot_audio_reverb" && !m_currentClip->reverb) {
+        m_currentClip->reverb = true;
+        m_currentClip->reverbMix = 0.35;
+        m_currentClip->reverbSize = 0.5;
+        emit modified();
     } else if (!effectId.startsWith("pierrot_")) {
         // OFX: adiciona ao clipe se não existe.
         bool found = false;
@@ -217,6 +239,8 @@ void ExpressWidget::removeEffectFromClip(const QString& effectId)
     else if (effectId == "pierrot_contrast")   m_currentClip->contrast = 1.0;
     else if (effectId == "pierrot_saturation") m_currentClip->saturation = 1.0;
     else if (effectId == "pierrot_blur")       m_currentClip->blur = 0.0;
+    else if (effectId == "pierrot_audio_eq")   m_currentClip->eqLow = m_currentClip->eqMid = m_currentClip->eqHigh = 0.0;
+    else if (effectId == "pierrot_audio_reverb") m_currentClip->reverb = false;
     else {
         // OFX: remove do clipe.
         for (int i = 0; i < m_currentClip->ofxFx.size(); ++i) {
@@ -278,6 +302,8 @@ static const QHash<QString, QString>& effectDisplayNames()
         { QStringLiteral("pierrot_chromakey"),  QStringLiteral("Chroma Key") },
         { QStringLiteral("pierrot_lainka"),     QStringLiteral("LAINKA") },
         { QStringLiteral("pierrot_motion"),     QStringLiteral("MotiOn") },
+        { QStringLiteral("pierrot_audio_eq"),   QStringLiteral("EQ Express") },
+        { QStringLiteral("pierrot_audio_reverb"), QStringLiteral("Reverb EX") },
     };
     return names;
 }
@@ -440,6 +466,62 @@ void ExpressWidget::createBuiltInTab(const QString& effectId)
             [this](int v) { applyBuiltInValue("motionAngle", v); });
         makeSlider(tr("Amostras:"), 1, 32, c ? c->motionSamples : 8,
             [this](int v) { applyBuiltInValue("motionSamples", v); });
+    }
+    else if (effectId == "pierrot_audio_eq") {
+        auto* chk = new QCheckBox(tr("Ativar EQ Express"));
+        chk->setChecked(c && (std::fabs(c->eqLow) > 0.01 || std::fabs(c->eqMid) > 0.01
+                              || std::fabs(c->eqHigh) > 0.01));
+        connect(chk, &QCheckBox::toggled, this, [this](bool v) { applyBuiltInBool("eqExpress", v); });
+        form->addRow(chk);
+
+        auto* hint = new QLabel(tr("Iguala o som do clipe em 3 bandas. "
+                                   "0 dB = sem alteração."), inner);
+        hint->setWordWrap(true);
+        hint->setStyleSheet(QStringLiteral("color:%1; font-size:11px;")
+            .arg(themeColors().expressDescText.name()));
+        form->addRow(hint);
+
+        auto makeDb = [&](const QString& label, double value, std::function<void(int)> slot) {
+            auto* sl = new QSlider(Qt::Horizontal);
+            sl->setRange(-120, 120); // décimos de dB
+            sl->setValue((int)llround(value * 10.0));
+            auto* lbl = new QLabel(QString::number(sl->value() / 10.0, 'f', 1) + " dB");
+            connect(sl, &QSlider::valueChanged, lbl, [lbl](int v) {
+                lbl->setText(QString::number(v / 10.0, 'f', 1) + " dB");
+            });
+            connect(sl, &QSlider::valueChanged, this, [slot](int v) { slot(v); });
+            auto* row = new QHBoxLayout;
+            row->addWidget(sl, 1);
+            row->addWidget(lbl);
+            form->addRow(label, row);
+        };
+        makeDb(tr("Graves:"), c ? c->eqLow : 0.0, [this](int v) { applyBuiltInValue("eqLow", v / 10.0); });
+        makeDb(tr("Médios:"), c ? c->eqMid : 0.0, [this](int v) { applyBuiltInValue("eqMid", v / 10.0); });
+        makeDb(tr("Agudos:"), c ? c->eqHigh : 0.0, [this](int v) { applyBuiltInValue("eqHigh", v / 10.0); });
+    }
+    else if (effectId == "pierrot_audio_reverb") {
+        auto* chk = new QCheckBox(tr("Ativar Reverb EX"));
+        chk->setChecked(c && c->reverb);
+        connect(chk, &QCheckBox::toggled, this, [this](bool v) { applyBuiltInBool("reverb", v); });
+        form->addRow(chk);
+
+        auto makeSlider = [&](const QString& label, int min, int max, int val,
+                              std::function<void(int)> slot) {
+            auto* sl = new QSlider(Qt::Horizontal);
+            sl->setRange(min, max);
+            sl->setValue(val);
+            auto* lbl = new QLabel(QString("%1%").arg(sl->value()));
+            connect(sl, &QSlider::valueChanged, lbl, [lbl](int v) { lbl->setText(QString("%1%").arg(v)); });
+            connect(sl, &QSlider::valueChanged, this, [slot](int v) { slot(v); });
+            auto* row = new QHBoxLayout;
+            row->addWidget(sl, 1);
+            row->addWidget(lbl);
+            form->addRow(label, row);
+        };
+        makeSlider(tr("Mix (úmido):"), 0, 100, c ? (int)llround(c->reverbMix * 100.0) : 35,
+            [this](int v) { applyBuiltInValue("reverbMix", v / 100.0); });
+        makeSlider(tr("Tamanho da sala:"), 0, 100, c ? (int)llround(c->reverbSize * 100.0) : 50,
+            [this](int v) { applyBuiltInValue("reverbSize", v / 100.0); });
     }
 
     auto* scroll = new QScrollArea;
@@ -714,6 +796,11 @@ void ExpressWidget::applyBuiltInValue(const QString& key, double value)
     else if (key == "motionAmount") m_currentClip->motionAmount = value;
     else if (key == "motionAngle") m_currentClip->motionAngle = value;
     else if (key == "motionSamples") m_currentClip->motionSamples = qMax(1, (int)value);
+    else if (key == "eqLow")     m_currentClip->eqLow = std::clamp(value, -12.0, 12.0);
+    else if (key == "eqMid")     m_currentClip->eqMid = std::clamp(value, -12.0, 12.0);
+    else if (key == "eqHigh")    m_currentClip->eqHigh = std::clamp(value, -12.0, 12.0);
+    else if (key == "reverbMix") m_currentClip->reverbMix = std::clamp(value, 0.0, 1.0);
+    else if (key == "reverbSize") m_currentClip->reverbSize = std::clamp(value, 0.0, 1.0);
     emit modified();
 }
 
@@ -724,6 +811,24 @@ void ExpressWidget::applyBuiltInBool(const QString& key, bool value)
     else if (key == "chromaKey") m_currentClip->chromaKey = value;
     else if (key == "lainkaEnabled") m_currentClip->lainkaEnabled = value;
     else if (key == "motionEnabled") m_currentClip->motionEnabled = value;
+    else if (key == "reverb") {
+        m_currentClip->reverb = value;
+        if (value && m_currentClip->reverbMix <= 0.0) m_currentClip->reverbMix = 0.35;
+        if (value && m_currentClip->reverbSize <= 0.0) m_currentClip->reverbSize = 0.5;
+    }
+    else if (key == "eqExpress") {
+        if (value) {
+            if (std::fabs(m_currentClip->eqLow) <= 0.01
+                && std::fabs(m_currentClip->eqMid) <= 0.01
+                && std::fabs(m_currentClip->eqHigh) <= 0.01) {
+                m_currentClip->eqLow = 0.0;
+                m_currentClip->eqMid = 1.5;
+                m_currentClip->eqHigh = 1.0;
+            }
+        } else {
+            m_currentClip->eqLow = m_currentClip->eqMid = m_currentClip->eqHigh = 0.0;
+        }
+    }
     emit modified();
 }
 

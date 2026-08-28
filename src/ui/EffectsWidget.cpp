@@ -20,6 +20,7 @@
 #include <QTreeWidgetItem>
 #include <QScrollArea>
 #include <QFrame>
+#include <QTabWidget>
 
 // ── EffectTree: arrasto de efeitos ───────────────────────────────────────
 
@@ -80,6 +81,10 @@ QHash<QString, QString> EffectsWidget::effectDescriptions()
           tr("Cria deformações que simulam efeito stop motion na imagem. Ideal para animações com aparência quadro a quadro.") },
         { QStringLiteral("pierrot_motion"),
           tr("Efeito de movimento e câmera dinâmica. Adiciona deslocamento e rotação à imagem.") },
+        { QStringLiteral("pierrot_audio_eq"),
+          tr("Equalizador de 3 bandas (graves, médios e agudos) aplicado ao áudio do clipe.") },
+        { QStringLiteral("pierrot_audio_reverb"),
+          tr("Adiciona profundidade e ambiente ao som do clipe com um reverb simples.") },
     };
 }
 
@@ -103,12 +108,27 @@ EffectsWidget::EffectsWidget(QWidget* parent) : QWidget(parent)
         .arg(themeColors().text.name()));
     rootLay->addWidget(m_searchBox);
 
+    // Abas: efeitos de vídeo e efeitos de áudio
+    m_tabs = new QTabWidget(this);
+    m_tabs->setDocumentMode(true);
+    m_tabs->setStyleSheet(QStringLiteral(
+        "QTabWidget::pane { background:%1; border:none; }"
+        "QTabBar::tab { background:%2; color:%3; padding:5px 12px; "
+        "border:none; border-bottom:2px solid transparent; }"
+        "QTabBar::tab:selected { background:%4; border-bottom:2px solid %5; }"
+        "QTabBar::tab:hover { background:%2; }")
+        .arg(themeColors().effectsTreeBg.name())
+        .arg(themeColors().tabBg.name())
+        .arg(themeColors().text.name())
+        .arg(themeColors().tabSelected.name())
+        .arg(themeColors().tabBorder.name()));
+
     // Layout horizontal: árvore (esquerda) + preview (direita)
     auto* hLay = new QHBoxLayout;
     hLay->setContentsMargins(0, 0, 0, 0);
     hLay->setSpacing(0);
 
-    // Árvore de efeitos
+    // Árvore de efeitos de vídeo
     m_tree = new EffectTree(this);
     m_tree->setHeaderHidden(true);
     m_tree->setRootIsDecorated(true);
@@ -130,7 +150,20 @@ EffectsWidget::EffectsWidget(QWidget* parent) : QWidget(parent)
         .arg(themeColors().effectsTreeBg.name())
         .arg(themeColors().scrollbarBg.name())
         .arg(themeColors().scrollbarHandle.name()));
-    hLay->addWidget(m_tree, 1);
+    // Árvore de efeitos de áudio
+    m_audioTree = new EffectTree(this);
+    m_audioTree->setHeaderHidden(true);
+    m_audioTree->setRootIsDecorated(true);
+    m_audioTree->setIndentation(16);
+    m_audioTree->setMinimumWidth(160);
+    m_audioTree->setDragEnabled(true);
+    m_audioTree->setDragDropMode(QAbstractItemView::DragOnly);
+    m_audioTree->setStyleSheet(m_tree->styleSheet());
+
+    m_tabs->addTab(m_tree, tr("Vídeo"));
+    m_tabs->addTab(m_audioTree, tr("Áudio"));
+
+    hLay->addWidget(m_tabs, 1);
 
     // Separador vertical
     auto* separator = new QFrame;
@@ -176,9 +209,15 @@ EffectsWidget::EffectsWidget(QWidget* parent) : QWidget(parent)
             this, &EffectsWidget::onTreeItemClicked);
     connect(m_tree, &QTreeWidget::itemDoubleClicked,
             this, &EffectsWidget::onTreeItemDoubleClicked);
+    connect(m_audioTree, &QTreeWidget::itemClicked,
+            this, &EffectsWidget::onTreeItemClicked);
+    connect(m_audioTree, &QTreeWidget::itemDoubleClicked,
+            this, &EffectsWidget::onTreeItemDoubleClicked);
     connect(m_searchBox, &QLineEdit::textChanged,
             this, &EffectsWidget::onSearchChanged);
     connect(m_tree, &QTreeWidget::itemSelectionChanged,
+            this, &EffectsWidget::onSelectionChanged);
+    connect(m_audioTree, &QTreeWidget::itemSelectionChanged,
             this, &EffectsWidget::onSelectionChanged);
 }
 
@@ -260,6 +299,25 @@ void EffectsWidget::buildTree()
         }
     }
     ofxCat->setExpanded(true);
+
+    // ── Áudio ───────────────────────────────────────────────────────────
+    m_audioTree->clear();
+    auto* audioCat = new QTreeWidgetItem(m_audioTree);
+    audioCat->setText(0, tr("Simples"));
+    audioCat->setFlags(audioCat->flags() & ~Qt::ItemIsSelectable);
+    audioCat->setFont(0, bold);
+
+    struct AudioEffect { QString name; QString id; };
+    const QVector<AudioEffect> audioEffects = {
+        { tr("EQ Express"), QStringLiteral("pierrot_audio_eq") },
+        { tr("Reverb EX"),  QStringLiteral("pierrot_audio_reverb") },
+    };
+    for (const auto& fx : audioEffects) {
+        auto* item = new QTreeWidgetItem(audioCat);
+        item->setText(0, fx.name);
+        item->setData(0, Qt::UserRole, fx.id);
+    }
+    audioCat->setExpanded(true);
 }
 
 // ── Preview ──────────────────────────────────────────────────────────────
@@ -297,6 +355,8 @@ void EffectsWidget::updatePreview(const QString& effectId)
         { QStringLiteral("pierrot_chromakey"), tr("Chroma Key") },
         { QStringLiteral("pierrot_lainka"), tr("LAINKA") },
         { QStringLiteral("pierrot_motion"), tr("MotiOn") },
+        { QStringLiteral("pierrot_audio_eq"), tr("EQ Express") },
+        { QStringLiteral("pierrot_audio_reverb"), tr("Reverb EX") },
     };
     m_previewName->setText(displayNames.value(effectId, effectId));
 
@@ -375,6 +435,7 @@ void EffectsWidget::updateCategoryPreview(QTreeWidgetItem* category)
 void EffectsWidget::onSelectionChanged()
 {
     auto* item = m_tree->currentItem();
+    if (!item) item = m_audioTree->currentItem();
     if (!item) {
         m_previewIcon->show();
         m_previewName->show();
@@ -401,10 +462,16 @@ void EffectsWidget::onSearchChanged(const QString& text)
 
 void EffectsWidget::filterTree(const QString& text)
 {
+    filterOneTree(m_tree, text);
+    filterOneTree(m_audioTree, text);
+}
+
+void EffectsWidget::filterOneTree(EffectTree* tree, const QString& text)
+{
     const QString query = text.trimmed().toLower();
 
-    for (int i = 0; i < m_tree->topLevelItemCount(); ++i) {
-        auto* cat = m_tree->topLevelItem(i);
+    for (int i = 0; i < tree->topLevelItemCount(); ++i) {
+        auto* cat = tree->topLevelItem(i);
         bool anyChildVisible = false;
 
         for (int j = 0; j < cat->childCount(); ++j) {
@@ -436,6 +503,7 @@ void EffectsWidget::setSelectedClip(Clip* clip)
 {
     m_currentClip = clip;
     m_tree->clearSelection();
+    m_audioTree->clearSelection();
     updatePreview(QString());
 }
 
@@ -443,7 +511,9 @@ void EffectsWidget::setSelectedClip(Clip* clip)
 
 void EffectsWidget::onTreeItemClicked()
 {
-    auto* item = m_tree->currentItem();
+    auto* tree = qobject_cast<EffectTree*>(sender());
+    if (!tree) tree = m_tree;
+    auto* item = tree->currentItem();
     if (!item) return;
     const QVariant v = item->data(0, Qt::UserRole);
     if (!v.isValid()) return;
@@ -453,7 +523,9 @@ void EffectsWidget::onTreeItemClicked()
 
 void EffectsWidget::onTreeItemDoubleClicked()
 {
-    auto* item = m_tree->currentItem();
+    auto* tree = qobject_cast<EffectTree*>(sender());
+    if (!tree) tree = m_tree;
+    auto* item = tree->currentItem();
     if (!item || !m_currentClip) return;
     const QVariant v = item->data(0, Qt::UserRole);
     if (!v.isValid()) return;

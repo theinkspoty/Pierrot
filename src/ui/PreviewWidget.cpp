@@ -184,8 +184,72 @@ public:
         void reset() { x1 = x2 = y1 = y2 = 0.0; }
     };
 
+    // Reverb Schroeder simples (4 combos + 2 allpass num barramento mono).
+    struct Comb {
+        float buf[8192];
+        int len = 1;
+        int pos = 0;
+        float feedback = 0.0f;
+        float damping = 0.0f;
+        float filter = 0.0f;
+        void setup(int length, float fb, float damp) {
+            len = qMax(1, length);
+            feedback = fb;
+            damping = damp;
+            pos = 0;
+            filter = 0.0f;
+            memset(buf, 0, sizeof(buf));
+        }
+        inline float tick(float in) {
+            const float output = buf[pos];
+            filter = output * (1.0f - damping) + filter * damping;
+            buf[pos] = in + filter * feedback;
+            if (++pos >= len) pos = 0;
+            return output;
+        }
+    };
+    struct Allpass {
+        float buf[8192];
+        int len = 1;
+        int pos = 0;
+        void setup(int length) {
+            len = qMax(1, length);
+            pos = 0;
+            memset(buf, 0, sizeof(buf));
+        }
+        inline float tick(float in) {
+            const float bufo = buf[pos];
+            const float out = -in + bufo;
+            buf[pos] = in + bufo * 0.5f;
+            if (++pos >= len) pos = 0;
+            return out;
+        }
+    };
+    struct SimpleReverb {
+        Comb comb[4];
+        Allpass allpass[2];
+        void setup(double size) {
+            const int delays[4] = { 1557, 1617, 1491, 1422 };
+            const int apDelays[2] = { 225, 556 };
+            const float fb = 0.60f + 0.28f * (float)size;
+            const float damp = 0.4f - 0.25f * (float)size;
+            for (int i = 0; i < 4; ++i) comb[i].setup(delays[i], fb, damp);
+            for (int i = 0; i < 2; ++i) allpass[i].setup(apDelays[i]);
+        }
+        inline float tick(float in) {
+            float o = 0.016f * comb[0].tick(in)
+                    + 0.016f * comb[1].tick(in)
+                    + 0.023f * comb[2].tick(in)
+                    + 0.027f * comb[3].tick(in);
+            o = allpass[0].tick(o);
+            o = allpass[1].tick(o);
+            return o;
+        }
+    };
+
     void configure(double eqLow, double eqMid, double eqHigh, bool denoise,
-                   double denoiseAmt, bool invertPhase, bool normalize) {
+                   double denoiseAmt, bool invertPhase, bool normalize,
+                   bool reverb, double reverbMix, double reverbSize) {
         const double fs = 48000.0;
         const int key = (int)std::llround(eqLow * 10) * 1000000
                       + (int)std::llround(eqMid * 10) * 1000
@@ -193,7 +257,10 @@ public:
                       + (denoise ? 100 : 0)
                       + (invertPhase ? 200 : 0)
                       + (normalize ? 400 : 0)
-                      + (int)std::llround(denoiseAmt) * 10000;
+                      + (int)std::llround(denoiseAmt) * 10000
+                      + (reverb ? 800 : 0)
+                      + (int)std::llround(reverbMix * 100) * 100000
+                      + (int)std::llround(reverbSize * 100) * 10000000;
         if (key == m_key) return; // parâmetros inalterados: mantém o estado
         m_key = key;
         for (int ch = 0; ch < 2; ++ch) {
@@ -205,6 +272,10 @@ public:
         gateEnabled = denoise;
         gateAmount = std::clamp(denoiseAmt, 1.0, 50.0);
         agcEnabled = normalize;
+        reverbEnabled = reverb;
+        reverbMixAmt = std::clamp(reverbMix, 0.0, 1.0);
+        reverbSizeAmt = std::clamp(reverbSize, 0.0, 1.0);
+        rv.setup(reverbSizeAmt);
         resetState();
     }
 
@@ -215,6 +286,7 @@ public:
         gateEnv = 0.0;
         agcLevel = 0.0;
         agcGain = 1.0;
+        rv.setup(reverbSizeAmt); // limpa os buffers do reverb
     }
 
     // Processa `frames` amostras estéreo interleaved S16 no próprio buffer.
@@ -248,6 +320,13 @@ public:
                 const double pk = qMax(std::fabs(l), std::fabs(r));
                 if (pk > 0.95) { const double s = 0.95 / pk; l *= s; r *= s; }
             }
+            if (reverbEnabled && reverbMixAmt > 0.01) {
+                const double dry = 0.5 * (l + r);
+                const double wet = rv.tick((float)dry) * 4.0;
+                const double w = reverbMixAmt;
+                l = l * (1.0 - w) + wet * w;
+                r = r * (1.0 - w) + wet * w;
+            }
             buf[2 * f] = (int16_t)std::lround(std::clamp(l, -1.0, 1.0) * 32768.0);
             buf[2 * f + 1] = (int16_t)std::lround(std::clamp(r, -1.0, 1.0) * 32768.0);
         }
@@ -263,6 +342,10 @@ private:
     bool agcEnabled = false;
     double agcLevel = 0.0;
     double agcGain = 1.0;
+    bool reverbEnabled = false;
+    double reverbMixAmt = 0.0;
+    double reverbSizeAmt = 0.5;
+    SimpleReverb rv; // DSP do Reverb EX (evita conflito com o parâmetro bool)
 };
 
 class AudioMixer : public QIODevice {
@@ -280,6 +363,9 @@ public:
         double denoiseAmount = 12.0;
         bool normalize = false;
         bool invertPhase = false;
+        bool reverb = false;
+        double reverbMix = 0.35;
+        double reverbSize = 0.5;
         int trackIndex = -1;   // índice da faixa (dentro de video/audio)
         bool isAudioTrack = false;
         double pan = 0.0;      // -1..+1, 0=centro
@@ -339,7 +425,8 @@ public:
                 s->trackIndex = w.trackIndex;
                 s->isAudioTrack = w.isAudioTrack;
                 s->fx.configure(w.eqLow, w.eqMid, w.eqHigh, w.denoise,
-                                w.denoiseAmount, w.invertPhase, w.normalize);
+                                w.denoiseAmount, w.invertPhase, w.normalize,
+                                w.reverb, w.reverbMix, w.reverbSize);
                 s->active = true;
                 Job j;
                 j.s = s;
@@ -1701,6 +1788,9 @@ QVector<AudioMixer::SourceInfo> buildMixSources(const Project* p, double t) {
         si.denoiseAmount = c->denoiseAmount;
         si.normalize = c->normalize;
         si.invertPhase = c->invertPhase;
+        si.reverb = c->reverb;
+        si.reverbMix = c->reverbMix;
+        si.reverbSize = c->reverbSize;
         si.trackIndex = it.value().trackIdx;
         si.isAudioTrack = it.value().isAudio;
         si.pan = it.value().pan;

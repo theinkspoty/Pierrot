@@ -261,6 +261,9 @@ static QJsonObject clipToJson(const Clip& c) {
     o["denoiseAmount"] = c.denoiseAmount;
     o["normalize"] = c.normalize;
     o["invertPhase"] = c.invertPhase;
+    o["reverb"] = c.reverb;
+    o["reverbMix"] = c.reverbMix;
+    o["reverbSize"] = c.reverbSize;
     o["kfOpacity"] = kfToJson(c.kfOpacity);
     o["kfVolume"] = kfToJson(c.kfVolume);
     o["kfTx"] = kfToJson(c.kfTx);
@@ -381,6 +384,9 @@ static Clip clipFromJson(const QJsonObject& o) {
     c.denoiseAmount = o["denoiseAmount"].toDouble(12.0);
     c.normalize = o["normalize"].toBool();
     c.invertPhase = o["invertPhase"].toBool();
+    c.reverb = o["reverb"].toBool();
+    c.reverbMix = o["reverbMix"].toDouble(0.35);
+    c.reverbSize = o["reverbSize"].toDouble(0.5);
     c.kfOpacity = kfFromJson(o["kfOpacity"]);
     c.kfVolume = kfFromJson(o["kfVolume"]);
     c.kfTx = kfFromJson(o["kfTx"]);

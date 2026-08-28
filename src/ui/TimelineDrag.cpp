@@ -1304,6 +1304,18 @@ void TimelineWidget::dropEvent(QDropEvent* e) {
             target->grayscale = true;
         } else if (effectId == "pierrot_chromakey") {
             target->chromaKey = true;
+        } else if (effectId == "pierrot_audio_eq") {
+            // EQ Express: só aplica o preset inicial se o EQ ainda estiver neutro.
+            if (std::fabs(target->eqLow) <= 0.01 && std::fabs(target->eqMid) <= 0.01
+                && std::fabs(target->eqHigh) <= 0.01) {
+                target->eqLow = 0.0;
+                target->eqMid = 1.5;
+                target->eqHigh = 1.0;
+            }
+        } else if (effectId == "pierrot_audio_reverb") {
+            target->reverb = true;
+            target->reverbMix = 0.35;
+            target->reverbSize = 0.5;
         } else {
             // Efeito OFX: adiciona ao stack ofxFx do clipe.
             bool already = false;

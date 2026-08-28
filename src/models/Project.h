@@ -368,6 +368,10 @@ struct Clip {
     double denoiseAmount = 12.0;
     bool normalize = false;
     bool invertPhase = false;
+    // Reverb EX: mistura úmida (0..1) e tamanho de sala (0..1).
+    bool reverb = false;
+    double reverbMix = 0.35;
+    double reverbSize = 0.5;
 
     // ── Efeitos OFX (plugins de terceiros) ──────────────────────────────
     QVector<OfxPluginInstance> ofxFx;  // stack de efeitos OFX (ordem = ordem de aplicação)
@@ -408,7 +412,8 @@ struct Clip {
 
     bool hasAudioFx() const {
         return std::fabs(eqLow) > 0.01 || std::fabs(eqMid) > 0.01
-            || std::fabs(eqHigh) > 0.01 || denoise || normalize || invertPhase;
+            || std::fabs(eqHigh) > 0.01 || denoise || normalize || invertPhase
+            || reverb;
     }
 };
 

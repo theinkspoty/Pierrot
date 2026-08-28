@@ -11,6 +11,7 @@
 
 class QLineEdit;
 class QLabel;
+class QTabWidget;
 class Project;
 struct Clip;
 struct OfxPluginInfo;
@@ -46,13 +47,16 @@ private slots:
 private:
     void buildTree();
     void filterTree(const QString& text);
+    static void filterOneTree(EffectTree* tree, const QString& text);
     void updatePreview(const QString& effectId);
     void updateCategoryPreview(QTreeWidgetItem* category);
     static QHash<QString, QString> effectDescriptions();
 
     Project* m_project = nullptr;
     Clip* m_currentClip = nullptr;
+    QTabWidget* m_tabs = nullptr;
     EffectTree* m_tree = nullptr;
+    EffectTree* m_audioTree = nullptr;
     QLineEdit* m_searchBox = nullptr;
     QVector<OfxPluginInfo> m_ofxPlugins;
 

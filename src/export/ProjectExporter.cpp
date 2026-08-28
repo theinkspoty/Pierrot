@@ -1141,8 +1141,31 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                 fc.last().append(QStringLiteral(",loudnorm=I=-14:TP=-1.5:LRA=11"));
             if (c->invertPhase)
                 fc.last().append(QStringLiteral(",aeval=-val(0)|-val(1)"));
-            fc.last().append(QStringLiteral("[%1]").arg(lbl));
-            albl << lbl;
+            // Reverb EX: mistura do sinal seco com um eco multi-tap que simula
+            // reverb (filtro aecho do ffmpeg, com dry/wet via asplit+amix).
+            if (c->reverb && c->reverbMix > 0.01) {
+                const QString d = QStringLiteral("%1_d").arg(lbl);
+                const QString w = QStringLiteral("%1_w").arg(lbl);
+                const QString dm = QStringLiteral("%1_dm").arg(lbl);
+                const QString rv = QStringLiteral("%1_rv").arg(lbl);
+                const QString mx = QStringLiteral("%1_mx").arg(lbl);
+                const double sc = 0.6 + 0.4 * std::clamp(c->reverbSize, 0.0, 1.0);
+                const double mix = std::clamp(c->reverbMix, 0.0, 1.0);
+                fc.last().append(QStringLiteral(",asplit=2[%1][%2]").arg(d).arg(w));
+                fc << QStringLiteral("[%1]volume=%2[%3]")
+                        .arg(d, num(1.0 - mix), dm);
+                fc << QStringLiteral("[%1]aecho=0.9:0.9:50|100|180:%2|%3|%4,volume=%5[%6]")
+                        .arg(w)
+                        .arg(num(0.30 * sc), num(0.22 * sc), num(0.14 * sc))
+                        .arg(num(mix), rv);
+                fc << QStringLiteral("[%1][%2]amix=inputs=2:duration=first:"
+                                     "normalize=0:dropout_transition=0[%3]")
+                        .arg(dm, rv, mx);
+                albl << mx;
+            } else {
+                fc.last().append(QStringLiteral("[%1]").arg(lbl));
+                albl << lbl;
+            }
         }
         if (albl.size() == 1) {
             aout = QStringLiteral("[%1]").arg(albl[0]);
