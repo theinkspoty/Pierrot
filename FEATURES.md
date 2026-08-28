@@ -6,7 +6,7 @@
 - Múltiplos arquivos simultâneos com análise assíncrona (não trava a interface).
 - Miniaturas com tamanho ajustável.
 - **Geradores de mídia** (estilo Vegas): mídia virtual sem arquivo, funciona como fundo/camada — **cor sólida**, **gradiente**, **checkboard** e **ruído (grão)**.
-- **Trimmer (in/out)**: ao soltar uma mídia de vídeo na timeline, abre o diálogo Trimmer para escolher o trecho (scrubber, `I`/`O` para marcar in/out, prévia de quadro, tocar). Cancelar aborta a soltura; multi-seleção insere direto.
+- **Trimmer (in/out)**: ao soltar uma mídia de vídeo na timeline, abre o diálogo Trimmer para escolher o trecho (scrubber, `I`/`O` para marcar in/out, prévia de quadro, tocar). Cancelar aborta a soltura; multi-seleção insere direto. **Desativável** nas Configurações (Qualidade e Timeline ▸ "Abrir o trimmer ao soltar mídia") para inserir direto.
 - **Fila de render**: várias exportações (formatos/resoluções/fps diferentes) na fila, rodando em sequência (menu Arquivo ▸ Fila de render…).
 - **Correção de cor (Lift/Gamma/Gain)**: por clipe (menu de contexto ▸ Correção de cor…), aplicada no preview e na exportação (`colorbalance` + `eq` do ffmpeg).
 - **Analisadores (Scopes)**: painel com waveform, histograma RGB e vectorscope, seguindo o quadro composto do preview (menu Exibir ▸ Analisadores).
@@ -28,6 +28,8 @@
 ## Edição de Clipes
 
 - **Mover**: arraste clipes na timeline.
+- **Agulha sempre à mão**: clique em qualquer ponto da timeline — inclusive sobre um clipe — move a agulha para o cursor (estilo Vegas; `Ctrl+clique` preserva o playhead).
+- **Auto-scroll**: ao arrastar a agulha, a região de loop, mover clipes ou trims para perto de uma borda, a timeline rola sozinha acompanhando o cursor (zona de 32 px à esquerda, 16 px à direita).
 - **Selecionar**: clique (ou Shift/Ctrl+clique para múltiplos).
 - **Trim**: arraste bordas para aparar.
 - **Duplicar**: Ctrl+D.
@@ -44,7 +46,7 @@
 |-------|-----------|-----------|
 | `0` | Selecionar | Selecionar/mover clipes |
 | `M` | Mover | Mover clipes |
-| `R` | Tesoura | Corte livre (clique na timeline) |
+| `R` | Tesoura | Corte livre — **segurar R** ativa, **soltar** volta à ferramenta anterior (hold-to-use) |
 | `E` | Envelope | Editar linhas de volume/efeitos |
 | `Z` | Lupa | Zoom na região arrastada |
 | `B` | Ripple | Trim com ripple (empurra adjacentes) |
@@ -61,6 +63,8 @@
 - **Transformação**: posição X/Y, escala, escala X/Y, rotação, âncora X/Y.
 - **Recorte**: crop L/R/T/B.
 - **Efeitos de vídeo**: brilho, contraste, saturação, desfoque, preto e branco, chroma key.
+- **Efeitos de áudio**: **EQ Express** (graves/médios/agudos, −12 a +12 dB) e **Reverb EX** (mix e tamanho) por clipe — com DSP em tempo real no preview (reverb Schroeder) e reproduzidos na exportação (cadeia dry/wet via `asplit`/`aecho`/`amix`).
+- **Painel Efeitos com abas** Vídeo / Áudio (com busca em ambas).
 - **LAINKA** (stop motion): skip, jitter, flicker, warp, onion skin, dust, scratch.
 - **Motion blur**.
 - **Plugins OFX** (OpenFX): efeitos de terceiros.
@@ -178,7 +182,7 @@ src/
   ui/PreviewWidget            Preview + reprodução (AudioMixer integrado)
   ui/ExportDialog             Diálogo de exportação com progresso
   ui/ProjectSettingsDialog    Resolução e fps do projeto
-  ui/EffectsWidget            Painel de efeitos (internos + OFX)
+  ui/EffectsWidget            Painel de efeitos com abas Vídeo/Áudio (internos + OFX + EQ Express/Reverb EX)
   ui/ExpressWidget            Expressões e atalhos
   ui/AudioEffectsDialog       Diálogo de efeitos de áudio por clipe
   ui/FileBrowserWidget        Explorador de arquivos (dock, Lugares + miniaturas)

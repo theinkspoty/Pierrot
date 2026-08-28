@@ -18,7 +18,7 @@ pra vídeos sem complexidade, focado no YouTube e outras plataformas.
 | Resolução           | configurável (padrão 1920×1080)                             |
 | Quadros/s           | configurável (padrão 30)                                    |
 | Taxa de áudio       | 48 kHz (exportação)                                         |
-| Efeitos por clipe   | volume, opacidade, velocidade, fades, texto, brilho, contraste, saturação, desfoque, P&B, chroma key + plugins OFX |
+| Efeitos por clipe   | vídeo: volume, opacidade, velocidade, fades, texto, brilho, contraste, saturação, desfoque, P&B, chroma key + plugins OFX; áudio: EQ Express e Reverb EX |
 | Blend por faixa     | 12 modos + opacidade de faixa (0–100%)                      |
 | Zoom da timeline    | 2 px/s – 4000 px/s                                          |
 | Fonte               | C++ (Qt Widgets) + FFmpeg (libav*)                          |
