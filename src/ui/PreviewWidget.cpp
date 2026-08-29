@@ -103,6 +103,11 @@ public slots:
             && std::fabs(m_readyT - t) <= step * 0.5) {
             img = m_readyImg;
             m_readyValid = false;
+        } else if (m_pReadyValid && m_pReadyPath == path && m_pReadyMaxW == maxW
+                   && std::fabs(m_pReadyT - t) <= step * 0.5) {
+            // Quadro pré-decodificado do clip NOVO logo após o swap no corte.
+            img = m_pReadyImg;
+            m_pReadyValid = false;
         } else {
             img = m_mainDecoder->frameAt(t, maxW);
         }
@@ -121,14 +126,30 @@ public slots:
         }
     }
 
-    void decodePrefetch(const QString& path, double t, int maxW) {
+    void decodePrefetch(const QString& path, double t, int maxW, double step) {
+        m_pReadyValid = false;
         if (!m_prefetchDecoder->isOpen() || m_prefetchDecoder->source() != path) {
             if (!m_prefetchDecoder->open(path)) {
                 emit prefetchReady(path, t, maxW, QImage());
                 return;
             }
         }
-        emit prefetchReady(path, t, maxW, m_prefetchDecoder->frameAt(t, maxW));
+        const QImage img = m_prefetchDecoder->frameAt(t, maxW);
+        emit prefetchReady(path, t, maxW, img);
+        // Pipeline de 1 frame à frente PARA O CLIPE NOVO: decodifica também o
+        // segundo quadro. No corte, o primeiro uso do decoder trocado (swap)
+        // devolve este quadro instantâneo; sem ele, o primeiro slot do novo
+        // clipe decodificava dois quadros seguidos e o preview engasgava até
+        // os m_ready voltarem a ficar em fase (a "travada" do corte).
+        if (!img.isNull() && step > 0.0) {
+            m_pReadyImg = m_prefetchDecoder->frameAt(t + step, maxW);
+            m_pReadyT = t + step;
+            m_pReadyPath = path;
+            m_pReadyMaxW = maxW;
+            m_pReadyValid = !m_pReadyImg.isNull();
+        } else {
+            m_pReadyValid = false;
+        }
     }
 
 signals:
@@ -145,6 +166,14 @@ private:
     double m_readyT = -1.0;
     int m_readyMaxW = 0;
     bool m_readyValid = false;
+
+    // Pipeline de 1 frame à frente do clip de PREFETCH (o que será trocado no
+    // corte). Consumido pelo decodeOne logo após o swap.
+    QImage m_pReadyImg;
+    QString m_pReadyPath;
+    double m_pReadyT = -1.0;
+    int m_pReadyMaxW = 0;
+    bool m_pReadyValid = false;
 };
 
 // Mixer de áudio: soma o PCM de todos os clipes ativos em `t` (clipe de vídeo
@@ -2414,7 +2443,8 @@ void PreviewWidget::updateFrame() {
                 QMetaObject::invokeMethod(m_frameWorker, "decodePrefetch", Qt::QueuedConnection,
                                           Q_ARG(QString, um->filePath),
                                           Q_ARG(double, uSrcT),
-                                          Q_ARG(int, decW));
+                                          Q_ARG(int, decW),
+                                          Q_ARG(double, 1.0 / projFps(m_project)));
             }
         }
     } else {
@@ -2560,16 +2590,44 @@ void PreviewWidget::requestLowerLayers(int decW) {
 // Chamado com m_frameMutex segurado.
 void PreviewWidget::kickFrameWorker() {
     if (m_workerBusy || m_reqQueue.isEmpty() || !m_frameWorker) return;
-    // Prefetch: NÃO segura os decodeOne's enquanto o decoder de prefetch
-    // trabalha — isso congelava o clipe atual por ~30-150ms a cada corte (o
-    // prefetch roda na mesma thread). Só bloqueia quando o corte está
-    // iminente (últimos 0.4s) e o prefetch ainda não terminou: aí é melhor
-    // privilegiar aquecer o próximo clipe para o swap ser instantâneo.
+    // Prefetch: não segura os decodeOne's enquanto o prefetch trabalha (isso
+    // parava o clipe atual por ~30-150ms a cada corte). Só nos últimos 0.12s
+    // antes do corte, se o prefetch ainda não terminou, dá prioridade a ele —
+    // o m_pReady (2º quadro pré-decodificado) torna o swap instantâneo.
     if (m_prefetch.requested && !m_prefetch.valid
-        && m_playhead >= m_prefetch.clipEnd - 0.4) return;
+        && m_playhead >= m_prefetch.clipEnd - 0.12) return;
+
+    // Podas pedidos órfãos: na virada de um corte, o pedido residual do clipe
+    // antigo não é mais "vivo" — decodificá-lo gastava um slot inteiro e
+    // atrasava o 1º frame do clipe novo (o "tiquinho" de travada). Na fila só
+    // interessam clipes que contêm o playhead agora (topo ou camadas ativas).
+    if (m_project) {
+        for (int i = m_reqQueue.size() - 1; i >= 0; --i) {
+            const QString& cid = m_reqQueue[i].clipId;
+            bool live = false;
+            for (const Track& tr : m_project->videoTracks)
+                for (const Clip& c : tr.clips)
+                    if (c.id == cid && !c.isText
+                        && m_playhead >= c.pos - 1e-6 && m_playhead < c.pos + c.dur + 1e-6) {
+                        live = true;
+                        break;
+                    }
+            if (!live) m_reqQueue.removeAt(i);
+        }
+        if (m_reqQueue.isEmpty()) return;
+    }
+
     m_workerBusy = true;
     if (m_perfT.isValid()) m_perfWorkerStartNs = m_perfT.nsecsElapsed();
-    const FrameReq r = m_reqQueue.takeFirst();
+    // Se o clipe do topo tem pedido na fila, ele vai primeiro (o vivo); os
+    // demais (camadas inferiores) ficam para a folga.
+    int idx = 0;
+    const Clip* top = clipAt(m_playhead);
+    if (top && m_reqQueue.size() > 1) {
+        for (int i = 0; i < m_reqQueue.size(); ++i)
+            if (m_reqQueue[i].clipId == top->id) { idx = i; break; }
+    }
+    const FrameReq r = m_reqQueue.takeAt(idx);
     QMetaObject::invokeMethod(m_frameWorker, "decodeOne", Qt::QueuedConnection,
                               Q_ARG(QString, r.clipId), Q_ARG(QString, r.path),
                               Q_ARG(double, r.t), Q_ARG(int, r.maxW), Q_ARG(double, r.dt));
@@ -2738,7 +2796,8 @@ void PreviewWidget::updatePrefetch() {
     QMetaObject::invokeMethod(m_frameWorker, "decodePrefetch", Qt::QueuedConnection,
                               Q_ARG(QString, nextMedia->filePath),
                               Q_ARG(double, srcT),
-                              Q_ARG(int, decW));
+                              Q_ARG(int, decW),
+                              Q_ARG(double, 1.0 / projFps(m_project)));
 }
 
 // Aplica pan/crop sobre um quadro e devolve o recorte.
