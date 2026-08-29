@@ -487,6 +487,8 @@ static QJsonObject trackToJson(const Track& t) {
     o["mesaOpacity"] = t.mesaOpacity;
     o["mesaAnchorX"] = t.mesaAnchorX;
     o["mesaAnchorY"] = t.mesaAnchorY;
+    o["mesaHidden"] = t.mesaHidden;
+    o["mesaLocked"] = t.mesaLocked;
     o["kfMesaX"] = kfToJson(t.kfMesaX);
     o["kfMesaY"] = kfToJson(t.kfMesaY);
     o["kfMesaScaleX"] = kfToJson(t.kfMesaScaleX);
@@ -539,6 +541,8 @@ static Track trackFromJson(const QJsonObject& o, bool audio) {
     t.mesaOpacity = o["mesaOpacity"].toDouble(1.0);
     t.mesaAnchorX = o["mesaAnchorX"].toDouble(0.0);
     t.mesaAnchorY = o["mesaAnchorY"].toDouble(0.0);
+    t.mesaHidden = o["mesaHidden"].toBool(false);
+    t.mesaLocked = o["mesaLocked"].toBool(false);
     t.kfMesaX = kfFromJson(o["kfMesaX"]);
     t.kfMesaY = kfFromJson(o["kfMesaY"]);
     t.kfMesaScaleX = kfFromJson(o["kfMesaScaleX"]);

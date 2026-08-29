@@ -18,7 +18,13 @@ uint qHash(const MesaWidget::KfRef& r) {
     uint h = qHash(r.source);
     h ^= qHash(r.trackId) + 0x9e3779b9 + (h << 6) + (h >> 2);
     h ^= qHash(qRound(r.time * 1000.0)) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    h ^= qHash(r.prop) + 0x9e3779b9 + (h << 6) + (h >> 2);
     return h;
+}
+
+uint qHash(const MesaWidget::KfRef& r, size_t seed) {
+    Q_UNUSED(seed);
+    return qHash(r);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -133,49 +139,57 @@ bool MesaWidget::isInMiniTimeline(const QPoint& p) const {
 }
 
 bool MesaWidget::isKfSelected(const KfRef& r) const {
-    return m_selectedKfs.contains(qHash(r));
+    return m_selectedKfs.contains(r);
 }
 
 void MesaWidget::toggleKfSelection(const KfRef& r, bool ctrl) {
-    const uint h = qHash(r);
     if (!ctrl) {
-        if (m_selectedKfs.size() == 1 && m_selectedKfs.contains(h))
+        if (m_selectedKfs.size() == 1 && m_selectedKfs.contains(r))
             return; // already sole selection
         m_selectedKfs.clear();
-        m_selectedKfs.insert(h);
+        m_selectedKfs.insert(r);
     } else {
-        if (m_selectedKfs.contains(h))
-            m_selectedKfs.remove(h);
+        if (m_selectedKfs.contains(r))
+            m_selectedKfs.remove(r);
         else
-            m_selectedKfs.insert(h);
+            m_selectedKfs.insert(r);
     }
 }
 
 void MesaWidget::deleteSelectedKfs() {
     MesaComposition* mc = currentMesa();
     if (!mc) return;
-    auto removeSelected = [&](QVector<Keyframe>& vks, KfRef::Source src, const QString& tid) {
-        for (int i = vks.size() - 1; i >= 0; --i) {
-            KfRef r{src, tid, vks[i].time};
-            if (isKfSelected(r)) vks.remove(i);
+
+    // Remove APENAS a property representada por cada KfRef selecionado:
+    // antes o Delete apagava todos os keyframes no mesmo tempo.
+    for (const KfRef& r : m_selectedKfs) {
+        QVector<Keyframe>* vks = nullptr;
+        if (r.source == KfRef::Cam) {
+            switch (r.prop) {
+                case PCamX: vks = &mc->kfCamX; break;
+                case PCamY: vks = &mc->kfCamY; break;
+                case PCamZ: vks = &mc->kfCamZoom; break;
+                case PCamR: vks = &mc->kfCamRotation; break;
+            }
+        } else {
+            Track* t = findTrack(r.trackId);
+            if (!t) continue;
+            switch (r.prop) {
+                case PLayX: vks = &t->kfMesaX; break;
+                case PLayY: vks = &t->kfMesaY; break;
+                case PLaySX: vks = &t->kfMesaScaleX; break;
+                case PLaySY: vks = &t->kfMesaScaleY; break;
+                case PLayRot: vks = &t->kfMesaRotation; break;
+                case PLayOp: vks = &t->kfMesaOpacity; break;
+                case PLayAX: vks = &t->kfMesaAnchorX; break;
+                case PLayAY: vks = &t->kfMesaAnchorY; break;
+                default: break;
+            }
         }
-    };
-    const QString camTid;
-    removeSelected(mc->kfCamX, KfRef::Cam, camTid);
-    removeSelected(mc->kfCamY, KfRef::Cam, camTid);
-    removeSelected(mc->kfCamZoom, KfRef::Cam, camTid);
-    removeSelected(mc->kfCamRotation, KfRef::Cam, camTid);
-    for (const QString& tid : mc->trackIds) {
-        Track* t = findTrack(tid);
-        if (!t) continue;
-        removeSelected(t->kfMesaX, KfRef::MesaTrack, tid);
-        removeSelected(t->kfMesaY, KfRef::MesaTrack, tid);
-        removeSelected(t->kfMesaScaleX, KfRef::MesaTrack, tid);
-        removeSelected(t->kfMesaScaleY, KfRef::MesaTrack, tid);
-        removeSelected(t->kfMesaRotation, KfRef::MesaTrack, tid);
-        removeSelected(t->kfMesaOpacity, KfRef::MesaTrack, tid);
-        removeSelected(t->kfMesaAnchorX, KfRef::MesaTrack, tid);
-        removeSelected(t->kfMesaAnchorY, KfRef::MesaTrack, tid);
+        if (!vks) continue;
+        for (int i = vks->size() - 1; i >= 0; --i) {
+            if (qFuzzyCompare((*vks)[i].time, r.time)) vks->remove(i);
+        }
     }
     m_selectedKfs.clear();
     emit modified();
@@ -183,56 +197,61 @@ void MesaWidget::deleteSelectedKfs() {
 }
 
 MesaWidget::KfRef MesaWidget::hitTestKf(const QPoint& pos) const {
-    KfRef miss{KfRef::Cam, QString(), -1.0};
+    KfRef miss{KfRef::Cam, QString(), -1.0, 0};
     if (!isInMiniTimeline(pos)) return miss;
     MesaComposition* mc = currentMesa();
     if (!mc) return miss;
     const int tlY = height() - propPanelHeight() - 16 - miniTimelineHeight();
-    const int midY = tlY + miniTimelineHeight() / 2;
     const int rulerW = width();
     const double dur = mesaDuration();
     const double start = m_contentStart;
     const double pps = qMax(20.0, (rulerW - 20.0) / dur);
     const int hitR = 6;  // pixels radius for hit
 
-    auto checkKf = [&](const QVector<Keyframe>& vks, KfRef::Source src, const QString& tid) -> KfRef {
+    // Pistas: keyframes de câmera ficam na faixa superior, das camadas na
+    // inferior. Mantém a mesma posição visual de desenho do drawMiniTimeline.
+    const int camLaneY = tlY + 14;
+    const int layerLaneY = tlY + (miniTimelineHeight() / 2) + 8;
+
+    auto checkKf = [&](const QVector<Keyframe>& vks, KfRef::Source src,
+                       const QString& tid, int prop, int laneY) -> KfRef {
         for (const Keyframe& k : vks) {
             const int x = 10 + (int)qRound((k.time - start) * pps);
-            if (std::abs(pos.x() - x) <= hitR && std::abs(pos.y() - midY) <= hitR)
-                return {src, tid, k.time};
+            if (std::abs(pos.x() - x) <= hitR && std::abs(pos.y() - laneY) <= hitR + 2)
+                return {src, tid, k.time, prop};
         }
         return miss;
     };
 
     // Camera
-    KfRef r = checkKf(mc->kfCamX, KfRef::Cam, QString());
+    KfRef r = checkKf(mc->kfCamX, KfRef::Cam, QString(), PCamX, camLaneY);
     if (r.time >= 0) return r;
-    r = checkKf(mc->kfCamY, KfRef::Cam, QString());
+    r = checkKf(mc->kfCamY, KfRef::Cam, QString(), PCamY, camLaneY);
     if (r.time >= 0) return r;
-    r = checkKf(mc->kfCamZoom, KfRef::Cam, QString());
+    r = checkKf(mc->kfCamZoom, KfRef::Cam, QString(), PCamZ, camLaneY);
     if (r.time >= 0) return r;
-    r = checkKf(mc->kfCamRotation, KfRef::Cam, QString());
+    r = checkKf(mc->kfCamRotation, KfRef::Cam, QString(), PCamR, camLaneY);
     if (r.time >= 0) return r;
 
     // Tracks
     for (const QString& tid : mc->trackIds) {
         Track* t = findTrack(tid);
         if (!t) continue;
-        r = checkKf(t->kfMesaX, KfRef::MesaTrack, tid);
+        r = checkKf(t->kfMesaX, KfRef::MesaTrack, tid, PLayX, layerLaneY);
         if (r.time >= 0) return r;
-        r = checkKf(t->kfMesaY, KfRef::MesaTrack, tid);
+        r = checkKf(t->kfMesaY, KfRef::MesaTrack, tid, PLayY, layerLaneY);
         if (r.time >= 0) return r;
-        r = checkKf(t->kfMesaScaleX, KfRef::MesaTrack, tid);
+        r = checkKf(t->kfMesaScaleX, KfRef::MesaTrack, tid, PLaySX, layerLaneY);
         if (r.time >= 0) return r;
-        r = checkKf(t->kfMesaScaleY, KfRef::MesaTrack, tid);
+        r = checkKf(t->kfMesaScaleY, KfRef::MesaTrack, tid, PLaySY, layerLaneY);
         if (r.time >= 0) return r;
-        r = checkKf(t->kfMesaRotation, KfRef::MesaTrack, tid);
+        r = checkKf(t->kfMesaRotation, KfRef::MesaTrack, tid, PLayRot, layerLaneY);
         if (r.time >= 0) return r;
-        r = checkKf(t->kfMesaOpacity, KfRef::MesaTrack, tid);
+        r = checkKf(t->kfMesaOpacity, KfRef::MesaTrack, tid, PLayOp, layerLaneY);
         if (r.time >= 0) return r;
-        r = checkKf(t->kfMesaAnchorX, KfRef::MesaTrack, tid);
+        r = checkKf(t->kfMesaAnchorX, KfRef::MesaTrack, tid, PLayAX, layerLaneY);
         if (r.time >= 0) return r;
-        r = checkKf(t->kfMesaAnchorY, KfRef::MesaTrack, tid);
+        r = checkKf(t->kfMesaAnchorY, KfRef::MesaTrack, tid, PLayAY, layerLaneY);
         if (r.time >= 0) return r;
     }
     return miss;
@@ -280,6 +299,7 @@ void MesaWidget::nudgeSelection(double dx, double dy) {
     };
     if (m_selectedIdx >= 0 && m_selectedIdx < tracks.size()) {
         Track* t = tracks[m_selectedIdx];
+        if (t->mesaLocked) return;  // cadeado impede transform por teclado também
         t->mesaX = snap(t->mesaX + dx);
         t->mesaY = snap(t->mesaY + dy);
         if (m_autoKey) {
@@ -321,6 +341,8 @@ double MesaWidget::propFieldValue(int kind) const {
         case PL_S: return kfValue(t->kfMesaScaleX, t->mesaScaleX, rel);
         case PL_R: return kfValue(t->kfMesaRotation, t->mesaRotation, rel);
         case PL_O: return kfValue(t->kfMesaOpacity, t->mesaOpacity, rel);
+        case PL_AX: return kfValue(t->kfMesaAnchorX, t->mesaAnchorX, rel);
+        case PL_AY: return kfValue(t->kfMesaAnchorY, t->mesaAnchorY, rel);
     }
     return 0.0;
 }
@@ -367,7 +389,6 @@ void MesaWidget::drawMiniTimeline(QPainter& p) {
     const double dur = mesaDuration();
     const double start = m_contentStart;
     const double pps = qMax(20.0, (rulerW - 20.0) / dur);
-    const int midY = tlY + tlH / 2;
 
     // ── Régua de tempo (ticks) ──
     const double tStep = niceStepMini(dur / 8.0);
@@ -399,17 +420,39 @@ void MesaWidget::drawMiniTimeline(QPainter& p) {
     }
 
     // ── Keyframe diamonds ──
-    auto drawKfDiamonds = [&](const QVector<Keyframe>& vks, const QColor& col,
-                              KfRef::Source src, const QString& tid) {
+    // Cor por PROPRIEDADE (não por camada): dá pra distinguir o que é X, Y,
+    // escala, rotação, opacidade, âncora na mini-timeline. Duas pistas:
+    // câmera (superior) e camadas (inferior).
+    auto propColor = [](int prop) -> QColor {
+        switch (prop) {
+            case PCamX: case PLayX: return QColor(96, 178, 255);        // X (azul)
+            case PCamY: case PLayY: return QColor(116, 226, 255);       // Y (ciano)
+            case PCamZ: return QColor(96, 255, 214);                    // zoom (teal)
+            case PLaySX: return QColor(120, 255, 150);                  // escala X (verde)
+            case PLaySY: return QColor(180, 255, 120);                  // escala Y (verde-claro)
+            case PCamR: case PLayRot: return QColor(255, 190, 110);     // rotação (laranja)
+            case PLayOp: return QColor(255, 130, 160);                  // opacidade (rosa)
+            case PLayAX: return QColor(255, 210, 120);                  // âncora X (âmbar)
+            case PLayAY: return QColor(240, 150, 255);                  // âncora Y (lilás)
+        }
+        return QColor(180, 180, 180);
+    };
+
+    const int camLaneY = tlY + 14;
+    const int layerLaneY = tlY + tlH / 2 + 8;
+
+    auto drawKfDiamonds = [&](const QVector<Keyframe>& vks, int prop,
+                              KfRef::Source src, const QString& tid, int laneY) {
         for (const Keyframe& k : vks) {
             const int x = 10 + (int)qRound((k.time - start) * pps);
             if (x < 5 || x > rulerW - 5) continue;
             const double sz = 4.0;
             const QPolygonF diamond = QPolygonF()
-                << QPointF(x, midY - sz) << QPointF(x + sz, midY)
-                << QPointF(x, midY + sz) << QPointF(x - sz, midY);
-            KfRef ref{src, tid, k.time};
+                << QPointF(x, laneY - sz) << QPointF(x + sz, laneY)
+                << QPointF(x, laneY + sz) << QPointF(x - sz, laneY);
+            KfRef ref{src, tid, k.time, prop};
             const bool sel = isKfSelected(ref);
+            const QColor col = propColor(prop);
             // Selection glow
             if (sel) {
                 p.setPen(QPen(QColor(255, 255, 255, 180), 2.0));
@@ -422,32 +465,33 @@ void MesaWidget::drawMiniTimeline(QPainter& p) {
         }
     };
 
-    // Camera keyframes (cor ciano)
-    const QString camTid;
-    drawKfDiamonds(mc->kfCamX, QColor(80, 200, 255), KfRef::Cam, camTid);
-    drawKfDiamonds(mc->kfCamY, QColor(80, 200, 255), KfRef::Cam, camTid);
-    drawKfDiamonds(mc->kfCamZoom, QColor(80, 200, 255), KfRef::Cam, camTid);
-    drawKfDiamonds(mc->kfCamRotation, QColor(80, 200, 255), KfRef::Cam, camTid);
+    // Rótulos das pistas (7px, bem discretos)
+    QFont lf = p.font();
+    lf.setPointSizeF(6);
+    p.setFont(lf);
+    p.setPen(QColor(90, 100, 110));
+    p.drawText(m_miniTimelineRect.left() + 2, camLaneY + 3, QStringLiteral("CAM"));
+    p.drawText(m_miniTimelineRect.left() + 2, layerLaneY + 3, QStringLiteral("LAY"));
 
-    // Track keyframes
+    // Camera keyframes (pista superior)
+    const QString camTid;
+    drawKfDiamonds(mc->kfCamX, PCamX, KfRef::Cam, camTid, camLaneY);
+    drawKfDiamonds(mc->kfCamY, PCamY, KfRef::Cam, camTid, camLaneY);
+    drawKfDiamonds(mc->kfCamZoom, PCamZ, KfRef::Cam, camTid, camLaneY);
+    drawKfDiamonds(mc->kfCamRotation, PCamR, KfRef::Cam, camTid, camLaneY);
+
+    // Track keyframes (pista inferior)
     const QVector<Track*> tracks = mesaTracks();
     for (int i = 0; i < tracks.size(); ++i) {
         Track* t = tracks[i];
-        QColor col;
-        const TrackGroup* tg = t->groupId.isEmpty() ? nullptr : m_project->findGroup(t->groupId);
-        if (tg && tg->mesaId == m_mesaId)
-            col = QColor(220, 180, 60);
-        else
-            col = QColor::fromHsv((i * 47 + 180) % 360, 60, 80);
-
-        drawKfDiamonds(t->kfMesaX, col, KfRef::MesaTrack, t->id);
-        drawKfDiamonds(t->kfMesaY, col, KfRef::MesaTrack, t->id);
-        drawKfDiamonds(t->kfMesaScaleX, col, KfRef::MesaTrack, t->id);
-        drawKfDiamonds(t->kfMesaScaleY, col, KfRef::MesaTrack, t->id);
-        drawKfDiamonds(t->kfMesaRotation, col, KfRef::MesaTrack, t->id);
-        drawKfDiamonds(t->kfMesaOpacity, col, KfRef::MesaTrack, t->id);
-        drawKfDiamonds(t->kfMesaAnchorX, col, KfRef::MesaTrack, t->id);
-        drawKfDiamonds(t->kfMesaAnchorY, col, KfRef::MesaTrack, t->id);
+        drawKfDiamonds(t->kfMesaX, PLayX, KfRef::MesaTrack, t->id, layerLaneY);
+        drawKfDiamonds(t->kfMesaY, PLayY, KfRef::MesaTrack, t->id, layerLaneY);
+        drawKfDiamonds(t->kfMesaScaleX, PLaySX, KfRef::MesaTrack, t->id, layerLaneY);
+        drawKfDiamonds(t->kfMesaScaleY, PLaySY, KfRef::MesaTrack, t->id, layerLaneY);
+        drawKfDiamonds(t->kfMesaRotation, PLayRot, KfRef::MesaTrack, t->id, layerLaneY);
+        drawKfDiamonds(t->kfMesaOpacity, PLayOp, KfRef::MesaTrack, t->id, layerLaneY);
+        drawKfDiamonds(t->kfMesaAnchorX, PLayAX, KfRef::MesaTrack, t->id, layerLaneY);
+        drawKfDiamonds(t->kfMesaAnchorY, PLayAY, KfRef::MesaTrack, t->id, layerLaneY);
     }
 
     // ── Playhead (linha vertical com gradiente) ──
@@ -599,19 +643,16 @@ void MesaWidget::paintEvent(QPaintEvent*) {
     // ── Selection handles (em screen-space) ──
     for (int i = 0; i < tracks.size(); ++i) {
         const Track* t = tracks[i];
+        if (t->mesaHidden) continue;  // camada oculta não mostra nem placeholder
         const bool sel = (i == m_selectedIdx);
         const LayerBounds lb = layerBounds(t, i);
 
-        // Placeholder para layers sem conteúdo
+        // Placeholder para layers sem conteúdo — desenhado pelo MESMO quad da
+        // seleção (layerScreenRect), incluindo a rotação em torno do âncora:
+        // o que você vê é exatamente o que o hit-test enxerga.
         if (!lb.hasContent) {
             QPointF center, corners[4], rotH;
             layerScreenRect(lb, center, corners, rotH);
-
-            p.save();
-            p.translate(center);
-            p.rotate(lb.rotation);
-            const double hw = lb.w * m_zoom / 2;
-            const double hh = lb.h * m_zoom / 2;
 
             // Cor: amarela se agrupada na Mesa, senão cor indexada
             QColor fill;
@@ -621,18 +662,26 @@ void MesaWidget::paintEvent(QPaintEvent*) {
             } else {
                 fill = QColor::fromHsv((i * 47 + 180) % 360, 30, 35, 100);
             }
-            p.setPen(sel ? QPen(QColor(255, 255, 255), 1.5) : QPen(fill.lighter(130), 1.0, Qt::DashLine));
+
+            QPainterPath placeholderPath;
+            placeholderPath.moveTo(corners[0]);
+            placeholderPath.lineTo(corners[1]);
+            placeholderPath.lineTo(corners[2]);
+            placeholderPath.lineTo(corners[3]);
+            placeholderPath.closeSubpath();
+
+            p.setPen(sel ? QPen(QColor(255, 255, 255), 1.5)
+                         : QPen(fill.lighter(130), 1.0, Qt::DashLine));
             p.setBrush(fill);
-            p.drawRect(-hw, -hh, hw * 2, hh * 2);
+            p.drawPath(placeholderPath);
 
             QFont f = p.font();
             f.setPointSizeF(8);
             f.setBold(sel);
             p.setFont(f);
             p.setPen(sel ? QColor(255, 255, 255) : fill.lighter(180));
-            p.drawText(QRectF(-hw, -hh, hw * 2, hh * 2), Qt::AlignCenter, t->name);
-
-            p.restore();
+            const QRectF textRect(center.x() - 80, center.y() - 12, 160, 24);
+            p.drawText(textRect, Qt::AlignCenter, t->name);
         }
 
         if (!sel) continue;

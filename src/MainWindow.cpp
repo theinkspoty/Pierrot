@@ -19,6 +19,7 @@
 #include "ui/ExportDialog.h"
 #include "ui/RenderQueueDialog.h"
 #include "ui/ScopeWidget.h"
+#include "ui/PreviewMonitor.h"
 #include "ui/ProjectSettingsDialog.h"
 #include "ui/SettingsDialog.h"
 #include "ui/Theme.h"
@@ -922,6 +923,28 @@ void MainWindow::createActions() {
     fileMenu->addAction(exportAct);
     fileMenu->addAction(queueAct);
     fileMenu->addSeparator();
+    QAction* stillAct = new QAction(tr("Exportar quadro atual (PNG)…"), this);
+    stillAct->setShortcut(QKeySequence("Ctrl+Shift+F"));
+    stillAct->setToolTip(tr("Salva o quadro composto no playhead como imagem PNG "
+                            "(a mesma imagem final do monitor)."));
+    connect(stillAct, &QAction::triggered, this, [this]() {
+        const QImage img = m_preview->compositeFrame();
+        if (img.isNull()) {
+            QMessageBox::information(this, tr("Exportar quadro"),
+                                     tr("Não há quadro para exportar neste momento."));
+            return;
+        }
+        const QString path = QFileDialog::getSaveFileName(
+            this, tr("Exportar quadro atual"),
+            SettingsDialog::exportDefaultDir() + QStringLiteral("/quadro.png"),
+            tr("Imagem PNG (*.png)"));
+        if (path.isEmpty()) return;
+        if (!img.save(path, "PNG"))
+            QMessageBox::warning(this, tr("Exportar quadro"),
+                                 tr("Não foi possível salvar a imagem."));
+    });
+    fileMenu->addAction(stillAct);
+    fileMenu->addSeparator();
     fileMenu->addAction(quit);
 
     QMenu* editMenu = menuBar()->addMenu(tr("&Editar"));
@@ -988,6 +1011,39 @@ void MainWindow::createActions() {
     viewMenu->addAction(m_histDock->toggleViewAction());
     viewMenu->addAction(m_scopesDock->toggleViewAction());
     viewMenu->addSeparator();
+
+    // Preview externo: janela própria (segundo monitor) com o mesmo sinal de
+    // vídeo do monitor principal, sem overlays. F11 ou duplo-clique = tela cheia.
+    m_monitorAction = new QAction(tr("Janela de preview externo"), this);
+    m_monitorAction->setCheckable(true);
+    m_monitorAction->setToolTip(tr("Abre o preview em uma janela própria — arraste para "
+                                   "um segundo monitor e use F11 para tela cheia."));
+    connect(m_monitorAction, &QAction::toggled, this, [this](bool on) {
+        if (on) {
+            if (!m_monitor) {
+                m_monitor = new PreviewMonitor;
+                connect(m_monitor, &QObject::destroyed, this, [this]() {
+                    m_monitor = nullptr;
+                    if (m_monitorAction) m_monitorAction->setChecked(false);
+                });
+            }
+            m_monitor->setFrame(m_preview->compositeFrame());
+            m_monitor->show();
+            m_monitor->raise();
+        } else if (m_monitor) {
+            m_monitor->close(); // WA_DeleteOnClose → destroyed → desmarca a ação
+        }
+    });
+    viewMenu->addAction(m_monitorAction);
+    viewMenu->addSeparator();
+    m_monitorTimer = new QTimer(this);
+    m_monitorTimer->setInterval(33); // ~30 Hz: basta para acompanhar o preview
+    connect(m_monitorTimer, &QTimer::timeout, this, [this]() {
+        if (m_monitor && m_monitor->isVisible())
+            m_monitor->setFrame(m_preview->compositeFrame());
+    });
+    m_monitorTimer->start();
+
     viewMenu->addAction(m_lockAction);
 
     QAction* appSettingsAction = new QAction(tr("Configurações do app…"), this);

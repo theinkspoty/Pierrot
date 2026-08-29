@@ -6,6 +6,7 @@
 #include "ProjectExporter.h"
 #include "util.h"
 #include "generators.h"
+#include "render/MesaRenderer.h"
 
 #include <QColor>
 #include <QFile>
@@ -22,9 +23,13 @@
 #include <QFontMetrics>
 #include <QTextStream>
 #include <QTemporaryFile>
+#include <QProcess>
+#include <QSettings>
 
 #include <algorithm>
+#include <climits>
 #include <cmath>
+#include <limits>
 
 namespace {
 
@@ -39,7 +44,76 @@ struct VideoClipRef {
     const MediaItem* m;
     QString blend;
     double trackOpacity = 1.0; // opacidade da faixa (0..1, estilo Vegas/FCE)
+
+    // Banda Mesa (c == nullptr): a composição inteira pré-renderizada por frame
+    // pelo MesaRenderer, inserida no Z do topo do grupo. bandPos = pos do clipe
+    // sintético usado no sort por pos (igual aos clipes reais).
+    double bandPos = -1.0;
+    double bandStart = 0.0;
+    double bandEnd = 0.0;
 };
+
+// Banda Mesa paralela a VideoClipRef: identifica o grupo pré-renderizado e o
+// padrão ffmpeg da sequência de PNGs gerada (vazio para clipes normais).
+struct MesaBandRef {
+    const MesaComposition* mc = nullptr;
+    int k = -1;
+    QString pattern;
+    double start = 0.0;
+    double end = 0.0;
+};
+
+// Posição do clipe (ou banda Mesa) na timeline, para o sort por pos.
+static double vclipPos(const VideoClipRef& v) {
+    return v.c ? v.c->pos : v.bandPos;
+}
+
+// Pré-renderiza a composição Mesa de `start` a `end` (segundos absolutos da
+// timeline), um PNG RGBA por frame na taxa FPS, no diretório temporário.
+// Retorna o padrão image2 para o ffmpeg (ex.: /tmp/pierrot-mesa-0-%05d.png)
+// ou vazio se nada for gerado. Caro em CPU: o empilhamento QPainter do canvas
+// + câmera roda por frame — a única forma WYSIWYG de levar a Mesa para a
+// exportação (o ffmpeg sozinho não reproduz os blends entre layers + câmera).
+// `done`/`total` acumulam o progresso da composição toda (em frames); se o
+// callback de progresso retornar false, aborta e marca `*aborted`.
+static QString renderMesaSequence(MesaRenderer& renderer, const Project& project,
+                                  const MesaComposition& mc, double start, double end,
+                                  int fps, int k, long long& done, long long total,
+                                  const ProjectExporter::Progress& progress,
+                                  bool* aborted) {
+    if (end <= start || fps <= 0) return QString();
+    const int frameCount = std::max(1, (int)std::ceil((end - start) * fps));
+    const QString dir = QDir::tempPath();
+    const QString pattern =
+        QStringLiteral("%1/pierrot-mesa-%2-%05d.png").arg(dir).arg(k);
+    int written = 0;
+    for (int i = 0; i < frameCount; ++i) {
+        // t no início do intervalo de cada frame: o quadro i fica em
+        // start + i/fps, batendo com o PTS do image2 (-framerate fps).
+        const double t = start + double(i) / fps;
+        if (t >= end - 1e-9) break;
+        ++done;
+        if (progress) {
+            const int pct = total > 0 ? (int)(done * 100LL / total) : 0;
+            if (!progress(pct)) {
+                *aborted = true;
+                return QString();
+            }
+        }
+        const QImage frame = renderer.render(mc, project, t);
+        if (frame.isNull()) continue;
+        const QString name =
+            QStringLiteral("%1/pierrot-mesa-%2-%3.png").arg(dir).arg(k)
+                .arg(i + 1, 5, 10, QLatin1Char('0'));
+        if (frame.save(name, "PNG")) {
+            ++written;
+        } else {
+            qWarning() << "[export] falha ao salvar frame Mesa" << name;
+        }
+    }
+    if (written == 0) return QString();
+    return pattern;
+}
 
 // Renderiza o texto estilizado num PNG transparente (fundo = transparência),
 // aplicando a posição textX/textY do estilo SEM o transform do clipe — o
@@ -129,6 +203,24 @@ QString codecFor(ExportSettings::Format f, bool video) {
         return video ? QStringLiteral("libvpx-vp9") : QStringLiteral("libopus");
     }
     return QStringLiteral("libx264");
+}
+
+// Detector (com cache por sessão) dos encoders H.264 por hardware do ffmpeg do
+// sistema. Prioridade: NVENC (NVIDIA → qualquer SO) → VAAPI (Linux/Intel/AMD).
+// Devolve "" quando nenhum existe (aí o export usa o libx264 normalmente).
+static QString detectHwEncoder() {
+    static QString cached = [] {
+        QProcess p;
+        p.start(QStringLiteral("ffmpeg"), QStringList() << QStringLiteral("-encoders"));
+        if (!p.waitForFinished(8000)) return QString();
+        const QString out = QString::fromUtf8(p.readAllStandardOutput());
+        if (out.contains(QStringLiteral("h264_nvenc")))
+            return QStringLiteral("h264_nvenc");
+        if (out.contains(QStringLiteral("h264_vaapi")))
+            return QStringLiteral("h264_vaapi");
+        return QString();
+    }();
+    return cached;
 }
 
 QString num(double v) {
@@ -446,7 +538,8 @@ QString drawColor(const QColor& c) {
 }
 
 QStringList ProjectExporter::buildCommand(const Project& project,
-                                          const ExportSettings& s, QString* error) {
+                                          const ExportSettings& s, QString* error,
+                                          const Progress& progress) {
     QStringList args;
     const auto fail = [&](const QString& msg) {
         if (error) *error = msg;
@@ -458,10 +551,12 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     if (project.duration() <= 0)
         return fail(QStringLiteral("Timeline vazia — nada para exportar."));
 
-    // Limpa PNGs temporários (texto e geradores) de exportações anteriores.
+    // Limpa PNGs temporários (texto, geradores e sequências Mesa) de
+    // exportações anteriores.
     const QDir tmp(QDir::tempPath());
     for (const QFileInfo& fi : tmp.entryInfoList(
-             {QStringLiteral("pierrot-text-*.png"), QStringLiteral("pierrot-gen-*.png")},
+             {QStringLiteral("pierrot-text-*.png"), QStringLiteral("pierrot-gen-*.png"),
+              QStringLiteral("pierrot-mesa-*.png")},
              QDir::Files))
         QFile::remove(fi.absoluteFilePath());
 
@@ -471,37 +566,136 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     const int FPS = s.fps;
 
     // Video clips bottom -> top, so the topmost track is composited last (on top).
+    // Tracks que pertencem a uma Mesa NÃO viram camadas normais do empilhamento:
+    // o clipe do grupo é a composição inteira (banda pré-renderizada), inserida
+    // no Z do topo do grupo. Convenção de Z igual ao PreviewWidget: faixa 0 é o
+    // TOPO (maior índice = por baixo).
+    QSet<QString> mesaTrackIds;
+    for (const MesaComposition& m : project.mesas)
+        for (const QString& tid : m.trackIds) mesaTrackIds.insert(tid);
+
+    // Banda Mesa: intervalo da timeline onde o grupo tem conteúdo (união dos
+    // clips das tracks membro) + Z = índice da track de topo com conteúdo.
+    // Pré-renderiza a sequência ANTES de montar o graph, para o padrão image2
+    // já existir quando o ffmpeg rodar (a resolução de saída da composição é
+    // a do projeto; o ffmpeg escala para W×H com letterbox transparente).
+    struct MesaBandPrep {
+        const MesaComposition* mc = nullptr;
+        int z = INT_MAX;
+        double start = 0.0, end = 0.0;
+        int frames = 1;
+        int k = -1;
+        QString pattern;
+    };
+    // Passo 1: mede as bandas (Z, intervalo e nº de frames) sem renderizar.
+    QVector<MesaBandPrep> mesaPreps;
+    {
+        int k = 0;
+        for (const MesaComposition& m : project.mesas) {
+            if (project.width <= 0 || project.height <= 0) continue;
+            double mn = std::numeric_limits<double>::max();
+            double mx = -std::numeric_limits<double>::max();
+            int z = INT_MAX;
+            bool hasClip = false;
+            bool hasVisible = false;
+            for (int tr = 0; tr < (int)project.videoTracks.size(); ++tr) {
+                if (!m.trackIds.contains(project.videoTracks[tr].id)) continue;
+                bool trackClips = false;
+                for (const Clip& c : project.videoTracks[tr].clips) {
+                    trackClips = true;
+                    hasClip = true;
+                    if (!project.videoTracks[tr].mesaHidden) hasVisible = true;
+                    if (c.pos < mn) mn = c.pos;
+                    if (c.pos + c.dur > mx) mx = c.pos + c.dur;
+                }
+                if (trackClips && tr < z) z = tr;
+            }
+            if (!hasClip || !hasVisible || z == INT_MAX) continue;
+            const int frames = std::max(1, (int)std::ceil((mx - mn) * FPS));
+            mesaPreps.push_back({&m, z, mn, mx, frames, k++, QString()});
+        }
+    }
+    // Passo 2: renderiza as sequências com progresso cumulativo (cancelável).
+    if (!mesaPreps.isEmpty()) {
+        long long totalFrames = 0;
+        for (const MesaBandPrep& p : mesaPreps) totalFrames += p.frames;
+        MesaRenderer renderer;
+        long long done = 0;
+        bool aborted = false;
+        QVector<MesaBandPrep> ok;
+        for (MesaBandPrep& p : mesaPreps) {
+            p.pattern = renderMesaSequence(renderer, project, *p.mc, p.start, p.end,
+                                           FPS, p.k, done, totalFrames, progress, &aborted);
+            if (aborted) return fail(QStringLiteral("Cancelado pelo usuário."));
+            if (p.pattern.isEmpty()) continue;
+            ok.push_back(p);
+        }
+        mesaPreps = ok;
+    }
+
     QVector<VideoClipRef> vclips;
     // Caminho temporário do PNG gerado para cada clipe de texto (índice = mesmo
     // de vclips); vazio para clipes de mídia. Preenchido no loop de inputs.
     QVector<QString> textPngs;
+    // Banda Mesa por entrada de vclips (padrão da sequência; vazio p/ normal).
+    QVector<MesaBandRef> mesaBands;
     for (int tr = (int)project.videoTracks.size() - 1; tr >= 0; --tr) {
-        const double trOp = std::clamp(project.videoTracks[tr].opacity, 0.0, 1.0);
-        for (const Clip& c : project.videoTracks[tr].clips) {
-            if (c.isText) {
-                // Clipe independente de texto: vira uma camada gerada.
-                vclips.push_back({&c, nullptr, project.videoTracks[tr].blendMode, trOp});
-                textPngs.push_back(QString());
-                continue;
+        const Track& track = project.videoTracks[tr];
+        if (!mesaTrackIds.contains(track.id)) {
+            const double trOp = std::clamp(track.opacity, 0.0, 1.0);
+            for (const Clip& c : track.clips) {
+                if (c.isText) {
+                    // Clipe independente de texto: vira uma camada gerada.
+                    vclips.push_back({&c, nullptr, track.blendMode, trOp});
+                    textPngs.push_back(QString());
+                    mesaBands.push_back(MesaBandRef());
+                    continue;
+                }
+                const MediaItem* m = project.findMedia(c.mediaId);
+                if (m && m->hasVideo) {
+                    vclips.push_back({&c, m, track.blendMode, trOp});
+                    textPngs.push_back(QString());
+                    mesaBands.push_back(MesaBandRef());
+                }
             }
-            const MediaItem* m = project.findMedia(c.mediaId);
-            if (m && m->hasVideo) {
-                vclips.push_back({&c, m, project.videoTracks[tr].blendMode, trOp});
-                textPngs.push_back(QString());
-            }
+        }
+        // A banda Mesa entra no Z do topo do grupo: quando tr == z (menor índice
+        // das tracks membro), ela já vem depois das tracks de baixo (índice
+        // maior) e antes das de cima — na ordem de empilhamento, como no preview.
+        for (const MesaBandPrep& bp : mesaPreps) {
+            if (bp.z != tr) continue;
+            const Track& zt = project.videoTracks[bp.z];
+            VideoClipRef v;
+            v.c = nullptr;
+            v.m = nullptr;
+            v.blend = zt.blendMode;
+            v.trackOpacity = std::clamp(zt.opacity, 0.0, 1.0);
+            v.bandPos = bp.start;
+            v.bandStart = bp.start;
+            v.bandEnd = bp.end;
+            vclips.push_back(v);
+            textPngs.push_back(QString());
+            mesaBands.push_back(MesaBandRef{bp.mc, 0, bp.pattern, bp.start, bp.end});
         }
     }
     std::stable_sort(vclips.begin(), vclips.end(),
-                     [](const VideoClipRef& a, const VideoClipRef& b) { return a.c->pos < b.c->pos; });
-    // Mantém textPngs alinhado a vclips reordenado.
+                     [](const VideoClipRef& a, const VideoClipRef& b) {
+                         return vclipPos(a) < vclipPos(b);
+                     });
+    // Mantém textPngs e mesaBands alinhados a vclips reordenado.
     {
         QVector<QString> reordered(textPngs.size());
+        QVector<MesaBandRef> reorderedBands(mesaBands.size());
         QVector<int> order(vclips.size());
         for (int i = 0; i < order.size(); ++i) order[i] = i;
         std::stable_sort(order.begin(), order.end(),
-                         [&](int a, int b) { return vclips[a].c->pos < vclips[b].c->pos; });
-        for (int i = 0; i < (int)vclips.size(); ++i) reordered[i] = textPngs[order[i]];
+                         [&](int a, int b) { return vclipPos(vclips[a]) < vclipPos(vclips[b]); });
+        for (int i = 0; i < (int)vclips.size(); ++i) {
+            reordered[i] = textPngs[order[i]];
+            reorderedBands[i] = mesaBands[order[i]];
+        }
         textPngs = reordered;
+        mesaBands = reorderedBands;
     }
 
     // Transições: para cada clipe de vídeo, verifica se ele se sobrepõe ao
@@ -573,6 +767,14 @@ QStringList ProjectExporter::buildCommand(const Project& project,
 
     for (int i = 0; i < (int)vclips.size(); ++i) {
         const VideoClipRef& v = vclips[i];
+        const MesaBandRef& mb = i < mesaBands.size() ? mesaBands[i] : MesaBandRef();
+        if (mb.mc != nullptr) {
+            // Banda Mesa: sequência de PNGs pré-renderizada (image2). O input
+            // começa no PTS 0 = bandStart; o graph reposiciona com setpts.
+            args << "-framerate" << num(FPS) << "-start_number" << "1"
+                 << "-t" << num(mb.end - mb.start) << "-i" << mb.pattern;
+            continue;
+        }
         if (v.m == nullptr) {
             // Clipe de texto: gera um PNG transparente com o texto estilizado
             // (como mídia), eliminando o drawtext — fonte/caixa/alfa ficam
@@ -663,18 +865,75 @@ QStringList ProjectExporter::buildCommand(const Project& project,
             vout = QStringLiteral("[bg0]");
         }
         int n = 0;
-        for (const VideoClipRef& v : vclips) {
+        for (int i = 0; i < (int)vclips.size(); ++i) {
+            const VideoClipRef& v = vclips[i];
             ++n;
             const int inIdx = n;
+            const QString lbl = QStringLiteral("v%1").arg(n);
+            const QString outLbl =
+                (n == (int)vclips.size()) ? QStringLiteral("vout") : QStringLiteral("m%1").arg(n);
+            const MesaBandRef& mb = mesaBands[i];
+
+            // ── Banda Mesa ────────────────────────────────────────────────
+            // A composição já sai pronta (canvas + câmera + blends internos)
+            // do MesaRenderer, no tamanho do projeto e com fundo transparente.
+            // Reposiciona na timeline (image2 começa em PTS 0 = bandStart),
+            // pré-multiplica o alpha por segurança de interpolação e overlay
+            // no Z do topo do grupo. Nada de transform/fade próprios: tudo já
+            // foi embutido nos frames renderizados.
+            if (mb.mc != nullptr) {
+                const double bStart = mb.start;
+                const double bEnd = mb.end;
+                const double bDur = mb.end - mb.start;
+                QString chain =
+                    QStringLiteral("[%1:v]fps=%2,settb=AVTB,setpts=(PTS-STARTPTS)+%3/TB,"
+                                   "trim=duration=%4,format=rgba")
+                        .arg(inIdx).arg(FPS).arg(num(bStart)).arg(num(bDur));
+                chain += QStringLiteral(",premultiply=inplace=1");
+                if (W != project.width || H != project.height) {
+                    // Resolução diferente da do projeto: contém + letterbox
+                    // transparente (igual a PNG/WebP com alpha), para o que
+                    // está por baixo continuar aparecendo.
+                    chain += QStringLiteral(
+                                 ",scale=%1:%2:force_original_aspect_ratio=decrease:"
+                                 "force_divisible_by=2,"
+                                 "pad=%1:%2:(ow-iw)/2:(oh-ih)/2:color=black@0,"
+                                 "fps=%3,format=rgba")
+                                 .arg(W).arg(H).arg(FPS);
+                }
+                chain += QStringLiteral(",unpremultiply=inplace=1,format=rgba");
+                if (v.trackOpacity < 1.0)
+                    chain += QStringLiteral(",colorchannelmixer=aa=%1").arg(num(v.trackOpacity));
+                fc << chain + QStringLiteral("[%1]").arg(lbl);
+                if (v.blend == QStringLiteral("normal")) {
+                    fc << QStringLiteral("%1[%2]overlay=0:0:eof_action=pass:enable='between(t,%3,%4)':eval=frame[%5]")
+                               .arg(vout, lbl).arg(num(bStart)).arg(num(bEnd)).arg(outLbl);
+                } else {
+                    const QString rs = QStringLiteral("rs%1").arg(n);
+                    const QString cs = QStringLiteral("cs%1").arg(n);
+                    const QString bs = QStringLiteral("bs%1").arg(n);
+                    const QString pl = QStringLiteral("pl%1").arg(n);
+                    fc << QStringLiteral("[%1]trim=start=%2:duration=%3,setpts=PTS-STARTPTS,format=rgba[%4]")
+                               .arg(vout.mid(1, vout.size() - 2), num(bStart), num(bDur), rs);
+                    fc << QStringLiteral("[%1]setpts=PTS-STARTPTS[%2]").arg(lbl, cs);
+                    fc << QStringLiteral("[%1][%2]blend=c0_mode=%3:c0_opacity=1:c1_mode=%3:c1_opacity=1"
+                                         ":c2_mode=%3:c2_opacity=1:c3_mode=normal:c3_opacity=1[%4]")
+                               .arg(rs, cs, v.blend, bs);
+                    fc << QStringLiteral("[%1]setpts=PTS-STARTPTS+%2/TB[%3]")
+                               .arg(bs).arg(num(bStart)).arg(pl);
+                    fc << QStringLiteral("%1[%2]overlay=0:0:eof_action=pass:enable='between(t,%3,%4)':eval=frame[%5]")
+                               .arg(vout, pl).arg(num(bStart)).arg(num(bEnd)).arg(outLbl);
+                }
+                vout = QStringLiteral("[%1]").arg(outLbl);
+                continue;
+            }
+
             const double pos = v.c->pos;
             const double end = v.c->pos + v.c->dur;
             const double dur = v.c->dur;
             const double speed = std::max(0.1, v.c->speed);
             const double fadeIn = std::min(std::max(v.c->fadeIn, 0.0), dur);
             const double fadeOut = std::min(std::max(v.c->fadeOut, 0.0), dur - fadeIn);
-            const QString lbl = QStringLiteral("v%1").arg(n);
-            const QString outLbl =
-                (n == (int)vclips.size()) ? QStringLiteral("vout") : QStringLiteral("m%1").arg(n);
             const bool hasT = v.c->hasTransform();
             // Mídia transparente (texto gerado ou PNG/WebP com alpha). Todo
             // redimensionamento do ffmpeg (o enquadramento contain, o flatt
@@ -1276,7 +1535,13 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     if (!aout.isEmpty()) args << "-map" << aout;
     else args << "-an";
 
-    args << "-c:v" << codecFor(s.format, true);
+    // Codificação por hardware (opt-in nas configurações): usa h264_nvenc ou
+    // h264_vaapi para MP4/MKV quando o ffmpeg do sistema tiver o encoder; se
+    // não houver, cai no libx264/VP9 normal (comportamento anterior).
+    const QString hwCodec = (s.format != ExportSettings::WEBM
+                             && QSettings().value("exportHwEncode", false).toBool())
+                                ? detectHwEncoder() : QString();
+    args << "-c:v" << (hwCodec.isEmpty() ? codecFor(s.format, true) : hwCodec);
     if (s.videoBitrateKbps > 0) {
         // Bitrate fixo
         args << "-b:v" << QStringLiteral("%1k").arg(s.videoBitrateKbps);
@@ -1285,6 +1550,12 @@ QStringList ProjectExporter::buildCommand(const Project& project,
         const int crf = std::clamp(s.crf, 0, 51);
         if (s.format == ExportSettings::WEBM) {
             args << "-crf" << QString::number(crf) << "-b:v" << "0" << "-cpu-used" << "4";
+        } else if (hwCodec == QStringLiteral("h264_nvenc")) {
+            // NVENC: -cq == qualidade VBR (0–51, mesmo espírito do CRF).
+            args << "-preset" << "p4" << "-cq" << QString::number(crf);
+        } else if (hwCodec == QStringLiteral("h264_vaapi")) {
+            // VAAPI: -qp em modo CQP (qualidade constante).
+            args << "-qp" << QString::number(crf);
         } else {
             args << "-preset" << "medium" << "-crf" << QString::number(crf);
         }

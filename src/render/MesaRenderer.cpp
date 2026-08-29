@@ -15,6 +15,7 @@ MesaRenderer::MesaRenderer() {}
 MesaRenderer::~MesaRenderer() { clearCache(); }
 
 void MesaRenderer::clearCache() {
+    QMutexLocker l(&m_mutex);
     for (auto it = m_decoders.begin(); it != m_decoders.end(); ++it) {
         it.value()->releaseBuffers();
         it.value()->close();
@@ -24,6 +25,7 @@ void MesaRenderer::clearCache() {
 }
 
 QImage MesaRenderer::decodeFrame(const QString& filePath, double time, int maxW) {
+    QMutexLocker l(&m_mutex);
     if (m_frameCache.key.path == filePath && qFuzzyCompare(m_frameCache.key.time, time)
         && m_frameCache.key.maxW == maxW && !m_frameCache.frame.isNull()) {
         return m_frameCache.frame;
@@ -95,6 +97,10 @@ bool MesaRenderer::drawTrackLayer(QPainter& acc, const Track& track,
 bool MesaRenderer::prepareLayer(LayerPrep& out, const MesaComposition& mesa,
                                 const Project& project, double relTime,
                                 const Track& track) {
+    // Layer oculta (olho desligado) não existe no empilhamento — nem no
+    // canvas do editor, nem no preview, nem (futuro) no export.
+    if (track.mesaHidden) return false;
+    out.blend = blendModeFor(track.blendMode);
     const double tMesaX = kfValue(track.kfMesaX, track.mesaX, relTime);
     const double tMesaY = kfValue(track.kfMesaY, track.mesaY, relTime);
     const double tScX = kfValue(track.kfMesaScaleX, track.mesaScaleX, relTime);
@@ -171,8 +177,20 @@ void MesaRenderer::drawTrackImage(QPainter& acc, const LayerPrep& prep) {
     acc.setRenderHint(QPainter::SmoothPixmapTransform);
     if (prep.opacity < 1.0)
         acc.setOpacity(prep.opacity);
+    acc.setCompositionMode(static_cast<QPainter::CompositionMode>(prep.blend));
     acc.drawImage(QRectF(-drawW / 2, -drawH / 2, drawW, drawH), prep.frame);
     acc.restore();
+}
+
+// Mapeia o blendMode textual do Track para o QPainter::CompositionMode.
+int MesaRenderer::blendModeFor(const QString& blend) const {
+    if (blend == QStringLiteral("add"))       return QPainter::CompositionMode_Plus;
+    if (blend == QStringLiteral("multiply"))  return QPainter::CompositionMode_Multiply;
+    if (blend == QStringLiteral("screen"))    return QPainter::CompositionMode_Screen;
+    if (blend == QStringLiteral("overlay"))   return QPainter::CompositionMode_Overlay;
+    if (blend == QStringLiteral("softlight")) return QPainter::CompositionMode_SoftLight;
+    if (blend == QStringLiteral("difference")) return QPainter::CompositionMode_Difference;
+    return QPainter::CompositionMode_SourceOver;
 }
 
 void MesaRenderer::renderToPainter(QPainter& painter, const MesaComposition& mesa,

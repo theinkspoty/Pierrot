@@ -473,6 +473,12 @@ struct Track {
     double mesaAnchorX = 0.0;    // anchor point X (pixels relativo ao centro)
     double mesaAnchorY = 0.0;    // anchor point Y (pixels relativo ao centro)
 
+    // Estado da camada na Mesa (independente do resto da timeline):
+    // mesaHidden = não desenhada (olho desligado); mesaLocked = não selecionável
+    // nem transformável (cadeado).
+    bool mesaHidden = false;
+    bool mesaLocked = false;
+
     // Keyframes das propriedades de canvas (tempos em segundos da timeline).
     QVector<Keyframe> kfMesaX;
     QVector<Keyframe> kfMesaY;

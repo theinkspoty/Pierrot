@@ -34,6 +34,11 @@ public:
     static bool trimmerEnabled();
     // Sensibilidade do arraste vertical no editor de curvas (1.0 = padrão).
     static double graphSensitivity();
+    // Decodificação de vídeo por hardware (VAAPI). Lida pelos decoders.
+    static bool hwDecodeEnabled();
+    // Codificação de vídeo por hardware no export (h264_nvenc/h264_vaapi),
+    // com retorno automático ao libx264 quando não houver encoders disponíveis.
+    static bool hwEncodeEnabled();
     // Caminhos extras de plugins OFX configurados pelo usuário.
     static QStringList ofxSearchPaths();
     // Pasta padrão onde o diálogo de exportação abre. Opcional (ativável).
@@ -62,6 +67,8 @@ private:
     QComboBox* m_thumbMode = nullptr;
     QCheckBox* m_rippleDelete = nullptr;
     QCheckBox* m_trimmer = nullptr;
+    QCheckBox* m_hwDecode = nullptr;
+    QCheckBox* m_hwEncode = nullptr;
     QDoubleSpinBox* m_graphSens = nullptr;
     // Navegação por categorias (sidebar estilo DaVinci).
     QListWidget*   m_catList = nullptr;

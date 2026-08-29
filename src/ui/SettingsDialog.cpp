@@ -218,6 +218,27 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
         tlHint->setWordWrap(true);
         tlLay->addRow(tlHint);
         v->addWidget(tlBox);
+
+        auto* perfBox = new QGroupBox(tr("Desempenho"), page);
+        auto* perfLay = new QVBoxLayout(perfBox);
+        m_hwDecode = new QCheckBox(tr("Decodificação de vídeo por hardware (VAAPI)"), page);
+        m_hwDecode->setChecked(s.value("hwDecode", true).toBool());
+        m_hwDecode->setToolTip(tr("Usa a GPU para decodificar H.264/HEVC/MJPEG. "
+                                  "Requer suporte VAAPI no Linux (Intel/AMD/NVIDIA com driver)."));
+        perfLay->addWidget(m_hwDecode);
+        auto* perfHint = new QLabel(tr("Transfere a decodificação de vídeo para a "
+                                       "placa de vídeo, aliviando a CPU (útil em 4K e "
+                                       "projetos com muitos cortes). Se algum arquivo "
+                                       "tiver problema, desligue — o Pierrot volta a "
+                                       "decodificar por software."), perfBox);
+        perfHint->setStyleSheet(QStringLiteral("color: %1;").arg(themeColors().placeholderText.name()));
+        perfHint->setWordWrap(true);
+        perfLay->addWidget(perfHint);
+        auto* perfHint2 = new QLabel(tr("Requer reinício do aplicativo para tomar efeito."), perfBox);
+        perfHint2->setStyleSheet(QStringLiteral("color: %1;").arg(themeColors().placeholderText.name()));
+        perfHint2->setWordWrap(true);
+        perfLay->addWidget(perfHint2);
+        v->addWidget(perfBox);
         v->addStretch(1);
         m_stack->addWidget(page);
     }
@@ -267,6 +288,25 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
         form->addRow(hint);
 
         v->addWidget(exportBox);
+
+        // Aceleração de hardware na codificação do export.
+        m_hwEncode = new QCheckBox(tr("Codificar vídeo por hardware no export (NVENC/VAAPI)"), page);
+        m_hwEncode->setChecked(s.value("exportHwEncode", false).toBool());
+        m_hwEncode->setToolTip(tr("Usa a GPU (h264_nvenc ou h264_vaapi) para codificar MP4/MKV.\n"
+                                  "Se o ffmpeg do sistema não tiver esses encoders, "
+                                  "cai automaticamente para o libx264."));
+        auto* hwBox = new QGroupBox(tr("Encode acelerado"), page);
+        auto* hwLay = new QVBoxLayout(hwBox);
+        hwLay->addWidget(m_hwEncode);
+        auto* hwHint = new QLabel(tr("Descarga a codificação da CPU para a placa de vídeo "
+                                     "(útil em 4K e projetos longos). Equivale à aceleração "
+                                     "por GPU que o Vega oferece na renderização; o retorno "
+                                     "ao libx264 é automático se não houver encoders de "
+                                     "hardware no sistema."), hwBox);
+        hwHint->setStyleSheet(QStringLiteral("color: %1;").arg(themeColors().placeholderText.name()));
+        hwHint->setWordWrap(true);
+        hwLay->addWidget(hwHint);
+        v->addWidget(hwBox);
         v->addStretch(1);
         m_stack->addWidget(page);
     }
@@ -470,6 +510,14 @@ bool SettingsDialog::eventFilter(QObject* o, QEvent* e) {
 }
 
 bool SettingsDialog::autoSaveEnabled() const { return m_autoSave->isChecked(); }
+
+bool SettingsDialog::hwDecodeEnabled() {
+    return QSettings().value("hwDecode", true).toBool();
+}
+
+bool SettingsDialog::hwEncodeEnabled() {
+    return QSettings().value("exportHwEncode", false).toBool();
+}
 int SettingsDialog::autoSaveMinutes() const { return m_autoInterval->value(); }
 bool SettingsDialog::mkvWarning() const { return m_mkvWarn->isChecked(); }
 
@@ -481,6 +529,8 @@ void SettingsDialog::accept() {
     s.setValue("timelineThumbMode", m_thumbMode->currentIndex());
     s.setValue("timelineRippleDelete", m_rippleDelete->isChecked());
     s.setValue("timelineTrimmer", m_trimmer->isChecked());
+    s.setValue("hwDecode", m_hwDecode->isChecked());
+    s.setValue("exportHwEncode", m_hwEncode->isChecked());
     s.setValue("graphSensitivity", m_graphSens->value());
     saveTheme(m_themeCombo->currentIndex() == 1 ? AppTheme::Light : AppTheme::Dark);
     QStringList ofxPaths;

@@ -26,6 +26,7 @@ find_package(FFmpeg REQUIRED)
 set(SOURCES
     src/main.cpp
     src/CrashReporter.cpp
+    src/Bench.cpp
     src/MainWindow.cpp
     src/models/Project.cpp
     src/ffmpeg/FFmpegDecoder.cpp
@@ -60,6 +61,7 @@ set(SOURCES
     src/ui/TrimmerDialog.cpp
     src/ui/RenderQueueDialog.cpp
     src/ui/ScopeWidget.cpp
+    src/ui/PreviewMonitor.cpp
     src/ui/FileBrowserWidget.cpp
     src/ui/MixerWidget.cpp
     src/ui/TitleBar.cpp
@@ -74,6 +76,7 @@ set(SOURCES
 set(HEADERS
     src/MainWindow.h
     src/CrashReporter.h
+    src/Bench.h
     src/version.h
     src/generators.h
     src/clipattrs.h
@@ -93,6 +96,7 @@ set(HEADERS
     src/ui/TimelineWidget.h
     src/ui/TimelineCommands.h
     src/ui/PreviewWidget.h
+    src/ui/PreviewMonitor.h
     src/ui/PancropWidget.h
     src/ui/ExportDialog.h
     src/ui/ProjectSettingsDialog.h

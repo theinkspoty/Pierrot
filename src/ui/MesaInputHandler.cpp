@@ -10,6 +10,7 @@
 #include <QResizeEvent>
 #include <QMenu>
 #include <QAction>
+#include <QStringList>
 #include <QtMath>
 #include <QCursor>
 #include <QLineEdit>
@@ -34,9 +35,38 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
         return;
     }
 
-    // Right-click context menu
+    // Right-click context menu (mini-timeline: adicionar track; lista de
+    // camadas: blend mode da camada).
     if (e->button() == Qt::RightButton) {
-        MesaComposition* mc = currentMesa();
+        if (m_showLayerList && m_layerListRect.contains(e->pos())) {
+            const QVector<Track*> tracks = mesaTracks();
+            const int headerH = 26, rowH = 24;
+            const int relY = e->pos().y() - m_layerListRect.top() - headerH;
+            if (relY >= 0) {
+                const int row = relY / rowH;
+                if (row >= 0 && row < tracks.size()) {
+                    Track* t = tracks[tracks.size() - 1 - row];
+                    QMenu menu(this);
+                    const QStringList modes = { QStringLiteral("normal"),
+                        QStringLiteral("add"), QStringLiteral("multiply"),
+                        QStringLiteral("screen"), QStringLiteral("overlay"),
+                        QStringLiteral("softlight"), QStringLiteral("difference") };
+                    for (const QString& m : modes) {
+                        QAction* a = menu.addAction(m);
+                        a->setCheckable(true);
+                        a->setChecked(t->blendMode == m);
+                    }
+                    QAction* sel2 = menu.exec(e->globalPosition().toPoint());
+                    if (sel2 && sel2->text() != t->blendMode) {
+                        t->blendMode = sel2->text();
+                        emit changesCommitted();
+                        emit modified();
+                        update();
+                    }
+                    return;
+                }
+            }
+        }
         if (mc && isInMiniTimeline(e->pos())) {
             QMenu menu(this);
             QAction* addAct = menu.addAction(tr("Adicionar track"));
@@ -95,12 +125,43 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
             const int row = relY / rowH;
             if (row >= 0 && row < tracks.size()) {
                 const int idx = tracks.size() - 1 - row;
+
+                // Zonas de ícone (olho/cadeado) têm prioridade sobre o corpo
+                for (const LayerRowZone& z : m_layerZones) {
+                    if (z.idx != idx) continue;
+                    if (z.eye.contains(e->pos())) {
+                        Track* t = tracks[idx];
+                        t->mesaHidden = !t->mesaHidden;
+                        if (t->mesaHidden && m_selectedIdx == idx) {
+                            m_selectedIdx = -1;
+                            emit mesaTrackSelected(nullptr);
+                        }
+                        emit changesCommitted();
+                        emit modified();
+                        update();
+                        return;
+                    }
+                    if (z.lock.contains(e->pos())) {
+                        Track* t = tracks[idx];
+                        t->mesaLocked = !t->mesaLocked;
+                        emit changesCommitted();
+                        emit modified();
+                        update();
+                        return;
+                    }
+                    break;
+                }
+
+                // Corpo: seleciona + inicia possível arrasto de reordenação
                 m_selectedIdx = (m_selectedIdx == idx) ? -1 : idx;
+                m_layerListDragIdx = idx;
+                m_layerListDragStart = e->pos();
                 update();
                 return;
             }
         }
         m_selectedIdx = -1;
+        m_layerListDragIdx = -1;
         update();
         return;
     }
@@ -116,6 +177,7 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
         const double relC = qMax(0.0, m_playheadTime);
         m_resizeStartZoom = kfValue(mc->kfCamZoom, mc->camZoom, relC);
         m_resizeStartPos = e->position();
+        m_selectedIdx = -1;
         emit mesaCameraSelected(mc);
         return;
     }
@@ -127,6 +189,7 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
         m_cameraDragStart = e->position();
         m_camDragStartX = kfValue(mc->kfCamX, mc->camX, rel);
         m_camDragStartY = kfValue(mc->kfCamY, mc->camY, rel);
+        m_selectedIdx = -1;
         emit mesaCameraSelected(mc);
         return;
     }
@@ -153,6 +216,10 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
         m_transformStartSX = t->mesaScaleX;
         m_transformStartSY = t->mesaScaleY;
         m_transformStartRot = t->mesaRotation;
+        m_transformZone = hz;
+        // Escala: padrão uniforme em torno do âncora; Shift = livre por eixo.
+        // (nas bordas a escala é de um eixo só, Shift não interfere)
+        m_scaleUniform = !(e->modifiers() & Qt::ShiftModifier);
 
         if (hz == HitBody) {
             m_transformOp = TMove;
@@ -168,7 +235,6 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
             setCursor(Qt::CrossCursor);
         } else {
             m_transformOp = TScale;
-            m_scaleUniform = (e->modifiers() & Qt::ShiftModifier);
             const LayerBounds lb = layerBounds(t, hitIdx);
             const QPointF anchor = canvasToScreen(QPointF(
                 kfValue(t->kfMesaAnchorX, t->mesaAnchorX, rel) + lb.x,
@@ -190,9 +256,6 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
 
 void MesaWidget::mouseMoveEvent(QMouseEvent* e) {
     MesaComposition* mc = currentMesa();
-    auto snap = [&](double v) {
-        return m_snapToGrid ? qRound(v / kGridSize) * kGridSize : v;
-    };
 
     if (m_draggingCanvas) {
         m_offset += e->position() - m_canvasDragStart;
@@ -236,8 +299,57 @@ void MesaWidget::mouseMoveEvent(QMouseEvent* e) {
 
             if (m_transformOp == TMove) {
                 const QPointF d = e->position() - m_transformStart;
-                t->mesaX = snap(m_transformStartX + d.x() / m_zoom);
-                t->mesaY = snap(m_transformStartY + d.y() / m_zoom);
+                double nx = m_transformStartX + d.x() / m_zoom;
+                double ny = m_transformStartY + d.y() / m_zoom;
+
+                if (m_snapToGrid) {
+                    nx = qRound(nx / kGridSize) * kGridSize;
+                    ny = qRound(ny / kGridSize) * kGridSize;
+
+                    // Snap de bordas/cantos/centros contra as outras camadas,
+                    // a câmera e o centro do canvas (8px na tela).
+                    const LayerBounds lb = layerBounds(t, m_transformTrackIdx);
+                    const double hw = lb.w / 2.0, hh = lb.h / 2.0;
+                    const double thr = 8.0 * (1.0 / m_zoom);
+
+                    QVector<double> xs, ys;
+                    for (int oi = 0; oi < tracks.size(); ++oi) {
+                        if (oi == m_transformTrackIdx) continue;
+                        const Track* o = tracks[oi];
+                        if (o->mesaHidden) continue;
+                        const LayerBounds ob = layerBounds(o, oi);
+                        xs << ob.x - ob.w / 2.0 << ob.x + ob.w / 2.0 << ob.x;
+                        ys << ob.y - ob.h / 2.0 << ob.y + ob.h / 2.0 << ob.y;
+                    }
+                    if (mc) {
+                        const double cXi = kfValue(mc->kfCamX, mc->camX, rel);
+                        const double cYi = kfValue(mc->kfCamY, mc->camY, rel);
+                        const double cZi = qMax(0.01, kfValue(mc->kfCamZoom, mc->camZoom, rel));
+                        const double camW = mc->canvasW / cZi;
+                        const double camH = mc->canvasH / cZi;
+                        xs << cXi - camW / 2.0 << cXi + camW / 2.0 << cXi;
+                        ys << cYi - camH / 2.0 << cYi + camH / 2.0 << cYi;
+                    }
+                    xs << 0.0; ys << 0.0;
+
+                    auto snapAxis = [&](double val, double half,
+                                        const QVector<double>& targets) -> double {
+                        double best = val, bestD = thr;
+                        for (double tv : targets) {
+                            for (double off : { -half, half, 0.0 }) {
+                                const double dv = tv - (val + off);
+                                const double ad = qAbs(dv);
+                                if (ad < bestD) { bestD = ad; best = val + dv; }
+                            }
+                        }
+                        return best;
+                    };
+                    nx = snapAxis(nx, hw, xs);
+                    ny = snapAxis(ny, hh, ys);
+                }
+
+                t->mesaX = nx;
+                t->mesaY = ny;
 
             } else if (m_transformOp == TScale) {
                 const LayerBounds lb = layerBounds(t, m_transformTrackIdx);
@@ -245,12 +357,36 @@ void MesaWidget::mouseMoveEvent(QMouseEvent* e) {
                     kfValue(t->kfMesaAnchorX, t->mesaAnchorX, rel) + lb.x,
                     kfValue(t->kfMesaAnchorY, t->mesaAnchorY, rel) + lb.y));
                 const double dist = QLineF(anchor, e->position()).length();
-                if (m_transformStartDist > 1.0) {
-                    const double factor = dist / m_transformStartDist;
-                    const double s = qMax(0.01, m_transformStartSX * factor);
-                    t->mesaScaleX = s;
-                    t->mesaScaleY = s;
+
+                const bool corner = (m_transformZone == HitCornerTL || m_transformZone == HitCornerTR
+                                  || m_transformZone == HitCornerBL || m_transformZone == HitCornerBR);
+                const bool edgeY  = (m_transformZone == HitEdgeT || m_transformZone == HitEdgeB);
+                const bool edgeX  = (m_transformZone == HitEdgeL || m_transformZone == HitEdgeR);
+
+                double sx = m_transformStartSX, sy = m_transformStartSY;
+                auto clamp = [](double v) { return qMax(0.01, v); };
+
+                if (corner) {
+                    if (m_scaleUniform && m_transformStartDist > 1.0) {
+                        // Padrão: proporcional, mantendo a proporção original.
+                        const double f = dist / m_transformStartDist;
+                        sx = qMax(0.01, sx * f);
+                        sy = qMax(0.01, sy * f);
+                    } else if (!m_scaleUniform) {
+                        // Shift: escala livre ao longo dos EIXOS do mundo.
+                        const QPointF d = e->position() - anchor;
+                        const QPointF d0 = m_transformStart - anchor;
+                        if (qAbs(d0.x()) > 1.0) sx = clamp(sx * (d.x() / d0.x()));
+                        if (qAbs(d0.y()) > 1.0) sy = clamp(sy * (d.y() / d0.y()));
+                    }
+                } else if (edgeY && m_transformStartDist > 1.0) {
+                    sy = clamp(sy * (dist / m_transformStartDist));
+                } else if (edgeX && m_transformStartDist > 1.0) {
+                    sx = clamp(sx * (dist / m_transformStartDist));
                 }
+
+                t->mesaScaleX = qMax(0.01, sx);
+                t->mesaScaleY = qMax(0.01, sy);
 
             } else if (m_transformOp == TRotate) {
                 const LayerBounds lb = layerBounds(t, m_transformTrackIdx);
@@ -293,7 +429,33 @@ void MesaWidget::mouseMoveEvent(QMouseEvent* e) {
     }
 }
 
-void MesaWidget::mouseReleaseEvent(QMouseEvent*) {
+void MesaWidget::mouseReleaseEvent(QMouseEvent* e) {
+    // Drop de reordenação na lista de camadas (arrasto de linha → linha)
+    if (m_layerListDragIdx >= 0) {
+        MesaComposition* mc = currentMesa();
+        if (mc && m_showLayerList) {
+            const QVector<Track*> tracks = mesaTracks();
+            const int headerH = 26, rowH = 24;
+            const int relY = e->pos().y() - m_layerListRect.top() - headerH;
+            if (relY >= 0 && relY < headerH + (int)tracks.size() * rowH) {
+                const int row = relY / rowH;
+                const int to = tracks.size() - 1 - row;
+                const int from = m_layerListDragIdx;
+                if (to >= 0 && to < (int)mc->trackIds.size() && to != from) {
+                    const QString tid = mc->trackIds[from];
+                    mc->trackIds.remove(from);
+                    mc->trackIds.insert(to, tid);
+                    m_selectedIdx = to;
+                    emit changesCommitted();
+                    emit modified();
+                }
+            }
+        }
+        m_layerListDragIdx = -1;
+        update();
+        return;
+    }
+
     const bool wasTransforming = (m_transformOp != TNone);
     const bool camChanged = m_draggingCamera || m_resizingCamera;
 
@@ -351,6 +513,7 @@ void MesaWidget::keyPressEvent(QKeyEvent* e) {
         if (mc && m_selectedIdx < mc->trackIds.size()) {
             mc->trackIds.remove(m_selectedIdx);
             m_selectedIdx = -1;
+            emit changesCommitted();
             emit modified();
             update();
         }
@@ -396,24 +559,33 @@ void MesaWidget::mouseDoubleClickEvent(QMouseEvent* e) {
     const int rulerW = width();
     const double t = xToTime(e->pos().x(), rulerW);
     m_playheadTime = t;
-
-    ensureKeyframesAt(t);
-
-    // Also create keyframes for all tracks in this Mesa
     const double rel = qMax(0.0, t);
+
+    // Duplo-clique = inserir UM keyframe no playhead do ALVO (a layer
+    // selecionada ou a câmera), com o VALOR AVALIADO pelas curvas atuais.
+    // Sempre KfLinear e apenas no alvo — antes o duplo-clique enchia o
+    // projeto de keyframes (câmera + TODAS as layers, KfSmooth) que
+    // nenhum usuário pediu.
+    auto upsertEval = [rel](QVector<Keyframe>& vks, double val) {
+        upsertKeyframe(vks, rel, val, KfLinear);
+    };
+
     const QVector<Track*> tracks = mesaTracks();
-    for (Track* track : tracks) {
-        auto upsert = [&](QVector<Keyframe>& vks, double val) {
-            upsertKeyframe(vks, rel, val, KfSmooth);
-        };
-        upsert(track->kfMesaX, kfValue(track->kfMesaX, track->mesaX, rel));
-        upsert(track->kfMesaY, kfValue(track->kfMesaY, track->mesaY, rel));
-        upsert(track->kfMesaScaleX, kfValue(track->kfMesaScaleX, track->mesaScaleX, rel));
-        upsert(track->kfMesaScaleY, kfValue(track->kfMesaScaleY, track->mesaScaleY, rel));
-        upsert(track->kfMesaRotation, kfValue(track->kfMesaRotation, track->mesaRotation, rel));
-        upsert(track->kfMesaOpacity, kfValue(track->kfMesaOpacity, track->mesaOpacity, rel));
-        upsert(track->kfMesaAnchorX, kfValue(track->kfMesaAnchorX, track->mesaAnchorX, rel));
-        upsert(track->kfMesaAnchorY, kfValue(track->kfMesaAnchorY, track->mesaAnchorY, rel));
+    if (m_selectedIdx >= 0 && m_selectedIdx < tracks.size()) {
+        Track* t = tracks[m_selectedIdx];
+        upsertEval(t->kfMesaX, kfValue(t->kfMesaX, t->mesaX, rel));
+        upsertEval(t->kfMesaY, kfValue(t->kfMesaY, t->mesaY, rel));
+        upsertEval(t->kfMesaScaleX, kfValue(t->kfMesaScaleX, t->mesaScaleX, rel));
+        upsertEval(t->kfMesaScaleY, kfValue(t->kfMesaScaleY, t->mesaScaleY, rel));
+        upsertEval(t->kfMesaRotation, kfValue(t->kfMesaRotation, t->mesaRotation, rel));
+        upsertEval(t->kfMesaOpacity, kfValue(t->kfMesaOpacity, t->mesaOpacity, rel));
+        upsertEval(t->kfMesaAnchorX, kfValue(t->kfMesaAnchorX, t->mesaAnchorX, rel));
+        upsertEval(t->kfMesaAnchorY, kfValue(t->kfMesaAnchorY, t->mesaAnchorY, rel));
+    } else {
+        upsertEval(mc->kfCamX, kfValue(mc->kfCamX, mc->camX, rel));
+        upsertEval(mc->kfCamY, kfValue(mc->kfCamY, mc->camY, rel));
+        upsertEval(mc->kfCamZoom, kfValue(mc->kfCamZoom, mc->camZoom, rel));
+        upsertEval(mc->kfCamRotation, kfValue(mc->kfCamRotation, mc->camRotation, rel));
     }
 
     emit modified();
@@ -503,6 +675,8 @@ void MesaWidget::commitPropEdit(int kind, const QString& text) {
         case PL_R: setTrack(&Track::mesaRotation, &Track::kfMesaRotation, v); break;
         case PL_O: setTrack(&Track::mesaOpacity, &Track::kfMesaOpacity,
                             qBound(0.0, v, 1.0)); break;
+        case PL_AX: setTrack(&Track::mesaAnchorX, &Track::kfMesaAnchorX, v); break;
+        case PL_AY: setTrack(&Track::mesaAnchorY, &Track::kfMesaAnchorY, v); break;
         case PC_X: setCam(&MesaComposition::kfCamX, &MesaComposition::camX, v); break;
         case PC_Y: setCam(&MesaComposition::kfCamY, &MesaComposition::camY, v); break;
         case PC_Z: setCam(&MesaComposition::kfCamZoom, &MesaComposition::camZoom,

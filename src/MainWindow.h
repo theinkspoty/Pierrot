@@ -36,6 +36,7 @@ class QTimer;
 class QProgressBar;
 class QComboBox;
 class ScopeWidget;
+class PreviewMonitor;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -159,9 +160,12 @@ private:
     QAction* m_saveAction = nullptr;
     QAction* m_saveAsAction = nullptr;
     QAction* m_snapAction = nullptr;
+    QAction* m_monitorAction = nullptr;
     QVector<QAction*> m_toolActions;
     QTimer* m_autoSaveTimer = nullptr;
     QTimer* m_layoutSaveTimer = nullptr;
+    QTimer* m_monitorTimer = nullptr;
     QProgressBar* m_busyBar = nullptr;
     OfxPluginManager* m_ofxManager = nullptr;
+    PreviewMonitor* m_monitor = nullptr; // preview externo (janela própria/2º monitor)
 };

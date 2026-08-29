@@ -12,6 +12,7 @@
 #include "ui/WelcomeWindow.h"
 #include "ui/ClickLogger.h"
 #include "ui/Theme.h"
+#include "Bench.h"
 #include "CrashReporter.h"
 #include <QMessageBox>
 #include <QFileInfo>
@@ -67,6 +68,21 @@ int main(int argc, char** argv) {
     app.setStyle(QStyleFactory::create("Fusion"));
     applyAppPalette(&app, savedTheme());
     app.setStyleSheet(flatControlStyleSheet(savedTheme()));
+
+    // Harness de stress (sem GUI):
+    //   pierrot --bench <projeto.pjrt>            → mede um projeto existente
+    //   pierrot --stress <saida.pjrt> <mídia…>    → gera projeto com 200 cortes
+    //     a partir da mídia dada e mede na hora (valida 200 cortes/4K em 1 passo)
+    for (int i = 1; i < argc; ++i) {
+        if (qstrcmp(argv[i], "--bench") == 0 && i + 1 < argc) {
+            return runBench(app, QString::fromLocal8Bit(argv[i + 1]));
+        }
+        if (qstrcmp(argv[i], "--stress") == 0 && i + 2 < argc) {
+            QStringList media;
+            for (int j = i + 2; j < argc; ++j) media.append(QString::fromLocal8Bit(argv[j]));
+            return runStress(app, QString::fromLocal8Bit(argv[i + 1]), media);
+        }
+    }
 
     // O editor é criado somente após a janela de boas-vindas, como no fluxo
     // original. Fechar a boas-vindas (X) encerra o exec() com Rejected e abre

@@ -13,6 +13,7 @@ extern "C" {
 #include <libavutil/log.h>
 #include <libavutil/samplefmt.h>
 #include <libavutil/channel_layout.h>
+#include <libavutil/hwcontext.h>
 }
 
 #include <cmath>
@@ -22,6 +23,7 @@ extern "C" {
 #include <QDebug>
 #include <QFileInfo>
 #include <QSet>
+#include <QSettings>
 #include <QThread>
 
 // Diagnóstico do caminho de áudio do preview: ligue com PIERROT_AUDIO_DEBUG=1.
@@ -72,6 +74,54 @@ static int resolveAudioStream(const AVFormatContext* fmt, int k) {
         }
     }
     return -1;
+}
+
+// Aceleração de hardware: desligada pela configuração "hwDecode" (Configurações
+// → Qualidade e Timeline → Desempenho), pela variável PIERROT_GPU=0 ou pelo
+// auto-cura: se o driver entregar quadros vazios repetidamente (formato
+// incomum/10-bit, transferência falha, etc.), o Pierrot desativa a GPU sozinho
+// para a sessão — o vídeo continua, em software.
+static bool s_hwBroken = false;
+static int s_hwFailSeq = 0;
+
+static bool hwDisabled() {
+    if (qEnvironmentVariableIsSet("PIERROT_GPU")
+        && (QString::fromLatin1(qgetenv("PIERROT_GPU")).trimmed() == QLatin1String("0")))
+        return true;
+    static const bool cfgDisabled = !QSettings().value("hwDecode", true).toBool();
+    return cfgDisabled || s_hwBroken;
+}
+
+// Dispositivo VAAPI compartilhado pelo processo: os decoders abrem/fecham a
+// todo momento (troca de clipes, prefetch), e criar um device por open custaria
+// vários ms no corte. Um AVBufferRef* contado é criado uma única vez (refs por
+// decoder via av_buffer_ref). Sem driver/GPU o FFmpeg falha aqui e tudo cai
+// para software normalmente.
+static AVBufferRef* vaapiDevice() {
+    static AVBufferRef* dev = nullptr;
+    static QMutex gHwMutex;
+    QMutexLocker l(&gHwMutex);
+    if (!dev) {
+        AVBufferRef* d = nullptr;
+        if (av_hwdevice_ctx_create(&d, AV_HWDEVICE_TYPE_VAAPI, nullptr, nullptr, 0) < 0) {
+            qDebug() << "[hw] VAAPI indisponível — usando decode por CPU";
+            d = nullptr;
+        } else {
+            qDebug() << "[hw] VAAPI ativo (decodificação por GPU)";
+        }
+        dev = d;
+    }
+    return dev;
+}
+
+// Callback do AVCodecContext: se o decoder listar AV_PIX_FMT_VAAPI entre os
+// formatos aceitos, usa hardware; senão devolve NONE para a tentativa seguinte
+// (o open() retenta em software puro).
+static enum AVPixelFormat hwVaapiGetFormat(AVCodecContext* s,
+                                           const enum AVPixelFormat* pix_fmts) {
+    for (const enum AVPixelFormat* p = pix_fmts; *p != AV_PIX_FMT_NONE; ++p)
+        if (*p == AV_PIX_FMT_VAAPI) return *p;
+    return AV_PIX_FMT_NONE;
 }
 
 FFmpegDecoder::FFmpegDecoder() {
@@ -423,12 +473,68 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
             AVCodecContext* cc = avcodec_alloc_context3(codec);
             if (cc) {
                 avcodec_parameters_to_context(cc, fmt->streams[idx]->codecpar);
-                cc->thread_count = qMin(4, QThread::idealThreadCount());
                 cc->thread_type = FF_THREAD_FRAME;
-                const int openErr = avcodec_open2(cc, codec, nullptr);
-                if (openErr == 0) {
+                AVBufferRef* hwDev = hwDisabled() ? nullptr : vaapiDevice();
+                if (hwDev) {
+                    cc->hw_device_ctx = av_buffer_ref(hwDev);
+                    cc->get_format = &hwVaapiGetFormat;
+                    // Frame threading + VAAPI é instável; GPU trabalha em 1 thread.
+                    cc->thread_count = 1;
+                    // Negocia os FRAMES hw ANTES de abrir: pede NV12 explícito.
+                    // Sem isso, drivers entregam o sw_format "nativo" (às vezes
+                    // P010/10-bit etc.), que o sws não converte → quadro preto.
+                    // Se a GPU não aceitar NV12, av_hwframe_ctx_init falha e a
+                    // decodificação cai para software abaixo.
+                    AVBufferRef* hwFrames = av_hwframe_ctx_alloc(hwDev);
+                    if (hwFrames) {
+                        AVHWFramesContext* fctx =
+                            reinterpret_cast<AVHWFramesContext*>(hwFrames->data);
+                        fctx->format = AV_PIX_FMT_VAAPI;
+                        fctx->sw_format = AV_PIX_FMT_NV12;
+                        fctx->width = cc->width;
+                        fctx->height = cc->height;
+                        if (av_hwframe_ctx_init(hwFrames) < 0) {
+                            av_buffer_unref(&hwFrames);
+                            hwFrames = nullptr;
+                        }
+                    }
+                    if (hwFrames) {
+                        cc->hw_frames_ctx = av_buffer_ref(hwFrames);
+                        av_buffer_unref(&hwFrames); // cc agora segura a ref
+                    } else {
+                        // Sem NV12 na GPU: remove o hwaccel e abre em software.
+                        av_buffer_unref(&cc->hw_device_ctx);
+                        cc->hw_device_ctx = nullptr;
+                        cc->get_format = nullptr;
+                    }
+                } else {
+                    cc->thread_count = qMin(4, QThread::idealThreadCount());
+                }
+                int openErr = avcodec_open2(cc, codec, nullptr);
+                if (openErr != 0 && hwDev) {
+                    // Codec sem hwaccel (ex.: PNG, AV1 sem VAAPI): retenta em
+                    // software puro, exatamente como antes desta mudança.
+                    avcodec_free_context(&cc);
+                    cc = avcodec_alloc_context3(codec);
+                    if (cc) {
+                        avcodec_parameters_to_context(cc, fmt->streams[idx]->codecpar);
+                        cc->thread_count = qMin(4, QThread::idealThreadCount());
+                        cc->thread_type = FF_THREAD_FRAME;
+                        openErr = avcodec_open2(cc, codec, nullptr);
+                        if (openErr != 0) {
+                            avcodec_free_context(&cc);
+                            cc = nullptr;
+                        }
+                    }
+                } else if (openErr != 0) {
+                    avcodec_free_context(&cc);
+                    cc = nullptr;
+                }
+                if (cc) {
                     m_codec = cc;
                     m_stream = idx;
+                    m_hw = hwDev && cc->pix_fmt == AV_PIX_FMT_VAAPI;
+                    m_hwPixFmt = m_hw ? (int)AV_PIX_FMT_VAAPI : -1;
                     const AVStream* st = fmt->streams[idx];
                     if (st->avg_frame_rate.num > 0 && st->avg_frame_rate.den > 0) {
                         const double r = av_q2d(st->avg_frame_rate);
@@ -443,8 +549,6 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
                                              || (st->nb_frames > 0 && st->nb_frames <= 1));
                     m_isImage = (isImagePath(filePath) && singleFrame)
                                 || (fmt->duration <= 0);
-                } else {
-                    avcodec_free_context(&cc);
                 }
             }
         }
@@ -518,6 +622,13 @@ void FFmpegDecoder::freeAllLocked() {
         av_frame_free(reinterpret_cast<AVFrame**>(&m_nextFrame));
         m_nextFrame = nullptr;
     }
+    if (m_swFrame) {
+        av_frame_unref(reinterpret_cast<AVFrame*>(m_swFrame));
+        av_frame_free(reinterpret_cast<AVFrame**>(&m_swFrame));
+        m_swFrame = nullptr;
+    }
+    m_hw = false;
+    m_hwPixFmt = -1;
     m_lastFrameSec = -1.0;
     m_nextFrameSec = -1.0;
     if (m_swr) {
@@ -565,6 +676,11 @@ QString FFmpegDecoder::source() const {
 double FFmpegDecoder::fps() const {
     QMutexLocker vlock(&m_mutex);
     return m_fps;
+}
+
+bool FFmpegDecoder::usesHardware() const {
+    QMutexLocker vlock(&m_mutex);
+    return m_hw;
 }
 
 // ── Frame cache LRU ────────────────────────────────────────────────────────
@@ -756,6 +872,36 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
 
     AVFrame* chosen = nullptr;
     bool atEof = false;
+    bool decodedAny = false; // se o decoder produziu ao menos um quadro
+    // Decodificação por hardware: o frame decodificado mora na GPU (formato
+    // VAAPI) e não pode ser lido cru pelo sws. `hostFrame` transfere para um
+    // buffer NV12 em RAM (m_swFrame) e devolve o frame "host". O fsec é
+    // calculado ANTES da transferência — av_hwframe_transfer_data não copia
+    // metadados de PTS, e a lógica de exibição (hold) depende dele.
+    const AVPixelFormat hwPM = static_cast<AVPixelFormat>(m_hwPixFmt);
+    auto hostFrame = [&](AVFrame* hwf, double& fsec) -> AVFrame* {
+        fsec = frameSec(hwf);
+        if (!(m_hw && hwf->format == hwPM)) return hwf;
+        AVFrame* sw = reinterpret_cast<AVFrame*>(m_swFrame);
+        if (!sw) {
+            sw = av_frame_alloc();
+            m_swFrame = sw;
+        }
+        if (!sw) return nullptr;
+        av_frame_unref(sw);
+        AVHWFramesContext* hfc = hwf->hw_frames_ctx
+            ? reinterpret_cast<AVHWFramesContext*>(hwf->hw_frames_ctx->data) : nullptr;
+        const AVPixelFormat swFmt = hfc ? static_cast<AVPixelFormat>(hfc->sw_format)
+                                        : AV_PIX_FMT_NV12;
+        sw->format = swFmt;
+        sw->width = hwf->width;
+        sw->height = hwf->height;
+        if (av_hwframe_transfer_data(sw, hwf, 0) < 0) {
+            av_frame_unref(sw);
+            return nullptr;
+        }
+        return sw;
+    };
     // Tolerância mínima: cobre apenas ruído de PTS. A seleção é a convenção de
     // EXIBIÇÃO (hold) — o frame mostrado em `targetSec` é o último cujo início
     // (fsec) ainda não passou de `targetSec + tolerance`. Antes selecionávamos
@@ -787,23 +933,31 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
 
     while (!chosen && !atEof) {
         while (avcodec_receive_frame(cc, m_frame) == 0) {
-            const double fsec = frameSec(m_frame);
+            decodedAny = true;
+            double fsec = 0.0;
+            AVFrame* src = hostFrame(m_frame, fsec);
+            if (!src) {
+                av_frame_unref(m_frame);
+                continue; // transferência hw→sw falhou; descarta o quadro
+            }
+            const bool usingScratch = (src != m_frame);
 
             if (fsec <= targetSec + tolerance) {
-                keepAsDisplay(m_frame, fsec);
+                keepAsDisplay(src, fsec);
                 m_lastPtsSec = fsec;
                 av_frame_unref(m_frame);
+                if (usingScratch) av_frame_unref(reinterpret_cast<AVFrame*>(m_swFrame));
                 continue;
             }
 
             if (m_lastFrameSec >= 0.0 && m_lastFrame) {
                 chosen = reinterpret_cast<AVFrame*>(m_lastFrame);
             } else {
-                chosen = m_frame;
+                chosen = src;
                 m_nextFrameSec = -1.0;
             }
             m_lastPtsSec = fsec;
-            if (chosen != m_frame) {
+            if (chosen != src) {
                 AVFrame* nf = reinterpret_cast<AVFrame*>(m_nextFrame);
                 if (!nf) {
                     nf = av_frame_alloc();
@@ -811,10 +965,11 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
                 }
                 if (nf) {
                     av_frame_unref(nf);
-                    av_frame_ref(nf, m_frame);
+                    av_frame_ref(nf, src);
                     m_nextFrameSec = fsec;
                 }
                 av_frame_unref(m_frame);
+                if (usingScratch) av_frame_unref(reinterpret_cast<AVFrame*>(m_swFrame));
             }
             break;
         }
@@ -825,12 +980,23 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
         if (r < 0) {
             avcodec_send_packet(cc, nullptr);
             while (avcodec_receive_frame(cc, m_frame) == 0) {
-                const double fsec = frameSec(m_frame);
-                if (fsec > targetSec + tolerance)
+                decodedAny = true;
+                double fsec = 0.0;
+                AVFrame* src = hostFrame(m_frame, fsec);
+                if (!src) {
+                    av_frame_unref(m_frame);
+                    continue;
+                }
+                const bool usingScratch = (src != m_frame);
+                if (fsec > targetSec + tolerance) {
+                    av_frame_unref(m_frame);
+                    if (usingScratch) av_frame_unref(reinterpret_cast<AVFrame*>(m_swFrame));
                     break;
-                keepAsDisplay(m_frame, fsec);
+                }
+                keepAsDisplay(src, fsec);
                 m_lastPtsSec = fsec;
                 av_frame_unref(m_frame);
+                if (usingScratch) av_frame_unref(reinterpret_cast<AVFrame*>(m_swFrame));
             }
             atEof = true;
             break;
@@ -885,6 +1051,19 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
     if (!result.isNull() && !m_isImage && m_fps > 0.0) {
         const FrameCacheKey cacheKey{(int64_t)std::floor(targetSec * m_fps), maxWidth};
         frameToCache(cacheKey, result);
+    }
+
+    // Auto-cura: hardware decodificou quadro(s) mas nada virou imagem (driver
+    // com formato quebrado/transferência falha). Após algumas ocorrências
+    // seguidas, desativa o VAAPI para a sessão — o vídeo volta por software.
+    if (m_hw && decodedAny && result.isNull()) {
+        if (++s_hwFailSeq >= 4) {
+            s_hwBroken = true;
+            qWarning() << "[hw] decodificação VAAPI produzindo quadros vazios — "
+                          "desativada nesta sessão (use as Configurações para controlar)";
+        }
+    } else if (m_hw) {
+        s_hwFailSeq = 0;
     }
 
     return result;

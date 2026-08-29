@@ -7,6 +7,7 @@
 
 #include <QImage>
 #include <QHash>
+#include <QMutex>
 #include "models/Project.h"
 
 class QPainter;
@@ -43,6 +44,7 @@ public:
         double anchorX = 0, anchorY = 0;
         double drawW = 0, drawH = 0;
         double opacity = 1.0;
+        int blend = 0;  // QPainter::CompositionMode (0 = SourceOver)
         bool valid = false;
     };
     bool prepareLayer(LayerPrep& out, const MesaComposition& mesa,
@@ -62,6 +64,8 @@ public:
     void clearCache();
 
 private:
+    int blendModeFor(const QString& blend) const;
+
     // Desenha uma única track (camada) num painter já preparado.
     // Retorna false se nada foi desenhado (sem clip ativo / frame vazio).
     bool drawTrackLayer(QPainter& acc, const Track& track,
@@ -78,4 +82,11 @@ private:
     struct FrameKey { QString path; double time; int maxW; };
     struct FrameCache { FrameKey key; QImage frame; };
     mutable FrameCache m_frameCache;
+
+    // O MESMO MesaRenderer é usado por threads diferentes no PreviewWidget:
+    // tryRenderMesa roda no worker de decode e requestLowerLayers na thread da
+    // UI — o FFmpegDecoder NÃO é thread-safe (concorrência em avcodec_send_packet
+    // derrubava o app com SIGSEGV). O mutex serializa todo acesso aos decoders
+    // e ao cache entre essas threads.
+    mutable QMutex m_mutex;
 };

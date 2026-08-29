@@ -1097,7 +1097,7 @@ static Qt::Key razorHoldKey() {
     if (!v.isEmpty()) {
         const QKeySequence ks(v, QKeySequence::PortableText);
         if (ks.count() == 1) {
-            const int k = ks[0] & ~int(Qt::KeyboardModifierMask);
+            const int k = ks[0].key();
             if (k > 0 && k < 0x1000000) return Qt::Key(k);
         }
     }

@@ -6,6 +6,7 @@
 #pragma once
 
 #include <QStringList>
+#include <functional>
 #include "models/Project.h"
 
 struct ExportSettings {
@@ -21,6 +22,10 @@ struct ExportSettings {
 };
 
 namespace ProjectExporter {
+// Callback de progresso/atrito da montagem do comando (CPUs: pré-render das
+// bandas Mesa). Recebe o percentual 0..100 e retorna true para continuar,
+// false para cancelar. Opcional (null = sem progresso/cancelamento).
+using Progress = std::function<bool(int pct)>;
 QStringList buildCommand(const Project& project, const ExportSettings& settings,
-                         QString* error = nullptr);
+                         QString* error = nullptr, const Progress& progress = nullptr);
 }

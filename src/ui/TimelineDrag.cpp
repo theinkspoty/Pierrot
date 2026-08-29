@@ -374,7 +374,7 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
                                : &m_project->videoTracks[brow];
             if (b == 3 && baudio) {
                 // Chip FX: menu dropdown de efeitos de áudio da faixa.
-                trackFxMenu(tr, e->globalPos());
+                trackFxMenu(tr, e->globalPosition().toPoint());
                 return;
             }
             emit editStart();

@@ -48,6 +48,11 @@ public:
     // analisadores (waveform/vectorscope/histograma). Vazio se sem quadro.
     QImage scopesFrame() const;
 
+    // Cópia (implicitamente compartilhada) do sinal de vídeo ATUAL do monitor:
+    // a composição final com todas as camadas inferiores, SEM overlays da
+    // interface. Usada pela janela de preview externo. Vazia se sem quadro.
+    QImage compositeFrame() const;
+
     // Níveis de áudio para o MixerWidget (thread-safe).
     struct AudioLevels {
         QHash<QPair<bool,int>, float> rms; // (isAudio, trackIndex) → RMS 0..1

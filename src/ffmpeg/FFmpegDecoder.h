@@ -55,6 +55,8 @@ public:
     bool isOpen() const;
     QString source() const;
     double fps() const;
+    // true se o vídeo está sendo decodificado por hardware (VAAPI ativo).
+    bool usesHardware() const;
 
     QImage frameAt(double seconds, int maxWidth = 0);
 
@@ -122,6 +124,14 @@ private:
 
     // Imagem estática (JPEG, PNG, BMP, etc.): frame único, sem seek.
     bool m_isImage = false;
+
+    // Aceleração de hardware (VAAPI/Linux; desligável com PIERROT_GPU=0).
+    // m_hwPixFmt guarda o formato do quadro decodificado (ex.: AV_PIX_FMT_VAAPI);
+    // m_swFrame é um AVFrame* auxiliar onde o quadro é transferido para NV12
+    // antes do sws (o hw frame mora na GPU e não pode ser lido cru).
+    bool m_hw = false;
+    int m_hwPixFmt = -1;
+    void* m_swFrame = nullptr; // AVFrame*
 
     // Buffers reutilizáveis para evitar alocação a cada decodificação.
     AVPacket* m_pkt = nullptr;        // frameAt()

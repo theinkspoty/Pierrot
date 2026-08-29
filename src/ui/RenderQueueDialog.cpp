@@ -12,12 +12,16 @@
 #include <QPushButton>
 #include <QLabel>
 #include <QProcess>
+#include <QThread>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QRegularExpression>
 #include <QFileInfo>
 #include <QTimer>
 #include <QMessageBox>
+
+#include <atomic>
+#include <utility>
 
 namespace {
 const char* formatLabel(int fmt) {
@@ -28,6 +32,40 @@ const char* formatLabel(int fmt) {
     }
 }
 } // namespace
+
+// Worker que monta o comando ffmpeg (incluindo o pré-render das bandas Mesa)
+// fora da thread da UI. O Projeto é recebido por cópia (snapshot) — a leitura
+// fica isolada de edições simultâneas na timeline. O `progress` da buildCommand
+// é repassado como signal; retorna false quando `cancel()` é chamado.
+class ExportBuildWorker : public QObject {
+    Q_OBJECT
+public:
+    ExportBuildWorker(Project project, ExportSettings settings)
+        : m_project(std::move(project)), m_settings(std::move(settings)) {}
+public slots:
+    void run() {
+        QString err;
+        const QStringList args = ProjectExporter::buildCommand(
+            m_project, m_settings, &err,
+            [this](int pct) {
+                emit progress(pct);
+                return !m_cancel.load();
+            });
+        if (args.isEmpty())
+            emit failed(err.isEmpty() ? QStringLiteral("Falha ao montar o comando.") : err);
+        else
+            emit ready(args);
+    }
+    void cancel() { m_cancel.store(true); }
+signals:
+    void ready(const QStringList& args);
+    void failed(const QString& err);
+    void progress(int pct);
+private:
+    Project m_project;
+    ExportSettings m_settings;
+    std::atomic<bool> m_cancel{false};
+};
 
 RenderQueueDialog::RenderQueueDialog(Project* project, QWidget* parent)
     : QDialog(parent), m_project(project) {
@@ -51,17 +89,25 @@ RenderQueueDialog::RenderQueueDialog(Project* project, QWidget* parent)
     m_dnBtn = new QPushButton(tr("▼"), this);
     m_clearBtn = new QPushButton(tr("Limpar"), this);
     m_startBtn = new QPushButton(tr("Iniciar fila"), this);
+    m_cancelBtn = new QPushButton(tr("Cancelar"), this);
+    m_cancelBtn->setEnabled(false);
 
     connect(m_addBtn, &QPushButton::clicked, this, &RenderQueueDialog::addJob);
     connect(m_rmBtn, &QPushButton::clicked, this, &RenderQueueDialog::removeSelected);
     connect(m_clearBtn, &QPushButton::clicked, this, [this]() {
-        if (m_process) return; // não limpa durante a execução
+        if (m_process || m_buildThread) return; // não limpa durante a execução
         m_jobs.clear();
         refreshList();
     });
     connect(m_upBtn, &QPushButton::clicked, this, [this]() { moveSelected(-1); });
     connect(m_dnBtn, &QPushButton::clicked, this, [this]() { moveSelected(1); });
     connect(m_startBtn, &QPushButton::clicked, this, &RenderQueueDialog::startQueue);
+    connect(m_cancelBtn, &QPushButton::clicked, this, [this]() {
+        if (m_buildWorker)
+            m_buildWorker->cancel(); // abate o pré-render das Mesas
+        else if (m_process && m_process->state() != QProcess::NotRunning)
+            m_process->kill();       // mata o ffmpeg atual
+    });
 
     auto* editBtns = new QHBoxLayout;
     editBtns->addWidget(m_addBtn);
@@ -70,6 +116,7 @@ RenderQueueDialog::RenderQueueDialog(Project* project, QWidget* parent)
     editBtns->addWidget(m_dnBtn);
     editBtns->addWidget(m_clearBtn);
     editBtns->addStretch();
+    editBtns->addWidget(m_cancelBtn);
     editBtns->addWidget(m_startBtn);
 
     auto* lay = new QVBoxLayout(this);
@@ -81,6 +128,7 @@ RenderQueueDialog::RenderQueueDialog(Project* project, QWidget* parent)
 }
 
 RenderQueueDialog::~RenderQueueDialog() {
+    finishBuildThread();
     if (m_process && m_process->state() != QProcess::NotRunning) {
         m_process->kill();
         m_process->deleteLater();
@@ -110,7 +158,7 @@ void RenderQueueDialog::refreshList() {
 }
 
 void RenderQueueDialog::removeSelected() {
-    if (m_process || m_jobs.isEmpty()) return;
+    if (m_process || m_buildThread || m_jobs.isEmpty()) return;
     const int row = m_jobsList->currentRow();
     if (row < 0 || row >= m_jobs.size()) return;
     m_jobs.removeAt(row);
@@ -118,7 +166,7 @@ void RenderQueueDialog::removeSelected() {
 }
 
 void RenderQueueDialog::moveSelected(int dir) {
-    if (m_process || m_jobs.isEmpty()) return;
+    if (m_process || m_buildThread || m_jobs.isEmpty()) return;
     const int row = m_jobsList->currentRow();
     const int to = row + dir;
     if (row < 0 || to < 0 || to >= m_jobs.size()) return;
@@ -128,12 +176,45 @@ void RenderQueueDialog::moveSelected(int dir) {
 }
 
 void RenderQueueDialog::startQueue() {
-    if (m_process || m_jobs.isEmpty()) return;
+    if (m_process || m_buildThread || m_jobs.isEmpty()) return;
     setBusy(true);
     m_current = -1;
     m_progress->setValue(0);
     m_log->clear();
     startNextJob();
+}
+
+void RenderQueueDialog::finishBuildThread() {
+    if (!m_buildThread) return;
+    m_buildThread->quit();
+    m_buildThread->wait();
+    m_buildThread = nullptr;
+    m_buildWorker = nullptr; // deletado via deleteLater quando o thread acaba
+}
+
+void RenderQueueDialog::onCommandBuilt(const QStringList& args) {
+    finishBuildThread();
+    m_progress->setFormat(QString()); // volta ao formato padrão (tempo do ffmpeg)
+    m_total = m_projectSnap.duration();
+    m_process = new QProcess(this);
+    m_process->setProcessChannelMode(QProcess::MergedChannels);
+    connect(m_process, &QProcess::readyReadStandardOutput,
+            this, &RenderQueueDialog::onReadyRead);
+    connect(m_process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, &RenderQueueDialog::onJobFinished);
+    m_process->start("ffmpeg", args);
+    if (!m_process->waitForStarted(3000)) {
+        log(tr("  Não foi possível iniciar o ffmpeg."));
+        m_process->deleteLater();
+        m_process = nullptr;
+        startNextJob();
+    }
+}
+
+void RenderQueueDialog::onBuildFailed(const QString& err) {
+    finishBuildThread();
+    log(tr("  Erro: %1").arg(err));
+    QTimer::singleShot(0, this, [this]() { startNextJob(); });
 }
 
 void RenderQueueDialog::startNextJob() {
@@ -152,28 +233,24 @@ void RenderQueueDialog::startNextJob() {
             .arg(m_current + 1).arg(m_jobs.size())
             .arg(QFileInfo(s.outputPath).fileName()));
 
-    QString err;
-    const QStringList args = ProjectExporter::buildCommand(*m_project, s, &err);
-    if (args.isEmpty() || !err.isEmpty()) {
-        log(tr("  Erro: %1").arg(err.isEmpty() ? tr("falha ao montar o comando") : err));
-        QTimer::singleShot(0, this, [this]() { startNextJob(); });
-        return;
-    }
-
-    m_total = m_project->duration();
-    m_process = new QProcess(this);
-    m_process->setProcessChannelMode(QProcess::MergedChannels);
-    connect(m_process, &QProcess::readyReadStandardOutput,
-            this, &RenderQueueDialog::onReadyRead);
-    connect(m_process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            this, &RenderQueueDialog::onJobFinished);
-    m_process->start("ffmpeg", args);
-    if (!m_process->waitForStarted(3000)) {
-        log(tr("  Não foi possível iniciar o ffmpeg."));
-        m_process->deleteLater();
-        m_process = nullptr;
-        startNextJob();
-    }
+    // Snapshot do projeto para o worker: o pré-render das bandas Mesa é caro
+    // em CPU e roda fora da UI; a cópia evita corrida com edições na timeline.
+    m_projectSnap = *m_project;
+    m_buildThread = new QThread(this);
+    m_buildWorker = new ExportBuildWorker(m_projectSnap, s);
+    m_buildWorker->moveToThread(m_buildThread);
+    connect(m_buildThread, &QThread::started, m_buildWorker, &ExportBuildWorker::run);
+    connect(m_buildWorker, &ExportBuildWorker::ready,
+            this, &RenderQueueDialog::onCommandBuilt);
+    connect(m_buildWorker, &ExportBuildWorker::failed,
+            this, &RenderQueueDialog::onBuildFailed);
+    connect(m_buildWorker, &ExportBuildWorker::progress, this, [this](int pct) {
+        m_progress->setFormat(QStringLiteral("Mesa %p%"));
+        m_progress->setValue(pct);
+    });
+    connect(m_buildThread, &QThread::finished, m_buildWorker, &QObject::deleteLater);
+    connect(m_buildThread, &QThread::finished, m_buildThread, &QObject::deleteLater);
+    m_buildThread->start();
 }
 
 void RenderQueueDialog::onReadyRead() {
@@ -212,6 +289,7 @@ void RenderQueueDialog::setBusy(bool busy) {
     m_addBtn->setEnabled(!busy);
     m_rmBtn->setEnabled(!busy);
     m_clearBtn->setEnabled(!busy);
+    m_cancelBtn->setEnabled(busy);
     if (busy) m_jobsList->setEnabled(false);
     else m_jobsList->setEnabled(true);
 }
@@ -219,3 +297,5 @@ void RenderQueueDialog::setBusy(bool busy) {
 void RenderQueueDialog::log(const QString& line) {
     m_log->appendPlainText(line);
 }
+
+#include "RenderQueueDialog.moc"

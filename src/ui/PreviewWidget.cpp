@@ -1017,6 +1017,10 @@ QImage PreviewWidget::scopesFrame() const {
                .convertToFormat(QImage::Format_ARGB32);
 }
 
+QImage PreviewWidget::compositeFrame() const {
+    return m_compositedCache.isNull() ? m_frame : m_compositedCache;
+}
+
 PreviewWidget::AudioLevels PreviewWidget::audioLevels() const {
     if (!m_audioFeed) return {};
     const AudioMixer::TrackLevels tl = m_audioFeed->currentLevels();

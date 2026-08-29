@@ -89,38 +89,55 @@ void MesaWidget::layerMediaSize(const Clip& c, bool& ok, double& w, double& h) c
 
 void MesaWidget::layerScreenRect(const LayerBounds& lb, QPointF& center,
                                   QPointF corners[4], QPointF& rotateHandle) const {
+    // Fonte de verdade visual = a MESMA transform de drawTrackImage
+    // (MesaRenderer): a layer gira/escala em torno do ponto do âncora
+    // (pivot + anchor), NÃO do centro do retângulo. Qualquer mudança aqui
+    // precisa continuar espelhando o render.
     center = canvasToScreen(QPointF(lb.x, lb.y));
-    const double hw = lb.w * m_zoom / 2.0;
-    const double hh = lb.h * m_zoom / 2.0;
+    const QPointF anchorPt = canvasToScreen(QPointF(lb.x + lb.anchorX,
+                                                    lb.y + lb.anchorY));
     const double rad = qDegreesToRadians(lb.rotation);
     const double cosR = qCos(rad);
     const double sinR = qSin(rad);
+    const double zoom = m_zoom;
 
+    // (lx, ly) em canvas-space relativo ao pivot. O quad local é rotacionado
+    // em torno de (anchorX, anchorY) exatamente como o render desenha a imagem.
     auto rotPt = [&](double lx, double ly) -> QPointF {
-        return center + QPointF(lx * cosR - ly * sinR, lx * sinR + ly * cosR);
+        const double vx = (lx - lb.anchorX) * cosR - (ly - lb.anchorY) * sinR;
+        const double vy = (lx - lb.anchorX) * sinR + (ly - lb.anchorY) * cosR;
+        return anchorPt + QPointF(vx, vy) * zoom;
     };
 
-    corners[0] = rotPt(-hw, -hh);
-    corners[1] = rotPt( hw, -hh);
-    corners[2] = rotPt( hw,  hh);
-    corners[3] = rotPt(-hw,  hh);
+    corners[0] = rotPt(-lb.w / 2.0, -lb.h / 2.0);
+    corners[1] = rotPt( lb.w / 2.0, -lb.h / 2.0);
+    corners[2] = rotPt( lb.w / 2.0,  lb.h / 2.0);
+    corners[3] = rotPt(-lb.w / 2.0,  lb.h / 2.0);
 
-    rotateHandle = rotPt(0, -hh - 30.0 * m_zoom);
+    rotateHandle = rotPt(0.0, -lb.h / 2.0 - 30.0);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
 // Hit testing
 // ═══════════════════════════════════════════════════════════════════════
 
-static double distToSegment(const QPointF& p, const QPointF& a, const QPointF& b) {
-    const double dx = b.x() - a.x();
-    const double dy = b.y() - a.y();
-    const double len2 = dx * dx + dy * dy;
-    if (len2 < 1e-6) return QLineF(p, a).length();
-    double t = qBound(0.0, ((p.x() - a.x()) * dx + (p.y() - a.y()) * dy) / len2, 1.0);
-    return QLineF(p, QPointF(a.x() + t * dx, a.y() + t * dy)).length();
+static bool pointInPolygon(const QPointF& p, const QPointF poly[4]) {
+    bool inside = false;
+    for (int i = 0, j = 3; i < 4; j = i++) {
+        const QPointF& a = poly[j];
+        const QPointF& b = poly[i];
+        if (((b.y() > p.y()) != (a.y() > p.y()))
+            && (p.x() < (a.x() - b.x()) * (p.y() - b.y()) / (a.y() - b.y()) + b.x()))
+            inside = !inside;
+    }
+    return inside;
 }
 
+// Prioridade de hit (cônica, resolve o "câmera come o clique da layer"):
+//   1. camadas COM conteúdo ativo (do topo para o fundo);
+//   2. câmera (cantos redimensionam, corpo move — só onde nenhuma layer cobre);
+//   3. placeholders de camadas sem conteúdo (o quad vazio visível no canvas).
+// A rotação NÃO pode ser acionada por uma linha invisível: só o handle.
 MesaWidget::HitZone MesaWidget::hitTest(const QPointF& sp, int& outTrackIdx) const {
     outTrackIdx = -1;
     MesaComposition* mc = currentMesa();
@@ -129,88 +146,89 @@ MesaWidget::HitZone MesaWidget::hitTest(const QPointF& sp, int& outTrackIdx) con
     const QVector<Track*> tracks = mesaTracks();
     const double handleRadius = 6.0;
 
-    const double rel = qMax(0.0, m_playheadTime);
-    const double cXi = kfValue(mc->kfCamX, mc->camX, rel);
-    const double cYi = kfValue(mc->kfCamY, mc->camY, rel);
-    const double cZi = kfValue(mc->kfCamZoom, mc->camZoom, rel);
-    const double cRi = kfValue(mc->kfCamRotation, mc->camRotation, rel);
-    const QPointF cc = canvasToScreen(QPointF(cXi, cYi));
-    const double camHW = mc->canvasW / qMax(0.01, cZi) * m_zoom / 2;
-    const double camHH = mc->canvasH / qMax(0.01, cZi) * m_zoom / 2;
-
-    auto rotPt = [](const QPointF& center, double lx, double ly, double rot) -> QPointF {
-        const double rad = qDegreesToRadians(rot);
-        return center + QPointF(lx * qCos(rad) - ly * qSin(rad),
-                                lx * qSin(rad) + ly * qCos(rad));
-    };
-
-    const QPointF camCorners[4] = {
-        rotPt(cc,  camHW,  camHH, cRi), rotPt(cc, -camHW,  camHH, cRi),
-        rotPt(cc,  camHW, -camHH, cRi), rotPt(cc, -camHW, -camHH, cRi)
-    };
-    for (int i = 0; i < 4; ++i) {
-        if (QLineF(camCorners[i], sp).length() <= handleRadius + 2) {
-            return HitCameraCorner;
-        }
-    }
-
-    {
-        const double rad = qDegreesToRadians(cRi);
-        const double cosR = qCos(rad), sinR = qSin(rad);
-        const QPointF d = sp - cc;
-        const double lx =  d.x() * cosR + d.y() * sinR;
-        const double ly = -d.x() * sinR + d.y() * cosR;
-        if (qAbs(lx) <= camHW && qAbs(ly) <= camHH)
-            return HitCamera;
-    }
-
-    for (int i = tracks.size() - 1; i >= 0; --i) {
-        const Track* t = tracks[i];
-        const LayerBounds lb = layerBounds(t, i);
+    auto layerHit = [&](const LayerBounds& lb) -> HitZone {
         QPointF center, corners[4], rotateHandle;
         layerScreenRect(lb, center, corners, rotateHandle);
 
-        if (QLineF(rotateHandle, sp).length() <= handleRadius + 2) {
-            outTrackIdx = i;
+        if (QLineF(rotateHandle, sp).length() <= handleRadius + 2)
             return HitRotate;
-        }
 
-        if (distToSegment(sp, center, rotateHandle) <= 4.0) {
-            outTrackIdx = i;
-            return HitRotate;
-        }
-
-        const struct { QPointF* corner; HitZone zone; } handleMap[] = {
+        const struct { const QPointF* corner; HitZone zone; } handleMap[] = {
             { &corners[0], HitCornerTL }, { &corners[1], HitCornerTR },
             { &corners[2], HitCornerBR }, { &corners[3], HitCornerBL }
         };
-        for (auto& h : handleMap) {
-            if (QLineF(*h.corner, sp).length() <= handleRadius) {
-                outTrackIdx = i;
+        for (auto& h : handleMap)
+            if (QLineF(*h.corner, sp).length() <= handleRadius)
                 return h.zone;
-            }
-        }
 
         for (int e = 0; e < 4; ++e) {
             const QPointF mid = (corners[e] + corners[(e + 1) % 4]) / 2.0;
-            if (QLineF(mid, sp).length() <= handleRadius) {
-                outTrackIdx = i;
-                return (e == 0) ? HitEdgeT : (e == 1) ? HitEdgeR : (e == 2) ? HitEdgeB : HitEdgeL;
-            }
+            if (QLineF(mid, sp).length() <= handleRadius)
+                return (e == 0) ? HitEdgeT : (e == 1) ? HitEdgeR
+                     : (e == 2) ? HitEdgeB : HitEdgeL;
         }
 
+        if (pointInPolygon(sp, corners))
+            return HitBody;
+
+        return HitNone;
+    };
+
+    // 1) Camadas com conteúdo (topo → fundo)
+    // Oculta (olho off) ou trancada (cadeado) não participa do hit test.
+    for (int i = tracks.size() - 1; i >= 0; --i) {
+        const Track* tr = tracks[i];
+        if (tr->mesaHidden || tr->mesaLocked) continue;
+        const LayerBounds lb = layerBounds(tr, i);
+        if (lb.hasContent) {
+            const HitZone z = layerHit(lb);
+            if (z != HitNone) { outTrackIdx = i; return z; }
+        }
+    }
+
+    // 2) Câmera
+    {
+        const double rel = qMax(0.0, m_playheadTime);
+        const double cXi = kfValue(mc->kfCamX, mc->camX, rel);
+        const double cYi = kfValue(mc->kfCamY, mc->camY, rel);
+        const double cZi = kfValue(mc->kfCamZoom, mc->camZoom, rel);
+        const double cRi = kfValue(mc->kfCamRotation, mc->camRotation, rel);
+        const QPointF cc = canvasToScreen(QPointF(cXi, cYi));
+        const double camHW = mc->canvasW / qMax(0.01, cZi) * m_zoom / 2;
+        const double camHH = mc->canvasH / qMax(0.01, cZi) * m_zoom / 2;
+
+        auto camRot = [](const QPointF& center, double lx, double ly, double rot) -> QPointF {
+            const double rad = qDegreesToRadians(rot);
+            return center + QPointF(lx * qCos(rad) - ly * qSin(rad),
+                                    lx * qSin(rad) + ly * qCos(rad));
+        };
+        const QPointF camCorners[4] = {
+            camRot(cc,  camHW,  camHH, cRi), camRot(cc, -camHW,  camHH, cRi),
+            camRot(cc,  camHW, -camHH, cRi), camRot(cc, -camHW, -camHH, cRi)
+        };
+        for (int i = 0; i < 4; ++i)
+            if (QLineF(camCorners[i], sp).length() <= handleRadius + 2)
+                return HitCameraCorner;
+
         {
-            const double rad = qDegreesToRadians(-lb.rotation);
+            const double rad = qDegreesToRadians(cRi);
             const double cosR = qCos(rad), sinR = qSin(rad);
-            const QPointF d = sp - center;
+            const QPointF d = sp - cc;
             const double lx =  d.x() * cosR + d.y() * sinR;
             const double ly = -d.x() * sinR + d.y() * cosR;
-            const double hw = lb.w * m_zoom / 2;
-            const double hh = lb.h * m_zoom / 2;
-            if (qAbs(lx) <= hw && qAbs(ly) <= hh) {
-                outTrackIdx = i;
-                return HitBody;
-            }
+            if (qAbs(lx) <= camHW && qAbs(ly) <= camHH)
+                return HitCamera;
+        }
+    }
+
+    // 3) Placeholders (camadas sem conteúdo ativo no playhead)
+    for (int i = tracks.size() - 1; i >= 0; --i) {
+        const Track* tr = tracks[i];
+        if (tr->mesaHidden || tr->mesaLocked) continue;
+        const LayerBounds lb = layerBounds(tr, i);
+        if (!lb.hasContent) {
+            const HitZone z = layerHit(lb);
+            if (z != HitNone) { outTrackIdx = i; return z; }
         }
     }
 

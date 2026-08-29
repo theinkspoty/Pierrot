@@ -9,6 +9,7 @@
 #include <QVector>
 #include <QTimer>
 #include <QHash>
+#include <QSet>
 #include <QSize>
 #include <QPointer>
 #include <QElapsedTimer>
@@ -106,15 +107,18 @@ private:
     QRect m_autoKeyBtnRect;
     void nudgeSelection(double dx, double dy);
 
-    // Desenho
+// Desenho
     void drawLayerList(QPainter& p);
     void drawPropertyPanel(QPainter& p);
     void drawMiniTimeline(QPainter& p);
-    int propPanelHeight() const { return 36; }
+    void drawEyeIcon(QPainter& p, const QRect& r, bool visible) const;
+    void drawLockIcon(QPainter& p, const QRect& r, bool locked) const;
+    QString blendShortName(const QString& blend) const;
+    int propPanelHeight() const { return 56; }
     int miniTimelineHeight() const { return 64; }
 
     // Campos editáveis do painel de propriedades (clique → digita o valor).
-    enum PropKind { PL_X, PL_Y, PL_S, PL_R, PL_O, PC_X, PC_Y, PC_Z, PC_R };
+    enum PropKind { PL_X, PL_Y, PL_S, PL_R, PL_O, PL_AX, PL_AY, PC_X, PC_Y, PC_Z, PC_R };
     struct PropField { QRect rect; int kind; };
     QVector<PropField> m_propFields;   // preenchido no drawPropertyPanel
     QPointer<QLineEdit> m_propEdit;
@@ -163,7 +167,7 @@ private:
     double m_transformStartRot = 0;
     double m_transformStartAngle = 0;  // ângulo inicial (para rotate)
     double m_transformStartDist = 0;   // distância inicial (para scale uniforme)
-    bool m_scaleUniform = false;       // Shift mantido
+    bool m_scaleUniform = true;        // escala de cantos: uniforme (Shift = livre por eixo)
 
     // Dragging camera
     bool m_draggingCamera = false;
@@ -184,6 +188,12 @@ private:
     // Layer list flutuante
     bool m_showLayerList = false;
     QRect m_layerListRect;
+    // Zonas clicáveis de cada linha (olho/cadeado/corpo) preenchidas no draw.
+    struct LayerRowZone { QRect eye, lock, body; int idx; };
+    QVector<LayerRowZone> m_layerZones;
+    // Reordenação por arrasto: índice da camada sendo arrastada na lista.
+    int m_layerListDragIdx = -1;
+    QPoint m_layerListDragStart;
 
     // Mini-timeline
     bool m_timelineDrag = false;
@@ -192,17 +202,25 @@ private:
     static constexpr double kDefaultPps = 80.0;  // pixels per second
 
     // Mini-timeline keyframe selection
+    // Cada keyframe é identificado por (source, trackId, time, prop) para que
+    // a seleção/remoção seja POR PROPRIEDADE (X, Y, escala...) e não apague
+    // tudo o que existe no mesmo tempo.
+    enum PropId { PCamX, PCamY, PCamZ, PCamR,
+                  PLayX, PLayY, PLaySX, PLaySY, PLayRot, PLayOp,
+                  PLayAX, PLayAY };
     struct KfRef {
         enum Source { Cam, MesaTrack } source;
         QString trackId;       // empty for Cam
         double time = 0.0;
+        int prop = 0;          // PropId
         bool operator==(const KfRef& o) const {
             return source == o.source && trackId == o.trackId
-                   && qFuzzyCompare(time, o.time);
+                   && qFuzzyCompare(time, o.time) && prop == o.prop;
         }
     };
     friend uint qHash(const KfRef& r);
-    QSet<int> m_selectedKfs;  // hash of KfRef
+    friend uint qHash(const KfRef& r, size_t seed);
+    QSet<KfRef> m_selectedKfs;
     KfRef hitTestKf(const QPoint& pos) const;
     bool isKfSelected(const KfRef& r) const;
     void toggleKfSelection(const KfRef& r, bool ctrl);
