@@ -89,6 +89,7 @@ private:
     void requestFrame(const QString& clipId, const QString& path, double t, int maxW);
     void requestLowerLayers(int decW);
     void kickFrameWorker();
+    void drawPerfOverlay(QPainter& p);
     void onFrameReady(const QString& clipId, const QString& path, double t, int maxW, const QImage& img);
     void onPrefetchReady(const QString& path, double t, int maxW, const QImage& img);
     void updatePrefetch();
@@ -207,6 +208,7 @@ private:
     struct PrefetchFrame {
         QString path;
         double t = 0.0;
+        double clipEnd = -1.0; // fim do clipe atual no momento da solicitação
         int maxW = 0;
         QImage img;
         bool valid = false;
@@ -226,6 +228,20 @@ private:
     PrefetchFrame m_prefetch;
     bool m_workerBusy = false;
     QString m_shownPath;
+    // Diagnóstico de performance (overlay com PIERROT_PERF_DEBUG=1).
+    QElapsedTimer m_perfT;
+    qint64 m_perfWorkerStartNs = 0;
+    qint64 m_perfPrefetchStartNs = 0;
+    struct PerfDbg {
+        qint64 seekMs = 0;      // applySeek() dentro do tick
+        qint64 prefetchMs = 0;  // updatePrefetch() dentro do tick
+        qint64 mixMs = 0;       // updateMixAudio() dentro do tick
+        qint64 totalMs = 0;     // soma dos três
+        qint64 workerMs = 0;    // kick -> onFrameReady (latência do decode)
+        qint64 prefetchLatMs = 0; // pedido -> prefetchReady (swap pronto?)
+        bool cut = false;       // playhead cruzou para outro clipe
+        int cutCount = 0;       // cortes cruzados (para estatística)
+    } m_perf;
     double m_shownT = -1.0;
     int m_shownW = -1;
 

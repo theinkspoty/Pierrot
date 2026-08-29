@@ -459,6 +459,16 @@ static QJsonObject trackToJson(const Track& t) {
     o["blendMode"] = t.blendMode;
     o["volume"] = t.volume;
     o["pan"] = t.pan;
+    o["color"] = t.color.isValid() ? t.color.name() : QString();
+    o["eqLow"] = t.eqLow;
+    o["eqMid"] = t.eqMid;
+    o["eqHigh"] = t.eqHigh;
+    o["denoise"] = t.denoise;
+    o["denoiseAmount"] = t.denoiseAmount;
+    o["invertPhase"] = t.invertPhase;
+    o["reverb"] = t.reverb;
+    o["reverbMix"] = t.reverbMix;
+    o["reverbSize"] = t.reverbSize;
     o["opacity"] = t.opacity;
     o["muted"] = t.muted;
     o["solo"] = t.solo;
@@ -485,6 +495,8 @@ static QJsonObject trackToJson(const Track& t) {
     o["kfMesaOpacity"] = kfToJson(t.kfMesaOpacity);
     o["kfMesaAnchorX"] = kfToJson(t.kfMesaAnchorX);
     o["kfMesaAnchorY"] = kfToJson(t.kfMesaAnchorY);
+    o["kfVolume"] = kfToJson(t.kfVolume);
+    o["kfPan"] = kfToJson(t.kfPan);
     return o;
 }
 
@@ -498,6 +510,17 @@ static Track trackFromJson(const QJsonObject& o, bool audio) {
     t.blendMode = o["blendMode"].toString(QStringLiteral("normal"));
     t.volume = o["volume"].toDouble(1.0);
     t.pan = o["pan"].toDouble(0.0);
+    const QString col = o["color"].toString();
+    if (!col.isEmpty() && QColor::isValidColor(col)) t.color = QColor(col);
+    t.eqLow = o["eqLow"].toDouble(0.0);
+    t.eqMid = o["eqMid"].toDouble(0.0);
+    t.eqHigh = o["eqHigh"].toDouble(0.0);
+    t.denoise = o["denoise"].toBool();
+    t.denoiseAmount = o["denoiseAmount"].toDouble(12.0);
+    t.invertPhase = o["invertPhase"].toBool();
+    t.reverb = o["reverb"].toBool();
+    t.reverbMix = o["reverbMix"].toDouble(0.35);
+    t.reverbSize = o["reverbSize"].toDouble(0.5);
     t.opacity = o["opacity"].toDouble(1.0);
     t.muted = o["muted"].toBool();
     t.solo = o["solo"].toBool();
@@ -524,6 +547,8 @@ static Track trackFromJson(const QJsonObject& o, bool audio) {
     t.kfMesaOpacity = kfFromJson(o["kfMesaOpacity"]);
     t.kfMesaAnchorX = kfFromJson(o["kfMesaAnchorX"]);
     t.kfMesaAnchorY = kfFromJson(o["kfMesaAnchorY"]);
+    t.kfVolume = kfFromJson(o["kfVolume"]);
+    t.kfPan = kfFromJson(o["kfPan"]);
     return t;
 }
 

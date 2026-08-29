@@ -431,6 +431,26 @@ struct Track {
     QString blendMode = QStringLiteral("normal");
     double volume = 1.0;
     double pan = 0.0; // -1.0 (esquerda) a +1.0 (direita), 0.0 = centro
+    QColor color;     // cor da faixa (inválida = paleta automática por índice)
+    // FX de áudio por faixa (estilo Vegas: aplicado ao barramento da faixa,
+    // depois da soma dos clipes dela e antes da mistura final).
+    double eqLow = 0.0;
+    double eqMid = 0.0;
+    double eqHigh = 0.0;
+    bool denoise = false;
+    double denoiseAmount = 12.0;
+    bool invertPhase = false;
+    bool reverb = false;
+    double reverbMix = 0.35;
+    double reverbSize = 0.5;
+    bool hasAudioFx() const {
+        return std::fabs(eqLow) > 0.01 || std::fabs(eqMid) > 0.01
+            || std::fabs(eqHigh) > 0.01 || denoise || invertPhase || reverb;
+    }
+    // Envelopes de áudio por faixa (tempos em segundos da timeline, absolutos).
+    // kfVolume: ganho linear 0..2; kfPan: -1..+1 (equal-power).
+    QVector<Keyframe> kfVolume;
+    QVector<Keyframe> kfPan;
     // Opacidade da faixa de vídeo (0..1, estilo Vegas/FCE): a faixa inteira
     // composta com transparência sobre as de baixo.
     double opacity = 1.0;

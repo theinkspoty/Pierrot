@@ -107,6 +107,7 @@ struct AudioClipRef {
     const Clip* c;
     double trackVol = 1.0;
     double trackPan = 0.0; // -1..+1
+    const Track* tr = nullptr;
 };
 
 QString hexColor(const QColor& col) {
@@ -538,7 +539,7 @@ QStringList ProjectExporter::buildCommand(const Project& project,
         if (t.muted || (anySolo && !t.solo)) continue;
         for (const Clip& c : t.clips) {
             const MediaItem* m = project.findMedia(c.mediaId);
-            if (m && m->hasAudio) aclips.push_back({&c, t.volume, t.pan});
+            if (m && m->hasAudio) aclips.push_back({&c, t.volume, t.pan, &t});
         }
     }
     std::sort(aclips.begin(), aclips.end(),
@@ -1055,7 +1056,8 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     // ---- Audio graph ----
     QString aout;
     if (!aclips.isEmpty()) {
-        QStringList albl;
+        // Os rótulos por clipe vão por faixa em tAlbl, para o FX por faixa.
+        QHash<const Track*, QStringList> tAlbl;
         int n = 0;
         for (const AudioClipRef& ar : aclips) {
             ++n;
@@ -1104,16 +1106,20 @@ QStringList ProjectExporter::buildCommand(const Project& project,
             }
             fc.last().append(QStringLiteral(",adelay=%1:all=1").arg(delayMs));
             // Lógica Vegas: volume efetivo = envelope do clipe (relativo, base 1.0)
-            // × volume do clipe × volume da faixa, limitado a 200% como no preview.
-            // O preview aplica o mesmo produto (PreviewWidget::buildMixSources).
-            const double staticGain =
-                std::clamp(c->volume * ar.trackVol, 0.0, 2.0);
-            if (!c->kfVolume.isEmpty()) {
-                fc.last().append(QStringLiteral(",volume='clip(%1*%2,0,2)'")
-                                     .arg(kfExpr(c->kfVolume, 1.0, c->pos))
-                                     .arg(num(staticGain)));
-            } else if (std::fabs(staticGain - 1.0) > 1e-4) {
-                fc.last().append(QStringLiteral(",volume=%1").arg(num(staticGain)));
+            // × volume do clipe × envelope da faixa (tempo absoluto da timeline),
+            // limitado a 200% como no preview. O preview aplica o mesmo produto
+            // (PreviewWidget::buildMixSources).
+            const bool trackEnv = ar.tr && !ar.tr->kfVolume.isEmpty();
+            const bool clipEnv = !c->kfVolume.isEmpty();
+            if (clipEnv || trackEnv
+                || std::fabs(c->volume * ar.trackVol - 1.0) > 1e-4) {
+                const QString gain =
+                    QStringLiteral("clip(%1*%2,0,2)")
+                        .arg(clipEnv ? kfExpr(c->kfVolume, 1.0, c->pos)
+                                     : num(c->volume))
+                        .arg(trackEnv ? kfExpr(ar.tr->kfVolume, ar.tr->volume, 0.0)
+                                      : num(ar.trackVol));
+                fc.last().append(QStringLiteral(",volume='%1'").arg(gain));
             }
             if (c->denoise)
                 fc.last().append(QStringLiteral(",afftdn=nr=%1")
@@ -1127,8 +1133,16 @@ QStringList ProjectExporter::buildCommand(const Project& project,
             if (std::fabs(c->eqHigh) > 0.01)
                 fc.last().append(QStringLiteral(",equalizer=f=6000:width_type=q:width=1:g=%1")
                                      .arg(num(std::clamp(c->eqHigh, -12.0, 12.0))));
-            // Pan estéreo: aplica pan da faixa (equal-power).
-            if (std::fabs(ar.trackPan) > 0.01) {
+            // Pan estéreo: pan da faixa (equal-power); com envelope, avalia em `t`
+            // (tempo absoluto da timeline, pós-adelay do clipe).
+            const bool trackPanEnv = ar.tr && !ar.tr->kfPan.isEmpty();
+            if (trackPanEnv) {
+                const QString pExpr =
+                    QStringLiteral("clip(%1,-1,1)").arg(kfExpr(ar.tr->kfPan, ar.tr->pan, 0.0));
+                fc.last().append(
+                    QStringLiteral(",aeval='val(0)*sqrt((1-(%1))*0.5)|val(1)*sqrt((1+(%1))*0.5)'")
+                        .arg(pExpr));
+            } else if (std::fabs(ar.trackPan) > 0.01) {
                 const double gL = std::sqrt(std::max(0.0, (1.0 - ar.trackPan) * 0.5));
                 const double gR = std::sqrt(std::max(0.0, (1.0 + ar.trackPan) * 0.5));
                 fc.last().append(QStringLiteral(",aeval='val(0)*%1|val(1)*%2'")
@@ -1161,23 +1175,89 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                 fc << QStringLiteral("[%1][%2]amix=inputs=2:duration=first:"
                                      "normalize=0:dropout_transition=0[%3]")
                         .arg(dm, rv, mx);
-                albl << mx;
+                tAlbl[ar.tr] << mx;
             } else {
                 fc.last().append(QStringLiteral("[%1]").arg(lbl));
-                albl << lbl;
+                tAlbl[ar.tr] << lbl;
             }
         }
-        if (albl.size() == 1) {
-            aout = QStringLiteral("[%1]").arg(albl[0]);
+        // FX por faixa (estilo Vegas): cada faixa de áudio é resumida num
+        // barramento, onde recebe os efeitos de faixa (denoise → EQ → inversão
+        // → Reverb EX) antes da mistura final. Espelha a ordem do preview.
+        QStringList tlbl;
+        int tIdx = 0;
+        for (const Track& tr : project.audioTracks) {
+            auto it = tAlbl.constFind(&tr);
+            if (it == tAlbl.cend() || it->isEmpty()) continue;
+            const QStringList& labels = it.value();
+            QString bus;
+            if (labels.size() == 1) {
+                bus = labels[0];
+            } else {
+                const QString tsrc = QStringLiteral("ta%1").arg(tIdx);
+                QString bIn;
+                for (const QString& l : labels) bIn += QStringLiteral("[%1]").arg(l);
+                fc << bIn
+                    + QStringLiteral(
+                          "amix=inputs=%1:duration=longest:dropout_transition=0[%2]")
+                          .arg(labels.size()).arg(tsrc);
+                bus = tsrc;
+            }
+            QStringList fx;
+            if (tr.denoise)
+                fx << QStringLiteral("afftdn=nr=%1")
+                          .arg(num(std::clamp(tr.denoiseAmount, 1.0, 50.0)));
+            if (std::fabs(tr.eqLow) > 0.01)
+                fx << QStringLiteral("equalizer=f=120:width_type=q:width=1:g=%1")
+                          .arg(num(std::clamp(tr.eqLow, -12.0, 12.0)));
+            if (std::fabs(tr.eqMid) > 0.01)
+                fx << QStringLiteral("equalizer=f=1000:width_type=q:width=1:g=%1")
+                          .arg(num(std::clamp(tr.eqMid, -12.0, 12.0)));
+            if (std::fabs(tr.eqHigh) > 0.01)
+                fx << QStringLiteral("equalizer=f=6000:width_type=q:width=1:g=%1")
+                          .arg(num(std::clamp(tr.eqHigh, -12.0, 12.0)));
+            if (tr.invertPhase)
+                fx << QStringLiteral("aeval=-val(0)|-val(1)");
+            QString preLbl = bus;
+            if (!fx.isEmpty()) {
+                preLbl = QStringLiteral("tbpre%1").arg(tIdx);
+                fc << QStringLiteral("[%1],%2[%3]")
+                        .arg(bus, fx.join(QLatin1Char(',')), preLbl);
+            }
+            if (tr.reverb && tr.reverbMix > 0.01) {
+                const QString d = QStringLiteral("tb%1d").arg(tIdx);
+                const QString w = QStringLiteral("tb%1w").arg(tIdx);
+                const QString dm = QStringLiteral("tb%1dm").arg(tIdx);
+                const QString rv = QStringLiteral("tb%1rv").arg(tIdx);
+                const QString mx = QStringLiteral("tb%1mx").arg(tIdx);
+                const double sc = 0.6 + 0.4 * std::clamp(tr.reverbSize, 0.0, 1.0);
+                const double mix = std::clamp(tr.reverbMix, 0.0, 1.0);
+                fc << QStringLiteral("[%1]asplit=2[%2][%3]").arg(preLbl, d, w);
+                fc << QStringLiteral("[%1]volume=%2[%3]").arg(d, num(1.0 - mix), dm);
+                fc << QStringLiteral("[%1]aecho=0.9:0.9:50|100|180:%2|%3|%4,volume=%5[%6]")
+                        .arg(w)
+                        .arg(num(0.30 * sc), num(0.22 * sc), num(0.14 * sc))
+                        .arg(num(mix), rv);
+                fc << QStringLiteral("[%1][%2]amix=inputs=2:duration=first:"
+                                     "normalize=0:dropout_transition=0[%3]")
+                        .arg(dm, rv, mx);
+                tlbl << mx;
+            } else {
+                tlbl << preLbl;
+            }
+            ++tIdx;
+        }
+        if (tlbl.size() == 1) {
+            aout = QStringLiteral("[%1]").arg(tlbl[0]);
         } else {
-            // Cada rótulo precisa dos colchetes ([a1][a2]...) senão o ffmpeg
+            // Cada rótulo precisa dos colchetes ([t1][t2]...) senão o ffmpeg
             // interpreta o nome inteiro como um filtro inexistente.
             QString aIn;
-            for (const QString& l : albl) aIn += QStringLiteral("[%1]").arg(l);
+            for (const QString& l : tlbl) aIn += QStringLiteral("[%1]").arg(l);
             fc << aIn
                 + QStringLiteral(
                       "amix=inputs=%1:duration=longest:dropout_transition=0[aout]")
-                      .arg(albl.size());
+                      .arg(tlbl.size());
             aout = QStringLiteral("[aout]");
         }
         // Volume master: aplica o masterVolume do projeto no sinal de áudio final.

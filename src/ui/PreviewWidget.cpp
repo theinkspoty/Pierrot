@@ -369,6 +369,18 @@ public:
         int trackIndex = -1;   // índice da faixa (dentro de video/audio)
         bool isAudioTrack = false;
         double pan = 0.0;      // -1..+1, 0=centro
+        // FX de áudio da FAIXA (aplicados ao barramento da faixa de áudio,
+        // depois da soma dos clipes dela; iguais para todas as fontes dela).
+        bool trackFxOn = false;
+        double trackFxEqLow = 0.0;
+        double trackFxEqMid = 0.0;
+        double trackFxEqHigh = 0.0;
+        bool trackFxDenoise = false;
+        double trackFxDenoiseAmount = 12.0;
+        bool trackFxInvertPhase = false;
+        bool trackFxReverb = false;
+        double trackFxReverbMix = 0.35;
+        double trackFxReverbSize = 0.5;
     };
 
     explicit AudioMixer(QObject* parent = nullptr) : QIODevice(parent) {
@@ -383,6 +395,7 @@ public:
         QMutexLocker l(&m_mutex);
         for (Source* s : m_sources) { s->dec.close(); delete s; }
         m_sources.clear();
+        drainClosing();
     }
 
     // atualiza o conjunto de fontes ativas para o playhead atual.
@@ -396,7 +409,9 @@ public:
     // áudio congelava. Cada FFmpegDecoder tem mutex próprio, então abrir/
     // reposicionar fora do lock é seguro; enquanto isso readData simplesmente
     // não encontra amostras da fonte ainda não pronta (silêncio momentâneo).
-    void updateSources(const QVector<SourceInfo>& want, bool reseek, int seq = -1) {
+    void updateSources(const QVector<SourceInfo>& want, bool reseek,
+                       const QVector<SourceInfo>& warm = QVector<SourceInfo>(),
+                       int seq = -1) {
         QMutexLocker job(&m_jobMutex);
         if (m_shutdown || (seq >= 0 && seq != m_jobSeq.load())) return;
         struct Job {
@@ -409,10 +424,15 @@ public:
             bool failed = false;
         };
         QVector<Job> jobs;
+        QSet<QString> wantKeys;
         {
             QMutexLocker l(&m_mutex);
             if (m_shutdown) return;
+            // Reconstrói as cadeias FX por faixa a cada atualização: evita
+            // entradas órfãs e garante que o estado acompanhe os parâmetros.
+            m_trackFx.clear();
             for (const SourceInfo& w : want) {
+                wantKeys.insert(w.key);
                 Source* s = findLocked(w.key);
                 if (!s) {
                     s = new Source;
@@ -427,6 +447,13 @@ public:
                 s->fx.configure(w.eqLow, w.eqMid, w.eqHigh, w.denoise,
                                 w.denoiseAmount, w.invertPhase, w.normalize,
                                 w.reverb, w.reverbMix, w.reverbSize);
+                if (w.isAudioTrack) {
+                    AudioFx& tfx = m_trackFx[qMakePair(w.isAudioTrack, w.trackIndex)];
+                    tfx.configure(w.trackFxEqLow, w.trackFxEqMid, w.trackFxEqHigh,
+                                  w.trackFxDenoise, w.trackFxDenoiseAmount,
+                                  w.trackFxInvertPhase, false,
+                                  w.trackFxReverb, w.trackFxReverbMix, w.trackFxReverbSize);
+                }
                 s->active = true;
                 Job j;
                 j.s = s;
@@ -435,6 +462,40 @@ public:
                 j.pos = w.mediaPos;
                 if (!s->opened || s->path != w.path || s->stream != w.audioStream) {
                     j.open = true;  // arquivo/stream novo: precisa reabrir
+                    j.seek = true;
+                } else if (reseek) {
+                    j.seek = true;
+                }
+                jobs.append(j);
+            }
+            // Pré-aquecimento (lookahead): abre/posiciona decoders dos clipes
+            // que entram dentro da janela adiante, mas SEM ativá-los (ficam em
+            // silêncio até o playhead chegar). Assim o corte de uma faixa para
+            // a outra não tem janela de silêncio — a fonte já está pronta.
+            for (const SourceInfo& w : warm) {
+                if (wantKeys.contains(w.key)) continue; // já ativo neste tick
+                Source* s = findLocked(w.key);
+                if (!s) {
+                    s = new Source;
+                    s->key = w.key;
+                    s->active = false;
+                    m_sources.append(s);
+                }
+                s->active = false; // só sai do silêncio quando virar want
+                s->vol = w.vol;
+                s->pan = w.pan;
+                s->trackIndex = w.trackIndex;
+                s->isAudioTrack = w.isAudioTrack;
+                s->fx.configure(w.eqLow, w.eqMid, w.eqHigh, w.denoise,
+                                w.denoiseAmount, w.invertPhase, w.normalize,
+                                w.reverb, w.reverbMix, w.reverbSize);
+                Job j;
+                j.s = s;
+                j.path = w.path;
+                j.stream = w.audioStream;
+                j.pos = w.mediaPos;
+                if (!s->opened || s->path != w.path || s->stream != w.audioStream) {
+                    j.open = true;
                     j.seek = true;
                 } else if (reseek) {
                     j.seek = true;
@@ -465,9 +526,13 @@ public:
             }
             // Única passada: remove toda fonte não desejada (já inativa ou
             // ativa mas fora do intervalo) — cada uma entra em `retire` UMA vez.
+            // Fontes pré-aquecidas (warm) são preservadas enquanto na janela.
             m_sources.erase(std::remove_if(m_sources.begin(), m_sources.end(),
                                            [&](Source* s) {
-                                               if (!s->active || !usedLocked(s->key, want)) {
+                                               const bool keep =
+                                                   (s->active && usedLocked(s->key, want))
+                                                   || usedLocked(s->key, warm);
+                                               if (!keep) {
                                                    retire.append(s);
                                                    return true;
                                                }
@@ -475,8 +540,28 @@ public:
                                            }),
                             m_sources.end());
         }
-        // Fecha/deleta FORA do lock: close() pode demorar (libera codec).
-        for (Source* s : retire) { s->dec.close(); delete s; }
+        // Fecha/deleta os aposentados no POOL, e não na UI thread: o
+        // close() precisa travar m_mutex E m_audioMutex, e a thread do sink
+        // segura o m_audioMutex durante o decodeAudio — fechar inline aqui
+        // congelava a interface por alguns ms a cada corte. O QPointer evita
+        // tocar num mixer já destruído (o destrutor drena o que sobrar).
+        if (!retire.isEmpty()) {
+            {
+                QMutexLocker lc(&m_closingMutex);
+                for (Source* s : retire) m_closing.append(s);
+            }
+            QPointer<AudioMixer> guard(this);
+            (void)QtConcurrent::run([guard]() {
+                AudioMixer* m = guard.data();
+                if (!m) return;
+                QVector<Source*> batch;
+                {
+                    QMutexLocker lc(&m->m_closingMutex);
+                    batch.swap(m->m_closing);
+                }
+                for (Source* s : batch) { s->dec.close(); delete s; }
+            });
+        }
     }
 
     // Desliga o mixer de forma síncrona antes do deleteLater: espera job em
@@ -486,6 +571,7 @@ public:
         QMutexLocker l(&m_mutex);
         m_shutdown = true;
         m_jobSeq.fetch_add(1);
+        drainClosing();
     }
 
     // Número de sequência para um novo pedido de seek (clique na timeline).
@@ -525,6 +611,24 @@ public:
         QHash<QPair<bool,int>, double> sumSq;
         QHash<QPair<bool,int>, int>    countSq;
 
+        // Barramentos por faixa (estilo Vegas): cada fonte entra no barramento
+        // da SUA faixa de áudio; depois o FX da faixa processa o barramento e
+        // por fim ele é somado no master. Fontes de faixas de vídeo entram nos
+        // barramentos normalmente (sem FX de faixa), preservando a soma.
+        QList<QPair<bool,int>> busOrder;
+        QHash<QPair<bool,int>, int> busIdx;
+        QVector<QVector<int16_t>> buses;
+        auto busOf = [&](bool a, int ti) -> int {
+            const QPair<bool,int> k{a, ti};
+            auto it = busIdx.constFind(k);
+            if (it != busIdx.cend()) return it.value();
+            const int idx = (int)buses.size();
+            busIdx.insert(k, idx);
+            buses.append(QVector<int16_t>(capacity / 2));
+            busOrder.append(k);
+            return idx;
+        };
+
         for (Source* s : m_sources) {
             if (!s->opened || !s->active) continue;
             const int got = s->dec.decodeAudio(tmp.data(), capacity);
@@ -534,6 +638,7 @@ public:
             if (n > 0) {
                 s->fx.process(tmp.data(), n);
                 const int16_t* src = tmp.constData();
+                int16_t* bus = buses[busOf(s->isAudioTrack, s->trackIndex)].data();
                 // Gains de pan por canal (potência equal-power).
                 const float pan = (float)s->pan;
                 const float gL = std::sqrt(std::max(0.0f, (1.0f - pan) * 0.5f));
@@ -544,10 +649,12 @@ public:
                 for (int i = 0; i < n; ++i) {
                     const int li = i * 2;
                     const int ri = li + 1;
-                    const float sumL = out[li] / 32768.0f + src[li] / 32768.0f * volL;
-                    const float sumR = out[ri] / 32768.0f + src[ri] / 32768.0f * volR;
-                    out[li] = (int16_t)std::lround(qBound(-1.0f, sumL, 1.0f) * 32768.0f);
-                    out[ri] = (int16_t)std::lround(qBound(-1.0f, sumR, 1.0f) * 32768.0f);
+                    // Soma SEM clamp intermediário de [-1,1]: o barramento acumula
+                    // o som real da faixa (o clamp só ocorre na escrita final).
+                    bus[li] = (int16_t)std::lround(
+                        qBound(-32768.0f, bus[li] + src[li] * volL, 32767.0f));
+                    bus[ri] = (int16_t)std::lround(
+                        qBound(-32768.0f, bus[ri] + src[ri] * volR, 32767.0f));
                     const float sL = src[li] / 32768.0f * volL;
                     const float sR = src[ri] / 32768.0f * volR;
                     localSumSq += sL * sL + sR * sR;
@@ -557,6 +664,26 @@ public:
                 const auto key = qMakePair(s->isAudioTrack, s->trackIndex);
                 sumSq[key] += rms * rms;
                 countSq[key] += 1;
+            }
+        }
+
+        // Aplica o FX de cada faixa de áudio e soma os barramentos no master.
+        {
+            int16_t* o = reinterpret_cast<int16_t*>(data);
+            const int totalSamples = capacity / 2;
+            for (int bi = 0; bi < (int)buses.size(); ++bi) {
+                const QPair<bool,int>& key = busOrder[bi];
+                if (key.first) { // faixa de áudio: processa a cadeia da faixa
+                    auto tit = m_trackFx.find(key);
+                    if (tit != m_trackFx.cend())
+                        tit.value().process(buses[bi].data(), totalSamples / 2);
+                }
+                const int16_t* bus = buses[bi].constData();
+                for (int i = 0; i < totalSamples; ++i) {
+                    const float s = o[i] / 32768.0f + bus[i] / 32768.0f;
+                    const int v = std::lround(qBound(-1.0f, s, 1.0f) * 32768.0f);
+                    o[i] = (int16_t)v;
+                }
             }
         }
 
@@ -610,6 +737,17 @@ private:
         bool isAudioTrack = false;
         double pan = 0.0;
     };
+    // Aposentados (retire) aguardando close no pool — ver updateSources.
+    QVector<Source*> m_closing;
+    QMutex m_closingMutex;
+    void drainClosing() {
+        QVector<Source*> batch;
+        {
+            QMutexLocker lc(&m_closingMutex);
+            batch.swap(m_closing);
+        }
+        for (Source* s : batch) { s->dec.close(); delete s; }
+    }
     Source* findLocked(const QString& key) const {
         for (Source* s : m_sources) if (s->key == key) return s;
         return nullptr;
@@ -619,6 +757,9 @@ private:
         return false;
     }
     QVector<Source*> m_sources;
+    // Cadeia FX por faixa de áudio (chave = {isAudioTrack, trackIndex});
+    // aplicada ao barramento da faixa no readData antes de somar no master.
+    QHash<QPair<bool,int>, AudioFx> m_trackFx;
     QMutex m_mutex;
     QMutex m_jobMutex;          // serializa updateSources/shutdown/destrutor
     std::atomic<int> m_jobSeq{0}; // só o pedido mais recente de seek executa
@@ -1199,6 +1340,35 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
 
     // Grade de referência visual (estilo Vegas), sobre todo o conteúdo.
     drawGrid(p, canvas);
+
+    // Diagnóstico de performance (PIERROT_PERF_DEBUG=1).
+    drawPerfOverlay(p);
+}
+
+void PreviewWidget::drawPerfOverlay(QPainter& p) {
+    static const bool on = qEnvironmentVariableIsSet("PIERROT_PERF_DEBUG");
+    if (!on) return;
+    p.save();
+    p.resetTransform();
+    const QRect box(8, 8, 320, 120);
+    p.fillRect(box, QColor(0, 0, 0, 180));
+    QFont f = p.font();
+    f.setPointSizeF(8);
+    p.setFont(f);
+    p.setPen(QColor(255, 255, 255));
+    QString txt = QStringLiteral(
+        "tick(ms): seek %1  prefetch %2  mix %3  total %4\n"
+        "worker->frame: %5 ms   prefetch->ready: %6 ms\n"
+        "corte: %7   (cortes cruzados: %8)\n"
+        "prefetch: req=%9 val=%10")
+        .arg(m_perf.seekMs).arg(m_perf.prefetchMs).arg(m_perf.mixMs)
+        .arg(m_perf.totalMs)
+        .arg(m_perf.workerMs).arg(m_perf.prefetchLatMs)
+        .arg(m_perf.cut ? QStringLiteral("SIM") : QStringLiteral("não"))
+        .arg(m_perf.cutCount)
+        .arg(m_prefetch.requested ? 1 : 0).arg(m_prefetch.valid ? 1 : 0);
+    p.drawText(box.adjusted(10, 8, -6, -6), Qt::AlignLeft | Qt::AlignTop, txt);
+    p.restore();
 }
 
 // Desenha o texto/título estilizado do clipe sobre o monitor (mesmo resultado
@@ -1634,12 +1804,23 @@ void PreviewWidget::tick() {
         stopPlayback();
         return;
     }
+    // Diagnóstico de perf: quanto cada fase deste tick custou (ms).
+    if (!m_perfT.isValid()) m_perfT.start();
+    const QString prevTopId = clipAt(m_playhead) ? clipAt(m_playhead)->id : QString();
+    QElapsedTimer pt; pt.start();
     applySeek(t);
+    m_perf.seekMs = pt.restart();
     updatePrefetch();
+    m_perf.prefetchMs = pt.restart();
     // Mixer acompanha o playhead: volumes/fades e troca de clipes acontecem
     // aqui, sem reiniciar o sink a cada transição. No shuttle (≠1x) o sink
     // fica mudo (stopAudio) e não deve ser reposicionado por frame.
     if (m_playRate == 1.0) updateMixAudio(t, false);
+    m_perf.mixMs = pt.restart();
+    const QString newTopId = clipAt(m_playhead) ? clipAt(m_playhead)->id : QString();
+    m_perf.cut = !prevTopId.isEmpty() && prevTopId != newTopId;
+    if (m_perf.cut) ++m_perf.cutCount;
+    m_perf.totalMs = m_perf.seekMs + m_perf.prefetchMs + m_perf.mixMs;
 }
 
 // Clipe de vídeo (com mídia) no topo em `t`. Clipes de texto independentes são
@@ -1742,7 +1923,8 @@ QVector<AudioMixer::SourceInfo> buildMixSources(const Project* p, double t) {
                 const MediaItem* m = p->findMedia(c.mediaId);
                 if (!m || !m->hasAudio) continue;
                 const double rel = t - c.pos;
-                double vol = c.volume * kfValue(c.kfVolume, 1.0, rel) * tr.volume;
+                double vol = c.volume * kfValue(c.kfVolume, 1.0, rel)
+                             * kfValue(tr.kfVolume, tr.volume, t);
                 if (c.fadeIn > 1e-6) vol *= std::min(1.0, rel / c.fadeIn);
                 if (c.fadeOut > 1e-6) vol *= std::min(1.0, (c.dur - rel) / c.fadeOut);
                 // Crossfade de transição: sobreposição com vizinho da MESMA
@@ -1764,7 +1946,7 @@ QVector<AudioMixer::SourceInfo> buildMixSources(const Project* p, double t) {
                 // faixa de áudio vence o da faixa de vídeo (inserido depois).
                 const QString base = c.groupId.isEmpty() ? c.id : c.groupId;
                 const QString key = QStringLiteral("%1|%2").arg(base).arg(c.audioStreamIndex);
-                reps.insert(key, {&c, vol, tr.pan, ti, isAudio});
+                reps.insert(key, {&c, vol, kfValue(tr.kfPan, tr.pan, t), ti, isAudio});
             }
         }
     };
@@ -1794,8 +1976,97 @@ QVector<AudioMixer::SourceInfo> buildMixSources(const Project* p, double t) {
         si.trackIndex = it.value().trackIdx;
         si.isAudioTrack = it.value().isAudio;
         si.pan = it.value().pan;
+        if (it.value().isAudio) {
+            const int ti = it.value().trackIdx;
+            if (ti >= 0 && ti < (int)p->audioTracks.size()) {
+                const Track& tr = p->audioTracks[ti];
+                si.trackFxOn = tr.hasAudioFx();
+                si.trackFxEqLow = tr.eqLow;
+                si.trackFxEqMid = tr.eqMid;
+                si.trackFxEqHigh = tr.eqHigh;
+                si.trackFxDenoise = tr.denoise;
+                si.trackFxDenoiseAmount = tr.denoiseAmount;
+                si.trackFxInvertPhase = tr.invertPhase;
+                si.trackFxReverb = tr.reverb;
+                si.trackFxReverbMix = tr.reverbMix;
+                si.trackFxReverbSize = tr.reverbSize;
+            }
+        }
         out.append(si);
     }
+    return out;
+}
+
+// Fontes "pré-aquecidas": clipes de áudio que começam dentro da janela de
+// lookahead à frente do playhead. O mixer abre/posiciona esses decoders sem
+// ativá-los, para que ao chegar no corte a fonte já esteja pronta — antes,
+// a abertura do clipe seguinte acontecia só no tick do corte e deixava uma
+// janela de silêncio audível ("flick").
+QVector<AudioMixer::SourceInfo> buildWarmSources(
+    const Project* p, double t, const QVector<AudioMixer::SourceInfo>& active) {
+    QVector<AudioMixer::SourceInfo> out;
+    if (!p) return out;
+    constexpr double kWarmWin = 0.3; // segundos à frente do playhead
+    bool anySolo = false;
+    for (const Track& tr : p->videoTracks)
+        if (tr.solo) { anySolo = true; break; }
+    if (!anySolo)
+        for (const Track& tr : p->audioTracks)
+            if (tr.solo) { anySolo = true; break; }
+
+    QSet<QString> have;
+    for (const AudioMixer::SourceInfo& a : active) have.insert(a.key);
+    auto warmCollect = [&](const QVector<Track>& tracks, bool isAudio) {
+        for (int ti = 0; ti < (int)tracks.size(); ++ti) {
+            const Track& tr = tracks[ti];
+            if (tr.muted || (anySolo && !tr.solo)) continue;
+            for (const Clip& c : tr.clips) {
+                // Já em reprodução agora, ou começa depois da janela: nada a
+                // aquecer.
+                if (t >= c.pos && t < c.pos + c.dur) continue;
+                if (c.pos <= t || c.pos >= t + kWarmWin) continue;
+                const MediaItem* m = p->findMedia(c.mediaId);
+                if (!m || !m->hasAudio) continue;
+                if (have.contains(c.id)) continue;
+                have.insert(c.id);
+                AudioMixer::SourceInfo si;
+                si.key = c.id; // a chave precisa ser a mesma do want futuro
+                si.path = m->filePath;
+                si.audioStream = c.audioStreamIndex;
+                si.mediaPos = c.in; // começo do áudio do clipe
+                si.vol = c.volume;
+                si.pan = 0.0;
+                si.trackIndex = ti;
+                si.isAudioTrack = isAudio;
+                si.eqLow = c.eqLow;
+                si.eqMid = c.eqMid;
+                si.eqHigh = c.eqHigh;
+                si.denoise = c.denoise;
+                si.denoiseAmount = c.denoiseAmount;
+                si.normalize = c.normalize;
+                si.invertPhase = c.invertPhase;
+                si.reverb = c.reverb;
+                si.reverbMix = c.reverbMix;
+                si.reverbSize = c.reverbSize;
+                if (isAudio) {
+                    const Track& tac = p->audioTracks[ti];
+                    si.trackFxOn = tac.hasAudioFx();
+                    si.trackFxEqLow = tac.eqLow;
+                    si.trackFxEqMid = tac.eqMid;
+                    si.trackFxEqHigh = tac.eqHigh;
+                    si.trackFxDenoise = tac.denoise;
+                    si.trackFxDenoiseAmount = tac.denoiseAmount;
+                    si.trackFxInvertPhase = tac.invertPhase;
+                    si.trackFxReverb = tac.reverb;
+                    si.trackFxReverbMix = tac.reverbMix;
+                    si.trackFxReverbSize = tac.reverbSize;
+                }
+                out.append(si);
+            }
+        }
+    };
+    warmCollect(p->videoTracks, false);
+    warmCollect(p->audioTracks, true);
     return out;
 }
 
@@ -1940,13 +2211,15 @@ void PreviewWidget::updateMixAudio(double t, bool reseek) {
     // Fontes são coletadas na UI thread (leitura leve dos clipes ativos);
     // só o trabalho pesado desce para o pool.
     const QVector<AudioMixer::SourceInfo> sources = buildMixSources(m_project, t);
+    const QVector<AudioMixer::SourceInfo> warm =
+        buildWarmSources(m_project, t, sources);
     auto* feed = m_audioFeed;
     // reseek=true (seek/loop): executa síncrono para garantir que decoders
     // antigos com chave obsoleta (ex: primeiro corte muda id→groupId) sejam
     // removidos IMEDIATAMENTE — o caminho async capturava a lista want
     // ANTES do corte e o decoder velho sobrevivia causando duplicação de áudio.
     // Fase 2 (open/seek) roda fora do lock, então a UI não congela.
-    feed->updateSources(sources, reseek);
+    feed->updateSources(sources, reseek, warm);
 }
 
 void PreviewWidget::updateFrame() {
@@ -2287,13 +2560,15 @@ void PreviewWidget::requestLowerLayers(int decW) {
 // Chamado com m_frameMutex segurado.
 void PreviewWidget::kickFrameWorker() {
     if (m_workerBusy || m_reqQueue.isEmpty() || !m_frameWorker) return;
-    // Prioriza o prefetch: se há um decodePrefetch pendente (o decoder de
-    // prefetch precisa abrir e aquecer o próximo arquivo ANTES do corte), não
-    // enfileira o próximo decodeOne para que o event loop processe o prefetch
-    // primeiro. Sem isso, decodeOne's enfileirados bloqueiam o prefetch e o
-    // swap no corte falha, causando travamento.
-    if (m_prefetch.requested && !m_prefetch.valid) return;
+    // Prefetch: NÃO segura os decodeOne's enquanto o decoder de prefetch
+    // trabalha — isso congelava o clipe atual por ~30-150ms a cada corte (o
+    // prefetch roda na mesma thread). Só bloqueia quando o corte está
+    // iminente (últimos 0.4s) e o prefetch ainda não terminou: aí é melhor
+    // privilegiar aquecer o próximo clipe para o swap ser instantâneo.
+    if (m_prefetch.requested && !m_prefetch.valid
+        && m_playhead >= m_prefetch.clipEnd - 0.4) return;
     m_workerBusy = true;
+    if (m_perfT.isValid()) m_perfWorkerStartNs = m_perfT.nsecsElapsed();
     const FrameReq r = m_reqQueue.takeFirst();
     QMetaObject::invokeMethod(m_frameWorker, "decodeOne", Qt::QueuedConnection,
                               Q_ARG(QString, r.clipId), Q_ARG(QString, r.path),
@@ -2312,6 +2587,8 @@ void PreviewWidget::onFrameReady(const QString& clipId, const QString& path, dou
     {
         QMutexLocker l(&m_frameMutex);
         m_workerBusy = false;
+        if (m_perfT.isValid() && m_perfWorkerStartNs > 0)
+            m_perf.workerMs = (m_perfT.nsecsElapsed() - m_perfWorkerStartNs) / 1000000;
         kickFrameWorker(); // continua com o próximo pedido, se houver
     }
     if (img.isNull() || !m_project) return;
@@ -2387,6 +2664,9 @@ void PreviewWidget::onFrameReady(const QString& clipId, const QString& path, dou
 
 void PreviewWidget::onPrefetchReady(const QString& path, double t, int maxW, const QImage& img) {
     QMutexLocker l(&m_frameMutex);
+    if (m_perfT.isValid() && m_perfPrefetchStartNs > 0)
+        m_perf.prefetchLatMs = (m_perfT.nsecsElapsed() - m_perfPrefetchStartNs) / 1000000;
+    m_perfPrefetchStartNs = 0;
     // Quadro do clipe de trás (transição ativa).
     if (m_underRequested && m_underPath == path
         && std::fabs(m_underT - t) < 1e-4 && m_underW == maxW) {
@@ -2441,6 +2721,7 @@ void PreviewWidget::updatePrefetch() {
 
     {
         QMutexLocker l(&m_frameMutex);
+        if (m_perfT.isValid()) m_perfPrefetchStartNs = m_perfT.nsecsElapsed();
         if (m_prefetch.requested && m_prefetch.path == nextMedia->filePath
             && std::fabs(m_prefetch.t - srcT) < 1e-4 && m_prefetch.maxW == decW) {
             return; // já solicitado ou já pronto
@@ -2451,6 +2732,7 @@ void PreviewWidget::updatePrefetch() {
         m_prefetch.img = QImage();
         m_prefetch.valid = false;
         m_prefetch.requested = true;
+        m_prefetch.clipEnd = clip->pos + clip->dur;
     }
 
     QMetaObject::invokeMethod(m_frameWorker, "decodePrefetch", Qt::QueuedConnection,

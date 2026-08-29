@@ -12,6 +12,7 @@
 #include "ffmpeg/FFmpegDecoder.h"
 #include "ui/TransformDialog.h"
 #include "ui/AudioEffectsDialog.h"
+#include "ui/TrackAudioFxDialog.h"
 #include "ui/TextEditorDialog.h"
 #include "ui/SettingsDialog.h"
 #include "ui/TlLog.h"
@@ -52,6 +53,7 @@
 #include <QFormLayout>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QElapsedTimer>
 #include <QVBoxLayout>
 #include <QSlider>
 #include <QLabel>
@@ -588,6 +590,7 @@ double TimelineWidget::snapTime(double t) const {
 }
 
 void TimelineWidget::setPlayhead(double t) {
+    QElapsedTimer dbg; dbg.start();
     const double prev = m_playhead;
     m_playhead = std::max(0.0, t);
     // Registro sempre-ligado: só transições relevantes (seeks/saltos), não
@@ -610,6 +613,7 @@ void TimelineWidget::setPlayhead(double t) {
     if (m_playing && !m_mouseOnRuler)
         m_cursorT = m_playhead;
     ensurePlayheadVisible();
+    m_perfPlayheadMs = dbg.elapsed();
     update();
 }
 
@@ -2398,6 +2402,55 @@ void TimelineWidget::showAudioEffectsDialog(Clip* c) {
     emit modified();
 }
 
+// Menu dropdown do chip FX no cabeçalho de uma faixa de áudio (estilo Vegas):
+// liga/desliga efeitos rapidamente ou abre o diálogo de ajustes.
+void TimelineWidget::trackFxMenu(Track* track, const QPoint& at) {
+    if (!track || !m_project) return;
+    QMenu menu(this);
+    QAction* denoise = menu.addAction(tr("Redução de ruído"));
+    denoise->setCheckable(true);
+    denoise->setChecked(track->denoise);
+    QAction* reverb = menu.addAction(tr("Reverb EX"));
+    reverb->setCheckable(true);
+    reverb->setChecked(track->reverb);
+    QAction* invert = menu.addAction(tr("Inverter fase"));
+    invert->setCheckable(true);
+    invert->setChecked(track->invertPhase);
+    menu.addSeparator();
+    QAction* adjust = menu.addAction(tr("Ajustes de EQ / Reverb…"));
+    QAction* clear = menu.addAction(tr("Limpar efeitos"));
+
+    const QAction* chosen = menu.exec(at);
+    if (!chosen) return;
+    if (chosen == adjust) {
+        TrackAudioFxDialog dlg(track, this);
+        // O diálogo só escreve na faixa em accept(); emitenos o undo depois.
+        if (dlg.exec() != QDialog::Accepted) return;
+        emit editStart();
+        update();
+        emit modified();
+        return;
+    }
+    emit editStart();
+    if (chosen == denoise) {
+        track->denoise = !track->denoise;
+        if (track->denoise && track->denoiseAmount < 1.0) track->denoiseAmount = 12.0;
+    } else if (chosen == reverb) {
+        track->reverb = !track->reverb;
+    } else if (chosen == invert) {
+        track->invertPhase = !track->invertPhase;
+    } else if (chosen == clear) {
+        track->eqLow = track->eqMid = track->eqHigh = 0.0;
+        track->denoise = false;
+        track->invertPhase = false;
+        track->reverb = false;
+        track->reverbMix = 0.35;
+        track->reverbSize = 0.5;
+    }
+    update();
+    emit modified();
+}
+
 void TimelineWidget::showTextEditorDialog(Clip* c) {
     if (!c) return;
     TextEditorDialog dlg(m_project, c, this);
@@ -2526,6 +2579,35 @@ void TimelineWidget::envelopePress(Clip* c, double t) {
     Keyframe k;
     k.time = rel;
     k.value = kfValue(keys, base, rel);
+    keys.append(k);
+    std::sort(keys.begin(), keys.end(),
+              [](const Keyframe& a, const Keyframe& b) { return a.time < b.time; });
+    update();
+    emit modified();
+}
+
+void TimelineWidget::trackEnvelopePress(int row, bool audio, double t) {
+    // Envelope de volume por faixa (ToolEnvelope em área vazia): alterna um
+    // keyframe no tempo absoluto `t` da timeline (segue o padrão do clipe,
+    // mas com tempos absolutos e base = volume estático da faixa).
+    if (!m_project || row < 0) return;
+    Track& tr = audio ? m_project->audioTracks[row] : m_project->videoTracks[row];
+    const double tt = std::max(0.0, t);
+    QVector<Keyframe>& keys = tr.kfVolume;
+    const double base = tr.volume;
+    for (int i = 0; i < keys.size(); ++i) {
+        if (std::fabs(keys[i].time - tt) < 1e-3) {
+            emit editStart();
+            keys.removeAt(i);
+            update();
+            emit modified();
+            return;
+        }
+    }
+    emit editStart();
+    Keyframe k;
+    k.time = tt;
+    k.value = kfValue(keys, base, tt);
     keys.append(k);
     std::sort(keys.begin(), keys.end(),
               [](const Keyframe& a, const Keyframe& b) { return a.time < b.time; });

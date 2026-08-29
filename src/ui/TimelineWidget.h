@@ -31,14 +31,16 @@ struct ClipVisKey {
     int w = 0;
     int h = 0;
     quint64 epoch = 0;
+    quint32 tint = 0; // cor da faixa (rgba) para redesenhar o waveform
     bool operator==(const ClipVisKey& o) const {
-        return id == o.id && w == o.w && h == o.h && epoch == o.epoch;
+        return id == o.id && w == o.w && h == o.h && epoch == o.epoch
+            && tint == o.tint;
     }
 };
 
 inline uint qHash(const ClipVisKey& k, uint seed = 0) {
     return qHash(k.id, seed) ^ (k.w * 0x9E3779B1u) ^ (k.h * 0x85EBCA77u)
-        ^ (uint(k.epoch) * 0xC2B2AE3Du);
+        ^ (uint(k.epoch) * 0xC2B2AE3Du) ^ (k.tint * 0xC96B9B3Fu);
 }
 
 class TimelineWidget : public QWidget {
@@ -157,7 +159,7 @@ protected:
     void dragLeaveEvent(QDragLeaveEvent*) override;
     void dropEvent(QDropEvent*) override;
 private:
-    enum DragMode { None, MoveClip, TrimLeft, TrimRight, ResizeSpeed, FadeIn, FadeOut, ClipOpacity, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, RulerLoopEdge, ResizeTrack, TrackVol, TrackOp, ClipVol, TrackDrag,
+    enum DragMode { None, MoveClip, TrimLeft, TrimRight, ResizeSpeed, FadeIn, FadeOut, ClipOpacity, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, RulerLoopEdge, ResizeTrack, TrackVol, TrackOp, ClipVol, TrackDrag, TrackEnvVol,
         RippleEdit,    // Trim com ripple (desloca subsequentes)
         RollingEdit,   // Ajusta fronteira entre 2 clipes
         SlipEdit,      // Mudar in/out sem mudar posição
@@ -206,9 +208,9 @@ private:
     void startAutoScroll(QMouseEvent* e);
     void stopAutoScroll();
     void autoScrollTick();
-    void drawClip(QPainter& p, const QRect& r, const Clip& c, const Track& tr, bool audio);
+    void drawClip(QPainter& p, const QRect& r, const Clip& c, const Track& tr, int trackIndex, bool audio);
     void drawTextClipBody(QPainter& p, const QRect& r, const Clip& c);
-    void drawAudioWaveform(QPainter& p, const QRect& r, const Clip& c, const QString& path);
+    void drawAudioWaveform(QPainter& p, const QRect& r, const Clip& c, const QString& path, const QColor& tint);
     void drawVideoThumbs(QPainter& p, const QRect& r, const Clip& c, const QString& path);
     void drawFadeCorners(QPainter& p, const QRect& r, const Clip& c);
     void drawOpacityHandle(QPainter& p, const QRect& r, const Clip& c);
@@ -230,6 +232,7 @@ private:
     Clip* clipAtTime(int row, bool audio, double t) const;
     QPair<Clip*, Clip*> adjacentClips(Clip* c);
     void envelopePress(Clip* c, double t);
+    void trackEnvelopePress(int row, bool audio, double t);
     void applyZoomRect(double t0, double t1);
     void removeClipsByIds(const QStringList& ids);
     void showProperties(Clip* c);
@@ -238,14 +241,18 @@ private:
     void showGradingDialog(Clip* c);
     void showTransformDialog(Clip* c);
     void showAudioEffectsDialog(Clip* c);
+    void trackFxMenu(Track* tr, const QPoint& at);
     void showTextEditorDialog(Clip* c);
-    void drawTrackHeader(QPainter& p, int y, int rowH, const Track& tr, bool selected);
+    void drawTrackHeader(QPainter& p, int y, int rowH, const Track& tr, int index, bool selected);
     int headerBtnAt(const QPoint& pos, int& row, bool& audio) const;
     bool trackLocked(const Clip* c) const;
     int volLineY(int row, bool audio, const Track& tr) const;
     int volRowAt(const QPoint& pos, int& row) const;
     int clipVolLineY(int row, const Clip& c) const;
     Clip* clipVolAt(const QPoint& pos, int& row) const;
+    int trackVolLineYAt(int row, double value) const;
+    int trackEnvKfAt(const QPoint& p, int& row, bool& audio) const;
+    void drawTrackVolEnvelope(QPainter& p, int row, const Track& tr);
     void copySelected();
     void cutSelected();
     void pasteClips();
@@ -280,6 +287,9 @@ private:
 
     Project* m_project = nullptr;
     double m_playhead = 0.0;
+    // Diagnóstico de perf (overlay com PIERROT_PERF_DEBUG=1).
+    qint64 m_perfPlayheadMs = 0;
+    qint64 m_perfPaintMs = 0;
     // Agulha "ponteiro" branca (estilo Vegas): posição do cursor na régua,
     // separada e independente do playhead de reprodução (m_playhead). -1 = oculta.
     double m_cursorT = -1.0;
@@ -345,6 +355,7 @@ private:
     QString m_hoverGripClip; // clipe cuja alça de opacidade está sob o mouse
     QString m_hoverCornerClip; // clipe cujo canto de fade está sob o mouse
     int m_hoverCornerSide = 0; // -1 esquerdo, +1 direito, 0 nenhum
+    QString m_lastVolTip; // texto do último tooltip dB mostrado
     QPixmap m_staticCache;
     bool m_staticDirty = true;
     QHash<QString, ClipOrig> m_dragOrig;
@@ -375,6 +386,16 @@ private:
     double m_volClipOrig = 1.0;
     int m_volRowOrig = -1;   // faixa de origem ao iniciar ClipVol
     bool m_volPending = false; // press em faixa de áudio; vira volume se drag vertical
+    bool m_envPending = false; // press na linha do envelope; clique = ponto, drag = volume
+    bool m_ctrlPending = false; // Ctrl+press num clipe aguardando clique/arrasto
+    QString m_ctrlClipId;       // clipe do Ctrl pending
+    bool m_ctrlCanMove = false; // faixa do clipe não está travada
+
+    // Envelope de volume por faixa (TrackEnvVol): keyframe sendo arrastado.
+    int m_envRow = -1;
+    bool m_envAudio = false;
+    int m_envKf = -1;
+    int m_envOrigY = 0;
 
     QHash<ClipVisKey, QPixmap> m_clipPix;
     qint64 m_clipBytes = 0;

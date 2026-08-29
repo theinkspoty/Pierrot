@@ -25,6 +25,7 @@
 #include <QTimer>
 #include <QLineEdit>
 #include <QSet>
+#include <QToolTip>
 #include <algorithm>
 #include <cmath>
 
@@ -173,7 +174,8 @@ int TimelineWidget::headerBtnAt(const QPoint& pos, int& row, bool& audio) const 
     if (pos.y() < btnY || pos.y() >= btnY + 18) return -1;
     const int dx = pos.x() - 6;
     const int size = 18, gap = 3;
-    for (int i = 0; i < 3; ++i) {
+    const int nBtns = audio ? 4 : 3;
+    for (int i = 0; i < nBtns; ++i) {
         const int bx = i * (size + gap);
         if (dx >= bx && dx < bx + size) return i;
     }
@@ -191,6 +193,10 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
     if (e->button() != Qt::LeftButton) return;
 
     m_volPending = false;
+    m_envPending = false;
+    m_ctrlPending = false;
+    m_ctrlClipId.clear();
+    m_ctrlCanMove = false;
 
     if (y < kRulerH) {
         // Marca o ponteiro branco no ponto clicado da régua.
@@ -288,39 +294,53 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
         }
     }
 
-    // Régua de volume das faixas de áudio: arrastar a linha ajusta o volume.
-    // Só quando não há clipe sob o cursor (o clique no clipe continua
-    // selecionando/arrastando normalmente, mesmo sobre a linha).
-    if (m_showVolLines) {
-        int vrow;
-        const bool onLine = volRowAt(e->pos(), vrow) >= 0
-            && std::abs(e->pos().y() - volLineY(vrow, true, m_project->audioTracks[vrow])) <= 6;
-        if (volRowAt(e->pos(), vrow) >= 0) {
+    // Régua de volume das faixas de áudio (com a tecla V):
+    // - clicar na linha alterna um ponto do envelope (vira ajuste de volume
+    //   base se o arraste for predominantemente vertical);
+    // - segurar num diamante arrasta o valor do keyframe;
+    // - segurar fora da linha (sem clipe) também pode virar ajuste de volume.
+    int vrow;
+    if (m_showVolLines && volRowAt(e->pos(), vrow) >= 0) {
             int r2;
             bool a2;
-            bool overClip = false;
-            if (rowFromY(y, r2, a2) && clipAt(r2, a2, xToTime(x)) != nullptr)
-                overClip = true;
-            if (!overClip && onLine) {
-                emit editStart();
-                m_dragMode = TrackVol;
-                m_volRow = vrow;
-                m_volOrig = m_project->audioTracks[vrow].volume;
-                m_dragStart = e->pos();
-                setCursor(Qt::SizeVerCursor);
-                update();
-                return;
+            const bool overClip = rowFromY(y, r2, a2)
+                && clipAt(r2, a2, xToTime(x)) != nullptr;
+            if (!overClip) {
+                // Diamante de keyframe sob o cursor: arrasta o valor.
+                int erow;
+                bool eaudio;
+                const int kfi = trackEnvKfAt(e->pos(), erow, eaudio);
+                if (kfi >= 0) {
+                    Track& tr = eaudio ? m_project->audioTracks[erow]
+                                       : m_project->videoTracks[erow];
+                    emit editStart();
+                    m_dragMode = TrackEnvVol;
+                    m_envRow = erow;
+                    m_envAudio = eaudio;
+                    m_envKf = kfi;
+                    m_envOrigY = e->pos().y();
+                    m_dragStart = e->pos();
+                    setCursor(Qt::SizeVerCursor);
+                    update();
+                    return;
+                }
+                const Track& tr = m_project->audioTracks[vrow];
+                const bool onLine = std::abs(y - trackVolLineYAt(vrow,
+                    kfValue(tr.kfVolume, tr.volume, xToTime(x)))) <= 6;
+                if (onLine && (m_tool == ToolSelect || m_tool == ToolMove
+                               || m_tool == ToolEnvelope)) {
+                    m_envPending = true;
+                    m_volRow = vrow;
+                } else if (!onLine && (m_tool == ToolSelect || m_tool == ToolMove)) {
+                    // Segurou na faixa (fora da linha e sem clipe): marca como
+                    // "pode virar volume". Se o arraste for predominantemente
+                    // vertical vira ajuste de volume; senão segue o fluxo normal
+                    // (playhead/marquee).
+                    m_volPending = true;
+                    m_volRow = vrow;
+                    m_volOrig = m_project->audioTracks[vrow].volume;
+                }
             }
-            if (!overClip && !onLine && (m_tool == ToolSelect || m_tool == ToolMove)) {
-                // Segurou na faixa (fora da linha e sem clipe): marca como
-                // "pode virar volume". Se o arraste for predominantemente
-                // vertical vira ajuste de volume; senão segue o fluxo normal
-                // (playhead/marquee).
-                m_volPending = true;
-                m_volRow = vrow;
-                m_volOrig = m_project->audioTracks[vrow].volume;
-            }
-        }
     }
 
     // Barra de opacidade da faixa de vídeo no cabeçalho: arrastar ajusta opacidade.
@@ -352,10 +372,15 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
         if (b >= 0) {
             Track* tr = baudio ? &m_project->audioTracks[brow]
                                : &m_project->videoTracks[brow];
+            if (b == 3 && baudio) {
+                // Chip FX: menu dropdown de efeitos de áudio da faixa.
+                trackFxMenu(tr, e->globalPos());
+                return;
+            }
             emit editStart();
             if (b == 0) tr->muted = !tr->muted;
             else if (b == 1) tr->solo = !tr->solo;
-            else tr->locked = !tr->locked;
+            else { tr->locked = !tr->locked; }
             // Clicar no botão também seleciona a faixa (qualquer lugar do
             // cabeçalho seleciona), respeitando Shift/Ctrl.
             if (e->modifiers() & Qt::ShiftModifier)
@@ -449,7 +474,15 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
             return;
         }
         if (m_tool == ToolEnvelope) {
-            if (clip) envelopePress(clip, std::max(0.0, snapTime(t)));
+            // Clique alterna ponto na área vazia da faixa; sobre clipe,
+            // alterna o envelope do clipe. (Diamantes de keyframe já foram
+            // tratados acima, valendo para qualquer ferramenta.)
+            m_envPending = false; // já tratado aqui; evita o toggle no release
+            if (clip) {
+                envelopePress(clip, std::max(0.0, snapTime(t)));
+            } else if (row >= 0) {
+                trackEnvelopePress(row, audio, std::max(0.0, snapTime(t)));
+            }
             return;
         }
         if (m_tool == ToolZoom) {
@@ -473,11 +506,15 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
         }
 
         if (clip) {
-            // Ctrl+clique sobre um clipe alterna a seleção do CLIPE (permite
-            // selecionar vários clipes). Seleção de faixas fica no cabeçalho e
-            // no corpo vazio da faixa (que continuam com Ctrl = alternar faixa).
+            // Ctrl no clipe: clique alterna a seleção do CLIPE (permite
+            // selecionar vários); arrastar DUPLICA o clipe e move a cópia
+            // (estilo Vegas). A decisão vem no movimento (>=4px) ou release.
             if (e->modifiers() & Qt::ControlModifier) {
-                toggleSelection(clip->id);
+                m_dragMode = None;
+                m_ctrlPending = true;
+                m_ctrlClipId = clip->id;
+                m_ctrlCanMove = !trackLocked(clip);
+                m_dragStart = e->pos();
                 return;
             }
             if (!isSelected(clip->id))
@@ -606,6 +643,51 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
     m_mousePos = e->pos();
     m_mouseOnRuler = (e->pos().y() < kRulerH);
 
+    // Ctrl+press num clipe: superou o limite de movimento => duplica e
+    // passa a arrastar a cópia (estilo Vegas). Ficou no clique => o release
+    // alterna a seleção.
+    if (m_ctrlPending) {
+        if (m_ctrlCanMove && (e->pos() - m_dragStart).manhattanLength() >= 4) {
+            m_ctrlPending = false;
+            Clip* src = findClipById(m_ctrlClipId);
+            if (!src) { update(); return; }
+            duplicateClip(src); // emite editStart e seleciona a cópia
+            Clip* copy = m_selected.isEmpty()
+                ? nullptr : findClipById(m_selected.first());
+            if (!copy) { update(); return; }
+            m_dragOrig.clear();
+            auto addOrig = [this](Clip* c) {
+                if (!c) return;
+                if (!c->groupId.isEmpty()) {
+                    for (Clip* m : groupMembers(c->groupId))
+                        m_dragOrig.insert(m->id, {m->pos, m->in, m->dur});
+                } else {
+                    m_dragOrig.insert(c->id, {c->pos, c->in, c->dur});
+                }
+            };
+            addOrig(copy);
+            // A cópia acompanha o mouse: o shift de duração aplicado por
+            // duplicateClip é descontado e o grupo duplicado anda com o cursor.
+            const double offSec = xToTime(e->pos().x()) - xToTime(m_dragStart.x());
+            for (auto it = m_dragOrig.begin(); it != m_dragOrig.end(); ++it) {
+                Clip* sc = findClipById(it.key());
+                if (sc) sc->pos = snapTime(std::max(0.0, sc->pos + offSec));
+            }
+            // Re-registra as posições já deslocadas e continua o arraste daqui.
+            m_dragOrig.clear();
+            addOrig(copy);
+            m_dragMode = MoveClip;
+            m_dragClip = copy->id;
+            m_dragUndoPushed = true; // duplicateClip já abriu o undo
+            m_dragStart = e->pos();
+            m_dragOrigPos = copy->pos;
+            m_dragOrigIn = copy->in;
+            m_dragOrigDur = copy->dur;
+        }
+        update();
+        return;
+    }
+
     // Destaque das alças (opacidade no centro, fades nos cantos) ao passar o
     // mouse sobre o topo de um clipe de vídeo. Repinta só quando o alvo muda.
     // Ignorado durante arrastos.
@@ -636,6 +718,42 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
         m_hoverCornerClip = newCorner;
         m_hoverCornerSide = newSide;
         update();
+    }
+
+    // Tooltip dB (estilo Vegas): sobre a linha de volume/envelope de uma
+    // faixa de áudio, mostra o valor em dB sob o cursor.
+    if (m_dragMode == None && !(e->buttons() & Qt::LeftButton)) {
+        QString tip;
+        const QPoint& at = e->pos();
+        int vrow;
+        if (m_showVolLines && at.x() >= kHeaderW && at.y() >= kRulerH
+            && volRowAt(at, vrow) >= 0) {
+            int r2;
+            bool a2;
+            const bool overClip = rowFromY(at.y(), r2, a2)
+                && clipAt(r2, a2, xToTime(at.x())) != nullptr;
+            if (!overClip) {
+                const Track& tr = m_project->audioTracks[vrow];
+                double val = kfValue(tr.kfVolume, tr.volume, xToTime(at.x()));
+                int erow;
+                bool eaudio;
+                const int kfi = trackEnvKfAt(at, erow, eaudio);
+                if (kfi >= 0 && eaudio) {
+                    const QVector<Keyframe>& keys =
+                        m_project->audioTracks[erow].kfVolume;
+                    if (kfi < keys.size()) val = keys[kfi].value;
+                }
+                const double db = 20.0 * std::log10(std::max(val, 1e-4));
+                tip = QStringLiteral("Volume: %1 dB").arg(db, 0, 'f', 1);
+            }
+        }
+        if (tip != m_lastVolTip) {
+            m_lastVolTip = tip;
+            if (tip.isEmpty())
+                QToolTip::hideText();
+            else
+                QToolTip::showText(mapToGlobal(at), tip, this);
+        }
     }
 
     // Agulha "ponteiro" branca: segue o cursor enquanto ele está sobre a régua
@@ -771,6 +889,24 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
             }
             return;
         }
+        if (m_dragMode == TrackEnvVol) {
+            if (m_envRow < 0 || m_envKf < 0 || !m_envAudio) return;
+            Track& t = m_project->audioTracks[m_envRow];
+            if (m_envKf >= t.kfVolume.size()) return;
+            const int rowH = trackH(m_envRow, true);
+            const int y = rowY(-1, m_envRow);
+            const int pad = 6;
+            const double frac = 1.0 - std::clamp(
+                (double)(e->pos().y() - (y + pad)) / (rowH - pad * 2.0), 0.0, 1.0);
+            const double v = std::clamp(frac * 2.0, 0.0, 2.0);
+            if (std::fabs(t.kfVolume[m_envKf].value - v) > 1e-4) {
+                t.kfVolume[m_envKf].value = v;
+                refreshView();
+                update();
+                emit modified();
+            }
+            return;
+        }
         if (m_dragMode == TrackOp) {
             if (m_volRow < 0 || m_volRow >= (int)m_project->videoTracks.size()) return;
             Track& t = m_project->videoTracks[m_volRow];
@@ -830,9 +966,10 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
             return;
         }
         if (m_dragMode == Marquee) {
-            // Press na faixa de áudio vazia: vira ajuste de volume se o
-            // arraste for predominantemente vertical (para cima/baixo).
-            if (m_volPending) {
+            // Press na faixa de áudio (na linha do envelope ou no vazio):
+            // vira ajuste de volume se o arraste for predominantemente
+            // vertical (para cima/baixo).
+            if (m_volPending || m_envPending) {
                 const int dy = e->pos().y() - m_dragStart.y();
                 const int dx = e->pos().x() - m_dragStart.x();
                 if (std::abs(dy) > std::abs(dx) + 4 && std::abs(dy) >= 5) {
@@ -840,6 +977,7 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                         emit editStart();
                         m_dragMode = TrackVol;
                         m_volPending = false;
+                        m_envPending = false;
                         m_volOrig = m_project->audioTracks[m_volRow].volume;
                         setCursor(Qt::SizeVerCursor);
                         // aplica o volume já neste movimento
@@ -1071,6 +1209,17 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
 }
 
 void TimelineWidget::mouseReleaseEvent(QMouseEvent* e) {
+    // Ctrl+press num clipe sem arrasto: vira clique = alterna a seleção
+    // (Ctrl+clique normal). Se arrastou, o m_ctrlPending já virou
+    // duplicação no mouseMove e aqui não chega.
+    if (m_ctrlPending) {
+        m_ctrlPending = false;
+        Clip* c = findClipById(m_ctrlClipId);
+        if (c) toggleSelection(c->id);
+        update();
+        return;
+    }
+
     switch (m_dragMode) {
     case RulerLoop:
     case RulerLoopEdge:
@@ -1091,6 +1240,7 @@ void TimelineWidget::mouseReleaseEvent(QMouseEvent* e) {
             }
         } else {
             selectInMarquee(e->modifiers() & Qt::ControlModifier);
+            m_envPending = false; // marquee real: não é clique na linha
         }
         m_marqueeRect = QRect();
         break;
@@ -1103,12 +1253,36 @@ void TimelineWidget::mouseReleaseEvent(QMouseEvent* e) {
     case TrackDrag:
         finishTrackDrag();
         break;
+    case TrackEnvVol:
+        // Clique simples (sem arraste) sobre um diamante remove o keyframe.
+        if (m_envRow >= 0 && m_envKf >= 0 && m_envAudio
+            && (e->pos() - m_dragStart).manhattanLength() < 4) {
+            Track& t = m_project->audioTracks[m_envRow];
+            if (m_envKf < t.kfVolume.size()) {
+                t.kfVolume.removeAt(m_envKf);
+                update();
+                emit modified();
+            }
+        }
+        break;
     case TrackOp:
         setCursor(Qt::ArrowCursor);
         break;
     default:
         break;
     }
+
+    // Clique simples na linha do envelope de volume de uma faixa (sem
+    // arraste): alterna um ponto naquele instante (estilo Vegas). Um arraste
+    // vertical já teria convertido para TrackVol no mouseMove.
+    if (m_envPending) {
+        m_envPending = false;
+        if (m_volRow >= 0 && m_volRow < (int)m_project->audioTracks.size()) {
+            const double t = std::max(0.0, snapTime(xToTime(e->pos().x())));
+            trackEnvelopePress(m_volRow, true, t);
+        }
+    }
+
     m_dragMode = None;
     m_dragClip.clear();
     m_dragUndoPushed = false;
@@ -1116,6 +1290,13 @@ void TimelineWidget::mouseReleaseEvent(QMouseEvent* e) {
     m_volRow = -1;
     m_volClip.clear();
     m_volPending = false;
+    m_envPending = false;
+    m_envRow = -1;
+    m_envKf = -1;
+    m_envAudio = false;
+    m_ctrlPending = false;
+    m_ctrlClipId.clear();
+    m_ctrlCanMove = false;
     m_trackDragActive = false;
     m_dragTrackRow = -1;
     m_dragGroupId.clear();

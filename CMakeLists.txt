@@ -50,6 +50,7 @@ set(SOURCES
     src/ui/Theme.cpp
     src/ui/TransformDialog.cpp
     src/ui/AudioEffectsDialog.cpp
+    src/ui/TrackAudioFxDialog.cpp
     src/ui/TextEditorDialog.cpp
     src/ui/WelcomeWindow.cpp
     src/ui/GraphEditorWidget.cpp
@@ -99,6 +100,7 @@ set(HEADERS
     src/ui/Theme.h
     src/ui/TransformDialog.h
     src/ui/AudioEffectsDialog.h
+    src/ui/TrackAudioFxDialog.h
     src/ui/TextEditorDialog.h
     src/ui/WelcomeWindow.h
     src/ui/GraphEditorWidget.h
