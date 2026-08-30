@@ -12,14 +12,14 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 QPointF MesaWidget::canvasToScreen(const QPointF& p) const {
-    const double cx = width() / 2.0 + m_offset.x();
-    const double cy = height() / 2.0 + m_offset.y();
+    const double cx = artCenter().x();
+    const double cy = artCenter().y();
     return QPointF(cx + p.x() * m_zoom, cy + p.y() * m_zoom);
 }
 
 QPointF MesaWidget::screenToCanvas(const QPointF& p) const {
-    const double cx = width() / 2.0 + m_offset.x();
-    const double cy = height() / 2.0 + m_offset.y();
+    const double cx = artCenter().x();
+    const double cy = artCenter().y();
     return QPointF((p.x() - cx) / m_zoom, (p.y() - cy) / m_zoom);
 }
 
@@ -33,16 +33,18 @@ MesaWidget::LayerBounds MesaWidget::layerBounds(const Track* t, int trackIdx) co
     if (!t || !mc) return lb;
 
     const double rel = qMax(0.0, m_playheadTime);
-    // MesaX/Y são OFFSETS do centro do canvas (convenção do MesaRenderer),
-    // não coordenadas absolutas. O pivot real em canvas-space é (canvasW/2 + X).
-    lb.x = mc->canvasW / 2.0 + kfValue(t->kfMesaX, t->mesaX, rel);
-    lb.y = mc->canvasH / 2.0 + kfValue(t->kfMesaY, t->mesaY, rel);
+    // Posição = coordenada absoluta da âncora na composição (origem do canvas
+    // no canto superior esquerdo — mesma convenção do MesaRenderer).
+    lb.x = kfValue(t->kfMesaX, t->mesaX, rel);
+    lb.y = kfValue(t->kfMesaY, t->mesaY, rel);
     lb.rotation = kfValue(t->kfMesaRotation, t->mesaRotation, rel);
-    lb.anchorX = kfValue(t->kfMesaAnchorX, t->mesaAnchorX, rel);
-    lb.anchorY = kfValue(t->kfMesaAnchorY, t->mesaAnchorY, rel);
+    lb.ax = kfValue(t->kfMesaAnchorX, t->mesaAnchorX, rel);
+    lb.ay = kfValue(t->kfMesaAnchorY, t->mesaAnchorY, rel);
 
     double scX = kfValue(t->kfMesaScaleX, t->mesaScaleX, rel);
     double scY = t->kfMesaScaleY.isEmpty() ? scX : kfValue(t->kfMesaScaleY, t->mesaScaleY, rel);
+    lb.sx = qMax(0.001, scX);
+    lb.sy = qMax(0.001, scY);
 
     double frameW = mc->canvasW;
     double frameH = mc->canvasH;
@@ -66,8 +68,8 @@ MesaWidget::LayerBounds MesaWidget::layerBounds(const Track* t, int trackIdx) co
         break;
     }
 
-    lb.w = frameW * scX;
-    lb.h = frameH * scY;
+    lb.w = frameW;
+    lb.h = frameH;
     return lb;
 }
 
@@ -91,32 +93,36 @@ void MesaWidget::layerMediaSize(const Clip& c, bool& ok, double& w, double& h) c
 
 void MesaWidget::layerScreenRect(const LayerBounds& lb, QPointF& center,
                                   QPointF corners[4], QPointF& rotateHandle) const {
-    // Fonte de verdade visual = a MESMA transform de drawTrackImage
-    // (MesaRenderer): a layer gira/escala em torno do ponto do âncora
-    // (pivot + anchor), NÃO do centro do retângulo. Qualquer mudança aqui
-    // precisa continuar espelhando o render.
-    center = canvasToScreen(QPointF(lb.x, lb.y));
-    const QPointF anchorPt = canvasToScreen(QPointF(lb.x + lb.anchorX,
-                                                    lb.y + lb.anchorY));
+    // Fonte de verdade visual = a MESMA matriz de drawTrackImage (MesaRenderer):
+    // M = T(posição)·R·S·T(-âncora), com o quad local na ORIGEM do canto
+    // superior esquerdo do frame natural. O ponto da âncora NA COMPOSIÇÃO é a
+    // própria posição (lb.x/lb.y). Qualquer mudança aqui precisa espelhar o
+    // render exatamente.
+    const QPointF anchorPt = canvasToScreen(QPointF(lb.x, lb.y));
+    // Âncora efetiva em px da layer a partir do topo esquerdo (centro natural
+    // + offset do usuário).
+    const double ax = lb.w / 2.0 + lb.ax;
+    const double ay = lb.h / 2.0 + lb.ay;
     const double rad = qDegreesToRadians(lb.rotation);
     const double cosR = qCos(rad);
     const double sinR = qSin(rad);
     const double zoom = m_zoom;
 
-    // (lx, ly) em canvas-space relativo ao pivot. O quad local é rotacionado
-    // em torno de (anchorX, anchorY) exatamente como o render desenha a imagem.
+    // Mapeia um ponto do espaço local (topo-esquerda do frame) → screen,
+    // aplicando escala, rotação em torno da âncora e translação de posição.
     auto rotPt = [&](double lx, double ly) -> QPointF {
-        const double vx = (lx - lb.anchorX) * cosR - (ly - lb.anchorY) * sinR;
-        const double vy = (lx - lb.anchorX) * sinR + (ly - lb.anchorY) * cosR;
+        const double vx = (lx - ax) * lb.sx * cosR - (ly - ay) * lb.sy * sinR;
+        const double vy = (lx - ax) * lb.sx * sinR + (ly - ay) * lb.sy * cosR;
         return anchorPt + QPointF(vx, vy) * zoom;
     };
 
-    corners[0] = rotPt(-lb.w / 2.0, -lb.h / 2.0);
-    corners[1] = rotPt( lb.w / 2.0, -lb.h / 2.0);
-    corners[2] = rotPt( lb.w / 2.0,  lb.h / 2.0);
-    corners[3] = rotPt(-lb.w / 2.0,  lb.h / 2.0);
+    corners[0] = rotPt(0, 0);
+    corners[1] = rotPt(lb.w, 0);
+    corners[2] = rotPt(lb.w, lb.h);
+    corners[3] = rotPt(0, lb.h);
+    center = rotPt(lb.w / 2.0, lb.h / 2.0);
 
-    rotateHandle = rotPt(0.0, -lb.h / 2.0 - 30.0);
+    rotateHandle = rotPt(lb.w / 2.0, -30.0);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -191,8 +197,8 @@ MesaWidget::HitZone MesaWidget::hitTest(const QPointF& sp, int& outTrackIdx) con
     // 2) Câmera
     {
         const double rel = qMax(0.0, m_playheadTime);
-        const double cXi = mc->canvasW / 2.0 + kfValue(mc->kfCamX, mc->camX, rel);
-        const double cYi = mc->canvasH / 2.0 + kfValue(mc->kfCamY, mc->camY, rel);
+        const double cXi = kfValue(mc->kfCamX, mc->camX, rel);
+        const double cYi = kfValue(mc->kfCamY, mc->camY, rel);
         const double cZi = kfValue(mc->kfCamZoom, mc->camZoom, rel);
         const double cRi = kfValue(mc->kfCamRotation, mc->camRotation, rel);
         const QPointF cc = canvasToScreen(QPointF(cXi, cYi));
@@ -252,17 +258,25 @@ void MesaWidget::cameraCornerPoints(QPointF out[4]) const {
     if (!mc) { out[0] = out[1] = out[2] = out[3] = {}; return; }
     const double rel = qMax(0.0, m_playheadTime);
     const double zi = kfValue(mc->kfCamZoom, mc->camZoom, rel);
-    const double xi = mc->canvasW / 2.0 + kfValue(mc->kfCamX, mc->camX, rel);
-    const double yi = mc->canvasH / 2.0 + kfValue(mc->kfCamY, mc->camY, rel);
+    const double xi = kfValue(mc->kfCamX, mc->camX, rel);
+    const double yi = kfValue(mc->kfCamY, mc->camY, rel);
+    const double ri = kfValue(mc->kfCamRotation, mc->camRotation, rel);
     const double cw = mc->canvasW / qMax(0.01, zi);
     const double ch = mc->canvasH / qMax(0.01, zi);
     const QPointF ctr = canvasToScreen(QPointF(xi, yi));
     const double hw = cw * m_zoom / 2;
     const double hh = ch * m_zoom / 2;
-    out[0] = ctr + QPointF( hw,  hh);
-    out[1] = ctr + QPointF(-hw,  hh);
-    out[2] = ctr + QPointF( hw, -hh);
-    out[3] = ctr + QPointF(-hw, -hh);
+    // Espelha o hitTest: cantos rotacionados pelo ângulo da câmera.
+    const double rad = qDegreesToRadians(ri);
+    const double cosR = qCos(rad), sinR = qSin(rad);
+    auto camRot = [&](double lx, double ly) -> QPointF {
+        return ctr + QPointF(lx * cosR - ly * sinR,
+                             lx * sinR + ly * cosR);
+    };
+    out[0] = camRot( hw,  hh);
+    out[1] = camRot(-hw,  hh);
+    out[2] = camRot( hw, -hh);
+    out[3] = camRot(-hw, -hh);
 }
 
 int MesaWidget::cameraCornerAt(const QPointF& sp) const {

@@ -37,12 +37,18 @@ public:
     // Prepara a renderização de UMA track (decodifica o frame ativo e retorna
     // a transformada a aplicar). Retorna false se não há frame ativo.
     // O resultado pode ser desenhado com drawTrackImage().
+    //
+    // Modelo After Effects: a camada vive no próprio espaço local (origem no
+    // CANTO SUPERIOR ESQUERDO do frame, tamanho natural). A matriz local→comp é
+    //      M = T(posição) · R(rotação) · S(escala) · T(-âncora)
+    // onde o "ponto de âncora" é definido em pixels da layer a partir do topo
+    // esquerdo. posX/posY = coordenada ABSOLUTA da âncora na composição.
     struct LayerPrep {
         QImage frame;
-        double pivotX = 0, pivotY = 0; // centro do pivot no canvas
-        double rot = 0;
-        double anchorX = 0, anchorY = 0;
-        double drawW = 0, drawH = 0;
+        double posX = 0, posY = 0; // posição da âncora na composição (px absolutos)
+        double rot = 0;            // rotação em graus (sentido horário)
+        double sx = 1, sy = 1;     // escala (multiplicador, 1.0 = 100%)
+        double ax = 0, ay = 0;     // âncora: OFFSET do centro natural da layer (px)
         double opacity = 1.0;
         int blend = 0;  // QPainter::CompositionMode (0 = SourceOver)
         bool valid = false;
@@ -50,8 +56,9 @@ public:
     bool prepareLayer(LayerPrep& out, const MesaComposition& mesa,
                       const Project& project, double relTime, const Track& track);
 
-    // Desenha um LayerPrep num painter (aplicando pivot/rotação/âncora/escala
-    // e opacidade). Assume o painter já posicionado no sistema de canvas.
+    // Desenha um LayerPrep num painter (aplicando posição/rotação/escala/
+    // âncora e opacidade). Assume o painter já posicionado no sistema de
+    // coordenadas da composição.
     void drawTrackImage(QPainter& acc, const LayerPrep& prep);
 
     // Desenha todas as layers diretamente num painter já em canvas-space.

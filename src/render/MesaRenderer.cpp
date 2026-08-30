@@ -47,29 +47,33 @@ QImage MesaRenderer::applyCameraTransform(const QImage& canvas,
                                            double relTime) {
     const int outW = project.width;
     const int outH = project.height;
-    const double cx = kfValue(mesa.kfCamX, mesa.camX, relTime);
-    const double cy = kfValue(mesa.kfCamY, mesa.camY, relTime);
-    const double zoom = qMax(0.01, kfValue(mesa.kfCamZoom, mesa.camZoom, relTime));
+    if (canvas.width() <= 0 || canvas.height() <= 0) return {};
+    // Câmera no estilo After Effects: um ponto da composição (camX, camY,
+    // ABSOLUTO, origem topo-esquerda) fica no centro do frame de saída, com
+    // rotação e zoom. zoom = 1.0 com a câmera no centro da comp e a comp
+    // proporcional ao output produz mapeamento 1:1 (contido no frame).
+    // Sem camadas abaixo, o fundo transparente deixa o monitor escuro assumir
+    // — visual idêntico ao preto.
+    const double camX = kfValue(mesa.kfCamX, mesa.camX, relTime);
+    const double camY = kfValue(mesa.kfCamY, mesa.camY, relTime);
+    const double zoom = qMax(0.001, kfValue(mesa.kfCamZoom, mesa.camZoom, relTime));
     const double rot = kfValue(mesa.kfCamRotation, mesa.camRotation, relTime);
 
     QImage out(outW, outH, QImage::Format_ARGB32);
-    // Transparente (não preto opaco): as áreas do canvas sem conteúdo deixam
-    // passar as faixas de VÍDEO INFERIORES no empilhamento (clipes com corte
-    // por baixo da composição). No preview sem camadas abaixo, o fundo escuro
-    // do monitor assume — visual idêntico ao preto.
     out.fill(Qt::transparent);
     QPainter p(&out);
     p.setRenderHint(QPainter::SmoothPixmapTransform);
+    p.setClipRect(0, 0, outW, outH);
 
+    const double fit = qMin(double(outW) / canvas.width(),
+                            double(outH) / canvas.height());
+    const double s = zoom * fit;
+
+    // View = T(centro do output) · R · S · T(-posição da câmera).
     p.translate(outW / 2.0, outH / 2.0);
     p.rotate(rot);
-
-    const double scale = qMin(outW, outH) * zoom / qMax(canvas.width(), canvas.height());
-    p.scale(scale, scale);
-
-    p.translate(-canvas.width() / 2.0 - cx, -canvas.height() / 2.0 - cy);
-
-    p.setClipRect(0, 0, outW, outH);
+    p.scale(s, s);
+    p.translate(-camX, -camY);
     p.drawImage(0, 0, canvas);
 
     return out;
@@ -116,10 +120,12 @@ bool MesaRenderer::prepareLayer(LayerPrep& out, const MesaComposition& mesa,
         if (cRel < 0 || cRel >= c.dur) continue;
 
         if (c.isText) {
-            // Renderiza texto
+            // Renderiza texto no TAMANHO NATURAL da camada (a composição).
+            // A escala é aplicada pela matriz da camada — antes o texto era
+            // escalado duas vezes (frame × sc e de novo no drawImage).
             const TextStyle* ts = project.textStyleFor(c);
-            const int fw = qMax(64, (int)(mesa.canvasW * tScX));
-            const int fh = qMax(32, (int)(mesa.canvasH * tScY));
+            const int fw = qMax(64, (int)(mesa.canvasW));
+            const int fh = qMax(32, (int)(mesa.canvasH));
             frame = QImage(fw, fh, QImage::Format_ARGB32);
             frame.fill(Qt::transparent);
             const double sizeFrac = ts->textSize > 0.0 ? ts->textSize : (1.0 / 18.0);
@@ -151,34 +157,39 @@ bool MesaRenderer::prepareLayer(LayerPrep& out, const MesaComposition& mesa,
     if (frame.isNull()) return false;
 
     out.frame = frame;
+    // Posição = coordenada absoluta da âncora na composição (origem topo-left).
+    out.posX = tMesaX;
+    out.posY = tMesaY;
     out.rot = tRot;
+    out.sx = tScX;
+    out.sy = tScY;
+    // Âncora: offset do centro natural da layer (px da própria layer).
+    out.ax = kfValue(track.kfMesaAnchorX, track.mesaAnchorX, relTime);
+    out.ay = kfValue(track.kfMesaAnchorY, track.mesaAnchorY, relTime);
     out.opacity = tOp;
-    out.anchorX = kfValue(track.kfMesaAnchorX, track.mesaAnchorX, relTime);
-    out.anchorY = kfValue(track.kfMesaAnchorY, track.mesaAnchorY, relTime);
-    out.pivotX = mesa.canvasW / 2.0 + tMesaX;
-    out.pivotY = mesa.canvasH / 2.0 + tMesaY;
-    out.drawW = frame.width() * tScX;
-    out.drawH = frame.height() * tScY;
     out.valid = true;
     return true;
 }
 
 void MesaRenderer::drawTrackImage(QPainter& acc, const LayerPrep& prep) {
     if (!prep.valid || prep.frame.isNull()) return;
+    // Matriz local→comp idêntica ao After Effects:
+    // M = T(posição) · R(rotação) · S(escala) · T(-âncora),
+    // com o frame desenhado com o topo-esquerdo na origem local.
+    // QPainter compõe na ordem das chamadas (1ª = mais externa), então a
+    // sequência abaixo gera exatamente M (ver desenho do quad em layerScreenRect).
     acc.save();
-    acc.translate(prep.pivotX, prep.pivotY);
-    acc.translate(prep.anchorX, prep.anchorY);
+    acc.translate(prep.posX, prep.posY);
     acc.rotate(prep.rot);
-    acc.translate(-prep.anchorX, -prep.anchorY);
-
-    const double drawW = prep.drawW;
-    const double drawH = prep.drawH;
+    acc.scale(prep.sx, prep.sy);
+    acc.translate(-(prep.frame.width() / 2.0 + prep.ax),
+                  -(prep.frame.height() / 2.0 + prep.ay));
 
     acc.setRenderHint(QPainter::SmoothPixmapTransform);
     if (prep.opacity < 1.0)
         acc.setOpacity(prep.opacity);
     acc.setCompositionMode(static_cast<QPainter::CompositionMode>(prep.blend));
-    acc.drawImage(QRectF(-drawW / 2, -drawH / 2, drawW, drawH), prep.frame);
+    acc.drawImage(QRectF(0, 0, prep.frame.width(), prep.frame.height()), prep.frame);
     acc.restore();
 }
 

@@ -243,10 +243,12 @@ struct MesaComposition {
     // Cada track referencia suas props de canvas (mesaX/Y etc.) na própria Track.
     QVector<QString> trackIds;
 
-    // Câmera (define o enquadramento que vai pro output)
-    double camX = 0.0;         // posição X da câmera (pixels no canvas)
+    // Câmera (estilo After Effects: define o enquadramento pro output).
+    // A posição (camX, camY) é ABSOLUTA em px da composição (origem topo-
+    // esquerda); padrão = centro da comp (canvasW/2, canvasH/2).
+    double camX = 0.0;         // posição X da câmera (px absolutos no canvas)
     double camY = 0.0;         // posição Y da câmera
-    double camZoom = 1.0;      // zoom (1.0 = canvas inteiro no output)
+    double camZoom = 1.0;      // zoom (1.0 = comp inteira no output)
     double camRotation = 0.0;  // rotação da câmera em graus
     QVector<Keyframe> kfCamX;
     QVector<Keyframe> kfCamY;
@@ -461,17 +463,21 @@ struct Track {
     int height = 0; // altura da faixa em pixels na timeline; 0 = padrão
     QVector<Clip> clips;
 
-    // ── Propriedades de canvas (Mesa: composição 2D) ────────────────────
+    // ── Propriedades de canvas (Mesa: composição 2D, estilo After Effects) ──
     // Estas propriedades são usadas quando a track pertence a um grupo Mesa.
     // Posição, escala, rotação e opacidade da track no canvas da composição.
-    double mesaX = 0.0;          // posição X no canvas (pixels, centro = 0)
-    double mesaY = 0.0;          // posição Y no canvas (pixels, centro = 0)
+    // O espaço da composição tem a ORIGEM no CANTO SUPERIOR ESQUERDO.
+    // mesaX/mesaY = posição ABSOLUTA do ponto de âncora em px (padrão = centro
+    // da comp). A cadeia de transform é AE: T(pos)·R·S·T(-âncora), onde o
+    // âncora é um OFFSET do CENTRO NATURAL da layer em px da própria layer.
+    double mesaX = 0.0;          // posição X da âncora no canvas (px absolutos)
+    double mesaY = 0.0;          // posição Y da âncora no canvas
     double mesaScaleX = 1.0;     // escala horizontal no canvas
     double mesaScaleY = 1.0;     // escala vertical no canvas
     double mesaRotation = 0.0;   // rotação no canvas (graus)
     double mesaOpacity = 1.0;    // opacidade no canvas (0..1)
-    double mesaAnchorX = 0.0;    // anchor point X (pixels relativo ao centro)
-    double mesaAnchorY = 0.0;    // anchor point Y (pixels relativo ao centro)
+    double mesaAnchorX = 0.0;    // anchor X: offset do centro natural (px da layer)
+    double mesaAnchorY = 0.0;    // anchor Y: offset do centro natural (px da layer)
 
     // Estado da camada na Mesa (independente do resto da timeline):
     // mesaHidden = não desenhada (olho desligado); mesaLocked = não selecionável

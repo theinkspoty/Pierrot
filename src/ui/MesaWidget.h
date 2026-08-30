@@ -22,6 +22,11 @@ class QLineEdit;
 // Tudo é desenhado no canvas: tracks como camadas, câmera, grid.
 // Pan: botão do meio. Zoom: roda do mouse. Seleção: clique esquerdo.
 // Transform: arrastar corpo = mover, cantos = escalar, handle acima = rotacionar.
+// Câmera (estilo AE): clicar no gizmo só SELECIONA; selecionada, arrastar em
+// qualquer lugar do canvas move, cantos redimensionam. A linha "Câmera" no
+// painel vertical fixo à esquerda (elementos da Mesa lá em cima) é a forma
+// confiável de selecioná-la mesmo coberta por camadas. Camadas têm prioridade
+// sobre a câmera no hit-test do canvas. O painel é alternado com a tecla L.
 class MesaWidget : public QWidget {
     Q_OBJECT
 public:
@@ -81,13 +86,16 @@ private:
     int cameraCornerAt(const QPointF& screenPos) const;
     void cameraCornerPoints(QPointF out[4]) const;
 
-    // Bounds da layer (calcula retângulo no canvas-space)
+    // Bounds da layer (mesma convenção AE do MesaRenderer: a layer vive em
+    // espaço local com origem no topo-esquerda, matriz local→comp =
+    // T(posição)·R·S·T(-âncora); x/y = posição absoluta da âncora na comp).
     struct LayerBounds {
-        double x = 0, y = 0;       // centro no canvas
-        double w = 100, h = 100;   // tamanho
+        double x = 0, y = 0;       // posição da âncora na composição (px absolutos)
         double rotation = 0;
-        double anchorX = 0, anchorY = 0;
-        bool hasContent = false;    // tem clip ativo
+        double w = 100, h = 100;   // tamanho NATURAL (não escalado) da camada
+        double sx = 1, sy = 1;     // escala (multiplicador)
+        double ax = 0, ay = 0;     // âncora: OFFSET do centro natural (px da layer)
+        bool hasContent = false;   // tem clip ativo
     };
     LayerBounds layerBounds(const Track* t, int trackIdx) const;
 
@@ -100,11 +108,6 @@ private:
     void layerScreenRect(const LayerBounds& lb, QPointF& center,
                          QPointF corners[4], QPointF& rotateHandle) const;
 
-    // Keyframes
-    void ensureKeyframesAt(double timeSec);      // câmera no tempo dado
-    void writeTrackKeyframes(Track* t);          // só a track dada (auto-key)
-    bool m_autoKey = true;                       // toggle estilo AE (botão/K)
-    QRect m_autoKeyBtnRect;
     void nudgeSelection(double dx, double dy);
 
 // Desenho
@@ -116,6 +119,19 @@ private:
     QString blendShortName(const QString& blend) const;
     int propPanelHeight() const { return 56; }
     int miniTimelineHeight() const { return 64; }
+    // Painel vertical fixo à esquerda (Câmera no topo + camadas). Quando
+    // oculto (tecla L), o canvas volta a ocupar a largura inteira.
+    static constexpr int kLayerPanelW = 190;
+    int panelWidth() const { return m_showLayerList ? kLayerPanelW : 0; }
+    QRect artRect() const {
+        const int pw = panelWidth();
+        return QRect(pw, 0, qMax(1, width() - pw), qMax(1, height()));
+    }
+    int artWidth() const { return artRect().width(); }
+    QPointF artCenter() const {
+        const QRect r = artRect();
+        return QPointF(r.x() + r.width() / 2.0, r.y() + r.height() / 2.0);
+    }
 
     // Campos editáveis do painel de propriedades (clique → digita o valor).
     enum PropKind { PL_X, PL_Y, PL_S, PL_R, PL_O, PL_AX, PL_AY, PC_X, PC_Y, PC_Z, PC_R };
@@ -151,8 +167,9 @@ private:
     double m_zoom = 1.0;
     QPointF m_offset = {0, 0};
 
-    // Seleção
+    // Seleção (exclusiva): camada selecionada (m_selectedIdx) OU câmera.
     int m_selectedIdx = -1;
+    bool m_cameraSelected = false;
 
     // Transform (move/scale/rotate)
     enum TransformOp { TNone, TMove, TScale, TRotate };
@@ -186,11 +203,14 @@ private:
     QPointF m_canvasDragStart;
 
     // Layer list flutuante
-    bool m_showLayerList = false;
+    bool m_showLayerList = true;
     QRect m_layerListRect;
     // Zonas clicáveis de cada linha (olho/cadeado/corpo) preenchidas no draw.
     struct LayerRowZone { QRect eye, lock, body; int idx; };
     QVector<LayerRowZone> m_layerZones;
+    // Nº de linhas visíveis no painel (ajustado no draw quando a lista
+    // estoura a altura do widget). Linha 0 = Câmera.
+    int m_layerListRowCount = 0;
     // Reordenação por arrasto: índice da camada sendo arrastada na lista.
     int m_layerListDragIdx = -1;
     QPoint m_layerListDragStart;

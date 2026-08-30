@@ -134,6 +134,7 @@ double MesaWidget::xToTime(int x, int rulerW) const {
 }
 
 bool MesaWidget::isInMiniTimeline(const QPoint& p) const {
+    if (p.x() < panelWidth()) return false;
     const int tlY = height() - propPanelHeight() - 16 - miniTimelineHeight();
     return p.y() >= tlY && p.y() < tlY + miniTimelineHeight();
 }
@@ -202,7 +203,8 @@ MesaWidget::KfRef MesaWidget::hitTestKf(const QPoint& pos) const {
     MesaComposition* mc = currentMesa();
     if (!mc) return miss;
     const int tlY = height() - propPanelHeight() - 16 - miniTimelineHeight();
-    const int rulerW = width();
+    const int x0 = panelWidth();
+    const int rulerW = artRect().width();
     const double dur = mesaDuration();
     const double start = m_contentStart;
     const double pps = qMax(20.0, (rulerW - 20.0) / dur);
@@ -216,7 +218,7 @@ MesaWidget::KfRef MesaWidget::hitTestKf(const QPoint& pos) const {
     auto checkKf = [&](const QVector<Keyframe>& vks, KfRef::Source src,
                        const QString& tid, int prop, int laneY) -> KfRef {
         for (const Keyframe& k : vks) {
-            const int x = 10 + (int)qRound((k.time - start) * pps);
+            const int x = x0 + 10 + (int)qRound((k.time - start) * pps);
             if (std::abs(pos.x() - x) <= hitR && std::abs(pos.y() - laneY) <= hitR + 2)
                 return {src, tid, k.time, prop};
         }
@@ -257,43 +259,10 @@ MesaWidget::KfRef MesaWidget::hitTestKf(const QPoint& pos) const {
     return miss;
 }
 
-void MesaWidget::ensureKeyframesAt(double timeSec) {
-    MesaComposition* mc = currentMesa();
-    if (!mc) return;
-    const double rel = qMax(0.0, timeSec);
-    auto upsert = [&](QVector<Keyframe>& vks, double val) {
-        upsertKeyframe(vks, rel, val, KfLinear);
-    };
-    upsert(mc->kfCamX, mc->camX);
-    upsert(mc->kfCamY, mc->camY);
-    upsert(mc->kfCamZoom, mc->camZoom);
-    upsert(mc->kfCamRotation, mc->camRotation);
-}
-
-// Grava keyframes APENAS da track editada (como no AE: auto-key afeta só as
-// propriedades mexidas). Antes, writeAllKeyframes() gravava câmera + todas as
-// layers no playhead a cada transform, poluindo tudo de keyframes.
-void MesaWidget::writeTrackKeyframes(Track* t) {
-    if (!t || !m_project) return;
-    const double rel = qMax(0.0, m_playheadTime);
-    auto upsert = [&](QVector<Keyframe>& vks, double val) {
-        upsertKeyframe(vks, rel, val, KfLinear);
-    };
-    upsert(t->kfMesaX, t->mesaX);
-    upsert(t->kfMesaY, t->mesaY);
-    upsert(t->kfMesaScaleX, t->mesaScaleX);
-    upsert(t->kfMesaScaleY, t->mesaScaleY);
-    upsert(t->kfMesaRotation, t->mesaRotation);
-    upsert(t->kfMesaOpacity, t->mesaOpacity);
-    upsert(t->kfMesaAnchorX, t->mesaAnchorX);
-    upsert(t->kfMesaAnchorY, t->mesaAnchorY);
-}
-
 void MesaWidget::nudgeSelection(double dx, double dy) {
     MesaComposition* mc = currentMesa();
     if (!mc) return;
     const QVector<Track*> tracks = mesaTracks();
-    const double rel = qMax(0.0, m_playheadTime);
     auto snap = [&](double v) {
         return m_snapToGrid ? qRound(v / kGridSize) * kGridSize : v;
     };
@@ -302,17 +271,11 @@ void MesaWidget::nudgeSelection(double dx, double dy) {
         if (t->mesaLocked) return;  // cadeado impede transform por teclado também
         t->mesaX = snap(t->mesaX + dx);
         t->mesaY = snap(t->mesaY + dy);
-        if (m_autoKey) {
-            upsertKeyframe(t->kfMesaX, rel, t->mesaX);
-            upsertKeyframe(t->kfMesaY, rel, t->mesaY);
-        }
-    } else {
+    } else if (m_cameraSelected) {
         mc->camX = snap(mc->camX + dx);
         mc->camY = snap(mc->camY + dy);
-        if (m_autoKey) {
-            upsertKeyframe(mc->kfCamX, rel, mc->camX);
-            upsertKeyframe(mc->kfCamY, rel, mc->camY);
-        }
+    } else {
+        return;  // nada selecionado: setas não mexem em nada
     }
     emit modified();
     emit changesCommitted();
@@ -371,8 +334,9 @@ void MesaWidget::drawMiniTimeline(QPainter& p) {
     const int propH = propPanelHeight();
     const int infoH = 16;
     const int tlY = height() - propH - infoH - tlH;
-    const int rulerW = width();
-    m_miniTimelineRect = QRect(0, tlY, rulerW, tlH);
+    const int x0 = panelWidth();
+    const int rulerW = artRect().width();
+    m_miniTimelineRect = QRect(x0, tlY, rulerW, tlH);
 
     // Fundo com gradiente sutil
     QLinearGradient bgGrad(0, tlY, 0, tlY + tlH);
@@ -382,10 +346,14 @@ void MesaWidget::drawMiniTimeline(QPainter& p) {
 
     // Separador superior com glow
     p.setPen(QPen(QColor(70, 70, 76), 1));
-    p.drawLine(0, tlY, rulerW, tlY);
+    p.drawLine(x0, tlY, x0 + rulerW, tlY);
     p.setPen(QPen(QColor(50, 50, 56), 1));
-    p.drawLine(0, tlY + 1, rulerW, tlY + 1);
+    p.drawLine(x0, tlY + 1, x0 + rulerW, tlY + 1);
 
+    // Desenha o conteúdo deslocado de x0 (a barra ocupa a área de arte,
+    // à direita do painel vertical de camadas).
+    p.save();
+    if (x0 > 0) p.translate(x0, 0);
     const double dur = mesaDuration();
     const double start = m_contentStart;
     const double pps = qMax(20.0, (rulerW - 20.0) / dur);
@@ -470,8 +438,8 @@ void MesaWidget::drawMiniTimeline(QPainter& p) {
     lf.setPointSizeF(6);
     p.setFont(lf);
     p.setPen(QColor(90, 100, 110));
-    p.drawText(m_miniTimelineRect.left() + 2, camLaneY + 3, QStringLiteral("CAM"));
-    p.drawText(m_miniTimelineRect.left() + 2, layerLaneY + 3, QStringLiteral("LAY"));
+    p.drawText(2, camLaneY + 3, QStringLiteral("CAM"));
+    p.drawText(2, layerLaneY + 3, QStringLiteral("LAY"));
 
     // Camera keyframes (pista superior)
     const QString camTid;
@@ -509,6 +477,7 @@ void MesaWidget::drawMiniTimeline(QPainter& p) {
             << QPointF(phX, tlY + 8);
         p.drawPolygon(head);
     }
+    p.restore();
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -531,7 +500,8 @@ void MesaWidget::paintEvent(QPaintEvent*) {
                    tr("Nenhuma Mesa selecionada\nClique direito na timeline \xe2\x86\x92 Criar Mesa"));
 
         const int bw = 160, bh = 36;
-        const QRect btnRect(width() / 2 - bw / 2, height() / 2 + 20, bw, bh);
+        const QPointF c = artCenter();
+        const QRect btnRect((int)c.x() - bw / 2, (int)c.y() + 20, bw, bh);
         m_createMesaBtnRect = btnRect;
         p.setPen(QPen(QColor(80, 180, 255), 1));
         p.setBrush(QColor(55, 55, 55));
@@ -545,12 +515,18 @@ void MesaWidget::paintEvent(QPaintEvent*) {
     const double rel = qMax(0.0, m_playheadTime);
     const QVector<Track*> tracks = mesaTracks();
 
+    // Tudo que pertence ao canvas fica restrito à área de arte (à direita do
+    // painel vertical de camadas); o painel é desenhado depois, por cima.
+    p.save();
+    p.setClipRect(artRect());
+
     // ── Grid do workspace ──
     {
         const double gridPx = kGridSize * m_zoom;
         if (gridPx >= 20.0 && gridPx <= 400.0) {
-            const QPointF tl = screenToCanvas(QPointF(0, 0));
-            const QPointF br = screenToCanvas(QPointF(width(), height()));
+            const QRect ar = artRect();
+            const QPointF tl = screenToCanvas(ar.topLeft());
+            const QPointF br = screenToCanvas(ar.bottomRight());
             const double majorStep = kGridSize * 5;
             const double majorPx = majorStep * m_zoom;
 
@@ -615,8 +591,8 @@ void MesaWidget::paintEvent(QPaintEvent*) {
     // ── Desenha layers diretamente no canvas infinito ──
     // Configura transformação canvas→screen no painter
     p.save();
-    const double cx = width() / 2.0 + m_offset.x();
-    const double cy = height() / 2.0 + m_offset.y();
+    const double cx = artCenter().x();
+    const double cy = artCenter().y();
     p.translate(cx, cy);
     p.scale(m_zoom, m_zoom);
 
@@ -717,7 +693,7 @@ void MesaWidget::paintEvent(QPaintEvent*) {
             p.drawRect(QRectF(mid.x() - hsm, mid.y() - hsm, hsm * 2, hsm * 2));
         }
 
-        const QPointF anchor = canvasToScreen(QPointF(lb.anchorX + lb.x, lb.anchorY + lb.y));
+        const QPointF anchor = canvasToScreen(QPointF(lb.x, lb.y));
         p.setPen(QPen(QColor(255, 60, 60), 1.5));
         p.drawLine(anchor + QPointF(-6, 0), anchor + QPointF(6, 0));
         p.drawLine(anchor + QPointF(0, -6), anchor + QPointF(0, 6));
@@ -725,17 +701,20 @@ void MesaWidget::paintEvent(QPaintEvent*) {
 
     // ── Câmera (guia visual, sempre visível) ──
     {
-        const double cXi = mc->canvasW / 2.0 + kfValue(mc->kfCamX, mc->camX, rel);
-        const double cYi = mc->canvasH / 2.0 + kfValue(mc->kfCamY, mc->camY, rel);
+        const double cXi = kfValue(mc->kfCamX, mc->camX, rel);
+        const double cYi = kfValue(mc->kfCamY, mc->camY, rel);
         const double cZi = kfValue(mc->kfCamZoom, mc->camZoom, rel);
         const double cRi = kfValue(mc->kfCamRotation, mc->camRotation, rel);
         const double camW = mc->canvasW / qMax(0.01, cZi);
         const double camH = mc->canvasH / qMax(0.01, cZi);
         const QPointF cc = canvasToScreen(QPointF(cXi, cYi));
 
-        const bool camDefault = qFuzzyCompare(cXi, 0.0) && qFuzzyCompare(cYi, 0.0)
+        const bool camDefault = qFuzzyCompare(cXi, mc->canvasW / 2.0)
+                                && qFuzzyCompare(cYi, mc->canvasH / 2.0)
                                 && qFuzzyCompare(cZi, 1.0) && qFuzzyCompare(cRi, 0.0);
-        const double camAlpha = camDefault ? 60.0 : 200.0;
+        // Selecionada (alvo ativo) = bem visível; senão, sobra só o contorno.
+        const double camAlpha = m_cameraSelected ? 230.0
+                              : (camDefault ? 60.0 : 200.0);
 
         // Viewport da câmera no canvas-space
         const double camScreenW = camW * m_zoom;
@@ -787,6 +766,7 @@ void MesaWidget::paintEvent(QPaintEvent*) {
             p.restore();
         }
     }
+    p.restore();  // fim do clip da área de arte
 
     // ── UI overlays ──
     if (m_showLayerList) drawLayerList(p);
@@ -807,18 +787,7 @@ void MesaWidget::paintEvent(QPaintEvent*) {
         const QString label = mc->name.isEmpty()
             ? QStringLiteral("Mesa \xe2\x80\x94 %1\xd7%2").arg(mc->canvasW).arg(mc->canvasH)
             : QStringLiteral("%1 \xe2\x80\x94 %2\xd7%3").arg(mc->name).arg(mc->canvasW).arg(mc->canvasH);
-        p.drawText(QRect(8, 0, width() - 16 - 92, hh), Qt::AlignLeft | Qt::AlignVCenter, label);
-
-        // Botão AUTO KEY (toggle, estilo AE): ligado = grava keyframe ao editar.
-        const QRect akRect(width() - 88, 3, 80, 16);
-        m_autoKeyBtnRect = akRect;
-        p.setPen(QPen(m_autoKey ? QColor(230, 70, 70) : QColor(100, 100, 100), 1));
-        p.setBrush(m_autoKey ? QColor(230, 70, 70, 35) : QColor(80, 80, 80, 60));
-        p.drawRoundedRect(akRect, 3, 3);
-        p.setPen(m_autoKey ? QColor(255, 120, 120) : QColor(150, 150, 150));
-        p.drawText(akRect, Qt::AlignCenter,
-                   m_autoKey ? QStringLiteral("\xe2\x97\x8f AUTO KEY")
-                             : QStringLiteral("\xe2\x97\x8b AUTO KEY"));
+        p.drawText(QRect(8, 0, width() - 16, hh), Qt::AlignLeft | Qt::AlignVCenter, label);
     }
 
     // ── Info bar ──
@@ -827,7 +796,8 @@ void MesaWidget::paintEvent(QPaintEvent*) {
     p.setFont(infof);
     p.setPen(QColor(100, 100, 100));
     const int infoY = height() - propPanelHeight() - 16 - miniTimelineHeight();
-    p.drawText(QRect(6, infoY, width() - 12, 14), Qt::AlignLeft | Qt::AlignVCenter,
+    const int x0 = panelWidth();
+    p.drawText(QRect(x0 + 6, infoY, artRect().width() - 12, 14), Qt::AlignLeft | Qt::AlignVCenter,
                QStringLiteral("Zoom %1%  |  %2\xd7%3  |  %4 layers  |  G: snap %5  |  L: layers")
                    .arg((int)(m_zoom * 100)).arg(mc->canvasW).arg(mc->canvasH)
                    .arg(tracks.size())
@@ -842,15 +812,16 @@ void MesaWidget::fitToContent() {
     MesaComposition* mc = currentMesa();
     if (!mc || width() <= 0 || height() <= 0) return;
     const double pad = 40.0;
-    const double availW = width() - pad * 2;
-    const double availH = height() - pad * 2 - propPanelHeight() - 22 - miniTimelineHeight();
+    const QRect ar = artRect();
+    const double availW = ar.width() - pad * 2;
+    const double availH = ar.height() - pad * 2 - propPanelHeight() - 22 - miniTimelineHeight();
     if (availW <= 0 || availH <= 0) return;
     const double sx = availW / mc->canvasW;
     const double sy = availH / mc->canvasH;
     m_zoom = qMin(sx, sy);
-    // Centraliza o canvas no widget: a origem do canvas fica em
-    // (widget_center - canvasW/2 * zoom), não no centro do widget.
-    const QPointF center(width() / 2.0, height() / 2.0);
+    // Centraliza o canvas na área de arte (à direita do painel de camadas):
+    // a origem do canvas fica em (art_center - canvasW/2 * zoom).
+    const QPointF center = artCenter();
     m_offset = center - QPointF(mc->canvasW / 2.0, mc->canvasH / 2.0) * m_zoom
              - center;  // simplifica para -canvas/2 * zoom
 }

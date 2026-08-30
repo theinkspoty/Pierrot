@@ -8,7 +8,9 @@
 #include <QPainterPath>
 
 // ═══════════════════════════════════════════════════════════════════════
-// Layer list flutuante (AE-style panel)
+// Painel vertical fixo à esquerda: Câmera no topo + elementos (clips/fotos)
+// empilhados abaixo. Clique numa linha seleciona; a transformação acontece
+// no canvas.
 // ═══════════════════════════════════════════════════════════════════════
 
 void MesaWidget::drawLayerList(QPainter& p) {
@@ -16,53 +18,80 @@ void MesaWidget::drawLayerList(QPainter& p) {
     if (!mc) return;
 
     const QVector<Track*> tracks = mesaTracks();
+    const int panelW = kLayerPanelW;
+    const int barH = 22;      // header bar do widget (desenhado depois, por cima)
+    const int titleH = 22;    // título interno do painel
     const int rowH = 24;
-    const int headerH = 26;
-    const int listW = 196;
-    const int listH = headerH + tracks.size() * rowH + 4;
-
-    m_layerListRect = QRect(8, height() - listH - 28 - propPanelHeight(), listW, listH);
+    m_layerListRect = QRect(0, barH, panelW, qMax(1, height() - barH));
     m_layerZones.clear();
 
-    // Shadow
-    p.setPen(Qt::NoPen);
-    p.setBrush(QColor(0, 0, 0, 40));
-    p.drawRoundedRect(m_layerListRect.adjusted(2, 2, 2, 2), 4, 4);
+    // Fundo do painel (a coluna inteira)
+    p.fillRect(m_layerListRect, QColor(28, 28, 31));
+    p.setPen(QPen(QColor(50, 50, 54), 1));
+    p.drawLine(panelW - 1, barH, panelW - 1, m_layerListRect.bottom());
 
-    // Background
-    p.setPen(QPen(QColor(60, 60, 60), 1));
-    p.setBrush(QColor(32, 32, 32, 240));
-    p.drawRoundedRect(m_layerListRect, 4, 4);
-
-    // Header
+    // Título
     QFont hf = p.font();
     hf.setPointSizeF(8);
     hf.setBold(true);
     p.setFont(hf);
-    p.setPen(QColor(160, 160, 160));
-    p.drawText(m_layerListRect.adjusted(8, 4, -8, 0), Qt::AlignLeft | Qt::AlignTop,
-               QStringLiteral("LAYERS  (arraste = reordenar)"));
+    p.setPen(QColor(150, 150, 150));
+    p.drawText(QRect(8, m_layerListRect.top(), panelW - 16, titleH),
+               Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("MESA"));
 
     QFont rf = p.font();
     rf.setPointSizeF(8);
     rf.setBold(false);
     p.setFont(rf);
 
-    for (int i = 0; i < tracks.size(); ++i) {
+    // Linhas visíveis: 0 = Câmera, depois camadas do topo do empilhamento.
+    // Se estourar a altura da coluna, as excedentes ficam fora da área
+    // clicável/desenhada (rolagem fica como follow-up).
+    const int maxRows = qMax(0, (m_layerListRect.height() - titleH) / rowH);
+    const int rowCount = qMin((int)tracks.size() + 1, maxRows);
+    m_layerListRowCount = rowCount;
+    if (rowCount <= 0) return;
+
+    const int left = m_layerListRect.left();
+    const int top = m_layerListRect.top() + titleH;
+
+    // ── Linha fixa da Câmera (row 0) ──
+    {
+        const int y = top;
+        const bool sel = m_cameraSelected;
+        if (sel)
+            p.fillRect(left + 1, y, panelW - 2, rowH, QColor(50, 80, 130));
+        else
+            p.fillRect(left + 1, y, panelW - 2, rowH, QColor(38, 38, 38));
+
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(70, 170, 210));
+        p.drawRoundedRect(left + 24, y + 7, 10, 10, 2, 2);
+
+        p.setPen(sel ? QColor(240, 240, 240) : QColor(175, 175, 175));
+        p.drawText(QRect(left + 40, y, panelW - 40 - 70, rowH),
+                   Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("Câmera"));
+        const double zi = kfValue(mc->kfCamZoom, mc->camZoom, qMax(0.0, m_playheadTime));
+        p.setPen(QColor(120, 185, 205));
+        p.drawText(QRect(left + panelW - 66, y, 52, rowH),
+                   Qt::AlignRight | Qt::AlignVCenter, QString::number(zi, 'f', 2));
+
+        m_layerZones.append({ {}, {}, QRect(left + 2, y, panelW - 4, rowH), -1 });
+    }
+
+    for (int i = 0; i + 1 < rowCount; ++i) {
         const int rowIdx = tracks.size() - 1 - i;
         const Track* t = tracks[rowIdx];
         const bool sel = (rowIdx == m_selectedIdx);
-        const int y = m_layerListRect.top() + headerH + i * rowH;
+        const int y = top + (i + 1) * rowH;
 
         // Selection highlight
         if (sel)
-            p.fillRect(m_layerListRect.left() + 1, y, listW - 2, rowH, QColor(50, 80, 130));
+            p.fillRect(left + 1, y, panelW - 2, rowH, QColor(50, 80, 130));
         else if (rowIdx % 2 == 0)
-            p.fillRect(m_layerListRect.left() + 1, y, listW - 2, rowH, QColor(38, 38, 38));
+            p.fillRect(left + 1, y, panelW - 2, rowH, QColor(38, 38, 38));
         else
-            p.fillRect(m_layerListRect.left() + 1, y, listW - 2, rowH, QColor(32, 32, 32));
-
-        const int left = m_layerListRect.left();
+            p.fillRect(left + 1, y, panelW - 2, rowH, QColor(32, 32, 32));
 
         // Eye (olho): t, clique alterna mesaHidden
         const QRect eyeR(left + 4, y + 5, 14, 14);
@@ -82,22 +111,22 @@ void MesaWidget::drawLayerList(QPainter& p) {
 
         // Layer name
         p.setPen(sel ? QColor(240, 240, 240) : QColor(170, 170, 170));
-        p.drawText(QRect(left + 40, y, listW - 40 - 46, rowH),
+        p.drawText(QRect(left + 40, y, panelW - 40 - 46, rowH),
                    Qt::AlignLeft | Qt::AlignVCenter, t->name.left(11));
 
         // Blend mode abreviado (ex.: "N","A","M","S","O"). Clique direito
         // na linha troca o modo.
         if (t->blendMode != QStringLiteral("normal")) {
             p.setPen(QColor(255, 170, 60));
-            p.drawText(QRect(left + listW - 58, y, 22, rowH),
+            p.drawText(QRect(left + panelW - 58, y, 22, rowH),
                        Qt::AlignRight | Qt::AlignVCenter, blendShortName(t->blendMode));
         }
 
         // Lock (cadeado): clique alterna mesaLocked
-        const QRect lockR(left + listW - 30, y + 4, 16, 16);
+        const QRect lockR(left + panelW - 30, y + 4, 16, 16);
         drawLockIcon(p, lockR, t->mesaLocked);
 
-        m_layerZones.append({ eyeR, lockR, QRect(left + 2, y, listW - 4, rowH), rowIdx });
+        m_layerZones.append({ eyeR, lockR, QRect(left + 2, y, panelW - 4, rowH), rowIdx });
     }
 }
 
@@ -159,12 +188,18 @@ QString MesaWidget::blendShortName(const QString& blend) const {
 
 void MesaWidget::drawPropertyPanel(QPainter& p) {
     const int ph = propPanelHeight();
-    const int w = width();
+    const int x0 = panelWidth();
+    const int w = artRect().width();
     const int y = height() - ph;
 
-    p.fillRect(0, y, w, ph, QColor(35, 35, 35));
+    p.fillRect(x0, y, w, ph, QColor(35, 35, 35));
     p.setPen(QColor(60, 60, 60));
-    p.drawLine(0, y, w, y);
+    p.drawLine(x0, y, x0 + w, y);
+
+    // Conteúdo deslocado de x0: o painel ocupa só a área à direita da coluna
+    // vertical de camadas.
+    p.save();
+    if (x0 > 0) p.translate(x0, 0);
 
     QFont f = p.font();
     f.setPointSizeF(8);
@@ -185,7 +220,9 @@ void MesaWidget::drawPropertyPanel(QPainter& p) {
         p.fillRect(x + 36, fy + 4, fieldW, 24, QColor(45, 45, 45));
         p.setPen(QColor(210, 210, 210));
         p.drawText(QRect(x + 38, fy + 4, fieldW - 4, 24), Qt::AlignLeft | Qt::AlignVCenter, value);
-        m_propFields.append({QRect(x + 36, fy + 4, fieldW, 24), kind});
+        // O rect é guardado em coordenadas do widget (não da área traduzida),
+        // para o hit-test do mouse bater.
+        m_propFields.append({QRect(x + 36 + x0, fy + 4, fieldW, 24), kind});
     };
 
     MesaComposition* mc = currentMesa();
@@ -249,4 +286,5 @@ void MesaWidget::drawPropertyPanel(QPainter& p) {
                        QStringLiteral("Selecione uma camada na lista (L) ou no canvas"));
         }
     }
+    p.restore();
 }

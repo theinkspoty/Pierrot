@@ -412,6 +412,9 @@ void TimelineWidget::criarMesa() {
     m_project->addTrack(false);
     Track& newTrack = m_project->videoTracks.last();
     newTrack.name = mc.name;
+    // Posição padrão no centro da composição (estilo AE: pos da âncora).
+    newTrack.mesaX = mc.canvasW / 2.0;
+    newTrack.mesaY = mc.canvasH / 2.0;
 
     // Cria o TrackGroup (pasta) vinculado à Mesa
     TrackGroup grp;
@@ -422,6 +425,9 @@ void TimelineWidget::criarMesa() {
     newTrack.groupId = grp.id;
 
     mc.trackIds.append(newTrack.id);
+    // Câmera padrão centrada na composição (mesma convenção das layers).
+    mc.camX = mc.canvasW / 2.0;
+    mc.camY = mc.canvasH / 2.0;
     m_project->mesas.append(mc);
 
     emit modified();
@@ -448,6 +454,9 @@ void TimelineWidget::addTrackToMesa(const QString& mesaId) {
 
     // Adiciona à lista de tracks da Mesa
     mc->trackIds.append(newTrack.id);
+    // Posição padrão no centro da composição (estilo AE).
+    newTrack.mesaX = mc->canvasW / 2.0;
+    newTrack.mesaY = mc->canvasH / 2.0;
 
     emit modified();
     invalidateScene();

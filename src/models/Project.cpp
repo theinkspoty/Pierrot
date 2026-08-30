@@ -605,6 +605,11 @@ QJsonObject Project::toJson() const {
     for (const MesaComposition& m : mesas) mesaArr.append(mesaToJson(m));
     o["mesas"] = mesaArr;
 
+    // Marker de migração: versão 2 das posições Mesa (px absolutos, origem
+    // topo-esquerda). Arquivos sem este campo são da v1 (offset do centro)
+    // e recebem +canvasW/2, +canvasH/2 no load — ver fromJson.
+    o["mesaPosAbs"] = true;
+
     return o;
 }
 
@@ -660,5 +665,30 @@ void Project::fromJson(const QJsonObject& o) {
     for (const QJsonValue& v : mesaArr) {
         MesaComposition m = mesaFromJson(v.toObject());
         if (!m.id.isEmpty()) mesas.append(m);
+    }
+
+    // Migração v1 → v2: antes, mesaX/mesaY e camX/camY eram OFFSETS do centro
+    // da comp (default 0 = centro). Agora são px ABSOLUTOS com origem no canto
+    // superior esquerdo (default = centro). Desloca valores estáticos E os
+    // keyframes, preservando a aparência dos projetos antigos.
+    if (!o.contains("mesaPosAbs") || !o["mesaPosAbs"].toBool()) {
+        for (MesaComposition& m : mesas) {
+            const double dX = m.canvasW / 2.0;
+            const double dY = m.canvasH / 2.0;
+            auto shift = [dX, dY](Track& t) {
+                t.mesaX += dX;
+                t.mesaY += dY;
+                for (Keyframe& k : t.kfMesaX) k.value += dX;
+                for (Keyframe& k : t.kfMesaY) k.value += dY;
+            };
+            for (const QString& tid : m.trackIds) {
+                for (Track& t : videoTracks) if (t.id == tid) shift(t);
+                for (Track& t : audioTracks) if (t.id == tid) shift(t);
+            }
+            m.camX += dX;
+            m.camY += dY;
+            for (Keyframe& k : m.kfCamX) k.value += dX;
+            for (Keyframe& k : m.kfCamY) k.value += dY;
+        }
     }
 }
