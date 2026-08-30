@@ -152,8 +152,8 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
             const int row = relY / rowH;
 
             // Row 0 = Câmera: clique alterna a seleção da câmera (independente da
-            // camada selecionada). Com ela ativa, arrastar o vazio move a
-            // câmera; sem ela, o vazio vira a mãozinha de pan.
+            // camada selecionada). Com ela ativa, arrastar em QUALQUER lugar do
+            // canvas move a câmera; sem ela, o vazio vira a mãozinha de pan.
             if (row == 0) {
                 m_cameraSelected = !m_cameraSelected;
                 qCInfo(lcMesa).noquote() << "[MESA] painel: câmera"
@@ -223,31 +223,36 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
     int hitIdx = -1;
     HitZone hz = hitTest(e->position(), hitIdx);
 
-    // Câmera (estilo AE): o primeiro clique só SELECIONA. Já selecionada,
-    // o clique ativa a operação direto (corpo = mover, canto = redimensionar).
-    // A seleção da camada é preservada (seleção independente).
+    // ── Câmera selecionada = ELEMENTO ATIVO: arrastar em QUALQUER lugar do
+    // canvas move a câmera (cantos redimensionam). É o jeito fácil de enquadrar:
+    // escolha a câmera uma vez e arraste por cima da imagem sem roubar o alvo.
+    if (m_cameraSelected) {
+        const double relC = qMax(0.0, m_playheadTime);
+        if (hz == HitCameraCorner) {
+            m_resizingCamera = true;
+            m_resizeCorner = cameraCornerAt(e->position());
+            m_resizeStartZoom = kfValue(mc->kfCamZoom, mc->camZoom, relC);
+            m_resizeStartPos = e->position();
+            setCursor(Qt::SizeFDiagCursor);
+            qCInfo(lcMesa).noquote() << "[MESA] canvas: RESIZING camera (cantos)";
+        } else {
+            m_draggingCamera = true;
+            m_cameraDragStart = e->position();
+            m_camDragStartX = kfValue(mc->kfCamX, mc->camX, relC);
+            m_camDragStartY = kfValue(mc->kfCamY, mc->camY, relC);
+            setCursor(Qt::SizeAllCursor);
+            qCInfo(lcMesa).noquote()
+                << "[MESA] canvas: MOVING camera (elemento ativo — arraste em qualquer lugar)";
+        }
+        update();
+        return;
+    }
+
+    // ── Câmera desmarcada: clique no gizmo só SELECIONA (1º clique) ──
     if (hz == HitCameraCorner || hz == HitCamera) {
-        const bool alreadySel = m_cameraSelected;
         m_cameraSelected = true;
         emit mesaCameraSelected(mc);
-        if (alreadySel) {
-            const double relC = qMax(0.0, m_playheadTime);
-            if (hz == HitCameraCorner) {
-                m_resizingCamera = true;
-                m_resizeCorner = cameraCornerAt(e->position());
-                m_resizeStartZoom = kfValue(mc->kfCamZoom, mc->camZoom, relC);
-                m_resizeStartPos = e->position();
-                qCInfo(lcMesa).noquote() << "[MESA] canvas: RESIZING camera (cantos)";
-            } else {
-                m_draggingCamera = true;
-                m_cameraDragStart = e->position();
-                m_camDragStartX = kfValue(mc->kfCamX, mc->camX, relC);
-                m_camDragStartY = kfValue(mc->kfCamY, mc->camY, relC);
-                qCInfo(lcMesa).noquote() << "[MESA] canvas: MOVING camera";
-            }
-        } else {
-            qCInfo(lcMesa).noquote() << "[MESA] canvas: câmera selecionada (1º clique)";
-        }
+        qCInfo(lcMesa).noquote() << "[MESA] canvas: câmera selecionada (1º clique)";
         update();
         return;
     }
@@ -256,20 +261,6 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
     if (hitIdx >= 0 && (hz == HitBody || hz == HitCornerTL || hz == HitCornerTR ||
         hz == HitCornerBL || hz == HitCornerBR || hz == HitEdgeT ||
         hz == HitEdgeB || hz == HitEdgeL || hz == HitEdgeR || hz == HitRotate)) {
-
-        // A câmera é a nossa "escolha": clicar em cima de uma camada não
-        // rouba o elemento ativo nem muda a seleção. Vira pan, como no vazio.
-        // Para editar a camada, tire a câmera (tecla Esc ou clique na linha
-        // "Câmera" do painel).
-        if (m_cameraSelected) {
-            m_draggingCanvas = true;
-            m_canvasDragStart = e->position();
-            setCursor(Qt::ClosedHandCursor);
-            qCInfo(lcMesa).noquote()
-                << "[MESA] canvas: câmera ativa — clique na camada vira PAN";
-            update();
-            return;
-        }
 
         m_selectedIdx = hitIdx;
 
@@ -319,9 +310,9 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
         return;
     }
 
-    // Nada clicado: a mãozinha SEMPRE dá pan do canvas (navega a vista do
-    // canvas infinito, como em apps de desenho). A câmera só é movida
-    // via gizmo (selecionar e arrastar o corpo/cantos dela).
+    // Nada clicado e câmera desmarcada: a mãozinha dá pan do canvas (navega a
+    // vista do canvas infinito, como em apps de desenho). Com a câmera
+    // selecionada o arrasto move a CÂMERA (caso acima), não o canvas.
     m_draggingCanvas = true;
     m_canvasDragStart = e->position();
     setCursor(Qt::ClosedHandCursor);

@@ -23,17 +23,14 @@ Q_DECLARE_LOGGING_CATEGORY(lcMesa)
 
 // Dock Mesa — canvas infinito estilo After Effects Composition Panel.
 // Tudo é desenhado no canvas: tracks como camadas, câmera, grid.
-// Pan: botão do meio. Zoom: roda do mouse. Seleção: clique esquerdo.
+// Pan: arrastar o vazio com a mãozinha (quando nada está ativo). Zoom: roda. Seleção: clique esquerdo.
 // Transform: arrastar corpo = mover, cantos = escalar, handle acima = rotacionar.
-// Doc: câmera (estilo AE): clicar no gizmo só SELECIONA; selecionada, arrastar em
-// qualquer lugar do canvas move, cantos redimensionam. A linha "Câmera" no
-// painel vertical fixo à esquerda (elementos da Mesa lá em cima) é a forma
-// confiável de selecioná-la mesmo coberta por camadas. Camadas têm prioridade
-// sobre a câmera no hit-test do canvas. O painel é alternado com a tecla L.
-// Com a câmera ATIVA, clicar em qualquer lugar (vazio OU em cima de uma
-// camada) NÃO rouba o elemento: vira pan da mãozinha. A câmera é a "escolha"
-// e só sai dela com Esc ou clicando na linha "Câmera". Para editar uma
-// camada, desative a câmera primeiro.
+// Doc: câmera (estilo AE): clicar no gizmo só SELECIONA; selecionada, arrastar
+// em QUALQUER lugar do canvas (vazio, em cima de camada, no próprio gizmo)
+// MOVE a câmera — cantos redimensionam. É o jeito fácil de enquadrar. Para
+// voltar à mãozinha de pan, desmarque a câmera com Esc ou clicando na linha
+// "Câmera" do painel. Sem a câmera selecionada, o vazio dá pan e o gizmo só
+// seleciona. O painel é alternado com a tecla L.
 class MesaWidget : public QWidget {
     Q_OBJECT
 public:

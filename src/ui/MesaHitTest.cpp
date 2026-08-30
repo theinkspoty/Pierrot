@@ -185,20 +185,9 @@ MesaWidget::HitZone MesaWidget::hitTest(const QPointF& sp, int& outTrackIdx) con
         return HitNone;
     };
 
-    // 1) Camadas com conteúdo (topo → fundo)
-    // Oculta (olho off) ou trancada (cadeado) não participa do hit test.
-    for (int i = tracks.size() - 1; i >= 0; --i) {
-        const Track* tr = tracks[i];
-        if (tr->mesaHidden || tr->mesaLocked) continue;
-        const LayerBounds lb = layerBounds(tr, i);
-        if (lb.hasContent) {
-            const HitZone z = layerHit(lb);
-            if (z != HitNone) { outTrackIdx = i; return z; }
-        }
-    }
-
-    // 2) Câmera
-    {
+    // Câmera: verifica pontos de canto (redimensionar) e corpo (recorte do
+    // enquadramento). Extraída pra lambda pra poder alternar a prioridade.
+    auto camHit = [&]() -> HitZone {
         const double rel = qMax(0.0, m_playheadTime);
         const double cXi = kfValue(mc->kfCamX, mc->camX, rel);
         const double cYi = kfValue(mc->kfCamY, mc->camY, rel);
@@ -221,18 +210,43 @@ MesaWidget::HitZone MesaWidget::hitTest(const QPointF& sp, int& outTrackIdx) con
             if (QLineF(camCorners[i], sp).length() <= handleRadius + 2)
                 return HitCameraCorner;
 
-        {
-            const double rad = qDegreesToRadians(cRi);
-            const double cosR = qCos(rad), sinR = qSin(rad);
-            const QPointF d = sp - cc;
-            const double lx =  d.x() * cosR + d.y() * sinR;
-            const double ly = -d.x() * sinR + d.y() * cosR;
-            if (qAbs(lx) <= camHW && qAbs(ly) <= camHH)
-                return HitCamera;
+        const double rad = qDegreesToRadians(cRi);
+        const double cosR = qCos(rad), sinR = qSin(rad);
+        const QPointF d = sp - cc;
+        const double lx =  d.x() * cosR + d.y() * sinR;
+        const double ly = -d.x() * sinR + d.y() * cosR;
+        if (qAbs(lx) <= camHW && qAbs(ly) <= camHH)
+            return HitCamera;
+        return HitNone;
+    };
+
+    // 1) A câmera TEM prioridade quando é a "escolha" ativa: com ela
+    // selecionada, o gizmo (e os cantos) ficam por cima de qualquer camada —
+    // nunca fica impossível agarrar o frame mesmo com uma imagem cobrindo.
+    if (m_cameraSelected) {
+        const HitZone z = camHit();
+        if (z != HitNone) return z;
+    }
+
+    // 2) Camadas com conteúdo (topo → fundo)
+    // Oculta (olho off) ou trancada (cadeado) não participa do hit test.
+    for (int i = tracks.size() - 1; i >= 0; --i) {
+        const Track* tr = tracks[i];
+        if (tr->mesaHidden || tr->mesaLocked) continue;
+        const LayerBounds lb = layerBounds(tr, i);
+        if (lb.hasContent) {
+            const HitZone z = layerHit(lb);
+            if (z != HitNone) { outTrackIdx = i; return z; }
         }
     }
 
-    // 3) Placeholders (camadas sem conteúdo ativo no playhead)
+    // 3) Câmera (não selecionada): logo depois das camadas com conteúdo.
+    {
+        const HitZone z = camHit();
+        if (z != HitNone) return z;
+    }
+
+    // 4) Placeholders (camadas sem conteúdo ativo no playhead)
     for (int i = tracks.size() - 1; i >= 0; --i) {
         const Track* tr = tracks[i];
         if (tr->mesaHidden || tr->mesaLocked) continue;

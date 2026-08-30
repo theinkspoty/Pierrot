@@ -41,23 +41,11 @@ QImage MesaRenderer::decodeFrame(const QString& filePath, double time, int maxW)
     return frame;
 }
 
-QImage MesaRenderer::applyCameraTransform(const QImage& canvas,
-                                           const MesaComposition& mesa,
-                                           const Project& project,
-                                           double relTime) {
+QImage MesaRenderer::render(const MesaComposition& mesa, const Project& project,
+                             double time) {
     const int outW = project.width;
     const int outH = project.height;
-    if (canvas.width() <= 0 || canvas.height() <= 0) return {};
-    // Câmera no estilo After Effects: um ponto da composição (camX, camY,
-    // ABSOLUTO, origem topo-esquerda) fica no centro do frame de saída, com
-    // rotação e zoom. zoom = 1.0 com a câmera no centro da comp e a comp
-    // proporcional ao output produz mapeamento 1:1 (contido no frame).
-    // Sem camadas abaixo, o fundo transparente deixa o monitor escuro assumir
-    // — visual idêntico ao preto.
-    const double camX = kfValue(mesa.kfCamX, mesa.camX, relTime);
-    const double camY = kfValue(mesa.kfCamY, mesa.camY, relTime);
-    const double zoom = qMax(0.001, kfValue(mesa.kfCamZoom, mesa.camZoom, relTime));
-    const double rot = kfValue(mesa.kfCamRotation, mesa.camRotation, relTime);
+    if (outW <= 0 || outH <= 0 || mesa.canvasW <= 0 || mesa.canvasH <= 0) return {};
 
     QImage out(outW, outH, QImage::Format_ARGB32);
     out.fill(Qt::transparent);
@@ -65,26 +53,31 @@ QImage MesaRenderer::applyCameraTransform(const QImage& canvas,
     p.setRenderHint(QPainter::SmoothPixmapTransform);
     p.setClipRect(0, 0, outW, outH);
 
-    const double fit = qMin(double(outW) / canvas.width(),
-                            double(outH) / canvas.height());
+    // Câmera no estilo After Effects: um ponto da composição (camX, camY,
+    // ABSOLUTO, origem topo-esquerda) fica no centro do frame de saída, com
+    // rotação e zoom. zoom = 1.0 com a câmera no centro da comp e a comp
+    // proporcional ao output produz mapeamento 1:1 (contido no frame).
+    const double camX = kfValue(mesa.kfCamX, mesa.camX, time);
+    const double camY = kfValue(mesa.kfCamY, mesa.camY, time);
+    const double zoom = qMax(0.001, kfValue(mesa.kfCamZoom, mesa.camZoom, time));
+    const double rot = kfValue(mesa.kfCamRotation, mesa.camRotation, time);
+    const double fit = qMin(double(outW) / mesa.canvasW,
+                            double(outH) / mesa.canvasH);
     const double s = zoom * fit;
 
-    // View = T(centro do output) · R · S · T(-posição da câmera).
+    // View = T(centro do output) · R · S · T(-posição da câmera) no espaço da
+    // composição. Cada camada empilha a matriz local por cima
+    // (T(pos)·R·S·T(-âncora)). Como o painter clipa só no frame de saída, uma
+    // imagem pode ficar em QUALQUER coordenada da comp (fora dos limites do
+    // canvas) e ainda aparece no preview quando a câmera apontar pra ela —
+    // não existe bitmap do tamanho da comp para cortá-la.
     p.translate(outW / 2.0, outH / 2.0);
     p.rotate(rot);
     p.scale(s, s);
     p.translate(-camX, -camY);
-    p.drawImage(0, 0, canvas);
+    renderToPainter(p, mesa, project, time);
 
     return out;
-}
-
-QImage MesaRenderer::render(const MesaComposition& mesa, const Project& project,
-                             double time) {
-    QImage canvas = renderCanvas(mesa, project, time);
-    // A câmera é avaliada no mesmo tempo absoluto das layers: os keyframes de
-    // câmera são gravados pelo MesaWidget na posição global do playhead.
-    return applyCameraTransform(canvas, mesa, project, time);
 }
 
 // Desenha uma única track (camada) num painter `acc` já preparado.
@@ -223,34 +216,4 @@ void MesaRenderer::renderToPainter(QPainter& painter, const MesaComposition& mes
 
         drawTrackLayer(painter, *track, mesa, project, relTime);
     }
-}
-
-QImage MesaRenderer::renderCanvas(const MesaComposition& mesa, const Project& project,
-                                   double relTime, const QString* skipTrackId) {
-    QImage canvas(mesa.canvasW, mesa.canvasH, QImage::Format_ARGB32);
-    canvas.fill(Qt::transparent);
-    QPainter acc(&canvas);
-    acc.setRenderHint(QPainter::SmoothPixmapTransform);
-
-    // Para cada track do grupo, renderiza seus clips na posição da track.
-    for (const QString& tid : mesa.trackIds) {
-        if (skipTrackId && *skipTrackId == tid) continue;
-
-        // Encontra a track
-        const Track* track = nullptr;
-        for (const Track& tr : project.videoTracks) {
-            if (tr.id == tid) { track = &tr; break; }
-        }
-        if (!track) {
-            for (const Track& tr : project.audioTracks) {
-                if (tr.id == tid) { track = &tr; break; }
-            }
-        }
-        if (!track) continue;
-
-        drawTrackLayer(acc, *track, mesa, project, relTime);
-    }
-
-    acc.end();
-    return canvas;
 }

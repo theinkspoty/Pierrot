@@ -24,15 +24,11 @@ public:
     // Renderiza a composição no instante `time` (segundos absolutos da
     // timeline). Layers e câmera usam o mesmo tempo absoluto — os keyframes
     // são gravados pelo MesaWidget na posição global do playhead.
+    // As camadas são compostas DIRETO no frame de saída (matriz da câmera +
+    // matriz local da layer), sem bitmap intermediário do tamanho da comp:
+    // não existe limite de onde uma imagem pode ficar para aparecer no preview.
     QImage render(const MesaComposition& mesa, const Project& project,
                   double time);
-
-    // Renderiza apenas o canvas (layers composadas) sem a transform de câmera.
-    // Útil para o editor visual (MesaWidget).
-    // skipTrackId != nulo: omitir essa track (usado para re-render só a camada
-    // arrastada durante um transform, evitando recompor a composição toda).
-    QImage renderCanvas(const MesaComposition& mesa, const Project& project,
-                        double relTime, const QString* skipTrackId = nullptr);
 
     // Prepara a renderização de UMA track (decodifica o frame ativo e retorna
     // a transformada a aplicar). Retorna false se não há frame ativo.
@@ -62,7 +58,9 @@ public:
     void drawTrackImage(QPainter& acc, const LayerPrep& prep);
 
     // Desenha todas as layers diretamente num painter já em canvas-space.
-    // Evita criar QImage intermediária — ideal para canvas infinito.
+    // Evita criar QImage intermediária — ideal para canvas infinito e para o
+    // preview/export sem limite de espaço (a matriz da câmera já está aplicada
+    // no painter, as camadas empilham a matriz local por cima).
     // skipTrackId: omitir essa track (para drag em tempo real).
     void renderToPainter(QPainter& painter, const MesaComposition& mesa,
                          const Project& project, double relTime,
@@ -80,8 +78,6 @@ private:
                         double relTime);
 
     QImage decodeFrame(const QString& filePath, double time, int maxW);
-    QImage applyCameraTransform(const QImage& canvas, const MesaComposition& mesa,
-                                const Project& project, double relTime);
 
     QHash<QString, FFmpegDecoder*> m_decoders;
 
