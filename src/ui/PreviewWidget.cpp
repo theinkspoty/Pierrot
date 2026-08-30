@@ -3121,6 +3121,12 @@ void PreviewWidget::applyCrop() {
 
     // Aplica efeitos OFX do clipe.
     if (!m_clipOfxFx.isEmpty() && m_ofxManager && !m_frame.isNull()) {
+        qInfo() << "[OFX] Aplicando" << m_clipOfxFx.size() << "efeito(s) OFX no preview"
+                << "- efeitos:" << [this]() {
+                    QStringList ids;
+                    for (const auto& fx : m_clipOfxFx) ids << fx.pluginId;
+                    return ids.join(", ");
+                }();
         m_frame = OfxRenderer::applyOfxEffects(m_frame, m_clipOfxFx, m_ofxManager,
                                                 m_playhead);
     }

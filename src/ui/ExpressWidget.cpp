@@ -31,6 +31,7 @@
 #include <QSpinBox>
 #include <QDoubleSpinBox>
 #include <QLineEdit>
+#include <QGroupBox>
 
 // ── Construtor ───────────────────────────────────────────────────────────
 
@@ -85,7 +86,7 @@ void ExpressWidget::setOfxPlugins(const QVector<OfxPluginInfo>& plugins)
 }
 
 void ExpressWidget::setOfxParamDefs(const QString& pluginId,
-                                     const QVector<QPair<QString,QPair<QString,QString>>>& params)
+                                     const QVector<OfxParamDefInfo>& params)
 {
     m_ofxParamDefs[pluginId] = params;
 }
@@ -146,7 +147,11 @@ void ExpressWidget::rebuildTabs()
 
 void ExpressWidget::addEffect(const QString& effectId)
 {
-    if (!m_currentClip) return;
+    if (!m_currentClip) {
+        qWarning() << "[OFX] Tentativa de adicionar efeito" << effectId << "sem clipe selecionado";
+        return;
+    }
+    qInfo() << "[OFX] addEffect:" << effectId << "ao clipe" << m_currentClip->id;
 
     // Se já está aberto como aba, só ativa.
     if (m_tabMap.contains(effectId)) {
@@ -211,6 +216,8 @@ void ExpressWidget::addEffect(const QString& effectId)
             fx.pluginId = effectId;
             fx.enabled = true;
             m_currentClip->ofxFx.append(fx);
+            qInfo() << "[OFX] Efeito" << effectId << "aplicado ao clipe" << m_currentClip->id
+                    << "- total de efeitos OFX:" << m_currentClip->ofxFx.size();
             emit modified();
         }
     }
@@ -543,6 +550,10 @@ void ExpressWidget::createBuiltInTab(const QString& effectId)
 
 void ExpressWidget::createOfxTab(const QString& pluginId)
 {
+    qInfo() << "[OFX] createOfxTab:" << pluginId
+            << "- paramDefs disponíveis:" << m_ofxParamDefs.contains(pluginId)
+            << "- qtd:" << m_ofxParamDefs.value(pluginId).size();
+
     if (m_tabMap.contains(pluginId)) {
         m_tabs->setCurrentIndex(m_tabMap[pluginId]);
         return;
@@ -559,10 +570,97 @@ void ExpressWidget::createOfxTab(const QString& pluginId)
     pageLay->setContentsMargins(0, 0, 0, 0);
     pageLay->setSpacing(0);
 
+    // Cabeçalho com título, olho (toggle) e X (excluir).
+    auto* header = new QWidget;
+    header->setStyleSheet(QStringLiteral("background:%1;").arg(themeColors().expressBg.name()));
+    auto* headerLay = new QHBoxLayout(header);
+    headerLay->setContentsMargins(8, 8, 8, 4);
+    headerLay->setSpacing(4);
+
+    // Botão olho (toggle enabled/disabled).
+    auto* eyeBtn = new QPushButton;
+    eyeBtn->setFixedSize(28, 28);
+    eyeBtn->setCursor(Qt::PointingHandCursor);
+    eyeBtn->setToolTip(tr("Ativar/Desativar efeito"));
+    eyeBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { background:transparent; border:none; font-size:16px; }"
+        "QPushButton:hover { background:rgba(255,255,255,0.1); border-radius:4px; }"));
+    // Verifica estado atual do efeito no clipe.
+    bool effectEnabled = true;
+    if (m_currentClip) {
+        for (const auto& fx : m_currentClip->ofxFx) {
+            if (fx.pluginId == pluginId) {
+                effectEnabled = fx.enabled;
+                break;
+            }
+        }
+    }
+    eyeBtn->setText(effectEnabled ? QStringLiteral("\xE2\x97\x89") : QStringLiteral("\xE2\x97\x8B"));
+    connect(eyeBtn, &QPushButton::clicked, this, [this, pluginId, eyeBtn]() {
+        if (!m_currentClip) return;
+        for (auto& fx : m_currentClip->ofxFx) {
+            if (fx.pluginId == pluginId) {
+                fx.enabled = !fx.enabled;
+                eyeBtn->setText(fx.enabled
+                    ? QStringLiteral("\xE2\x97\x89")
+                    : QStringLiteral("\xE2\x97\x8B"));
+                emit modified();
+                break;
+            }
+        }
+    });
+
+    // Título.
     auto* title = new QLabel;
     title->setText(QStringLiteral("<b style='color:#dcddde;'>%1</b>").arg(titleText));
-    title->setStyleSheet(QStringLiteral("padding:12px 16px 4px; background:%1;").arg(themeColors().expressBg.name()));
-    pageLay->addWidget(title);
+    title->setStyleSheet(QStringLiteral("background:transparent;"));
+
+    // Botão X (excluir efeito).
+    auto* closeBtn = new QPushButton(QStringLiteral("\xC3\x97"));
+    closeBtn->setFixedSize(28, 28);
+    closeBtn->setCursor(Qt::PointingHandCursor);
+    closeBtn->setToolTip(tr("Remover efeito"));
+    closeBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { background:transparent; border:none; color:%1; font-size:18px; }"
+        "QPushButton:hover { background:rgba(255,0,0,0.3); border-radius:4px; }")
+        .arg(themeColors().text.name()));
+    connect(closeBtn, &QPushButton::clicked, this, [this, pluginId]() {
+        if (!m_currentClip) return;
+        // Remove efeito do clipe.
+        for (int i = 0; i < m_currentClip->ofxFx.size(); ++i) {
+            if (m_currentClip->ofxFx[i].pluginId == pluginId) {
+                m_currentClip->ofxFx.removeAt(i);
+                break;
+            }
+        }
+        // Remove a aba.
+        if (m_tabMap.contains(pluginId)) {
+            int idx = m_tabMap[pluginId];
+            m_tabMap.remove(pluginId);
+            m_tabPages.remove(pluginId);
+            m_tabs->removeTab(idx);
+            // Reconstrói mapa de índices.
+            m_tabMap.clear();
+            for (int i = 0; i < m_tabs->count(); ++i) {
+                for (auto it = m_tabPages.constBegin(); it != m_tabPages.constEnd(); ++it) {
+                    if (m_tabs->widget(i) == it.value()) {
+                        m_tabMap.insert(it.key(), i);
+                        break;
+                    }
+                }
+            }
+            if (m_tabs->count() == 0) {
+                m_tabs->hide();
+                m_emptyLabel->show();
+            }
+        }
+        emit modified();
+    });
+
+    headerLay->addWidget(eyeBtn);
+    headerLay->addWidget(title, 1);
+    headerLay->addWidget(closeBtn);
+    pageLay->addWidget(header);
 
     if (info && !info->description.isEmpty()) {
         auto* desc = new QLabel(info->description);
@@ -582,10 +680,47 @@ void ExpressWidget::createOfxTab(const QString& pluginId)
     const auto& paramDefs = m_ofxParamDefs.value(pluginId);
     bool hasParams = false;
 
+    qInfo() << "[OFX] createOfxTab: processando" << paramDefs.size() << "parâmetros para" << pluginId;
+
+    // Coleta grupos para criar seções.
+    QHash<QString, QGroupBox*> groupBoxes;
+    auto getOrCreateGroup = [&](const QString& parentName) -> QGroupBox* {
+        if (parentName.isEmpty()) return nullptr;
+        if (groupBoxes.contains(parentName)) return groupBoxes[parentName];
+        auto* gb = new QGroupBox(parentName);
+        auto* gbl = new QFormLayout(gb);
+        gbl->setContentsMargins(8, 8, 8, 8);
+        gbl->setSpacing(4);
+        groupBoxes[parentName] = gb;
+        paramsLayout->addRow(gb);
+        return gb;
+    };
+
     for (const auto& pd : paramDefs) {
-        const QString& paramName = pd.first;
-        const QString& paramType = pd.second.first;
-        const QString& paramLabel = pd.second.second.isEmpty() ? paramName : pd.second.second;
+        const QString& paramName = pd.name;
+        const QString& paramType = pd.type;
+        const QString& paramLabel = pd.label.isEmpty() ? pd.name : pd.label;
+
+        // Pula parâmetros secretos (mas não desabilitados — muitos plugins
+        // definem params como disabled durante describe pois dependem de
+        // outros params para serem habilitados dinamicamente).
+        if (pd.secret) {
+            qInfo() << "[OFX]   SKIP (secret):" << paramName << "type:" << paramType;
+            continue;
+        }
+
+        qInfo() << "[OFX]   param:" << paramName << "type:" << paramType << "label:" << paramLabel;
+
+        // DEBUG: mostra se o tipo é reconhecido
+        bool typeRecognized = (paramType == kOfxParamTypeDouble || paramType == kOfxParamTypeInteger
+            || paramType == kOfxParamTypeBoolean || paramType == kOfxParamTypeChoice
+            || paramType == kOfxParamTypeRGB || paramType == kOfxParamTypeRGBA
+            || paramType == kOfxParamTypeString
+            || paramType == kOfxParamTypeDouble2D || paramType == kOfxParamTypeInteger2D
+            || paramType == kOfxParamTypeDouble3D || paramType == kOfxParamTypeInteger3D);
+        if (!typeRecognized) {
+            qWarning() << "[OFX]   TIPO NÃO RECONHECIDO:" << paramType << "para" << paramName;
+        }
 
         // Encontra o índice do parâmetro no clipe (OfxPluginInstance).
         int paramIndex = -1;
@@ -601,7 +736,17 @@ void ExpressWidget::createOfxTab(const QString& pluginId)
                     if (!found) {
                         OfxParam p;
                         p.key = paramName;
-                        p.value = 0.0;
+                        // Usa valor padrão do metadata se disponível
+                        if (pd.defaultValue.isValid())
+                            p.value = pd.defaultValue;
+                        else if (paramType == kOfxParamTypeBoolean)
+                            p.value = false;
+                        else if (paramType == kOfxParamTypeChoice)
+                            p.value = 0;
+                        else if (paramType == kOfxParamTypeString)
+                            p.value = QString();
+                        else
+                            p.value = 0.0;
                         fx.params.append(p);
                     }
                     paramIndex = fx.params.size() - 1;
@@ -610,11 +755,20 @@ void ExpressWidget::createOfxTab(const QString& pluginId)
             }
         }
 
+        // Determina o layout pai (group ou raiz).
+        QFormLayout* targetLayout = paramsLayout;
+        if (!pd.parent.isEmpty()) {
+            QGroupBox* gb = getOrCreateGroup(pd.parent);
+            if (gb) targetLayout = qobject_cast<QFormLayout*>(gb->layout());
+            if (!targetLayout) targetLayout = paramsLayout;
+        }
+
         if (paramType == kOfxParamTypeDouble || paramType == kOfxParamTypeInteger) {
             auto* spin = new QDoubleSpinBox;
-            spin->setRange(-99999, 99999);
-            spin->setDecimals(paramType == kOfxParamTypeInteger ? 0 : 3);
-            spin->setValue(0);
+            spin->setRange(pd.minVal, pd.maxVal);
+            spin->setDecimals(paramType == kOfxParamTypeInteger ? 0 : (pd.digits > 0 ? pd.digits : 3));
+            if (pd.increment > 0) spin->setSingleStep(pd.increment);
+            spin->setValue(pd.defaultValue.isValid() ? pd.defaultValue.toDouble() : 0.0);
             spin->setStyleSheet(QStringLiteral(
                 "QDoubleSpinBox { background:%1; color:%2; border:1px solid %3; "
                 "border-radius:3px; padding:3px 6px; }")
@@ -622,7 +776,13 @@ void ExpressWidget::createOfxTab(const QString& pluginId)
                 .arg(themeColors().text.name())
                 .arg(themeColors().inputBorder.name()));
             if (paramIndex >= 0 && m_currentClip) {
-                spin->setValue(m_currentClip->ofxFx[0].params[paramIndex].value.toDouble());
+                // Encontra o plugin correto no clipe (não assume índice 0)
+                for (const auto& fx : m_currentClip->ofxFx) {
+                    if (fx.pluginId == pluginId && paramIndex < fx.params.size()) {
+                        spin->setValue(fx.params[paramIndex].value.toDouble());
+                        break;
+                    }
+                }
             }
             connect(spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
                 [this, pluginId, paramName](double val) {
@@ -637,17 +797,23 @@ void ExpressWidget::createOfxTab(const QString& pluginId)
                     }
                     emit modified();
                 });
-            paramsLayout->addRow(paramLabel, spin);
+            targetLayout->addRow(paramLabel, spin);
             hasParams = true;
         }
         else if (paramType == kOfxParamTypeBoolean) {
             auto* check = new QCheckBox;
-            check->setChecked(false);
+            check->setChecked(pd.defaultValue.isValid() ? pd.defaultValue.toBool() : false);
             check->setStyleSheet(QStringLiteral(
                 "QCheckBox { color:%1; } QCheckBox::indicator { width:16px; height:16px; }")
                 .arg(themeColors().text.name()));
             if (paramIndex >= 0 && m_currentClip) {
-                check->setChecked(m_currentClip->ofxFx[0].params[paramIndex].value.toBool());
+                // Encontra o plugin correto no clipe (não assume índice 0)
+                for (const auto& fx : m_currentClip->ofxFx) {
+                    if (fx.pluginId == pluginId && paramIndex < fx.params.size()) {
+                        check->setChecked(fx.params[paramIndex].value.toBool());
+                        break;
+                    }
+                }
             }
             connect(check, &QCheckBox::toggled, this,
                 [this, pluginId, paramName](bool val) {
@@ -662,7 +828,7 @@ void ExpressWidget::createOfxTab(const QString& pluginId)
                     }
                     emit modified();
                 });
-            paramsLayout->addRow(paramLabel, check);
+            targetLayout->addRow(paramLabel, check);
             hasParams = true;
         }
         else if (paramType == kOfxParamTypeChoice) {
@@ -673,7 +839,26 @@ void ExpressWidget::createOfxTab(const QString& pluginId)
                 .arg(themeColors().expressCardBg.name())
                 .arg(themeColors().text.name())
                 .arg(themeColors().inputBorder.name()));
-            combo->addItem(QStringLiteral("0"));
+            // Adiciona opções do metadata (ou fallback numérico)
+            if (!pd.choiceOptions.isEmpty()) {
+                for (const QString& opt : pd.choiceOptions)
+                    combo->addItem(opt);
+            } else {
+                // Fallback: tenta extrair do plugin, senão usa índices
+                int defaultVal = pd.defaultValue.isValid() ? pd.defaultValue.toInt() : 0;
+                combo->addItem(QString::number(defaultVal));
+            }
+            // Define valor inicial
+            if (paramIndex >= 0 && m_currentClip) {
+                for (const auto& fx : m_currentClip->ofxFx) {
+                    if (fx.pluginId == pluginId && paramIndex < fx.params.size()) {
+                        int idx = fx.params[paramIndex].value.toInt();
+                        if (idx >= 0 && idx < combo->count())
+                            combo->setCurrentIndex(idx);
+                        break;
+                    }
+                }
+            }
             connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
                 [this, pluginId, paramName](int val) {
                     if (!m_currentClip) return;
@@ -687,18 +872,20 @@ void ExpressWidget::createOfxTab(const QString& pluginId)
                     }
                     emit modified();
                 });
-            paramsLayout->addRow(paramLabel, combo);
+            targetLayout->addRow(paramLabel, combo);
             hasParams = true;
         }
         else if (paramType == kOfxParamTypeRGB || paramType == kOfxParamTypeRGBA) {
             auto* colorBtn = new QPushButton;
             colorBtn->setFixedSize(60, 24);
+            QColor defaultColor = pd.defaultValue.isValid() ? pd.defaultValue.value<QColor>() : Qt::green;
             colorBtn->setStyleSheet(QStringLiteral(
-                "QPushButton { background:#00ff00; border:1px solid %1; border-radius:3px; }")
+                "QPushButton { background:%1; border:1px solid %2; border-radius:3px; }")
+                .arg(defaultColor.name())
                 .arg(themeColors().inputBorder.name()));
                 connect(colorBtn, &QPushButton::clicked, this,
-                    [this, colorBtn, pluginId, paramName, paramLabel]() {
-                    QColor c = QColorDialog::getColor(Qt::green, this, paramLabel);
+                    [this, colorBtn, pluginId, paramName, paramLabel, defaultColor]() {
+                    QColor c = QColorDialog::getColor(defaultColor, this, paramLabel);
                     if (c.isValid()) {
                         colorBtn->setStyleSheet(QStringLiteral(
                             "QPushButton { background:%1; border:1px solid #4f545c; border-radius:3px; }")
@@ -715,7 +902,7 @@ void ExpressWidget::createOfxTab(const QString& pluginId)
                         emit modified();
                     }
                 });
-            paramsLayout->addRow(paramLabel, colorBtn);
+            targetLayout->addRow(paramLabel, colorBtn);
             hasParams = true;
         }
         else if (paramType == kOfxParamTypeString) {
@@ -726,6 +913,14 @@ void ExpressWidget::createOfxTab(const QString& pluginId)
                         .arg(themeColors().expressCardBg.name())
                         .arg(themeColors().text.name())
                         .arg(themeColors().inputBorder.name()));
+            if (paramIndex >= 0 && m_currentClip) {
+                for (const auto& fx : m_currentClip->ofxFx) {
+                    if (fx.pluginId == pluginId && paramIndex < fx.params.size()) {
+                        edit->setText(fx.params[paramIndex].value.toString());
+                        break;
+                    }
+                }
+            }
             connect(edit, &QLineEdit::textChanged, this,
                 [this, pluginId, paramName](const QString& val) {
                     if (!m_currentClip) return;
@@ -739,7 +934,74 @@ void ExpressWidget::createOfxTab(const QString& pluginId)
                     }
                     emit modified();
                 });
-            paramsLayout->addRow(paramLabel, edit);
+            targetLayout->addRow(paramLabel, edit);
+            hasParams = true;
+        }
+        else if (paramType == kOfxParamTypeDouble2D || paramType == kOfxParamTypeInteger2D) {
+            auto* container = new QWidget;
+            auto* hbox = new QHBoxLayout(container);
+            hbox->setContentsMargins(0, 0, 0, 0);
+            hbox->setSpacing(4);
+            bool isInt = (paramType == kOfxParamTypeInteger2D);
+            double defX = 0.0, defY = 0.0;
+            if (pd.defaultValue.isValid()) {
+                // DefaultValue pode ser um double (usamos como X, Y=0)
+                defX = pd.defaultValue.toDouble();
+            }
+            for (int dim = 0; dim < 2; ++dim) {
+                auto* spin = new QDoubleSpinBox;
+                spin->setRange(pd.minVal, pd.maxVal);
+                spin->setDecimals(isInt ? 0 : (pd.digits > 0 ? pd.digits : 3));
+                if (pd.increment > 0) spin->setSingleStep(pd.increment);
+                spin->setValue(dim == 0 ? defX : defY);
+                spin->setPrefix(dim == 0 ? "X: " : "Y: ");
+                spin->setStyleSheet(QStringLiteral(
+                    "QDoubleSpinBox { background:%1; color:%2; border:1px solid %3; "
+                    "border-radius:3px; padding:3px 6px; }")
+                    .arg(themeColors().expressCardBg.name())
+                    .arg(themeColors().text.name())
+                    .arg(themeColors().inputBorder.name()));
+                // Lê valor atual do clipe
+                if (paramIndex >= 0 && m_currentClip) {
+                    for (const auto& fx : m_currentClip->ofxFx) {
+                        if (fx.pluginId == pluginId && paramIndex < fx.params.size()) {
+                            // Para 2D, armazenamos como string "x,y" ou apenas o double
+                            QString str = fx.params[paramIndex].value.toString();
+                            if (str.contains(',')) {
+                                QStringList parts = str.split(',');
+                                if (dim < parts.size())
+                                    spin->setValue(parts[dim].toDouble());
+                            } else if (dim == 0) {
+                                spin->setValue(fx.params[paramIndex].value.toDouble());
+                            }
+                            break;
+                        }
+                    }
+                }
+                connect(spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
+                    [this, pluginId, paramName, dim](double val) {
+                        if (!m_currentClip) return;
+                        for (auto& fx : m_currentClip->ofxFx) {
+                            if (fx.pluginId == pluginId) {
+                                for (auto& p : fx.params) {
+                                    if (p.key == paramName) {
+                                        // Armazena como "x,y"
+                                        QString str = p.value.toString();
+                                        QStringList parts = str.contains(',') ? str.split(',') : QStringList{"0", "0"};
+                                        while (parts.size() < 2) parts.append("0");
+                                        parts[dim] = QString::number(val);
+                                        p.value = parts.join(',');
+                                        break;
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                        emit modified();
+                    });
+                hbox->addWidget(spin);
+            }
+            targetLayout->addRow(paramLabel, container);
             hasParams = true;
         }
     }
@@ -765,6 +1027,11 @@ void ExpressWidget::createOfxTab(const QString& pluginId)
     const int idx = m_tabs->addTab(page, titleText);
     m_tabMap[pluginId] = idx;
     m_tabs->setCurrentIndex(idx);
+
+    qInfo() << "[OFX] createOfxTab: aba criada para" << pluginId
+            << "- hasParams:" << hasParams
+            << "- tabs visível:" << m_tabs->isVisible()
+            << "- emptyLabel visível:" << m_emptyLabel->isVisible();
 }
 
 // ── Aplicação de valores ─────────────────────────────────────────────────

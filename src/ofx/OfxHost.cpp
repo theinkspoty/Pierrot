@@ -324,10 +324,16 @@ OfxStatus OfxHostImpl::paramGetHandle(OfxParamSetHandle h, const char* name,
                                   OfxParamHandle* param, OfxPropertySetHandle* props) {
     if (!h || !name) return kOfxStatErrBadHandle;
     auto* defs = reinterpret_cast<QVector<OfxParamDef>*>(h);
+    QString qName = QString::fromLatin1(name);
+
     // Busca por nome
     for (int i = 0; i < defs->size(); ++i) {
-        if ((*defs)[i].name == QString::fromLatin1(name)) {
+        if ((*defs)[i].name == qName) {
             if (param) {
+                // Verifica se já existe um handle cacheado para este parâmetro
+                // Nota: o cache é por instância, mas aqui só temos o paramSetHandle
+                // Por enquanto, criamos um novo handle (o cache será implementado
+                // no nível da instância do efeito)
                 auto* storage = new ParamStorage;
                 storage->name = (*defs)[i].name;
                 storage->type = (*defs)[i].type;
@@ -907,17 +913,51 @@ bool OfxHostImpl::render(OfxEffectInstance& inst, const QImage& input, QImage& o
                       double time, int width, int height) {
     if (!inst.entry || input.isNull()) return false;
 
-    // Atribui a imagem de entrada ao clip Source e suas propriedades
-    inst.clips["Source"].image = input;
-    inst.clips["Source"].props.setString(kOfxImageEffectPropPixelDepth, 0, kOfxBitDepthByte);
-    inst.clips["Source"].props.setString(kOfxImageEffectPropComponents, 0, kOfxImageComponentRGBA);
+    qInfo() << "[OFX] Render" << inst.pluginId
+            << "- clips disponíveis:" << inst.clips.keys()
+            << "- params:" << inst.params.size()
+            << "- input:" << input.width() << "x" << input.height();
 
-    // Prepara a imagem de saída
-    output = QImage(width, height, QImage::Format_ARGB32_Premultiplied);
+    // Encontra o clip de entrada (Source ou primeiro clip não-Output)
+    QString sourceName = QStringLiteral("Source");
+    if (!inst.clips.contains(sourceName)) {
+        // Tenta encontrar qualquer clip que não seja Output
+        for (auto it = inst.clips.begin(); it != inst.clips.end(); ++it) {
+            if (it.key() != QStringLiteral("Output")) {
+                sourceName = it.key();
+                break;
+            }
+        }
+    }
+
+    // Encontra o clip de saída (Output ou último clip)
+    QString outputName = QStringLiteral("Output");
+    if (!inst.clips.contains(outputName)) {
+        // Tenta encontrar o último clip que não é o source
+        for (auto it = inst.clips.begin(); it != inst.clips.end(); ++it) {
+            if (it.key() != sourceName) {
+                outputName = it.key();
+                break;
+            }
+        }
+    }
+
+    // Atribui a imagem de entrada ao clip de source e suas propriedades
+    // Converte para RGBA8888 para corresponder ao que o plugin espera
+    if (inst.clips.contains(sourceName)) {
+        inst.clips[sourceName].image = input.convertToFormat(QImage::Format_RGBA8888);
+        inst.clips[sourceName].props.setString(kOfxImageEffectPropPixelDepth, 0, kOfxBitDepthByte);
+        inst.clips[sourceName].props.setString(kOfxImageEffectPropComponents, 0, kOfxImageComponentRGBA);
+    }
+
+    // Prepara a imagem de saída (RGBA8888 corresponde ao kOfxImageComponentRGBA)
+    output = QImage(width, height, QImage::Format_RGBA8888);
     output.fill(Qt::transparent);
-    inst.clips["Output"].image = output;
-    inst.clips["Output"].props.setString(kOfxImageEffectPropPixelDepth, 0, kOfxBitDepthByte);
-    inst.clips["Output"].props.setString(kOfxImageEffectPropComponents, 0, kOfxImageComponentRGBA);
+    if (inst.clips.contains(outputName)) {
+        inst.clips[outputName].image = output;
+        inst.clips[outputName].props.setString(kOfxImageEffectPropPixelDepth, 0, kOfxBitDepthByte);
+        inst.clips[outputName].props.setString(kOfxImageEffectPropComponents, 0, kOfxImageComponentRGBA);
+    }
 
     // Prepara argumentos de render
     auto* inArgs = new PropSetStorage;
@@ -941,8 +981,14 @@ bool OfxHostImpl::render(OfxEffectInstance& inst, const QImage& input, QImage& o
     OfxImageEffectHandle effectHandle = reinterpret_cast<OfxImageEffectHandle>(&inst);
     OfxStatus s = inst.entry(kOfxImageEffectActionRender, effectHandle, inHandle, outHandle);
 
+    qInfo() << "[OFX] Render resultado para" << inst.pluginId
+            << "- status:" << s
+            << "- source:" << sourceName
+            << "- output:" << outputName;
+
     if (s == kOfxStatOK) {
-        output = inst.clips["Output"].image;
+        if (inst.clips.contains(outputName))
+            output = inst.clips[outputName].image;
     } else {
         qWarning() << "[OFX] Render failed for" << inst.pluginId
                    << "- status:" << s
@@ -962,6 +1008,8 @@ void OfxHostImpl::destroyInstance(OfxEffectInstance& inst) {
     }
     inst.privateData = nullptr;
     inst.params.clear();
+    // Limpa cache de handles de parâmetros
+    inst.paramHandleCache.clear();
     for (auto& pd : inst.paramDefs) {
         if (pd.tempStorage) {
             delete reinterpret_cast<PropSetStorage*>(pd.tempStorage);

@@ -151,20 +151,22 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     // Gerenciador de plugins OFX — escaneia diretórios conhecidos.
     m_ofxManager = new OfxPluginManager(this);
-    m_ofxManager->scanPlugins();
-    m_preview->setOfxManager(m_ofxManager);
 
     // Conecta callback de describe para popular parâmetros no Express.
+    // DEVE ser definido ANTES de scanPlugins() para capturar os parâmetros.
     m_ofxManager->setDescribeCallback([this](const QString& pluginId,
                                              const QString& name,
                                              const QString& grouping,
                                              const QString& description,
                                              int versionMajor, int versionMinor,
-                                             const QVector<QPair<QString,QPair<QString,QString>>>& params) {
+                                             const QVector<OfxParamDefInfo>& params) {
         Q_UNUSED(name); Q_UNUSED(grouping); Q_UNUSED(description);
         Q_UNUSED(versionMajor); Q_UNUSED(versionMinor);
         m_express->setOfxParamDefs(pluginId, params);
     });
+
+    m_ofxManager->scanPlugins();
+    m_preview->setOfxManager(m_ofxManager);
 
     // Inicializa o painel de efeitos.
     m_effects->setProject(&m_project);
@@ -1938,5 +1940,6 @@ void MainWindow::projectSettings() {
 
 void MainWindow::exportVideo() {
     ExportDialog dlg(&m_project, this);
+    dlg.setOfxManager(m_ofxManager);
     dlg.exec();
 }

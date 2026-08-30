@@ -10,8 +10,10 @@
 #include <QImage>
 #include <QVector>
 #include <QString>
+#include <QHash>
 
 struct OfxPluginInstance;
+struct OfxEffectInstance;
 class OfxPluginManager;
 
 class OfxRenderer {
@@ -28,4 +30,12 @@ public:
                                  const OfxPluginInstance& effect,
                                  const OfxPluginManager* manager,
                                  double time = 0.0);
+
+    // Limpa o cache de instâncias (chamado ao descarregar plugins ou destruir o renderer).
+    static void clearCache();
+
+private:
+    // Cache de instâncias OFX por pluginId (evita re-criação a cada frame).
+    // A chave é o pluginId; o valor é a instância persistente.
+    static QHash<QString, OfxEffectInstance*> s_instanceCache;
 };

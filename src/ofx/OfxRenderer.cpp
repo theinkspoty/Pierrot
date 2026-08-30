@@ -10,6 +10,22 @@
 
 #include <QDebug>
 
+// Cache estático de instâncias OFX por pluginId.
+QHash<QString, OfxEffectInstance*> OfxRenderer::s_instanceCache;
+
+void OfxRenderer::clearCache()
+{
+    OfxHostImpl& host = OfxHostImpl::instance();
+    for (auto it = s_instanceCache.begin(); it != s_instanceCache.end(); ++it) {
+        OfxEffectInstance* inst = it.value();
+        if (inst) {
+            host.destroyInstance(*inst);
+            delete inst;
+        }
+    }
+    s_instanceCache.clear();
+}
+
 QImage OfxRenderer::applyOfxEffects(const QImage& input,
                                      const QVector<OfxPluginInstance>& effects,
                                      const OfxPluginManager* manager,
@@ -42,25 +58,45 @@ QImage OfxRenderer::applySingleOfx(const QImage& input,
 
     OfxHostImpl& host = OfxHostImpl::instance();
 
-    // Cria instância temporária do efeito
-    OfxEffectInstance inst;
-    host.initPlugin(inst, lib->handle, lib->entry, effect.pluginId);
+    // Tenta reutilizar instância do cache
+    OfxEffectInstance* inst = nullptr;
+    auto cacheIt = s_instanceCache.find(effect.pluginId);
+    if (cacheIt != s_instanceCache.end()) {
+        inst = cacheIt.value();
+        qInfo() << "[OFX] Reutilizando instância cacheada para" << effect.pluginId
+                << "- clips:" << inst->clips.keys()
+                << "- params:" << inst->params.size();
+    } else {
+        // Cria nova instância e cacheia
+        inst = new OfxEffectInstance;
+        host.initPlugin(*inst, lib->handle, lib->entry, effect.pluginId);
 
-    // Describe (já foi feito no scan, mas precisamos para criar a instância)
-    // Na verdade, o describe já extraiu os paramDefs — reutilizamos
-    // uma instância "template" se disponível, ou refazemos
-    if (!host.describe(inst)) {
-        qWarning() << "[OFX] Describe falhou para" << effect.pluginId;
-        return input;
+        // Describe (necessário para criar a instância)
+        qInfo() << "[OFX] Chamando describe para" << effect.pluginId;
+        if (!host.describe(*inst)) {
+            qWarning() << "[OFX] Describe falhou para" << effect.pluginId;
+            delete inst;
+            return input;
+        }
+        qInfo() << "[OFX] Describe OK - clips:" << inst->clips.keys()
+                << "- paramDefs:" << inst->paramDefs.size();
+
+        // Cria instância
+        qInfo() << "[OFX] Chamando createInstance para" << effect.pluginId;
+        if (!host.createInstance(*inst)) {
+            qWarning() << "[OFX] createInstance falhou para" << effect.pluginId;
+            delete inst;
+            return input;
+        }
+        qInfo() << "[OFX] createInstance OK - clips:" << inst->clips.keys()
+                << "- params:" << inst->params.size();
+
+        s_instanceCache[effect.pluginId] = inst;
     }
 
-    // Cria instância
-    host.createInstance(inst);
-
-    // Aplica parâmetros salvos no clipe
+    // Atualiza parâmetros na instância cacheada
     for (const OfxParam& p : effect.params) {
-        // Busca o parâmetro na instância
-        for (auto& iparam : inst.params) {
+        for (auto& iparam : inst->params) {
             if (iparam.name == p.key) {
                 if (p.value.canConvert<double>() &&
                     (iparam.type == kOfxParamTypeDouble || iparam.type == kOfxParamTypeInteger)) {
@@ -88,14 +124,13 @@ QImage OfxRenderer::applySingleOfx(const QImage& input,
 
     // Renderiza
     QImage output;
-    bool ok = host.render(inst, input, output, time, input.width(), input.height());
-
-    host.destroyInstance(inst);
+    bool ok = host.render(*inst, input, output, time, input.width(), input.height());
 
     if (!ok || output.isNull()) {
         qWarning() << "[OFX] Render falhou para" << effect.pluginId;
         return input;
     }
 
-    return output;
+    // Converte de volta para ARGB32_Premultiplied (formato nativo do preview)
+    return output.convertToFormat(QImage::Format_ARGB32_Premultiplied);
 }

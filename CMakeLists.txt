@@ -33,6 +33,7 @@ set(SOURCES
     src/ffmpeg/MediaCache.cpp
     src/export/ProjectExporter.cpp
     src/export/LainkaRenderer.cpp
+    src/export/OfxExportRenderer.cpp
     src/ofx/OfxPluginManager.cpp
     src/ofx/OfxHost.cpp
     src/ofx/OfxRenderer.cpp
@@ -89,6 +90,7 @@ set(HEADERS
     src/export/ProjectExporter.h
     src/export/LainkaFx.h
     src/export/LainkaRenderer.h
+    src/export/OfxExportRenderer.h
     src/ofx/OfxPluginManager.h
     src/ofx/OfxHost.h
     src/ofx/OfxRenderer.h

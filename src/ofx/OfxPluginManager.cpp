@@ -5,6 +5,7 @@
 
 #include "OfxPluginManager.h"
 #include "OfxHost.h"
+#include "OfxRenderer.h"
 
 #include <QDir>
 #include <QStandardPaths>
@@ -38,6 +39,9 @@ OfxPluginManager::OfxPluginManager(QObject* parent) : QObject(parent) {}
 OfxPluginManager::~OfxPluginManager() { cleanupLibs(); }
 
 void OfxPluginManager::cleanupLibs() {
+    // Limpa cache de instâncias OFX antes de descarregar bibliotecas
+    OfxRenderer::clearCache();
+
     for (auto it = m_libs.begin(); it != m_libs.end(); ++it) {
         if (it.value().handle) {
             dlclose(it.value().handle);
@@ -64,6 +68,12 @@ QStringList OfxPluginManager::searchPaths() const
         QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)
         + QStringLiteral("/ofx");
     paths << userDir;
+
+    // Caminhos comuns onde usuários instalam plugins OFX
+    paths << QDir::homePath() + QStringLiteral("/Documentos/pierrot/ofx")
+          << QDir::homePath() + QStringLiteral("/Documents/pierrot/ofx")
+          << QDir::homePath() + QStringLiteral("/ofx")
+          << QDir::homePath() + QStringLiteral("/.ofx");
 
     const QString envPath = qgetenv("PIERROT_OFX_PATH");
     if (!envPath.isEmpty()) {
@@ -255,7 +265,11 @@ bool OfxPluginManager::loadOfxLibrary(const QString& libPath, const QString& fal
         OfxEffectInstance tempInst;
         tempInst.pluginId = info.id;
         host.initPlugin(tempInst, lib, plugin->mainEntry, info.id);
+        qInfo() << "[OFX] Chamando describe para" << info.id;
         if (host.describe(tempInst)) {
+            qInfo() << "[OFX] Describe OK para" << info.id
+                    << "- clips:" << tempInst.clips.keys()
+                    << "- paramDefs:" << tempInst.paramDefs.size();
             // Extrai dados do describe — label e grouping são propriedades padrão OFX
             char* plabel = nullptr;
             char* pgrouping = nullptr;
@@ -269,8 +283,8 @@ bool OfxPluginManager::loadOfxLibrary(const QString& libPath, const QString& fal
             if (pgrouping && std::strlen(pgrouping) > 0)
                 info.grouping = QString::fromLatin1(pgrouping);
 
-            // Coleta parâmetros com tipo e label
-            QVector<QPair<QString,QPair<QString,QString>>> paramList;
+            // Coleta parâmetros com metadata completa
+            QVector<OfxParamDefInfo> paramList;
             for (auto& pd : tempInst.paramDefs) {
                 // Copia props do storage temporário (preenchido pelo plugin)
                 if (pd.tempStorage) {
@@ -278,8 +292,55 @@ bool OfxPluginManager::loadOfxLibrary(const QString& libPath, const QString& fal
                     delete reinterpret_cast<OfxPropSet*>(pd.tempStorage);
                     pd.tempStorage = nullptr;
                 }
-                QString label = pd.props.getStringQt(kOfxPropLabel, 0, pd.name);
-                paramList.append({pd.name, {pd.type, label}});
+                OfxParamDefInfo info;
+                info.name = pd.name;
+                info.type = pd.type;
+                info.label = pd.props.getStringQt(kOfxPropLabel, 0, pd.name);
+                info.hint = pd.props.getStringQt(kOfxParamPropHint, 0, QString());
+                info.parent = pd.props.getStringQt(kOfxParamPropParent, 0, QString());
+                info.enabled = pd.props.getIntVal(kOfxParamPropEnabled, 0, 1) != 0;
+                info.secret = pd.props.getIntVal(kOfxParamPropSecret, 0, 0) != 0;
+                info.animatable = pd.props.getIntVal(kOfxParamPropAnimates, 0, 1) != 0;
+                info.persistant = pd.props.getIntVal(kOfxParamPropPersistant, 0, 1) != 0;
+
+                // Min/Max para tipos numéricos
+                if (pd.type == kOfxParamTypeDouble || pd.type == kOfxParamTypeInteger
+                    || pd.type == kOfxParamTypeDouble2D || pd.type == kOfxParamTypeInteger2D
+                    || pd.type == kOfxParamTypeDouble3D || pd.type == kOfxParamTypeInteger3D) {
+                    info.minVal = pd.props.getDoubleVal(kOfxParamPropMin, 0, -99999.0);
+                    info.maxVal = pd.props.getDoubleVal(kOfxParamPropMax, 0, 99999.0);
+                    info.displayMin = pd.props.getDoubleVal(kOfxParamPropDisplayMin, 0, info.minVal);
+                    info.displayMax = pd.props.getDoubleVal(kOfxParamPropDisplayMax, 0, info.maxVal);
+                    info.increment = pd.props.getDoubleVal(kOfxParamPropIncrement, 0, 0.0);
+                    info.digits = pd.props.getIntVal(kOfxParamPropDigits, 0, 0);
+                    // Dimensão para tipos 2D/3D
+                    if (pd.type == kOfxParamTypeDouble2D || pd.type == kOfxParamTypeInteger2D)
+                        info.dimension = 2;
+                    else if (pd.type == kOfxParamTypeDouble3D || pd.type == kOfxParamTypeInteger3D)
+                        info.dimension = 3;
+                }
+
+                // Default value
+                if (pd.type == kOfxParamTypeDouble || pd.type == kOfxParamTypeDouble2D
+                    || pd.type == kOfxParamTypeDouble3D) {
+                    info.defaultValue = pd.props.getDoubleVal(kOfxParamPropDefault, 0, 0.0);
+                } else if (pd.type == kOfxParamTypeInteger || pd.type == kOfxParamTypeInteger2D
+                           || pd.type == kOfxParamTypeInteger3D) {
+                    info.defaultValue = pd.props.getIntVal(kOfxParamPropDefault, 0, 0);
+                } else if (pd.type == kOfxParamTypeBoolean) {
+                    info.defaultValue = pd.props.getIntVal(kOfxParamPropDefault, 0, 0) != 0;
+                } else if (pd.type == kOfxParamTypeChoice) {
+                    info.defaultValue = pd.props.getIntVal(kOfxParamPropDefault, 0, 0);
+                    // Extrai opções de choice
+                    int dim = pd.props.getDimension(kOfxParamPropChoiceOption);
+                    for (int ci = 0; ci < dim; ++ci) {
+                        QString opt = pd.props.getStringQt(kOfxParamPropChoiceOption, ci, QString());
+                        if (!opt.isEmpty())
+                            info.choiceOptions.append(opt);
+                    }
+                }
+
+                paramList.append(info);
             }
 
             // Notifica callback

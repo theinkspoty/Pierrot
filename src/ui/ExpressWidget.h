@@ -18,6 +18,8 @@ class Project;
 struct Clip;
 struct OfxPluginInfo;
 
+#include "ofx/OfxPluginManager.h"
+
 // Janela docável "Express" — editor de parâmetros de efeitos do clipe.
 // Cada efeito aplicado ao clipe vira uma aba nesta janela.
 class ExpressWidget : public QWidget {
@@ -30,7 +32,7 @@ public:
 
     // Registra parâmetros descobertos pelo describe (chamado pelo manager).
     void setOfxParamDefs(const QString& pluginId,
-                         const QVector<QPair<QString,QPair<QString,QString>>>& params);
+                         const QVector<OfxParamDefInfo>& params);
 
     // Chamado quando a seleção de clipes muda na timeline.
     void setSelectedClip(Clip* clip);
@@ -71,8 +73,8 @@ private:
     // Efeitos nativos que já foram aplicados ao clipe (para não duplicar).
     QSet<QString> m_appliedBuiltIn;
 
-    // Parâmetros OFX descobertos (pluginId -> lista de {name, {type, label}}).
-    QHash<QString, QVector<QPair<QString,QPair<QString,QString>>>> m_ofxParamDefs;
+    // Parâmetros OFX descobertos (pluginId -> lista de definições completas).
+    QHash<QString, QVector<OfxParamDefInfo>> m_ofxParamDefs;
 
     // Widgets de parâmetros OFX (para leitura dos valores).
     QHash<QString, QWidget*> m_ofxParamWidgets;

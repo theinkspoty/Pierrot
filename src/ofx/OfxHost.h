@@ -100,6 +100,10 @@ struct OfxEffectInstance {
 
     QMap<QString, OfxClip> clips;    // "Source", "Output", etc.
 
+    // Cache de handles de parâmetros (nome -> handle)
+    // Evita criar novos ParamStorage a cada chamada de paramGetHandle
+    QMap<QString, OfxParamHandle> paramHandleCache;
+
     void* privateData = nullptr;     // dados privados do plugin
 };
 

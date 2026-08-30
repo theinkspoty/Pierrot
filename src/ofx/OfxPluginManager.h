@@ -25,6 +25,29 @@ struct OfxPluginLib {
     int pluginCount = 0;
 };
 
+// Metadata completa de um parâmetro OFX (extraída durante o describe).
+struct OfxParamDefInfo {
+    QString name;               // nome interno do parâmetro
+    QString type;               // kOfxParamTypeDouble, etc.
+    QString label;              // nome legível
+    QString hint;               // dica/descrição do parâmetro
+    QString parent;             // nome do group/page pai (vazio = raiz)
+    double minVal = -99999.0;   // kOfxParamPropMin
+    double maxVal = 99999.0;    // kOfxParamPropMax
+    double displayMin = 0.0;    // kOfxParamPropDisplayMin
+    double displayMax = 0.0;    // kOfxParamPropDisplayMax
+    double increment = 0.0;     // kOfxParamPropIncrement
+    int digits = 0;             // kOfxParamPropDigits
+    bool enabled = true;        // kOfxParamPropEnabled
+    bool secret = false;        // kOfxParamPropSecret
+    bool animatable = true;     // kOfxParamPropAnimatable
+    bool persistant = true;     // kOfxParamPropPersistant
+    QStringList choiceOptions;  // kOfxParamPropChoiceOption (para Choice)
+    QVariant defaultValue;      // valor padrão
+    // Para Double2D/Integer2D/Double3D/Integer3D
+    int dimension = 1;
+};
+
 class OfxPluginManager : public QObject {
     Q_OBJECT
 public:
@@ -53,8 +76,7 @@ public:
                                                 const QString& grouping,
                                                 const QString& description,
                                                 int versionMajor, int versionMinor,
-                                                const QVector<QPair<QString,QPair<QString,QString>>>& params)>;
-    // params: {name, {type, label}}
+                                                const QVector<OfxParamDefInfo>& params)>;
     void setDescribeCallback(DescribeCallback cb) { m_describeCb = cb; }
 
 signals:
