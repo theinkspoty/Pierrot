@@ -11,22 +11,29 @@
 #include <QHash>
 #include <QSet>
 #include <QSize>
-#include <QPointer>
 #include <QElapsedTimer>
+#include <QLoggingCategory>
 #include "models/Project.h"
 #include "render/MesaRenderer.h"
 
-class QLineEdit;
+// Categoria de log da Mesa: habilita/desabilita com
+//   Q_LOGGING_RULES="mesa.widget=true|false"
+// e filtra no terminal com `grep "\[MESA\]"`.
+Q_DECLARE_LOGGING_CATEGORY(lcMesa)
 
 // Dock Mesa — canvas infinito estilo After Effects Composition Panel.
 // Tudo é desenhado no canvas: tracks como camadas, câmera, grid.
 // Pan: botão do meio. Zoom: roda do mouse. Seleção: clique esquerdo.
 // Transform: arrastar corpo = mover, cantos = escalar, handle acima = rotacionar.
-// Câmera (estilo AE): clicar no gizmo só SELECIONA; selecionada, arrastar em
+// Doc: câmera (estilo AE): clicar no gizmo só SELECIONA; selecionada, arrastar em
 // qualquer lugar do canvas move, cantos redimensionam. A linha "Câmera" no
 // painel vertical fixo à esquerda (elementos da Mesa lá em cima) é a forma
 // confiável de selecioná-la mesmo coberta por camadas. Camadas têm prioridade
 // sobre a câmera no hit-test do canvas. O painel é alternado com a tecla L.
+// Com a câmera ATIVA, clicar em qualquer lugar (vazio OU em cima de uma
+// camada) NÃO rouba o elemento: vira pan da mãozinha. A câmera é a "escolha"
+// e só sai dela com Esc ou clicando na linha "Câmera". Para editar uma
+// camada, desative a câmera primeiro.
 class MesaWidget : public QWidget {
     Q_OBJECT
 public:
@@ -112,12 +119,10 @@ private:
 
 // Desenho
     void drawLayerList(QPainter& p);
-    void drawPropertyPanel(QPainter& p);
     void drawMiniTimeline(QPainter& p);
     void drawEyeIcon(QPainter& p, const QRect& r, bool visible) const;
     void drawLockIcon(QPainter& p, const QRect& r, bool locked) const;
     QString blendShortName(const QString& blend) const;
-    int propPanelHeight() const { return 56; }
     int miniTimelineHeight() const { return 64; }
     // Painel vertical fixo à esquerda (Câmera no topo + camadas). Quando
     // oculto (tecla L), o canvas volta a ocupar a largura inteira.
@@ -133,14 +138,6 @@ private:
         return QPointF(r.x() + r.width() / 2.0, r.y() + r.height() / 2.0);
     }
 
-    // Campos editáveis do painel de propriedades (clique → digita o valor).
-    enum PropKind { PL_X, PL_Y, PL_S, PL_R, PL_O, PL_AX, PL_AY, PC_X, PC_Y, PC_Z, PC_R };
-    struct PropField { QRect rect; int kind; };
-    QVector<PropField> m_propFields;   // preenchido no drawPropertyPanel
-    QPointer<QLineEdit> m_propEdit;
-    double propFieldValue(int kind) const;
-    void startPropEdit(const PropField& f);
-    void commitPropEdit(int kind, const QString& text);
     void fitToContent();
     void throttledUpdate();  // máx ~60fps durante drag
 
@@ -167,7 +164,8 @@ private:
     double m_zoom = 1.0;
     QPointF m_offset = {0, 0};
 
-    // Seleção (exclusiva): camada selecionada (m_selectedIdx) OU câmera.
+    // Seleção NÃO exclusiva: camada (m_selectedIdx) e câmera (m_cameraSelected)
+    // são independentes; Esc limpa as duas.
     int m_selectedIdx = -1;
     bool m_cameraSelected = false;
 
@@ -243,7 +241,21 @@ private:
     QSet<KfRef> m_selectedKfs;
     KfRef hitTestKf(const QPoint& pos) const;
     bool isKfSelected(const KfRef& r) const;
-    void toggleKfSelection(const KfRef& r, bool ctrl);
+
+    // Arrasto horizontal e marquee de keyframes na mini-timeline.
+    QVector<Keyframe>* keyframesFor(KfRef::Source src, const QString& trackId, int prop);
+    void sortKfs(QVector<Keyframe>& vks) const;
+    double timelinePps(int rulerW) const;
+
+    bool m_kfDrag = false;              // arrastando os keyframes selecionados
+    int m_kfDragStartX = 0;
+    struct KfOrigin { KfRef ref; double time; };
+    QVector<KfOrigin> m_kfDragOrigins;  // tempo ORIGINAL de cada selecionado
+    bool m_timelinePressPending = false;  // clique no vazio: playhead ou marquee
+    int m_timelinePressX = 0;
+    bool m_timelineMarquee = false;     // retângulo de seleção múltipla
+    QPoint m_marqueeStartPos;
+    int m_marqueeCurX = 0;
 
     // Snap
     bool m_snapToGrid = false;

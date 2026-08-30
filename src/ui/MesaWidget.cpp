@@ -9,6 +9,9 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QtMath>
+#include <algorithm>
+
+Q_LOGGING_CATEGORY(lcMesa, "mesa.widget")
 
 // ═══════════════════════════════════════════════════════════════════════
 // KfRef — identificador de keyframe no mini-timeline
@@ -133,28 +136,18 @@ double MesaWidget::xToTime(int x, int rulerW) const {
     return qMax(0.0, start + (x - 10.0) / pps);
 }
 
+double MesaWidget::timelinePps(int rulerW) const {
+    return qMax(20.0, (rulerW - 20.0) / mesaDuration());
+}
+
 bool MesaWidget::isInMiniTimeline(const QPoint& p) const {
     if (p.x() < panelWidth()) return false;
-    const int tlY = height() - propPanelHeight() - 16 - miniTimelineHeight();
+    const int tlY = height() - miniTimelineHeight();
     return p.y() >= tlY && p.y() < tlY + miniTimelineHeight();
 }
 
 bool MesaWidget::isKfSelected(const KfRef& r) const {
     return m_selectedKfs.contains(r);
-}
-
-void MesaWidget::toggleKfSelection(const KfRef& r, bool ctrl) {
-    if (!ctrl) {
-        if (m_selectedKfs.size() == 1 && m_selectedKfs.contains(r))
-            return; // already sole selection
-        m_selectedKfs.clear();
-        m_selectedKfs.insert(r);
-    } else {
-        if (m_selectedKfs.contains(r))
-            m_selectedKfs.remove(r);
-        else
-            m_selectedKfs.insert(r);
-    }
 }
 
 void MesaWidget::deleteSelectedKfs() {
@@ -188,6 +181,9 @@ void MesaWidget::deleteSelectedKfs() {
             }
         }
         if (!vks) continue;
+        qCInfo(lcMesa).noquote() << "[MESA] Delete: removendo kf t="
+                                 << QString::number(r.time, 'f', 3) << "s prop=" << r.prop
+                                 << (r.source == KfRef::Cam ? "(câmera)" : "'" + r.trackId + "'");
         for (int i = vks->size() - 1; i >= 0; --i) {
             if (qFuzzyCompare((*vks)[i].time, r.time)) vks->remove(i);
         }
@@ -202,7 +198,7 @@ MesaWidget::KfRef MesaWidget::hitTestKf(const QPoint& pos) const {
     if (!isInMiniTimeline(pos)) return miss;
     MesaComposition* mc = currentMesa();
     if (!mc) return miss;
-    const int tlY = height() - propPanelHeight() - 16 - miniTimelineHeight();
+    const int tlY = height() - miniTimelineHeight();
     const int x0 = panelWidth();
     const int rulerW = artRect().width();
     const double dur = mesaDuration();
@@ -259,6 +255,38 @@ MesaWidget::KfRef MesaWidget::hitTestKf(const QPoint& pos) const {
     return miss;
 }
 
+QVector<Keyframe>* MesaWidget::keyframesFor(KfRef::Source src, const QString& trackId, int prop) {
+    MesaComposition* mc = currentMesa();
+    if (!mc) return nullptr;
+    if (src == KfRef::Cam) {
+        switch (prop) {
+            case PCamX: return &mc->kfCamX;
+            case PCamY: return &mc->kfCamY;
+            case PCamZ: return &mc->kfCamZoom;
+            case PCamR: return &mc->kfCamRotation;
+        }
+        return nullptr;
+    }
+    Track* t = findTrack(trackId);
+    if (!t) return nullptr;
+    switch (prop) {
+        case PLayX: return &t->kfMesaX;
+        case PLayY: return &t->kfMesaY;
+        case PLaySX: return &t->kfMesaScaleX;
+        case PLaySY: return &t->kfMesaScaleY;
+        case PLayRot: return &t->kfMesaRotation;
+        case PLayOp: return &t->kfMesaOpacity;
+        case PLayAX: return &t->kfMesaAnchorX;
+        case PLayAY: return &t->kfMesaAnchorY;
+    }
+    return nullptr;
+}
+
+void MesaWidget::sortKfs(QVector<Keyframe>& vks) const {
+    std::stable_sort(vks.begin(), vks.end(),
+                     [](const Keyframe& a, const Keyframe& b) { return a.time < b.time; });
+}
+
 void MesaWidget::nudgeSelection(double dx, double dy) {
     MesaComposition* mc = currentMesa();
     if (!mc) return;
@@ -282,34 +310,6 @@ void MesaWidget::nudgeSelection(double dx, double dy) {
     update();
 }
 
-double MesaWidget::propFieldValue(int kind) const {
-    const double rel = qMax(0.0, m_playheadTime);
-    if (kind >= PC_X) {
-        const MesaComposition* mc = currentMesa();
-        if (!mc) return 0.0;
-        switch (kind) {
-            case PC_X: return kfValue(mc->kfCamX, mc->camX, rel);
-            case PC_Y: return kfValue(mc->kfCamY, mc->camY, rel);
-            case PC_Z: return kfValue(mc->kfCamZoom, mc->camZoom, rel);
-            case PC_R: return kfValue(mc->kfCamRotation, mc->camRotation, rel);
-        }
-        return 0.0;
-    }
-    const QVector<Track*> tracks = mesaTracks();
-    if (m_selectedIdx < 0 || m_selectedIdx >= tracks.size()) return 0.0;
-    const Track* t = tracks[m_selectedIdx];
-    switch (kind) {
-        case PL_X: return kfValue(t->kfMesaX, t->mesaX, rel);
-        case PL_Y: return kfValue(t->kfMesaY, t->mesaY, rel);
-        case PL_S: return kfValue(t->kfMesaScaleX, t->mesaScaleX, rel);
-        case PL_R: return kfValue(t->kfMesaRotation, t->mesaRotation, rel);
-        case PL_O: return kfValue(t->kfMesaOpacity, t->mesaOpacity, rel);
-        case PL_AX: return kfValue(t->kfMesaAnchorX, t->mesaAnchorX, rel);
-        case PL_AY: return kfValue(t->kfMesaAnchorY, t->mesaAnchorY, rel);
-    }
-    return 0.0;
-}
-
 // ═══════════════════════════════════════════════════════════════════════
 // Mini-timeline (régua de tempo + keyframes + playhead)
 // ═══════════════════════════════════════════════════════════════════════
@@ -331,9 +331,7 @@ void MesaWidget::drawMiniTimeline(QPainter& p) {
     if (!mc) return;
 
     const int tlH = miniTimelineHeight();
-    const int propH = propPanelHeight();
-    const int infoH = 16;
-    const int tlY = height() - propH - infoH - tlH;
+    const int tlY = height() - tlH;
     const int x0 = panelWidth();
     const int rulerW = artRect().width();
     m_miniTimelineRect = QRect(x0, tlY, rulerW, tlH);
@@ -357,6 +355,13 @@ void MesaWidget::drawMiniTimeline(QPainter& p) {
     const double dur = mesaDuration();
     const double start = m_contentStart;
     const double pps = qMax(20.0, (rulerW - 20.0) / dur);
+
+    // ── Pistas (câmera azulada, camadas neutra) + separador ──
+    p.setPen(Qt::NoPen);
+    p.fillRect(QRect(0, tlY + 6, rulerW, 14), QColor(70, 140, 200, 16));
+    p.fillRect(QRect(0, tlY + tlH / 2 - 2, rulerW, 16), QColor(255, 255, 255, 7));
+    p.setPen(QPen(QColor(255, 255, 255, 16), 1));
+    p.drawLine(0, tlY + tlH / 2, rulerW, tlY + tlH / 2);
 
     // ── Régua de tempo (ticks) ──
     const double tStep = niceStepMini(dur / 8.0);
@@ -476,6 +481,32 @@ void MesaWidget::drawMiniTimeline(QPainter& p) {
             << QPointF(phX - 5, tlY + 1) << QPointF(phX + 5, tlY + 1)
             << QPointF(phX, tlY + 8);
         p.drawPolygon(head);
+
+        // Chip do tempo atual ao lado do playhead
+        QFont cf2 = p.font();
+        cf2.setPointSizeF(7);
+        p.setFont(cf2);
+        const QString tstr = QString::number(m_playheadTime, 'f',
+                                             m_playheadTime < 10.0 ? 2 : 1) + "s";
+        const QRect chip(phX + 5, tlY + 2, 36, 12);
+        p.fillRect(chip, QColor(255, 70, 70, 45));
+        p.setPen(QColor(255, 165, 165));
+        p.drawText(chip, Qt::AlignLeft | Qt::AlignVCenter, tstr);
+    }
+
+    // ── Marquee de seleção (arrastar no vazio da timeline) ──
+    if (m_timelineMarquee) {
+        const int a = m_marqueeStartPos.x() - x0;
+        const int b = m_marqueeCurX - x0;
+        const int l = qBound(0, qMin(a, b), rulerW);
+        const int r = qBound(0, qMax(a, b), rulerW);
+        if (r > l) {
+            const QRect mq(l, tlY + 6, r - l, tlH - 12);
+            p.fillRect(mq, QColor(80, 180, 255, 40));
+            p.setPen(QPen(QColor(120, 200, 255, 190), 1, Qt::DashLine));
+            p.setBrush(Qt::NoBrush);
+            p.drawRect(mq);
+        }
     }
     p.restore();
 }
@@ -589,11 +620,13 @@ void MesaWidget::paintEvent(QPaintEvent*) {
     }
 
     // ── Desenha layers diretamente no canvas infinito ──
-    // Configura transformação canvas→screen no painter
+    // Configura transformação canvas→screen no painter. O m_offset entra no
+    // translate para o conteúdo andar JUNTO com o grid/handles no pan (senão
+    // a camada ficaria "solta", presa no centro da tela).
     p.save();
     const double cx = artCenter().x();
     const double cy = artCenter().y();
-    p.translate(cx, cy);
+    p.translate(cx + m_offset.x(), cy + m_offset.y());
     p.scale(m_zoom, m_zoom);
 
     const QString* skipId = nullptr;
@@ -771,7 +804,6 @@ void MesaWidget::paintEvent(QPaintEvent*) {
     // ── UI overlays ──
     if (m_showLayerList) drawLayerList(p);
     drawMiniTimeline(p);
-    drawPropertyPanel(p);
 
     // ── Header bar ──
     {
@@ -795,12 +827,11 @@ void MesaWidget::paintEvent(QPaintEvent*) {
     infof.setPointSizeF(7);
     p.setFont(infof);
     p.setPen(QColor(100, 100, 100));
-    const int infoY = height() - propPanelHeight() - 16 - miniTimelineHeight();
     const int x0 = panelWidth();
-    p.drawText(QRect(x0 + 6, infoY, artRect().width() - 12, 14), Qt::AlignLeft | Qt::AlignVCenter,
-               QStringLiteral("Zoom %1%  |  %2\xd7%3  |  %4 layers  |  G: snap %5  |  L: layers")
-                   .arg((int)(m_zoom * 100)).arg(mc->canvasW).arg(mc->canvasH)
-                   .arg(tracks.size())
+    p.drawText(QRect(x0 + 6, height() - miniTimelineHeight() - 14, artRect().width() - 12, 14),
+               Qt::AlignLeft | Qt::AlignVCenter,
+               QStringLiteral("Zoom %1%  |  G: snap %2  |  L: layers")
+                   .arg((int)(m_zoom * 100))
                    .arg(m_snapToGrid ? "ON" : "OFF"));
 }
 
@@ -814,7 +845,7 @@ void MesaWidget::fitToContent() {
     const double pad = 40.0;
     const QRect ar = artRect();
     const double availW = ar.width() - pad * 2;
-    const double availH = ar.height() - pad * 2 - propPanelHeight() - 22 - miniTimelineHeight();
+    const double availH = ar.height() - pad * 2 - 22 - miniTimelineHeight();
     if (availW <= 0 || availH <= 0) return;
     const double sx = availW / mc->canvasW;
     const double sy = availH / mc->canvasH;
@@ -824,6 +855,9 @@ void MesaWidget::fitToContent() {
     const QPointF center = artCenter();
     m_offset = center - QPointF(mc->canvasW / 2.0, mc->canvasH / 2.0) * m_zoom
              - center;  // simplifica para -canvas/2 * zoom
+    qCInfo(lcMesa).noquote() << "[MESA] fitToContent: zoom" << (int)(m_zoom * 100)
+                             << "% offset" << m_offset << "canvas" << mc->canvasW
+                             << "x" << mc->canvasH;
 }
 
 void MesaWidget::setMesaId(const QString& id) {

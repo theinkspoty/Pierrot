@@ -14,13 +14,16 @@
 QPointF MesaWidget::canvasToScreen(const QPointF& p) const {
     const double cx = artCenter().x();
     const double cy = artCenter().y();
-    return QPointF(cx + p.x() * m_zoom, cy + p.y() * m_zoom);
+    // m_offset desloca a vista (pan da mãozinha): origem do canvas + pan.
+    return QPointF(cx + p.x() * m_zoom + m_offset.x(),
+                   cy + p.y() * m_zoom + m_offset.y());
 }
 
 QPointF MesaWidget::screenToCanvas(const QPointF& p) const {
     const double cx = artCenter().x();
     const double cy = artCenter().y();
-    return QPointF((p.x() - cx) / m_zoom, (p.y() - cy) / m_zoom);
+    return QPointF((p.x() - m_offset.x() - cx) / m_zoom,
+                   (p.y() - m_offset.y() - cy) / m_zoom);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
