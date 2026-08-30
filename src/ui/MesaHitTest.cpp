@@ -33,8 +33,10 @@ MesaWidget::LayerBounds MesaWidget::layerBounds(const Track* t, int trackIdx) co
     if (!t || !mc) return lb;
 
     const double rel = qMax(0.0, m_playheadTime);
-    lb.x = kfValue(t->kfMesaX, t->mesaX, rel);
-    lb.y = kfValue(t->kfMesaY, t->mesaY, rel);
+    // MesaX/Y são OFFSETS do centro do canvas (convenção do MesaRenderer),
+    // não coordenadas absolutas. O pivot real em canvas-space é (canvasW/2 + X).
+    lb.x = mc->canvasW / 2.0 + kfValue(t->kfMesaX, t->mesaX, rel);
+    lb.y = mc->canvasH / 2.0 + kfValue(t->kfMesaY, t->mesaY, rel);
     lb.rotation = kfValue(t->kfMesaRotation, t->mesaRotation, rel);
     lb.anchorX = kfValue(t->kfMesaAnchorX, t->mesaAnchorX, rel);
     lb.anchorY = kfValue(t->kfMesaAnchorY, t->mesaAnchorY, rel);
@@ -189,8 +191,8 @@ MesaWidget::HitZone MesaWidget::hitTest(const QPointF& sp, int& outTrackIdx) con
     // 2) Câmera
     {
         const double rel = qMax(0.0, m_playheadTime);
-        const double cXi = kfValue(mc->kfCamX, mc->camX, rel);
-        const double cYi = kfValue(mc->kfCamY, mc->camY, rel);
+        const double cXi = mc->canvasW / 2.0 + kfValue(mc->kfCamX, mc->camX, rel);
+        const double cYi = mc->canvasH / 2.0 + kfValue(mc->kfCamY, mc->camY, rel);
         const double cZi = kfValue(mc->kfCamZoom, mc->camZoom, rel);
         const double cRi = kfValue(mc->kfCamRotation, mc->camRotation, rel);
         const QPointF cc = canvasToScreen(QPointF(cXi, cYi));
@@ -250,8 +252,8 @@ void MesaWidget::cameraCornerPoints(QPointF out[4]) const {
     if (!mc) { out[0] = out[1] = out[2] = out[3] = {}; return; }
     const double rel = qMax(0.0, m_playheadTime);
     const double zi = kfValue(mc->kfCamZoom, mc->camZoom, rel);
-    const double xi = kfValue(mc->kfCamX, mc->camX, rel);
-    const double yi = kfValue(mc->kfCamY, mc->camY, rel);
+    const double xi = mc->canvasW / 2.0 + kfValue(mc->kfCamX, mc->camX, rel);
+    const double yi = mc->canvasH / 2.0 + kfValue(mc->kfCamY, mc->camY, rel);
     const double cw = mc->canvasW / qMax(0.01, zi);
     const double ch = mc->canvasH / qMax(0.01, zi);
     const QPointF ctr = canvasToScreen(QPointF(xi, yi));

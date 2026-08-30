@@ -725,8 +725,8 @@ void MesaWidget::paintEvent(QPaintEvent*) {
 
     // ── Câmera (guia visual, sempre visível) ──
     {
-        const double cXi = kfValue(mc->kfCamX, mc->camX, rel);
-        const double cYi = kfValue(mc->kfCamY, mc->camY, rel);
+        const double cXi = mc->canvasW / 2.0 + kfValue(mc->kfCamX, mc->camX, rel);
+        const double cYi = mc->canvasH / 2.0 + kfValue(mc->kfCamY, mc->camY, rel);
         const double cZi = kfValue(mc->kfCamZoom, mc->camZoom, rel);
         const double cRi = kfValue(mc->kfCamRotation, mc->camRotation, rel);
         const double camW = mc->canvasW / qMax(0.01, cZi);
@@ -848,7 +848,11 @@ void MesaWidget::fitToContent() {
     const double sx = availW / mc->canvasW;
     const double sy = availH / mc->canvasH;
     m_zoom = qMin(sx, sy);
-    m_offset = QPointF(0, 0);
+    // Centraliza o canvas no widget: a origem do canvas fica em
+    // (widget_center - canvasW/2 * zoom), não no centro do widget.
+    const QPointF center(width() / 2.0, height() / 2.0);
+    m_offset = center - QPointF(mc->canvasW / 2.0, mc->canvasH / 2.0) * m_zoom
+             - center;  // simplifica para -canvas/2 * zoom
 }
 
 void MesaWidget::setMesaId(const QString& id) {

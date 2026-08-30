@@ -318,18 +318,28 @@ void MesaWidget::mouseMoveEvent(QMouseEvent* e) {
                         const Track* o = tracks[oi];
                         if (o->mesaHidden) continue;
                         const LayerBounds ob = layerBounds(o, oi);
-                        xs << ob.x - ob.w / 2.0 << ob.x + ob.w / 2.0 << ob.x;
-                        ys << ob.y - ob.h / 2.0 << ob.y + ob.h / 2.0 << ob.y;
+                        // Targets em offset-space (relativo ao centro do canvas)
+                        xs << ob.x - ob.w / 2.0 - mc->canvasW / 2.0
+                           << ob.x + ob.w / 2.0 - mc->canvasW / 2.0
+                           << ob.x - mc->canvasW / 2.0;
+                        ys << ob.y - ob.h / 2.0 - mc->canvasH / 2.0
+                           << ob.y + ob.h / 2.0 - mc->canvasH / 2.0
+                           << ob.y - mc->canvasH / 2.0;
                     }
                     if (mc) {
-                        const double cXi = kfValue(mc->kfCamX, mc->camX, rel);
-                        const double cYi = kfValue(mc->kfCamY, mc->camY, rel);
+                        const double cXi = mc->canvasW / 2.0 + kfValue(mc->kfCamX, mc->camX, rel);
+                        const double cYi = mc->canvasH / 2.0 + kfValue(mc->kfCamY, mc->camY, rel);
                         const double cZi = qMax(0.01, kfValue(mc->kfCamZoom, mc->camZoom, rel));
                         const double camW = mc->canvasW / cZi;
                         const double camH = mc->canvasH / cZi;
-                        xs << cXi - camW / 2.0 << cXi + camW / 2.0 << cXi;
-                        ys << cYi - camH / 2.0 << cYi + camH / 2.0 << cYi;
+                        xs << cXi - camW / 2.0 - mc->canvasW / 2.0
+                           << cXi + camW / 2.0 - mc->canvasW / 2.0
+                           << cXi - mc->canvasW / 2.0;
+                        ys << cYi - camH / 2.0 - mc->canvasH / 2.0
+                           << cYi + camH / 2.0 - mc->canvasH / 2.0
+                           << cYi - mc->canvasH / 2.0;
                     }
+                    // Centro do canvas = offset (0, 0)
                     xs << 0.0; ys << 0.0;
 
                     auto snapAxis = [&](double val, double half,
