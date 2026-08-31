@@ -56,6 +56,7 @@ set(SOURCES
     src/ui/TextEditorDialog.cpp
     src/ui/WelcomeWindow.cpp
     src/ui/GraphEditorWidget.cpp
+    src/ui/ClipPropertiesWidget.cpp
     src/ui/ClickLogger.cpp
     src/ui/EffectsWidget.cpp
     src/ui/ExpressWidget.cpp
@@ -70,6 +71,7 @@ set(SOURCES
     src/ui/MesaHitTest.cpp
     src/ui/MesaInputHandler.cpp
     src/ui/MesaOverlayRenderer.cpp
+    src/ui/MesaCanvasOps.cpp
     src/render/MesaRenderer.cpp
     resources.qrc
 )
@@ -110,6 +112,7 @@ set(HEADERS
     src/ui/TextEditorDialog.h
     src/ui/WelcomeWindow.h
     src/ui/GraphEditorWidget.h
+    src/ui/ClipPropertiesWidget.h
     src/ui/ClickLogger.h
     src/ui/EffectsWidget.h
     src/ui/ExpressWidget.h

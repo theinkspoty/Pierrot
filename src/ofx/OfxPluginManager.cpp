@@ -8,6 +8,7 @@
 #include "OfxRenderer.h"
 
 #include <QDir>
+#include <QFileInfo>
 #include <QStandardPaths>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -273,15 +274,31 @@ bool OfxPluginManager::loadOfxLibrary(const QString& libPath, const QString& fal
             // Extrai dados do describe — label e grouping são propriedades padrão OFX
             char* plabel = nullptr;
             char* pgrouping = nullptr;
+            char* picon = nullptr;
             tempInst.imageEffectProps.getString(kOfxPropLabel, 0,
                                                 (const char*&)plabel);
             tempInst.imageEffectProps.getString(kOfxImageEffectPluginPropGrouping, 0,
                                                 (const char*&)pgrouping);
+            tempInst.imageEffectProps.getString(kOfxPropIcon, 0,
+                                                (const char*&)picon);
 
             if (plabel && std::strlen(plabel) > 0)
                 info.name = QString::fromLatin1(plabel);
             if (pgrouping && std::strlen(pgrouping) > 0)
                 info.grouping = QString::fromLatin1(pgrouping);
+            if (picon && std::strlen(picon) > 0)
+                info.iconPath = resolveIconPath(libPath, QString::fromLatin1(picon));
+            // Fallback de convenção: procura nomes comuns na pasta Resources
+            // caso o plugin não declare kOfxPropIcon.
+            if (info.iconPath.isEmpty()) {
+                static const char* const iconCandidates[] = {
+                    "Icon.png", "icon.png", "Icon.svg", "icon.svg", "Plugin.png"
+                };
+                for (const char* nm : iconCandidates) {
+                    const QString p = resolveIconPath(libPath, QString::fromUtf8(nm));
+                    if (!p.isEmpty()) { info.iconPath = p; break; }
+                }
+            }
 
             // Coleta parâmetros com metadata completa
             QVector<OfxParamDefInfo> paramList;
@@ -379,6 +396,39 @@ void OfxPluginManager::describePlugin(OfxPluginInfo& info) {
     Q_UNUSED(info);
 }
 
+QString OfxPluginManager::resolveIconPath(const QString& libPath,
+                                           const QString& relPath) const {
+    // O ícone OFX é relativo à pasta Resources do bundle. O bundle segue o
+    // layout padrão:  <Bundle>.ofx/Contents/[Linux/MacOS]/.../Plugin.ofx
+    // com a Resources em <Bundle>.ofx/Contents/Resources.
+    QString dir = QFileInfo(libPath).absolutePath();
+    QString contentsDir;
+    for (;;) {
+        if (!dir.isEmpty() && QFileInfo(dir).isDir()
+            && QFileInfo(dir).fileName().compare(QStringLiteral("Contents"),
+                                                 Qt::CaseInsensitive) == 0) {
+            contentsDir = dir;
+            break;
+        }
+        const QString parent = QFileInfo(dir + QLatin1String("/..")).absolutePath();
+        if (parent.isEmpty() || parent == dir) break;
+        dir = parent;
+    }
+
+    QStringList bases;
+    if (!contentsDir.isEmpty())
+        bases << contentsDir + QStringLiteral("/Resources") << contentsDir;
+    bases << QFileInfo(libPath).absolutePath();
+
+    for (const QString& base : bases) {
+        QString cand = QFileInfo(relPath).isAbsolute()
+                ? relPath
+                : QDir(base).filePath(relPath);
+        if (QFileInfo(cand).isFile()) return cand;
+    }
+    return QString();
+}
+
 // ── Busca por id ─────────────────────────────────────────────────────────
 
 const OfxPluginInfo* OfxPluginManager::findPlugin(const QString& id) const
@@ -411,6 +461,7 @@ QJsonObject OfxPluginManager::toJson() const
         pj["grouping"] = p.grouping;
         pj["description"] = p.description;
         pj["pluginPath"] = p.pluginPath;
+        pj["iconPath"] = p.iconPath;
         pj["versionMajor"] = p.versionMajor;
         pj["versionMinor"] = p.versionMinor;
         arr.append(pj);
@@ -437,6 +488,7 @@ void OfxPluginManager::fromJson(const QJsonObject& obj)
         info.grouping = pj["grouping"].toString();
         info.description = pj["description"].toString();
         info.pluginPath = pj["pluginPath"].toString();
+        info.iconPath = pj["iconPath"].toString();
         info.versionMajor = pj["versionMajor"].toInt(1);
         info.versionMinor = pj["versionMinor"].toInt(0);
         m_plugins.append(info);

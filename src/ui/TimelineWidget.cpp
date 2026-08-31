@@ -463,6 +463,137 @@ void TimelineWidget::addTrackToMesa(const QString& mesaId) {
     update();
 }
 
+void TimelineWidget::sendTrackToMesa(const QString& trackId, const QString& mesaId) {
+    if (!m_project || mesaId.isEmpty()) return;
+    MesaComposition* mc = m_project->findMesa(mesaId);
+    if (!mc) return;
+
+    // Só faixas de vídeo viram camadas de Mesa.
+    int trackIdx = -1;
+    for (int i = 0; i < m_project->videoTracks.size(); ++i)
+        if (m_project->videoTracks[i].id == trackId) { trackIdx = i; break; }
+    if (trackIdx < 0) return;
+
+    Track& t = m_project->videoTracks[trackIdx];
+
+    // Já é membro desta Mesa: nada a fazer.
+    if (mc->trackIds.contains(t.id)) return;
+
+    emit editStart();
+
+    // Exclusividade: a track sai de qualquer outra Mesa.
+    for (MesaComposition& m : m_project->mesas)
+        if (m.trackIds.contains(t.id))
+            m.trackIds.removeAll(t.id);
+
+    // Entra na composição alvo e no grupo (pasta) da Mesa.
+    mc->trackIds.append(t.id);
+    TrackGroup* grp = m_project->findGroup(mesaId);
+    t.groupId = grp ? grp->id : t.groupId;
+
+    emit modified();
+    emit mesaChanged(mesaId);
+    invalidateScene();
+    updateScrollRanges();
+    update();
+}
+
+void TimelineWidget::addSolidToMesa(const QString& mesaId, const QString& generator,
+                                    const QColor& c1, const QColor& c2) {
+    if (!m_project || mesaId.isEmpty()) return;
+    MesaComposition* mc = m_project->findMesa(mesaId);
+    if (!mc) return;
+
+    emit editStart();
+
+    // Mídia virtual gerada sob demanda (mesmo formato da pool de mídia).
+    MediaItem m;
+    m.id = newId();
+    m.isSolid = true;
+    m.hasVideo = true;
+    m.width = m_project->width;
+    m.height = m_project->height;
+    m.duration = m_project->duration() > 0 ? m_project->duration() : 5.0;
+    m.generator = generator;
+    m.solidColor = c1;
+    m.solidColor2 = c2;
+    if (generator.isEmpty()) {
+        const QString hex = m.solidColor.name();
+        m.name = tr("Cor %1").arg(hex.startsWith(QLatin1Char('#')) ? hex.mid(1) : hex);
+    } else if (generator == QStringLiteral("gradient")) {
+        m.name = tr("Gradiente");
+    } else {
+        m.name = tr("Camada %1").arg(generator);
+    }
+    m_project->media.append(m);
+
+    // Nova track de vídeo vinculada ao grupo (pasta) da Mesa.
+    m_project->addTrack(false);
+    Track& nt = m_project->videoTracks.last();
+    nt.name = tr("Mesa %1 · %2").arg(mc->name).arg(m.name);
+    TrackGroup* grp = m_project->findGroup(mesaId);
+    if (grp) nt.groupId = grp->id;
+    mc->trackIds.append(nt.id);
+    nt.mesaX = mc->canvasW / 2.0;
+    nt.mesaY = mc->canvasH / 2.0;
+
+    // Clipe cobrindo toda a duração da mídia virtual.
+    Clip c;
+    c.id = newId();
+    c.mediaId = m.id;
+    c.pos = 0.0;
+    c.in = 0.0;
+    c.dur = m.duration;
+    c.speed = 1.0;
+    c.name = m.name;
+    nt.clips.append(c);
+
+    emit modified();
+    emit mesaChanged(mesaId);
+    invalidateScene();
+    updateScrollRanges();
+    update();
+}
+
+void TimelineWidget::duplicateMesaTrack(const QString& mesaId, const QString& trackId) {
+    if (!m_project || mesaId.isEmpty()) return;
+    MesaComposition* mc = m_project->findMesa(mesaId);
+    if (!mc) return;
+
+    int srcIdx = -1;
+    for (int i = 0; i < (int)m_project->videoTracks.size(); ++i)
+        if (m_project->videoTracks[i].id == trackId) { srcIdx = i; break; }
+    if (srcIdx < 0) return;
+
+    emit editStart();
+
+    // Cópia profunda: ids novos em clips (as mídias são compartilhadas,
+    // como todo clipe duplicado do projeto).
+    Track copy = m_project->videoTracks[srcIdx];
+    copy.id = newId();
+    copy.name = tr("%1 (cópia)").arg(copy.name);
+    for (int i = 0; i < copy.clips.size(); ++i) {
+        copy.clips[i].id = newId();
+        copy.clips[i].groupId = QString();  // grupos entra-e-sai não valem para a cópia
+    }
+
+    // Deslocada +20/+20 no canvas (base e keyframes de posição), para sair da
+    // sombra da original e fácil de pegar.
+    copy.mesaX += 20.0;
+    copy.mesaY += 20.0;
+    for (Keyframe& k : copy.kfMesaX) k.value += 20.0;
+    for (Keyframe& k : copy.kfMesaY) k.value += 20.0;
+
+    m_project->videoTracks.append(copy);
+    mc->trackIds.append(copy.id);
+
+    emit modified();
+    emit mesaChanged(mesaId);
+    invalidateScene();
+    updateScrollRanges();
+    update();
+}
+
 void TimelineWidget::resizeEvent(QResizeEvent*) {
     const int bar = m_vbar->sizeHint().width();
     const int hbarH = m_hbar->sizeHint().height();
@@ -1306,9 +1437,14 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
             QAction* del = menu.addAction(tr("Desagrupar faixas"));
             QAction* openMesa = nullptr;
             QAction* delMesa = nullptr;
+            QAction* mbMesa = nullptr;
             if (!g->mesaId.isEmpty()) {
                 openMesa = menu.addAction(tr("Abrir Mesa"));
+                mbMesa = menu.addAction(tr("Motion blur (Ctrl+Shift+B)"));
                 delMesa = menu.addAction(tr("Excluir Mesa"));
+                MesaComposition* m = m_project->findMesa(g->mesaId);
+                if (m) mbMesa->setCheckable(true);
+                if (m) mbMesa->setChecked(m->motionBlur);
             }
             QAction* act = menu.exec(e->globalPos());
             if (act == selAll) {
@@ -1320,6 +1456,17 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
                 toggleGroupCollapsed(gid);
             } else if (act == openMesa) {
                 emit mesaOpenRequested(g->mesaId);
+            } else if (act == mbMesa) {
+                MesaComposition* m = m_project->findMesa(g->mesaId);
+                if (m) {
+                    emit editStart();
+                    m->motionBlur = !m->motionBlur;
+                    emit modified();
+                    emit mesaChanged(g->mesaId);
+                    refreshView();
+                    qDebug() << "[TIMELINE] mesa motion blur"
+                             << (m->motionBlur ? "ON" : "OFF");
+                }
             } else if (act == delMesa) {
                 emit editStart();
                 const QString mesaId = g->mesaId;
@@ -1472,7 +1619,7 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         else if (act == pasteAttr) pasteAttributes();
         else if (act == savePreset) saveClipPreset();
         else if (act == applyPreset) applyClipPreset();
-        else if (act == props) showProperties(clip);
+        else if (act == props) emit propertiesRequested(clip->id);
         else if (act == speedAct) showSpeedDialog(clip);
         else if (act == unlink) {
             emit editStart();
@@ -1589,6 +1736,7 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         QAction* renameGroup = nullptr;
         QAction* ungroupTracks = nullptr;
         QAction* createMesa = nullptr;
+        QMenu* sendMesaMenu = nullptr;
         if (track) {
             menu.addSeparator();
             if (m_selTracks.size() >= 2)
@@ -1598,6 +1746,14 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
                 ungroupTracks = menu.addAction(tr("Desagrupar faixas"));
             }
             createMesa = menu.addAction(tr("Criar Mesa"));
+            if (!track->audio && !m_project->mesas.isEmpty()) {
+                sendMesaMenu = menu.addMenu(tr("Enviar para Mesa"));
+                for (const MesaComposition& mesa : m_project->mesas) {
+                    QAction* a = sendMesaMenu->addAction(
+                        mesa.name.isEmpty() ? mesa.id : mesa.name);
+                    a->setData(mesa.id);
+                }
+            }
         }
         QAction* delTrack = nullptr;
         if (track) {
@@ -1672,6 +1828,9 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         }
         else if (track && act == createMesa) {
             criarMesa();
+        }
+        else if (track && act && sendMesaMenu && act->parent() == sendMesaMenu) {
+            sendTrackToMesa(track->id, act->data().toString());
         }
         else if (track && act && blendMenu && act->parent() == blendMenu) {
             emit editStart();
@@ -1855,108 +2014,6 @@ void TimelineWidget::showSpeedDialog(Clip* c) {
         sc->in = std::max(0.0, sc->in - (consumed - c->dur));
     }
     invalidateScene();
-    update();
-    emit modified();
-}
-
-void TimelineWidget::showProperties(Clip* c) {    if (!c) return;
-
-    QDialog dlg(this);
-    dlg.setWindowTitle(tr("Propriedades do clipe"));
-
-    auto* vol = new QSlider(Qt::Horizontal, &dlg);
-    vol->setRange(0, 200);
-    vol->setValue((int)llround(c->volume * 100.0));
-    auto* volLabel = new QLabel(QString("%1%").arg(vol->value()), &dlg);
-    connect(vol, &QSlider::valueChanged, &dlg, [volLabel](int v) {
-        volLabel->setText(QString("%1%").arg(v));
-    });
-
-    auto* op = new QSlider(Qt::Horizontal, &dlg);
-    op->setRange(0, 100);
-    op->setValue((int)llround(c->opacity * 100.0));
-    auto* opLabel = new QLabel(QString("%1%").arg(op->value()), &dlg);
-    connect(op, &QSlider::valueChanged, &dlg, [opLabel](int v) {
-        opLabel->setText(QString("%1%").arg(v));
-    });
-
-    auto* volRow = new QHBoxLayout;
-    volRow->addWidget(vol, 1);
-    volRow->addWidget(volLabel);
-    auto* opRow = new QHBoxLayout;
-    opRow->addWidget(op, 1);
-    opRow->addWidget(opLabel);
-
-    auto* speed = new QSlider(Qt::Horizontal, &dlg);
-    speed->setRange(10, 400);
-    speed->setValue((int)llround(c->speed * 100.0));
-    auto* speedLabel = new QLabel(QString("%1×").arg(speed->value() / 100.0), &dlg);
-    connect(speed, &QSlider::valueChanged, &dlg, [speedLabel](int v) {
-        speedLabel->setText(QString("%1×").arg(v / 100.0));
-    });
-    auto* speedRow = new QHBoxLayout;
-    speedRow->addWidget(speed, 1);
-    speedRow->addWidget(speedLabel);
-
-    auto* fIn = new QSlider(Qt::Horizontal, &dlg);
-    fIn->setRange(0, 5000);
-    fIn->setValue((int)llround(c->fadeIn * 1000.0));
-    auto* fInLabel = new QLabel(QString("%1 s").arg(fIn->value() / 1000.0), &dlg);
-    connect(fIn, &QSlider::valueChanged, &dlg, [fInLabel](int v) {
-        fInLabel->setText(QString("%1 s").arg(v / 1000.0));
-    });
-    auto* fInRow = new QHBoxLayout;
-    fInRow->addWidget(fIn, 1);
-    fInRow->addWidget(fInLabel);
-
-    auto* fOut = new QSlider(Qt::Horizontal, &dlg);
-    fOut->setRange(0, 5000);
-    fOut->setValue((int)llround(c->fadeOut * 1000.0));
-    auto* fOutLabel = new QLabel(QString("%1 s").arg(fOut->value() / 1000.0), &dlg);
-    connect(fOut, &QSlider::valueChanged, &dlg, [fOutLabel](int v) {
-        fOutLabel->setText(QString("%1 s").arg(v / 1000.0));
-    });
-    auto* fOutRow = new QHBoxLayout;
-    fOutRow->addWidget(fOut, 1);
-    fOutRow->addWidget(fOutLabel);
-
-    const bool isAudio = trackOf(c)->audio;
-
-    auto* form = new QFormLayout;
-    form->addRow(tr("Volume:"), volRow);
-    form->addRow(tr("Opacidade:"), opRow);
-    form->addRow(tr("Velocidade:"), speedRow);
-    form->addRow(tr("Fade in:"), fInRow);
-    form->addRow(tr("Fade out:"), fOutRow);
-    if (!isAudio) {
-        // Texto/título tem editor dedicado (menu de contexto "Texto…").
-        auto* textBtn = new QPushButton(tr("Texto do clipe…"), &dlg);
-        connect(textBtn, &QPushButton::clicked, &dlg, [this, c, &dlg]() {
-            TextEditorDialog td(m_project, c, &dlg);
-            if (td.exec() == QDialog::Accepted) {
-                emit editStart();
-                emit modified();
-            }
-        });
-        form->addRow(tr("Texto:"), textBtn);
-    }
-
-    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
-    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-
-    auto* lay = new QVBoxLayout(&dlg);
-    lay->addLayout(form);
-    lay->addWidget(buttons);
-
-    if (dlg.exec() != QDialog::Accepted) return;
-
-    emit editStart();
-    c->volume = vol->value() / 100.0;
-    c->opacity = op->value() / 100.0;
-    c->speed = speed->value() / 100.0;
-    c->fadeIn = fIn->value() / 1000.0;
-    c->fadeOut = fOut->value() / 1000.0;
     update();
     emit modified();
 }

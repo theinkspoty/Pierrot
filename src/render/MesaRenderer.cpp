@@ -5,6 +5,7 @@
 
 #include "MesaRenderer.h"
 #include "ffmpeg/FFmpegDecoder.h"
+#include "generators.h"
 
 #include <QPainter>
 #include <QPainterPath>
@@ -47,16 +48,54 @@ QImage MesaRenderer::render(const MesaComposition& mesa, const Project& project,
     const int outH = project.height;
     if (outW <= 0 || outH <= 0 || mesa.canvasW <= 0 || mesa.canvasH <= 0) return {};
 
+    const double frameDur = 1.0 / qMax(1, project.fps);
+    const double extent = mesa.motionBlurShutter * frameDur;
+
+    // Motion blur de CÂMERA: o enquadramento é redefinido em cada sub-passada
+    // (mostra o rastro da câmera). Cada passada é uma composição LIMPA da pilha
+    // (motionBlurStack desligado) — são as passadas dela que integram o rastro;
+    // as layers (já com o transform em ts) borram naturalmente junto.
+    if (mesa.motionBlur && mesa.motionBlurSamples >= 2 && extent > 0.0) {
+        const int n = qBound(2, mesa.motionBlurSamples, 32);
+        QImage out(outW, outH, QImage::Format_ARGB32);
+        out.fill(Qt::transparent);
+        QPainter p(&out);
+        p.setClipRect(0, 0, outW, outH);
+        const double w = 1.0 / n;
+        for (int i = 0; i < n; ++i) {
+            const double frac = n == 1 ? 0.0 : double(i) / double(n - 1);
+            const double ts = time - extent / 2.0 + frac * extent;
+            QImage sample = renderSample(mesa, project, ts, nullptr, false);
+            p.save();
+            p.setOpacity(w);
+            p.setCompositionMode(QPainter::CompositionMode_Plus);
+            p.drawImage(0, 0, sample);
+            p.restore();
+        }
+        return out;
+    }
+
+    return renderSample(mesa, project, time, nullptr);
+}
+
+// Desenha uma passada inteira: câmera (no instante `time`) + todas as layers.
+// Câmera no estilo After Effects: um ponto da composição (camX, camY, ABSOLUTO,
+// origem topo-esquerda) fica no centro do frame de saída, com rotação e zoom.
+// zoom = 1.0 com a câmera no centro da comp e a comp proporcional ao output
+// produz mapeamento 1:1 (contido no frame).
+QImage MesaRenderer::renderSample(const MesaComposition& mesa, const Project& project,
+                                  double time, const QString* skipTrackId,
+                                  bool motionBlurStack) {
+    const int outW = project.width;
+    const int outH = project.height;
+    if (outW <= 0 || outH <= 0 || mesa.canvasW <= 0 || mesa.canvasH <= 0) return {};
+
     QImage out(outW, outH, QImage::Format_ARGB32);
     out.fill(Qt::transparent);
     QPainter p(&out);
     p.setRenderHint(QPainter::SmoothPixmapTransform);
     p.setClipRect(0, 0, outW, outH);
 
-    // Câmera no estilo After Effects: um ponto da composição (camX, camY,
-    // ABSOLUTO, origem topo-esquerda) fica no centro do frame de saída, com
-    // rotação e zoom. zoom = 1.0 com a câmera no centro da comp e a comp
-    // proporcional ao output produz mapeamento 1:1 (contido no frame).
     const double camX = kfValue(mesa.kfCamX, mesa.camX, time);
     const double camY = kfValue(mesa.kfCamY, mesa.camY, time);
     const double zoom = qMax(0.001, kfValue(mesa.kfCamZoom, mesa.camZoom, time));
@@ -75,35 +114,64 @@ QImage MesaRenderer::render(const MesaComposition& mesa, const Project& project,
     p.rotate(rot);
     p.scale(s, s);
     p.translate(-camX, -camY);
-    renderToPainter(p, mesa, project, time);
+    renderToPainter(p, mesa, project, time, skipTrackId, motionBlurStack);
 
     return out;
+}
+
+// Empilha as camadas da composição num painter já no canvas-space.
+// `relTime` fixa o CONTEÚDO; `transformTime` avalia os keyframes de transform.
+void MesaRenderer::paintStack(QPainter& painter, const MesaComposition& mesa,
+                              const Project& project, double relTime,
+                              const QString* skipTrackId, double transformTime) {
+    for (const QString& tid : mesa.trackIds) {
+        if (skipTrackId && *skipTrackId == tid) continue;
+
+        const Track* track = nullptr;
+        for (const Track& tr : project.videoTracks) {
+            if (tr.id == tid) { track = &tr; break; }
+        }
+        if (!track) {
+            for (const Track& tr : project.audioTracks) {
+                if (tr.id == tid) { track = &tr; break; }
+            }
+        }
+        if (!track) continue;
+
+        drawTrackLayer(painter, *track, mesa, project, relTime, transformTime);
+    }
 }
 
 // Desenha uma única track (camada) num painter `acc` já preparado.
 // Retorna false se nada foi desenhado (sem clip ativo / frame vazio).
 bool MesaRenderer::drawTrackLayer(QPainter& acc, const Track& track,
                                   const MesaComposition& mesa, const Project& project,
-                                  double relTime) {
+                                  double relTime, double transformTime) {
     LayerPrep prep;
-    if (!prepareLayer(prep, mesa, project, relTime, track)) return false;
+    if (!prepareLayer(prep, mesa, project, relTime, track, transformTime)) return false;
     drawTrackImage(acc, prep);
     return true;
 }
 
 bool MesaRenderer::prepareLayer(LayerPrep& out, const MesaComposition& mesa,
                                 const Project& project, double relTime,
-                                const Track& track) {
+                                const Track& track, double transformTime) {
     // Layer oculta (olho desligado) não existe no empilhamento — nem no
     // canvas do editor, nem no preview, nem (futuro) no export.
     if (track.mesaHidden) return false;
+    // tempo de transform separado do tempo de conteúdo: `transformTime` rasteja
+    // os keyframes das props de canvas (motion blur); `relTime` fixa o clip
+    // ativo. Camada com motion blur desligado (mesaMotionBlur=false) fica
+    // FIXA no relTime — é ela não borra nas sub-passadas.
+    const double t = (transformTime >= 0.0 && track.mesaMotionBlur) ? transformTime
+                                                                    : relTime;
     out.blend = blendModeFor(track.blendMode);
-    const double tMesaX = kfValue(track.kfMesaX, track.mesaX, relTime);
-    const double tMesaY = kfValue(track.kfMesaY, track.mesaY, relTime);
-    const double tScX = kfValue(track.kfMesaScaleX, track.mesaScaleX, relTime);
-    const double tScY = kfValue(track.kfMesaScaleY, track.mesaScaleY, relTime);
-    const double tRot = kfValue(track.kfMesaRotation, track.mesaRotation, relTime);
-    const double tOp = std::clamp(kfValue(track.kfMesaOpacity, track.mesaOpacity, relTime),
+    const double tMesaX = kfValue(track.kfMesaX, track.mesaX, t);
+    const double tMesaY = kfValue(track.kfMesaY, track.mesaY, t);
+    const double tScX = kfValue(track.kfMesaScaleX, track.mesaScaleX, t);
+    const double tScY = kfValue(track.kfMesaScaleY, track.mesaScaleY, t);
+    const double tRot = kfValue(track.kfMesaRotation, track.mesaRotation, t);
+    const double tOp = std::clamp(kfValue(track.kfMesaOpacity, track.mesaOpacity, t),
                                   0.0, 1.0);
 
     // Encontra o clip ativo nesta track no tempo rel
@@ -139,9 +207,17 @@ bool MesaRenderer::prepareLayer(LayerPrep& out, const MesaComposition& mesa,
             fp.fillPath(path, ts->textColor);
         } else if (!c.mediaId.isEmpty()) {
             const MediaItem* mi = project.findMedia(c.mediaId);
-            if (mi && !mi->filePath.isEmpty()) {
-                const double srcT = c.in + cRel * c.speed;
-                frame = decodeFrame(mi->filePath, srcT, mesa.canvasW);
+            if (mi) {
+                if (mi->isSolid) {
+                    // Mídia virtual (sólido/gradiente/checkerboard/noise):
+                    // gerada no tamanho próprio (ou da comp, se não definido).
+                    const int fw = mi->width > 0 ? mi->width : (int)mesa.canvasW;
+                    const int fh = mi->height > 0 ? mi->height : (int)mesa.canvasH;
+                    frame = generatorFrame(*mi, fw, fh);
+                } else if (!mi->filePath.isEmpty()) {
+                    const double srcT = c.in + cRel * c.speed;
+                    frame = decodeFrame(mi->filePath, srcT, mesa.canvasW);
+                }
             }
         }
         if (!frame.isNull()) break;
@@ -199,21 +275,64 @@ int MesaRenderer::blendModeFor(const QString& blend) const {
 
 void MesaRenderer::renderToPainter(QPainter& painter, const MesaComposition& mesa,
                                    const Project& project, double relTime,
-                                   const QString* skipTrackId) {
-    for (const QString& tid : mesa.trackIds) {
-        if (skipTrackId && *skipTrackId == tid) continue;
-
-        const Track* track = nullptr;
-        for (const Track& tr : project.videoTracks) {
-            if (tr.id == tid) { track = &tr; break; }
-        }
-        if (!track) {
-            for (const Track& tr : project.audioTracks) {
-                if (tr.id == tid) { track = &tr; break; }
-            }
-        }
-        if (!track) continue;
-
-        drawTrackLayer(painter, *track, mesa, project, relTime);
+                                   const QString* skipTrackId, bool motionBlurStack) {
+    const bool mb = motionBlurStack && mesa.motionBlur && mesa.motionBlurSamples >= 2
+                 && mesa.motionBlurShutter > 0.0;
+    if (!mb) {
+        paintStack(painter, mesa, project, relTime, skipTrackId, relTime);
+        return;
     }
+
+    // Motion blur por sub-passadas COMPLETAS (estilo AE): cada passada desenha a
+    // pilha inteira no instante `ts` (oclusão entre camadas correta em cada uma);
+    // as n passadas somam com peso 1/n num buffer do tamanho do clip. Estática:
+    // n·(1/n) = identidade (nada borra); em movimento, as bordas ficam com
+    // cobertura parcial (as próprias bordas do rastro). O buffer usa o clip do
+    // painter para capturar a VIEW atual da câmera sem depender do tamanho do
+    // canvas infinito.
+    const QRect cr = painter.clipBoundingRect().toAlignedRect();
+    if (cr.isEmpty() || cr.width() > 16384 || cr.height() > 16384) {
+        paintStack(painter, mesa, project, relTime, skipTrackId, relTime);
+        return;
+    }
+
+    const int n = qBound(2, mesa.motionBlurSamples, 32);
+    const double frameDur = 1.0 / qMax(1, project.fps);
+    const double extent = mesa.motionBlurShutter * frameDur;
+    const QTransform view = painter.transform();
+
+    QImage acc(cr.size(), QImage::Format_ARGB32_Premultiplied);
+    acc.fill(Qt::transparent);
+    QPainter ap(&acc);
+    ap.setRenderHint(QPainter::SmoothPixmapTransform);
+    for (int i = 0; i < n; ++i) {
+        const double frac = n == 1 ? 0.0 : double(i) / double(n - 1);
+        const double ts = relTime - extent / 2.0 + frac * extent;
+        QImage pass(cr.size(), QImage::Format_ARGB32_Premultiplied);
+        pass.fill(Qt::transparent);
+        QPainter pp(&pass);
+        pp.setRenderHint(QPainter::SmoothPixmapTransform);
+        // Mesma view da câmera do painter, deslocada para o sistema de
+        // coordenadas do buffer: pixel (x,y) do pass = device (x+cr.x, y+cr.y).
+        // O QImage clipa sozinho nas bordas; nada além do buffer é pintado.
+        QTransform passT = view;
+        passT.translate(-cr.x(), -cr.y());   // translate pré-multiplicado (saída)
+        pp.setTransform(passT);
+        // Conteúdo FIXO em relTime; só o transform das camadas rasteja em ts.
+        paintStack(pp, mesa, project, relTime, skipTrackId, ts);
+        pp.end();
+        ap.save();
+        ap.setOpacity(1.0 / n);
+        ap.setCompositionMode(QPainter::CompositionMode_Plus);
+        ap.drawImage(0, 0, pass);
+        ap.restore();
+    }
+    ap.end();
+
+    // Composição final em DEVICE coordinates (cr está em device): zera o
+    // transform do painter para o buffer cair exatamente sobre o região do clip.
+    painter.save();
+    painter.resetTransform();
+    painter.drawImage(cr.topLeft(), acc);
+    painter.restore();
 }

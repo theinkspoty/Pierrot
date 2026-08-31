@@ -113,6 +113,16 @@ public slots:
     // Cria um clipe Mesa (composição 2D) numa faixa de vídeo.
     void criarMesa();
     void addTrackToMesa(const QString& mesaId);
+    // Envia uma track EXISTENTE de vídeo para dentro de uma Mesa como camada
+    // (exclusivamente: sai de qualquer outra Mesa e passa a compor essa).
+    void sendTrackToMesa(const QString& trackId, const QString& mesaId);
+    // Cria uma camada de MÍDIA VIRTUAL (sólido/gradiente) dentro de uma Mesa:
+    // gera o MediaItem no pool e uma track nova com um clip cobrindo tudo.
+    void addSolidToMesa(const QString& mesaId, const QString& generator,
+                        const QColor& c1, const QColor& c2);
+    // Duplica uma track que é camada de Mesa (cópia profunda com ids novos,
+    // deslocada +20/+20 no canvas).
+    void duplicateMesaTrack(const QString& mesaId, const QString& trackId);
     // Arrasto manual vindo da pool de mídia (não depende do DnD do
     // compositor, que falha em alguns ambientes/Wayland).
     void showDropHover(const QPoint& globalPos);
@@ -139,8 +149,10 @@ signals:
     void loopChanged(double in, double out);
     void loopEnabledChanged(bool enabled); // "Q" liga/desliga o loop de reprodução
     void mesaOpenRequested(const QString& mesaId);
+    void mesaChanged(const QString& mesaId);
     void selectionChanged(const QString& id);
     void pancropRequested(const QString& id);
+    void propertiesRequested(const QString& id);
     void mediaImported();
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -235,7 +247,6 @@ private:
     void trackEnvelopePress(int row, bool audio, double t);
     void applyZoomRect(double t0, double t1);
     void removeClipsByIds(const QStringList& ids);
-    void showProperties(Clip* c);
     void showSpeedDialog(Clip* c);
     void showEffectsDialog(Clip* c);
     void showGradingDialog(Clip* c);

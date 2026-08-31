@@ -296,6 +296,8 @@ void EffectsWidget::buildTree()
             item->setText(0, p.name.isEmpty() ? p.id : p.name);
             item->setData(0, Qt::UserRole, p.id);
             item->setToolTip(0, p.description.isEmpty() ? p.id : p.description);
+            if (!p.iconPath.isEmpty())
+                item->setIcon(0, QIcon(p.iconPath));
         }
     }
     ofxCat->setExpanded(true);
@@ -339,7 +341,17 @@ void EffectsWidget::updatePreview(const QString& effectId)
         { QStringLiteral("pierrot_motion"), QStringLiteral(":/fx/motion.ico") },
     };
 
-    const QString iconPath = fxIcons.value(effectId);
+    // Ícone do plugin OFX (kOfxPropIcon) tem prioridade sobre o mapa nativo.
+    QString iconPath;
+    for (const OfxPluginInfo& p : m_ofxPlugins) {
+        if (p.id == effectId && !p.iconPath.isEmpty()) {
+            iconPath = p.iconPath;
+            break;
+        }
+    }
+    if (iconPath.isEmpty())
+        iconPath = fxIcons.value(effectId);
+
     if (!iconPath.isEmpty()) {
         m_previewIcon->setPixmap(QIcon(iconPath).pixmap(64, 64));
     } else {

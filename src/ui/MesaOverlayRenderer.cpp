@@ -76,13 +76,13 @@ void MesaWidget::drawLayerList(QPainter& p) {
         p.drawText(QRect(left + panelW - 66, y, 52, rowH),
                    Qt::AlignRight | Qt::AlignVCenter, QString::number(zi, 'f', 2));
 
-        m_layerZones.append({ {}, {}, QRect(left + 2, y, panelW - 4, rowH), -1 });
+        m_layerZones.append({ {}, {}, {}, QRect(left + 2, y, panelW - 4, rowH), -1 });
     }
 
     for (int i = 0; i + 1 < rowCount; ++i) {
         const int rowIdx = tracks.size() - 1 - i;
         const Track* t = tracks[rowIdx];
-        const bool sel = (rowIdx == m_selectedIdx);
+        const bool sel = hasSelection(rowIdx);
         const int y = top + (i + 1) * rowH;
 
         // Selection highlight
@@ -109,10 +109,32 @@ void MesaWidget::drawLayerList(QPainter& p) {
         p.setBrush(dotColor);
         p.drawRoundedRect(left + 24, y + 7, 10, 10, 2, 2);
 
-        // Layer name
+        // Layer name (recomeça depois do chip MB)
         p.setPen(sel ? QColor(240, 240, 240) : QColor(170, 170, 170));
-        p.drawText(QRect(left + 40, y, panelW - 40 - 46, rowH),
-                   Qt::AlignLeft | Qt::AlignVCenter, t->name.left(11));
+        p.drawText(QRect(left + 58, y, panelW - 58 - 46, rowH),
+                   Qt::AlignLeft | Qt::AlignVCenter, t->name.left(10));
+
+        // Chip "MB" de motion blur por camada (Vegas: allow motion blur).
+        // Só faz sentido com o blur global ligado; clique alterna o flag da
+        // camada (azul = borra, cinza riscado = fica fixa nas sub-passadas).
+        if (mc->motionBlur) {
+            const QRect mbR(left + 36, y + 4, 20, 16);
+            const bool on = t->mesaMotionBlur;
+            p.setPen(QPen(on ? QColor(110, 190, 255) : QColor(110, 110, 110), 1));
+            p.setBrush(on ? QColor(70, 150, 220, 70) : QColor(255, 255, 255, 10));
+            p.drawRoundedRect(mbR, 3, 3);
+            QFont mbf = p.font();
+            mbf.setPointSizeF(6);
+            p.setFont(mbf);
+            p.setPen(on ? QColor(150, 210, 255) : QColor(120, 120, 120));
+            p.drawText(mbR, Qt::AlignCenter, QStringLiteral("MB"));
+            p.setFont(rf);
+            if (!on) {
+                p.setPen(QPen(QColor(120, 120, 120), 1));
+                p.drawLine(mbR.left() + 2, mbR.top() + mbR.height() / 2,
+                           mbR.right() - 2, mbR.top() + mbR.height() / 2);
+            }
+        }
 
         // Blend mode abreviado (ex.: "N","A","M","S","O"). Clique direito
         // na linha troca o modo.
@@ -126,7 +148,9 @@ void MesaWidget::drawLayerList(QPainter& p) {
         const QRect lockR(left + panelW - 30, y + 4, 16, 16);
         drawLockIcon(p, lockR, t->mesaLocked);
 
-        m_layerZones.append({ eyeR, lockR, QRect(left + 2, y, panelW - 4, rowH), rowIdx });
+        const QRect mbZone(mc->motionBlur
+            ? QRect(left + 36, y + 4, 20, 16) : QRect());
+        m_layerZones.append({ eyeR, lockR, mbZone, QRect(left + 2, y, panelW - 4, rowH), rowIdx });
     }
 }
 

@@ -26,6 +26,11 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
         return;
     }
 
+    if (e->button() == Qt::LeftButton && m_mbButtonRect.contains(e->pos())) {
+        toggleMotionBlur();
+        return;
+    }
+
     if (e->button() == Qt::MiddleButton) {
         m_draggingCanvas = true;
         m_canvasDragStart = e->position();
@@ -57,8 +62,19 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
                         a->setCheckable(true);
                         a->setChecked(t->blendMode == m);
                     }
+                    menu.addSeparator();
+                    QAction* mbRow = menu.addAction(tr("Motion blur (allow)"));
+                    mbRow->setCheckable(true);
+                    mbRow->setChecked(t->mesaMotionBlur);
                     QAction* sel2 = menu.exec(e->globalPosition().toPoint());
-                    if (sel2 && sel2->text() != t->blendMode) {
+                    if (sel2 == mbRow) {
+                        t->mesaMotionBlur = !t->mesaMotionBlur;
+                        qCInfo(lcMesa).noquote() << "[MESA] painel: motion blur '"
+                                                 << t->name << "' " << (t->mesaMotionBlur ? "ON" : "OFF");
+                        emit changesCommitted();
+                        emit modified();
+                        update();
+                    } else if (sel2 && sel2->text() != t->blendMode) {
                         t->blendMode = sel2->text();
                         qCInfo(lcMesa).noquote() << "[MESA] painel: blend '" << t->name
                                                  << "' ->" << t->blendMode;
@@ -85,6 +101,19 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
                                          << m_selectedKfs.size() << "keyframes";
                 deleteSelectedKfs();
             }
+        } else if (mc) {
+            // Menu de contexto no canvas (clique direito na área de arte):
+            // duplicar/remover/reset, ordem, blend, alinhar/distribuir e
+            // criação de camadas sólidas/gradientes.
+            int hitIdx = -1;
+            const HitZone hz = hitTest(e->position(), hitIdx);
+            const bool isLayer = (hitIdx >= 0 && (hz == HitBody || hz == HitCornerTL ||
+                hz == HitCornerTR || hz == HitCornerBL || hz == HitCornerBR ||
+                hz == HitEdgeT || hz == HitEdgeB || hz == HitEdgeL ||
+                hz == HitEdgeR || hz == HitRotate));
+            qCInfo(lcMesa).noquote() << "[MESA] canvas: menu de contexto";
+            showCanvasContextMenu(e->globalPosition().toPoint(),
+                                  isLayer ? hitIdx : -1);
         }
         return;
     }
@@ -193,19 +222,37 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
                         update();
                         return;
                     }
+                    if (!z.mb.isNull() && z.mb.contains(e->pos())) {
+                        Track* t = tracks[idx];
+                        t->mesaMotionBlur = !t->mesaMotionBlur;
+                        qCInfo(lcMesa).noquote() << "[MESA] painel: motion blur '"
+                                                 << t->name << "' " << (t->mesaMotionBlur ? "ON" : "OFF");
+                        emit changesCommitted();
+                        emit modified();
+                        update();
+                        return;
+                    }
                     break;
                 }
 
                 // Corpo: alterna a seleção da camada (NÃO deseleciona a
-                // câmera) + inicia possível arrasto de reordenação
-                const bool wasSel = (m_selectedIdx == idx);
-                m_selectedIdx = wasSel ? -1 : idx;
-                emit mesaTrackSelected(wasSel ? nullptr : tracks[idx]);
+                // câmera) + inicia possível arrasto de reordenação.
+                // Shift/Ctrl+clique soma/alterna no multi-seleção.
+                const bool multiMod = e->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier);
+                if (multiMod) {
+                    toggleSelect(idx);
+                } else if (selectionCount() == 1 && hasSelection(idx)) {
+                    selectOnly(-1);   // clique na única selecionada: desmarca
+                } else {
+                    selectOnly(idx);
+                }
+                emit mesaTrackSelected(hasSelection(idx) ? tracks[idx] : nullptr);
                 m_layerListDragIdx = idx;
                 m_layerListDragStart = e->pos();
                 qCInfo(lcMesa).noquote() << "[MESA] painel: camada"
-                                         << (wasSel ? "desselecionada" : "selecionada")
-                                         << "'" << tracks[idx]->name << "' idx=" << idx;
+                                         << (hasSelection(idx) ? "selecionada" : "desselecionada")
+                                         << "'" << tracks[idx]->name << "' idx=" << idx
+                                         << "sel=" << m_selectedIdxs.size();
                 update();
                 return;
             }
@@ -262,14 +309,34 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
         hz == HitCornerBL || hz == HitCornerBR || hz == HitEdgeT ||
         hz == HitEdgeB || hz == HitEdgeL || hz == HitEdgeR || hz == HitRotate)) {
 
-        m_selectedIdx = hitIdx;
-
         QVector<Track*> tracks = mesaTracks();
         Track* t = tracks[hitIdx];
+
+        // Multi-seleção: Shift/Ctrl+clique no CORPO soma/alterna (Shift em
+        // cantos/bordas continua sendo escala livre); clique num membro do
+        // grupo mantém o grupo (só troca a primária); senão colapsa nele.
+        const bool bodyHit = (hz == HitBody);
+        const bool multiMod = (e->modifiers() & Qt::ControlModifier)
+                           || (bodyHit && (e->modifiers() & Qt::ShiftModifier));
+        if (multiMod) {
+            toggleSelect(hitIdx);
+        } else if (selectionCount() > 1 && hasSelection(hitIdx)) {
+            m_selectedIdx = hitIdx;
+        } else {
+            selectOnly(hitIdx);
+        }
         emit mesaTrackSelected(t);
 
         m_dragTrackId = t->id;
         m_dragTrackIndex = hitIdx;
+
+        // Sem seleção (Shift+clique desmarcou a única) → apenas clique.
+        if (m_selectedIdxs.isEmpty()) {
+            m_dragTrackId.clear();
+            m_dragTrackIndex = -1;
+            update();
+            return;
+        }
 
         m_transformTrackIdx = hitIdx;
         m_transformStart = e->position();
@@ -282,6 +349,20 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
         // Escala: padrão uniforme em torno do âncora; Shift = livre por eixo.
         // (nas bordas a escala é de um eixo só, Shift não interfere)
         m_scaleUniform = !(e->modifiers() & Qt::ShiftModifier);
+
+        // Valores iniciais de TODAS as selecionadas: o grupo move/escala/
+        // rotaciona junto (escala e rotação relativas ao próprio âncora).
+        m_multiStartX.clear(); m_multiStartY.clear();
+        m_multiStartSX.clear(); m_multiStartSY.clear(); m_multiStartRot.clear();
+        for (int i : m_selectedIdxs) {
+            if (i < 0 || i >= tracks.size()) continue;
+            const Track* ti = tracks[i];
+            m_multiStartX.insert(i, ti->mesaX);
+            m_multiStartY.insert(i, ti->mesaY);
+            m_multiStartSX.insert(i, ti->mesaScaleX);
+            m_multiStartSY.insert(i, ti->mesaScaleY);
+            m_multiStartRot.insert(i, ti->mesaRotation);
+        }
 
         if (hz == HitBody) {
             m_transformOp = TMove;
@@ -304,8 +385,21 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
 
         qCInfo(lcMesa).noquote() << "[MESA] canvas: camada '" << t->name << "' selecionada. zona:" << int(hz)
                                  << "op:" << int(m_transformOp)
+                                 << "sel=" << m_selectedIdxs.size()
                                  << "x/y/s/rot:" << t->mesaX << t->mesaY
                                  << t->mesaScaleX << t->mesaRotation;
+        update();
+        return;
+    }
+
+    // Shift+arrastar no vazio = retângulo de seleção múltipla (com a câmera
+    // desmarcada; com ela, arrastar move a câmera — tratado acima).
+    if (e->modifiers() & Qt::ShiftModifier) {
+        m_canvasMarquee = true;
+        m_marqueeOrigin = e->position();
+        m_marqueeRect = QRectF();
+        m_transformOp = TNone;
+        qCInfo(lcMesa).noquote() << "[MESA] canvas: MARQUEE iniciado (Shift+vazio)";
         update();
         return;
     }
@@ -347,6 +441,16 @@ void MesaWidget::mouseMoveEvent(QMouseEvent* e) {
         for (QVector<Keyframe>* vks : touched)
             sortKfs(*vks);
         throttledUpdate();
+        return;
+    }
+
+    // Marquee já ativo: só atualiza a borda do retângulo
+    if (m_canvasMarquee) {
+        if ((e->position() - m_marqueeOrigin).manhattanLength() > 4)
+            m_marqueeRect = QRectF(m_marqueeOrigin, e->position()).normalized();
+        else
+            m_marqueeRect = QRectF();
+        update();
         return;
     }
 
@@ -411,8 +515,8 @@ void MesaWidget::mouseMoveEvent(QMouseEvent* e) {
 
             if (m_transformOp == TMove) {
                 const QPointF d = e->position() - m_transformStart;
-                double nx = m_transformStartX + d.x() / m_zoom;
-                double ny = m_transformStartY + d.y() / m_zoom;
+                double nx = m_multiStartX.value(m_transformTrackIdx, t->mesaX) + d.x() / m_zoom;
+                double ny = m_multiStartY.value(m_transformTrackIdx, t->mesaY) + d.y() / m_zoom;
 
                 if (m_snapToGrid) {
                     nx = qRound(nx / kGridSize) * kGridSize;
@@ -465,8 +569,17 @@ void MesaWidget::mouseMoveEvent(QMouseEvent* e) {
                     ny = snapAxis(ny, hh, ys);
                 }
 
-                t->mesaX = nx;
-                t->mesaY = ny;
+                // O snap ajusta a posição da PRIMÁRIA; o grupo inteiro segue o
+                // mesmo delta (preserva o arranjo interno da seleção).
+                const double dxc = nx - m_multiStartX.value(m_transformTrackIdx, nx);
+                const double dyc = ny - m_multiStartY.value(m_transformTrackIdx, ny);
+                for (int i : m_selectedIdxs) {
+                    if (i < 0 || i >= tracks.size()) continue;
+                    Track* ti = tracks[i];
+                    if (ti->mesaLocked) continue;
+                    ti->mesaX = m_multiStartX.value(i, ti->mesaX) + dxc;
+                    ti->mesaY = m_multiStartY.value(i, ti->mesaY) + dyc;
+                }
 
             } else if (m_transformOp == TScale) {
                 const LayerBounds lb = layerBounds(t, m_transformTrackIdx);
@@ -480,30 +593,37 @@ void MesaWidget::mouseMoveEvent(QMouseEvent* e) {
                 const bool edgeY  = (m_transformZone == HitEdgeT || m_transformZone == HitEdgeB);
                 const bool edgeX  = (m_transformZone == HitEdgeL || m_transformZone == HitEdgeR);
 
-                double sx = m_transformStartSX, sy = m_transformStartSY;
+                // Fator de escala do grupo: calculado na PRIMÁRIA e aplicado a
+                // cada selecionada em relação ao PRÓPRIO âncora (estilo AE).
+                double fx = 1.0, fy = 1.0;
                 auto clamp = [](double v) { return qMax(0.01, v); };
 
                 if (corner) {
                     if (m_scaleUniform && m_transformStartDist > 1.0) {
                         // Padrão: proporcional, mantendo a proporção original.
                         const double f = dist / m_transformStartDist;
-                        sx = qMax(0.01, sx * f);
-                        sy = qMax(0.01, sy * f);
+                        fx = clamp(f);
+                        fy = clamp(f);
                     } else if (!m_scaleUniform) {
                         // Shift: escala livre ao longo dos EIXOS do mundo.
                         const QPointF d = e->position() - anchor;
                         const QPointF d0 = m_transformStart - anchor;
-                        if (qAbs(d0.x()) > 1.0) sx = clamp(sx * (d.x() / d0.x()));
-                        if (qAbs(d0.y()) > 1.0) sy = clamp(sy * (d.y() / d0.y()));
+                        if (qAbs(d0.x()) > 1.0) fx = clamp(d.x() / d0.x());
+                        if (qAbs(d0.y()) > 1.0) fy = clamp(d.y() / d0.y());
                     }
                 } else if (edgeY && m_transformStartDist > 1.0) {
-                    sy = clamp(sy * (dist / m_transformStartDist));
+                    fy = clamp(dist / m_transformStartDist);
                 } else if (edgeX && m_transformStartDist > 1.0) {
-                    sx = clamp(sx * (dist / m_transformStartDist));
+                    fx = clamp(dist / m_transformStartDist);
                 }
 
-                t->mesaScaleX = qMax(0.01, sx);
-                t->mesaScaleY = qMax(0.01, sy);
+                for (int i : m_selectedIdxs) {
+                    if (i < 0 || i >= tracks.size()) continue;
+                    Track* ti = tracks[i];
+                    if (ti->mesaLocked) continue;
+                    ti->mesaScaleX = qMax(0.01, m_multiStartSX.value(i, ti->mesaScaleX) * fx);
+                    ti->mesaScaleY = qMax(0.01, m_multiStartSY.value(i, ti->mesaScaleY) * fy);
+                }
 
             } else if (m_transformOp == TRotate) {
                 const LayerBounds lb = layerBounds(t, m_transformTrackIdx);
@@ -514,7 +634,12 @@ void MesaWidget::mouseMoveEvent(QMouseEvent* e) {
                 if (e->modifiers() & Qt::ControlModifier) {
                     delta = qRound(delta / 15.0) * 15.0;
                 }
-                t->mesaRotation = m_transformStartRot + delta;
+                for (int i : m_selectedIdxs) {
+                    if (i < 0 || i >= tracks.size()) continue;
+                    Track* ti = tracks[i];
+                    if (ti->mesaLocked) continue;
+                    ti->mesaRotation = m_multiStartRot.value(i, ti->mesaRotation) + delta;
+                }
             }
 
             throttledUpdate();
@@ -550,6 +675,38 @@ void MesaWidget::mouseMoveEvent(QMouseEvent* e) {
 }
 
 void MesaWidget::mouseReleaseEvent(QMouseEvent* e) {
+    // Marquee de seleção no canvas (Shift+arrasto no vazio)
+    if (m_canvasMarquee) {
+        MesaComposition* mcm = currentMesa();
+        if (mcm && !m_marqueeRect.isNull()) {
+            const QVector<Track*> tks = mesaTracks();
+            const bool multiMod = e->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier);
+            if (!multiMod) selectOnly(-1);
+            QList<int> newly;
+            for (int i = 0; i < tks.size(); ++i) {
+                if (tks[i]->mesaLocked || tks[i]->mesaHidden) continue;
+                const LayerBounds lb = layerBounds(tks[i], i);
+                QPointF center, corners[4], rotH;
+                layerScreenRect(lb, center, corners, rotH);
+                QPolygonF poly;
+                for (int j = 0; j < 4; ++j) poly << corners[j];
+                if (poly.boundingRect().intersects(m_marqueeRect))
+                    newly.append(i);
+            }
+            for (int i : newly) { m_selectedIdxs.insert(i); m_selectedIdx = i; }
+            if (!newly.isEmpty()) {
+                emit mesaTrackSelected(tks[m_selectedIdx]);
+                qCInfo(lcMesa).noquote()
+                    << "[MESA] marquee: " << newly.size() << "camada(s) selecionada(s) ->"
+                    << m_selectedIdxs.size();
+            }
+        }
+        m_canvasMarquee = false;
+        m_marqueeRect = QRectF();
+        update();
+        return;
+    }
+
     // Drop de reordenação na lista de camadas (arrasto de linha → linha)
     if (m_layerListDragIdx >= 0) {
         MesaComposition* mc = currentMesa();
@@ -568,7 +725,7 @@ void MesaWidget::mouseReleaseEvent(QMouseEvent* e) {
                     const QString tid = mc->trackIds[from];
                     mc->trackIds.remove(from);
                     mc->trackIds.insert(to, tid);
-                    m_selectedIdx = to;
+                    selectOnly(to);
                     emit changesCommitted();
                     emit modified();
                     qCInfo(lcMesa).noquote() << "[MESA] painel: reordenou camada '" << tid
@@ -614,18 +771,6 @@ void MesaWidget::mouseReleaseEvent(QMouseEvent* e) {
             grab(mc->kfCamY, PCamY, KfRef::Cam, QString());
             grab(mc->kfCamZoom, PCamZ, KfRef::Cam, QString());
             grab(mc->kfCamRotation, PCamR, KfRef::Cam, QString());
-            for (const QString& tid : mc->trackIds) {
-                Track* t = findTrack(tid);
-                if (!t) continue;
-                grab(t->kfMesaX, PLayX, KfRef::MesaTrack, tid);
-                grab(t->kfMesaY, PLayY, KfRef::MesaTrack, tid);
-                grab(t->kfMesaScaleX, PLaySX, KfRef::MesaTrack, tid);
-                grab(t->kfMesaScaleY, PLaySY, KfRef::MesaTrack, tid);
-                grab(t->kfMesaRotation, PLayRot, KfRef::MesaTrack, tid);
-                grab(t->kfMesaOpacity, PLayOp, KfRef::MesaTrack, tid);
-                grab(t->kfMesaAnchorX, PLayAX, KfRef::MesaTrack, tid);
-                grab(t->kfMesaAnchorY, PLayAY, KfRef::MesaTrack, tid);
-            }
         }
         m_timelineMarquee = false;
         m_timelinePressPending = false;
@@ -703,21 +848,16 @@ void MesaWidget::keyPressEvent(QKeyEvent* e) {
     } else if (e->key() == Qt::Key_Delete && !m_selectedKfs.isEmpty()) {
         qCInfo(lcMesa).noquote() << "[MESA] Delete: removendo" << m_selectedKfs.size() << "keyframes";
         deleteSelectedKfs();
-    } else if (e->key() == Qt::Key_Delete && m_selectedIdx >= 0) {
-        MesaComposition* mc = currentMesa();
-        if (mc && m_selectedIdx < mc->trackIds.size()) {
-            qCInfo(lcMesa).noquote() << "[MESA] Delete: camada '" << mc->trackIds[m_selectedIdx]
-                                     << "' removida";
-            mc->trackIds.remove(m_selectedIdx);
-            m_selectedIdx = -1;
-            emit changesCommitted();
-            emit modified();
-            update();
-        }
+    } else if (e->key() == Qt::Key_Delete && !m_selectedIdxs.isEmpty()) {
+        qCInfo(lcMesa).noquote() << "[MESA] Delete: removendo" << m_selectedIdxs.size()
+                                 << "camada(s) da Mesa";
+        removeLayersFromMesa();
     } else if (e->key() == Qt::Key_Escape) {
-        if (m_selectedIdx >= 0 || m_cameraSelected || !m_selectedKfs.isEmpty()
+        if (m_selectedIdx >= 0 || !m_selectedIdxs.isEmpty() || m_cameraSelected
+            || !m_selectedKfs.isEmpty()
             || m_timelinePressPending || m_kfDrag) {
             m_selectedIdx = -1;
+            m_selectedIdxs.clear();
             m_cameraSelected = false;
             m_selectedKfs.clear();
             m_timelinePressPending = false;

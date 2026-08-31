@@ -169,6 +169,9 @@ static QJsonObject mesaToJson(const MesaComposition& m) {
     o["kfCamY"] = kfToJson(m.kfCamY);
     o["kfCamZoom"] = kfToJson(m.kfCamZoom);
     o["kfCamRotation"] = kfToJson(m.kfCamRotation);
+    o["motionBlur"] = m.motionBlur;
+    o["motionBlurSamples"] = m.motionBlurSamples;
+    o["motionBlurShutter"] = m.motionBlurShutter;
     return o;
 }
 
@@ -188,6 +191,9 @@ static MesaComposition mesaFromJson(const QJsonObject& o) {
     m.kfCamY = kfFromJson(o["kfCamY"]);
     m.kfCamZoom = kfFromJson(o["kfCamZoom"]);
     m.kfCamRotation = kfFromJson(o["kfCamRotation"]);
+    m.motionBlur = o["motionBlur"].toBool(false);
+    m.motionBlurSamples = o["motionBlurSamples"].toInt(8);
+    m.motionBlurShutter = o["motionBlurShutter"].toDouble(0.5);
     return m;
 }
 
@@ -489,6 +495,7 @@ static QJsonObject trackToJson(const Track& t) {
     o["mesaAnchorY"] = t.mesaAnchorY;
     o["mesaHidden"] = t.mesaHidden;
     o["mesaLocked"] = t.mesaLocked;
+    o["mesaMotionBlur"] = t.mesaMotionBlur;
     o["kfMesaX"] = kfToJson(t.kfMesaX);
     o["kfMesaY"] = kfToJson(t.kfMesaY);
     o["kfMesaScaleX"] = kfToJson(t.kfMesaScaleX);
@@ -543,6 +550,7 @@ static Track trackFromJson(const QJsonObject& o, bool audio) {
     t.mesaAnchorY = o["mesaAnchorY"].toDouble(0.0);
     t.mesaHidden = o["mesaHidden"].toBool(false);
     t.mesaLocked = o["mesaLocked"].toBool(false);
+    t.mesaMotionBlur = o["mesaMotionBlur"].toBool(true);
     t.kfMesaX = kfFromJson(o["kfMesaX"]);
     t.kfMesaY = kfFromJson(o["kfMesaY"]);
     t.kfMesaScaleX = kfFromJson(o["kfMesaScaleX"]);

@@ -49,8 +49,13 @@ public:
         int blend = 0;  // QPainter::CompositionMode (0 = SourceOver)
         bool valid = false;
     };
+    // Nesta preparação o `relTime` fixa o CONTEÚDO (clip ativo e decode da
+    // mídia); `transformTime` (= -1 → igual a relTime) avalia APENAS os
+    // keyframes de transform (posição/escala/rotação/opacidade/âncora). É o
+    // gancho do motion blur: conteúdo fixo + transform rastejando.
     bool prepareLayer(LayerPrep& out, const MesaComposition& mesa,
-                      const Project& project, double relTime, const Track& track);
+                      const Project& project, double relTime, const Track& track,
+                      double transformTime = -1.0);
 
     // Desenha um LayerPrep num painter (aplicando posição/rotação/escala/
     // âncora e opacidade). Assume o painter já posicionado no sistema de
@@ -62,20 +67,38 @@ public:
     // preview/export sem limite de espaço (a matriz da câmera já está aplicada
     // no painter, as camadas empilham a matriz local por cima).
     // skipTrackId: omitir essa track (para drag em tempo real).
+    // motionBlurStack: quando true e a comp tem motion blur, desenha as camadas
+    // como n sub-passadas completas integradas (estilo AE). Em render(),
+    // desabilitado por passada de câmera para não sobrepor os dois rastros.
     void renderToPainter(QPainter& painter, const MesaComposition& mesa,
                          const Project& project, double relTime,
-                         const QString* skipTrackId = nullptr);
+                         const QString* skipTrackId = nullptr,
+                         bool motionBlurStack = true);
 
     void clearCache();
 
 private:
     int blendModeFor(const QString& blend) const;
 
+    // Renderiza uma única passada com o enquadramento da câmera no instante
+    // `time` (usado tanto pelo caminho limpo quanto pela integração temporal
+    // do motion blur da câmera em render()).
+    QImage renderSample(const MesaComposition& mesa, const Project& project,
+                        double time, const QString* skipTrackId,
+                        bool motionBlurStack = true);
+
+    // Empilha as camadas da composição num painter já no canvas-space.
+    // `relTime` fixa o CONTEÚDO (clip ativo/decode); `transformTime` avalia os
+    // keyframes de transform de cada camada (a base do motion blur por passada).
+    void paintStack(QPainter& painter, const MesaComposition& mesa,
+                    const Project& project, double relTime,
+                    const QString* skipTrackId, double transformTime);
+
     // Desenha uma única track (camada) num painter já preparado.
     // Retorna false se nada foi desenhado (sem clip ativo / frame vazio).
     bool drawTrackLayer(QPainter& acc, const Track& track,
                         const MesaComposition& mesa, const Project& project,
-                        double relTime);
+                        double relTime, double transformTime);
 
     QImage decodeFrame(const QString& filePath, double time, int maxW);
 

@@ -11,6 +11,7 @@
 #include <QHash>
 #include <QSet>
 #include <QSize>
+#include <QRectF>
 #include <QElapsedTimer>
 #include <QLoggingCategory>
 #include "models/Project.h"
@@ -24,6 +25,9 @@ Q_DECLARE_LOGGING_CATEGORY(lcMesa)
 // Dock Mesa — canvas infinito estilo After Effects Composition Panel.
 // Tudo é desenhado no canvas: tracks como camadas, câmera, grid.
 // Pan: arrastar o vazio com a mãozinha (quando nada está ativo). Zoom: roda. Seleção: clique esquerdo.
+// Multi-seleção: Shift+clique soma/alterna e Shift+arrastar no vazio faz o
+// retângulo de seleção; o grupo move/escala/rotaciona junto (escala e rotação
+// relativas ao próprio âncora de cada camada).
 // Transform: arrastar corpo = mover, cantos = escalar, handle acima = rotacionar.
 // Doc: câmera (estilo AE): clicar no gizmo só SELECIONA; selecionada, arrastar
 // em QUALQUER lugar do canvas (vazio, em cima de camada, no próprio gizmo)
@@ -52,6 +56,9 @@ public:
     void autoSelectMesa();
     bool hasSelectedKeyframes() const { return !m_selectedKfs.isEmpty(); }
     void deleteSelectedKfs();
+    // Alterna motion blur da composição atual (atalho Ctrl+Shift+B, botão
+    // "MB" do header e menu de contexto usam todos este método).
+    void toggleMotionBlur();
 
 signals:
     void modified();
@@ -61,6 +68,12 @@ signals:
     void mesaTrackSelected(Track* track);
     void mesaCameraSelected(MesaComposition* mc);
     void mesaAddTrackRequested();
+    // Pedido de criação/alteração de camadas cuja fonte vive na TimelineWidget
+    // (criação de tracks/clipes centralizada lá).
+    void mesaAddSolidRequested(const QString& generator, const QColor& c1, const QColor& c2);
+    void mesaDuplicateLayerRequested(const QString& mesaId, const QString& trackId);
+    // Abre o painel de propriedades (janela normal) para a camada em questão.
+    void mesaLayerPropsRequested(const QString& trackId);
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -114,6 +127,23 @@ private:
 
     void nudgeSelection(double dx, double dy);
 
+    // ── Seleção múltipla ──
+    void selectOnly(int idx);        // limpa e seleciona `idx` (-1 = limpar)
+    void toggleSelect(int idx);      // Shift/Ctrl+clique: soma/alterna
+    bool hasSelection(int idx) const { return m_selectedIdxs.contains(idx); }
+    int selectionCount() const { return m_selectedIdxs.size(); }
+    int primarySelectedIdx() const { return m_selectedIdx; }
+
+    // ── Operações de camada (menu de contexto no canvas) ──
+    void showCanvasContextMenu(const QPoint& globalPos, int hitIdx);
+    void removeLayersFromMesa();      // remove da composição (com foco no Delete)
+    void resetLayersTransform();      // zera props de canvas das selecionadas
+    void moveLayerOrder(int idx, int delta);  // -1 = recuar, +1 = avançar
+    enum AlignMode { AlignLeft, AlignCenterH, AlignRight,
+                     AlignTop, AlignCenterV, AlignBottom };
+    void alignLayers(AlignMode mode);
+    void distributeLayers(bool horizontal);
+
 // Desenho
     void drawLayerList(QPainter& p);
     void drawMiniTimeline(QPainter& p);
@@ -161,10 +191,18 @@ private:
     double m_zoom = 1.0;
     QPointF m_offset = {0, 0};
 
-    // Seleção NÃO exclusiva: camada (m_selectedIdx) e câmera (m_cameraSelected)
-    // são independentes; Esc limpa as duas.
+    // Seleção NÃO exclusiva: camadas (multi-seleção) e câmera (m_cameraSelected)
+    // são independentes; Esc limpa as duas. m_selectedIdx é a camada PRINCIPAL
+    // (última clicada); m_selectedIdxs guarda todas as selecionadas (sempre
+    // contém m_selectedIdx quando a seleção não está vazia).
     int m_selectedIdx = -1;
+    QSet<int> m_selectedIdxs;
     bool m_cameraSelected = false;
+
+    // Retângulo de seleção múltipla no canvas (Shift+arrastar no vazio).
+    bool m_canvasMarquee = false;
+    QPointF m_marqueeOrigin;
+    QRectF m_marqueeRect;
 
     // Transform (move/scale/rotate)
     enum TransformOp { TNone, TMove, TScale, TRotate };
@@ -180,6 +218,14 @@ private:
     double m_transformStartAngle = 0;  // ângulo inicial (para rotate)
     double m_transformStartDist = 0;   // distância inicial (para scale uniforme)
     bool m_scaleUniform = true;        // escala de cantos: uniforme (Shift = livre por eixo)
+
+    // Transform MÚLTIPLO: valores iniciais de TODAS as selecionadas (por
+    // índice na mesaTracks()) para mover/escalar/rotacionar o grupo junto.
+    QHash<int, double> m_multiStartX;
+    QHash<int, double> m_multiStartY;
+    QHash<int, double> m_multiStartSX;
+    QHash<int, double> m_multiStartSY;
+    QHash<int, double> m_multiStartRot;
 
     // Dragging camera
     bool m_draggingCamera = false;
@@ -200,8 +246,8 @@ private:
     // Layer list flutuante
     bool m_showLayerList = true;
     QRect m_layerListRect;
-    // Zonas clicáveis de cada linha (olho/cadeado/corpo) preenchidas no draw.
-    struct LayerRowZone { QRect eye, lock, body; int idx; };
+    // Zonas clicáveis de cada linha (olho/cadeado/MB/corpo) preenchidas no draw.
+    struct LayerRowZone { QRect eye, lock, mb, body; int idx; };
     QVector<LayerRowZone> m_layerZones;
     // Nº de linhas visíveis no painel (ajustado no draw quando a lista
     // estoura a altura do widget). Linha 0 = Câmera.
@@ -267,4 +313,7 @@ private:
 
     // Botão "Criar Mesa" (estado vazio)
     QRect m_createMesaBtnRect;
+
+    // Botão "MB" (toggle de motion blur) no header — clicável.
+    QRect m_mbButtonRect;
 };

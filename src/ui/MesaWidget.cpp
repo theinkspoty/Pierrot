@@ -8,6 +8,7 @@
 
 #include <QPainter>
 #include <QPainterPath>
+#include <QShortcut>
 #include <QtMath>
 #include <algorithm>
 
@@ -40,6 +41,12 @@ MesaWidget::MesaWidget(QWidget* parent)
     setFocusPolicy(Qt::StrongFocus);
     setMinimumSize(200, 150);
     setStyleSheet("background: #2D2D2D;");
+    // Atalho do motion blur IGUAL ao Vegas (Ctrl+Shift+B). Usa contexto de
+    // janela: funciona mesmo quando o foco está noutro widget (timeline,
+    // preview, árvore de mídia) — só precisa de uma mesa aberta no ativo.
+    auto* mbShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+B")), this);
+    mbShortcut->setContext(Qt::WindowShortcut);
+    connect(mbShortcut, &QShortcut::activated, this, &MesaWidget::toggleMotionBlur);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -206,10 +213,8 @@ MesaWidget::KfRef MesaWidget::hitTestKf(const QPoint& pos) const {
     const double pps = qMax(20.0, (rulerW - 20.0) / dur);
     const int hitR = 6;  // pixels radius for hit
 
-    // Pistas: keyframes de câmera ficam na faixa superior, das camadas na
-    // inferior. Mantém a mesma posição visual de desenho do drawMiniTimeline.
+    // Pista única: keyframes da câmera. Mesma posição visual do drawMiniTimeline.
     const int camLaneY = tlY + 14;
-    const int layerLaneY = tlY + (miniTimelineHeight() / 2) + 8;
 
     auto checkKf = [&](const QVector<Keyframe>& vks, KfRef::Source src,
                        const QString& tid, int prop, int laneY) -> KfRef {
@@ -230,28 +235,6 @@ MesaWidget::KfRef MesaWidget::hitTestKf(const QPoint& pos) const {
     if (r.time >= 0) return r;
     r = checkKf(mc->kfCamRotation, KfRef::Cam, QString(), PCamR, camLaneY);
     if (r.time >= 0) return r;
-
-    // Tracks
-    for (const QString& tid : mc->trackIds) {
-        Track* t = findTrack(tid);
-        if (!t) continue;
-        r = checkKf(t->kfMesaX, KfRef::MesaTrack, tid, PLayX, layerLaneY);
-        if (r.time >= 0) return r;
-        r = checkKf(t->kfMesaY, KfRef::MesaTrack, tid, PLayY, layerLaneY);
-        if (r.time >= 0) return r;
-        r = checkKf(t->kfMesaScaleX, KfRef::MesaTrack, tid, PLaySX, layerLaneY);
-        if (r.time >= 0) return r;
-        r = checkKf(t->kfMesaScaleY, KfRef::MesaTrack, tid, PLaySY, layerLaneY);
-        if (r.time >= 0) return r;
-        r = checkKf(t->kfMesaRotation, KfRef::MesaTrack, tid, PLayRot, layerLaneY);
-        if (r.time >= 0) return r;
-        r = checkKf(t->kfMesaOpacity, KfRef::MesaTrack, tid, PLayOp, layerLaneY);
-        if (r.time >= 0) return r;
-        r = checkKf(t->kfMesaAnchorX, KfRef::MesaTrack, tid, PLayAX, layerLaneY);
-        if (r.time >= 0) return r;
-        r = checkKf(t->kfMesaAnchorY, KfRef::MesaTrack, tid, PLayAY, layerLaneY);
-        if (r.time >= 0) return r;
-    }
     return miss;
 }
 
@@ -294,11 +277,14 @@ void MesaWidget::nudgeSelection(double dx, double dy) {
     auto snap = [&](double v) {
         return m_snapToGrid ? qRound(v / kGridSize) * kGridSize : v;
     };
-    if (m_selectedIdx >= 0 && m_selectedIdx < tracks.size()) {
-        Track* t = tracks[m_selectedIdx];
-        if (t->mesaLocked) return;  // cadeado impede transform por teclado também
-        t->mesaX = snap(t->mesaX + dx);
-        t->mesaY = snap(t->mesaY + dy);
+    if (!m_selectedIdxs.isEmpty()) {
+        for (int i : m_selectedIdxs) {
+            if (i < 0 || i >= tracks.size()) continue;
+            Track* t = tracks[i];
+            if (t->mesaLocked) continue;  // cadeado impede transform por teclado também
+            t->mesaX = snap(t->mesaX + dx);
+            t->mesaY = snap(t->mesaY + dy);
+        }
     } else if (m_cameraSelected) {
         mc->camX = snap(mc->camX + dx);
         mc->camY = snap(mc->camY + dy);
@@ -356,12 +342,9 @@ void MesaWidget::drawMiniTimeline(QPainter& p) {
     const double start = m_contentStart;
     const double pps = qMax(20.0, (rulerW - 20.0) / dur);
 
-    // ── Pistas (câmera azulada, camadas neutra) + separador ──
+    // ── Pista (só a câmera) ──
     p.setPen(Qt::NoPen);
     p.fillRect(QRect(0, tlY + 6, rulerW, 14), QColor(70, 140, 200, 16));
-    p.fillRect(QRect(0, tlY + tlH / 2 - 2, rulerW, 16), QColor(255, 255, 255, 7));
-    p.setPen(QPen(QColor(255, 255, 255, 16), 1));
-    p.drawLine(0, tlY + tlH / 2, rulerW, tlY + tlH / 2);
 
     // ── Régua de tempo (ticks) ──
     const double tStep = niceStepMini(dur / 8.0);
@@ -393,26 +376,20 @@ void MesaWidget::drawMiniTimeline(QPainter& p) {
     }
 
     // ── Keyframe diamonds ──
-    // Cor por PROPRIEDADE (não por camada): dá pra distinguir o que é X, Y,
-    // escala, rotação, opacidade, âncora na mini-timeline. Duas pistas:
-    // câmera (superior) e camadas (inferior).
+    // Cor por PROPRIEDADE da câmera: distingue X, Y, zoom, rotação na
+    // mini-timeline (todos na mesma pista, estilo AE). Os keyframes das
+    // camadas são editados no Graph Editor — a mini-timeline é só da câmera.
     auto propColor = [](int prop) -> QColor {
         switch (prop) {
-            case PCamX: case PLayX: return QColor(96, 178, 255);        // X (azul)
-            case PCamY: case PLayY: return QColor(116, 226, 255);       // Y (ciano)
-            case PCamZ: return QColor(96, 255, 214);                    // zoom (teal)
-            case PLaySX: return QColor(120, 255, 150);                  // escala X (verde)
-            case PLaySY: return QColor(180, 255, 120);                  // escala Y (verde-claro)
-            case PCamR: case PLayRot: return QColor(255, 190, 110);     // rotação (laranja)
-            case PLayOp: return QColor(255, 130, 160);                  // opacidade (rosa)
-            case PLayAX: return QColor(255, 210, 120);                  // âncora X (âmbar)
-            case PLayAY: return QColor(240, 150, 255);                  // âncora Y (lilás)
+            case PCamX: return QColor(96, 178, 255);        // X (azul)
+            case PCamY: return QColor(116, 226, 255);       // Y (ciano)
+            case PCamZ: return QColor(96, 255, 214);        // zoom (teal)
+            case PCamR: return QColor(255, 190, 110);       // rotação (laranja)
         }
         return QColor(180, 180, 180);
     };
 
     const int camLaneY = tlY + 14;
-    const int layerLaneY = tlY + tlH / 2 + 8;
 
     auto drawKfDiamonds = [&](const QVector<Keyframe>& vks, int prop,
                               KfRef::Source src, const QString& tid, int laneY) {
@@ -438,34 +415,19 @@ void MesaWidget::drawMiniTimeline(QPainter& p) {
         }
     };
 
-    // Rótulos das pistas (7px, bem discretos)
+    // Rótulo da pista (só a câmera)
     QFont lf = p.font();
     lf.setPointSizeF(6);
     p.setFont(lf);
     p.setPen(QColor(90, 100, 110));
     p.drawText(2, camLaneY + 3, QStringLiteral("CAM"));
-    p.drawText(2, layerLaneY + 3, QStringLiteral("LAY"));
 
-    // Camera keyframes (pista superior)
+    // Camera keyframes
     const QString camTid;
     drawKfDiamonds(mc->kfCamX, PCamX, KfRef::Cam, camTid, camLaneY);
     drawKfDiamonds(mc->kfCamY, PCamY, KfRef::Cam, camTid, camLaneY);
     drawKfDiamonds(mc->kfCamZoom, PCamZ, KfRef::Cam, camTid, camLaneY);
     drawKfDiamonds(mc->kfCamRotation, PCamR, KfRef::Cam, camTid, camLaneY);
-
-    // Track keyframes (pista inferior)
-    const QVector<Track*> tracks = mesaTracks();
-    for (int i = 0; i < tracks.size(); ++i) {
-        Track* t = tracks[i];
-        drawKfDiamonds(t->kfMesaX, PLayX, KfRef::MesaTrack, t->id, layerLaneY);
-        drawKfDiamonds(t->kfMesaY, PLayY, KfRef::MesaTrack, t->id, layerLaneY);
-        drawKfDiamonds(t->kfMesaScaleX, PLaySX, KfRef::MesaTrack, t->id, layerLaneY);
-        drawKfDiamonds(t->kfMesaScaleY, PLaySY, KfRef::MesaTrack, t->id, layerLaneY);
-        drawKfDiamonds(t->kfMesaRotation, PLayRot, KfRef::MesaTrack, t->id, layerLaneY);
-        drawKfDiamonds(t->kfMesaOpacity, PLayOp, KfRef::MesaTrack, t->id, layerLaneY);
-        drawKfDiamonds(t->kfMesaAnchorX, PLayAX, KfRef::MesaTrack, t->id, layerLaneY);
-        drawKfDiamonds(t->kfMesaAnchorY, PLayAY, KfRef::MesaTrack, t->id, layerLaneY);
-    }
 
     // ── Playhead (linha vertical com gradiente) ──
     const int phX = 10 + (int)qRound((m_playheadTime - start) * pps);
@@ -653,7 +615,7 @@ void MesaWidget::paintEvent(QPaintEvent*) {
     for (int i = 0; i < tracks.size(); ++i) {
         const Track* t = tracks[i];
         if (t->mesaHidden) continue;  // camada oculta não mostra nem placeholder
-        const bool sel = (i == m_selectedIdx);
+        const bool sel = hasSelection(i);
         const LayerBounds lb = layerBounds(t, i);
 
         // Placeholder para layers sem conteúdo — desenhado pelo MESMO quad da
@@ -695,16 +657,11 @@ void MesaWidget::paintEvent(QPaintEvent*) {
 
         if (!sel) continue;
 
-        // Handles de seleção (white AE-style)
+        // Handles de seleção (white AE-style): o gizmo completo (rotate +
+        // cantos + âncora) aparece só na primária; as demais selecionadas
+        // mostram apenas o contorno tracejado (retângulo da seleção).
         QPointF center, corners[4], rotateHandle;
         layerScreenRect(lb, center, corners, rotateHandle);
-
-        p.setPen(QPen(QColor(255, 255, 255, 200), 1.0));
-        p.drawLine(center, rotateHandle);
-
-        p.setPen(QPen(QColor(255, 255, 255), 1.5));
-        p.setBrush(QColor(45, 45, 45));
-        p.drawEllipse(rotateHandle, 5, 5);
 
         p.setPen(QPen(QColor(255, 255, 255, 200), 1.5, Qt::DashLine));
         p.setBrush(Qt::NoBrush);
@@ -713,23 +670,32 @@ void MesaWidget::paintEvent(QPaintEvent*) {
         p.drawLine(corners[2], corners[3]);
         p.drawLine(corners[3], corners[0]);
 
-        p.setPen(QPen(QColor(0, 0, 0, 120), 1.0));
-        p.setBrush(QColor(255, 255, 255));
-        const double hs = 4.0;
-        for (int j = 0; j < 4; ++j)
-            p.drawRect(QRectF(corners[j].x() - hs, corners[j].y() - hs, hs * 2, hs * 2));
+        if (i == m_selectedIdx) {
+            p.setPen(QPen(QColor(255, 255, 255, 200), 1.0));
+            p.drawLine(center, rotateHandle);
 
-        p.setBrush(QColor(220, 220, 220));
-        const double hsm = 3.0;
-        for (int e = 0; e < 4; ++e) {
-            const QPointF mid = (corners[e] + corners[(e + 1) % 4]) / 2.0;
-            p.drawRect(QRectF(mid.x() - hsm, mid.y() - hsm, hsm * 2, hsm * 2));
+            p.setPen(QPen(QColor(255, 255, 255), 1.5));
+            p.setBrush(QColor(45, 45, 45));
+            p.drawEllipse(rotateHandle, 5, 5);
+
+            p.setPen(QPen(QColor(0, 0, 0, 120), 1.0));
+            p.setBrush(QColor(255, 255, 255));
+            const double hs = 4.0;
+            for (int j = 0; j < 4; ++j)
+                p.drawRect(QRectF(corners[j].x() - hs, corners[j].y() - hs, hs * 2, hs * 2));
+
+            p.setBrush(QColor(220, 220, 220));
+            const double hsm = 3.0;
+            for (int e = 0; e < 4; ++e) {
+                const QPointF mid = (corners[e] + corners[(e + 1) % 4]) / 2.0;
+                p.drawRect(QRectF(mid.x() - hsm, mid.y() - hsm, hsm * 2, hsm * 2));
+            }
+
+            const QPointF anchor = canvasToScreen(QPointF(lb.x, lb.y));
+            p.setPen(QPen(QColor(255, 60, 60), 1.5));
+            p.drawLine(anchor + QPointF(-6, 0), anchor + QPointF(6, 0));
+            p.drawLine(anchor + QPointF(0, -6), anchor + QPointF(0, 6));
         }
-
-        const QPointF anchor = canvasToScreen(QPointF(lb.x, lb.y));
-        p.setPen(QPen(QColor(255, 60, 60), 1.5));
-        p.drawLine(anchor + QPointF(-6, 0), anchor + QPointF(6, 0));
-        p.drawLine(anchor + QPointF(0, -6), anchor + QPointF(0, 6));
     }
 
     // ── Câmera (guia visual, sempre visível) ──
@@ -801,6 +767,13 @@ void MesaWidget::paintEvent(QPaintEvent*) {
     }
     p.restore();  // fim do clip da área de arte
 
+    // ── Marquee de seleção múltipla ──
+    if (m_canvasMarquee && !m_marqueeRect.isNull()) {
+        p.setBrush(QColor(80, 150, 255, 40));
+        p.setPen(QPen(QColor(80, 170, 255), 1.0));
+        p.drawRect(m_marqueeRect);
+    }
+
     // ── UI overlays ──
     if (m_showLayerList) drawLayerList(p);
     drawMiniTimeline(p);
@@ -820,6 +793,22 @@ void MesaWidget::paintEvent(QPaintEvent*) {
             ? QStringLiteral("Mesa \xe2\x80\x94 %1\xd7%2").arg(mc->canvasW).arg(mc->canvasH)
             : QStringLiteral("%1 \xe2\x80\x94 %2\xd7%3").arg(mc->name).arg(mc->canvasW).arg(mc->canvasH);
         p.drawText(QRect(8, 0, width() - 16, hh), Qt::AlignLeft | Qt::AlignVCenter, label);
+
+        // Botão "MB": toggle de motion blur visível e clicável. Destaque
+        // quando ligado (o user precisa VER se está ativo).
+        const int bw = 36, bh = 16;
+        m_mbButtonRect = QRect(width() - bw - 6, (hh - bh) / 2, bw, bh);
+        const bool mbOn = mc->motionBlur;
+        p.setPen(QPen(mbOn ? QColor(110, 190, 255) : QColor(120, 120, 120), 1));
+        p.setBrush(mbOn ? QColor(70, 150, 220, 90) : QColor(255, 255, 255, 14));
+        p.drawRoundedRect(m_mbButtonRect, 4, 4);
+        QFont bf = p.font();
+        bf.setPointSizeF(7);
+        bf.setBold(mbOn);
+        p.setFont(bf);
+        p.setPen(mbOn ? QColor(170, 215, 255) : QColor(140, 140, 140));
+        p.drawText(m_mbButtonRect, Qt::AlignCenter, mbOn
+            ? QStringLiteral("MB ON") : QStringLiteral("MB"));
     }
 
     // ── Info bar ──
@@ -828,11 +817,36 @@ void MesaWidget::paintEvent(QPaintEvent*) {
     p.setFont(infof);
     p.setPen(QColor(100, 100, 100));
     const int x0 = panelWidth();
+    const bool mbOn = currentMesa() && currentMesa()->motionBlur;
     p.drawText(QRect(x0 + 6, height() - miniTimelineHeight() - 14, artRect().width() - 12, 14),
                Qt::AlignLeft | Qt::AlignVCenter,
-               QStringLiteral("Zoom %1%  |  G: snap %2  |  L: layers")
+               QStringLiteral("Zoom %1%  |  G: snap %2  |  L: layers  |  Ctrl+Shift+B: MB %3  |  Shift+arrastar: multi")
                    .arg((int)(m_zoom * 100))
-                   .arg(m_snapToGrid ? "ON" : "OFF"));
+                   .arg(m_snapToGrid ? "ON" : "OFF")
+                   .arg(mbOn ? "ON" : "OFF"));
+
+    // Se o MB está ligado mas nada tem keyframes, o blur não aparece (só
+    // borra o que se move por kfs). Avisa em vez de deixar o user achando
+    // que não funcionou.
+    if (mbOn) {
+        bool hasKf = false;
+        for (const Track* t : tracks) {
+            if (!t->kfMesaX.isEmpty() || !t->kfMesaY.isEmpty()
+                || !t->kfMesaScaleX.isEmpty() || !t->kfMesaScaleY.isEmpty()
+                || !t->kfMesaRotation.isEmpty() || !t->kfMesaOpacity.isEmpty()
+                || !t->kfMesaAnchorX.isEmpty() || !t->kfMesaAnchorY.isEmpty()) {
+                hasKf = true; break;
+            }
+        }
+        if (!hasKf && mc->kfCamX.isEmpty() && mc->kfCamY.isEmpty()
+            && mc->kfCamZoom.isEmpty() && mc->kfCamRotation.isEmpty()) {
+            p.setPen(QColor(255, 200, 120));
+            p.drawText(QRect(x0 + 6, height() - miniTimelineHeight() - 28,
+                             artRect().width() - 12, 12),
+                       Qt::AlignLeft,
+                       QStringLiteral("MB ligado: mova a câmera ou crie keyframes (Graph Editor) pra ver o blur"));
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -863,6 +877,8 @@ void MesaWidget::fitToContent() {
 void MesaWidget::setMesaId(const QString& id) {
     m_mesaId = id;
     m_selectedIdx = -1;
+    m_selectedIdxs.clear();
+    m_cameraSelected = false;
     m_transformOp = TNone;
     m_cachedTracks.clear();
     m_cachedTracksVersion = 0;

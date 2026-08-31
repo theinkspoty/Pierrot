@@ -12,6 +12,7 @@
 #include "ui/PancropWidget.h"
 #include "ui/GraphEditorWidget.h"
 #include "ui/EffectsWidget.h"
+#include "ui/ClipPropertiesWidget.h"
 #include "ui/ExpressWidget.h"
 #include "ui/FileBrowserWidget.h"
 #include "ui/MixerWidget.h"
@@ -68,6 +69,7 @@ static QKeySequence appKey(const char* id, const QKeySequence& fallback) {
 #include <QTime>
 #include <QProgressBar>
 #include <QGuiApplication>
+#include <QCursor>
 #include <QScreen>
 #include <QDataStream>
 
@@ -149,6 +151,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     m_express = new ExpressWidget(this);
     m_fileBrowser = new FileBrowserWidget(this);
 
+    m_props = new ClipPropertiesWidget(this);
+    m_props->setWindowFlag(Qt::Window);
+    m_props->setWindowTitle(tr("Propriedades"));
+    m_props->resize(300, 640);
+    m_props->hide();
+    m_props->setProject(&m_project);
+
     // Gerenciador de plugins OFX — escaneia diretórios conhecidos.
     m_ofxManager = new OfxPluginManager(this);
 
@@ -181,7 +190,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // Clique/arrasto de efeito no painel → Express.
     connect(m_effects, &EffectsWidget::effectSelected, m_express, &ExpressWidget::addEffect);
 
-    // Conecta seleção de clipes na timeline ao painel de efeitos e ao Express.
+    // Conecta seleção de clipes na timeline ao painel de efeitos, ao Express
+    // e ao painel de Propriedades (Effect Controls).
     connect(m_timeline, &TimelineWidget::selectionChanged, this, [this](const QString& id) {
         Clip* clip = nullptr;
         if (!id.isEmpty()) {
@@ -195,6 +205,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         }
         m_effects->setSelectedClip(clip);
         m_express->setSelectedClip(clip);
+        m_props->showClip(id);
     });
 
     createDocks();
@@ -307,9 +318,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     connect(m_mesa, &MesaWidget::mesaTrackSelected, this, [this](Track* t) {
         m_graph->setMesaTrack(t);
+        m_props->showMesaLayer(t ? t->id : QString());
     });
     connect(m_mesa, &MesaWidget::mesaCameraSelected, this, [this](MesaComposition* mc) {
         m_graph->setMesaCamera(mc);
+        m_props->showMesaCamera(mc ? mc->id : QString());
     });
     connect(m_mesa, &MesaWidget::mesaCreateRequested, this, [this]() {
         m_timeline->criarMesa();
@@ -317,11 +330,26 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_mesa, &MesaWidget::mesaAddTrackRequested, this, [this]() {
         m_timeline->addTrackToMesa(m_mesa->mesaId());
     });
+    // Sólido/gradiente gerados na própria Mesa (menu de contexto do canvas).
+    connect(m_mesa, &MesaWidget::mesaAddSolidRequested,
+            this, [this](const QString& gen, const QColor& c1, const QColor& c2) {
+        m_timeline->addSolidToMesa(m_mesa->mesaId(), gen, c1, c2);
+    });
+    // Duplicar camada da Mesa (menu de contexto do canvas).
+    connect(m_mesa, &MesaWidget::mesaDuplicateLayerRequested,
+            this, [this](const QString& mesaId, const QString& trackId) {
+        m_timeline->duplicateMesaTrack(mesaId, trackId);
+    });
     connect(m_timeline, &TimelineWidget::mesaOpenRequested, this, [this](const QString& mesaId) {
         m_mesa->setMesaId(mesaId);
         m_mesaDock->show();
         m_mesaDock->raise();
         m_mesa->refresh();
+    });
+    // Tracks enviadas para a Mesa → atualiza o dock se for a Mesa aberta.
+    connect(m_timeline, &TimelineWidget::mesaChanged, this, [this](const QString& mesaId) {
+        if (m_mesa && m_mesa->mesaId() == mesaId)
+            m_mesa->refresh();
     });
     connect(m_timeline, &TimelineWidget::mediaImported, this, [this]() {
         m_pool->refreshFromProject();
@@ -372,6 +400,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_timeline, &TimelineWidget::playheadChanged, m_pancrop, &PancropWidget::setPlayhead);
     connect(m_timeline, &TimelineWidget::selectionChanged, m_graph, &GraphEditorWidget::setClipId);
     connect(m_timeline, &TimelineWidget::playheadChanged, m_graph, &GraphEditorWidget::setPlayhead);
+    connect(m_timeline, &TimelineWidget::playheadChanged, m_props, &ClipPropertiesWidget::setPlayhead);
     connect(m_timeline, &TimelineWidget::playheadChanged, this, [this](double t) {
         if (m_mesa) { m_mesa->setPlayheadPosition(t); m_mesa->refresh(); }
     });
@@ -424,6 +453,33 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         m_preview->refreshView();
         setModified();
     });
+
+    // Painel de Propriedades (Effect Controls): edições com undo e refresh
+    // em vivo do preview, timeline, editor de curvas e canvas da Mesa.
+    connect(m_props, &ClipPropertiesWidget::editStart, this, &MainWindow::pushUndo);
+    connect(m_props, &ClipPropertiesWidget::modified, this, [this]() {
+        m_timeline->update();
+        m_preview->refreshView();
+        m_graph->refresh();
+        setModified();
+        if (m_mesa) m_mesa->update();
+    });
+    // Qualquer mudança estrutural na timeline/Mesa re-sincroniza o painel
+    // (evita ponteiros pendentes e mostra valores atualizados após undo).
+    connect(m_timeline, &TimelineWidget::modified, m_props, &ClipPropertiesWidget::refresh);
+    connect(m_mesa, &MesaWidget::modified, m_props, &ClipPropertiesWidget::refresh);
+    // "Propriedades…" no menu de contexto da timeline abre a janela do painel.
+    connect(m_timeline, &TimelineWidget::propertiesRequested, this,
+            [this](const QString& id) {
+                showPropsWindow();
+                m_props->showClip(id);
+            });
+    // "Propriedades da camada…" no canvas da Mesa abre a janela do painel.
+    connect(m_mesa, &MesaWidget::mesaLayerPropsRequested, this,
+            [this](const QString& trackId) {
+                showPropsWindow();
+                m_props->showMesaLayer(trackId);
+            });
 
     updateTitle();
     statusBar()->showMessage(tr("Pronto — arraste mídia para a timeline."));
@@ -597,6 +653,24 @@ bool MainWindow::confirmDiscardChanges() {
     if (b == saveBtn) return saveProject();
     // Descartar segue direto para a operação.
     return true;
+}
+
+// Janela normal (não-dockável) do painel de Propriedades: abre perto do
+// cursor ao ser pedida pelo menu de contexto e segue a seleção enquanto
+// aberta.
+void MainWindow::showPropsWindow() {
+    const QPoint cur = QCursor::pos();
+    m_props->show();
+    if (QScreen* s = m_props->screen()) {
+        const QRect avail = s->availableGeometry();
+        int x = cur.x() - 16;
+        int y = cur.y() - 16;
+        x = qBound(avail.left(), x, avail.right() - m_props->width() + 1);
+        y = qBound(avail.top(), y, avail.bottom() - m_props->height() + 1);
+        m_props->move(x, y);
+    }
+    m_props->raise();
+    m_props->activateWindow();
 }
 
 void MainWindow::showEvent(QShowEvent* event) {
@@ -1701,6 +1775,7 @@ void MainWindow::applyUndoState() {
     m_pool->refreshFromProject();
     m_pancrop->setProject(&m_project);
     m_graph->refresh();
+    m_props->refresh();
     m_preview->refreshView();
     m_mixer->refresh();
     m_mesa->refresh();

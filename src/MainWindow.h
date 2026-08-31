@@ -24,6 +24,7 @@ class PancropWidget;
 class GraphEditorWidget;
 class EffectsWidget;
 class ExpressWidget;
+class ClipPropertiesWidget;
 class FileBrowserWidget;
 class MixerWidget;
 class MesaWidget;
@@ -63,6 +64,7 @@ private:
     void restoreSettings();
     void scheduleLayoutSave();
     void setDockLocked(bool locked);
+    void showPropsWindow();
     QIcon makeIcon(const std::function<void(QPainter&, const QColor&)>& draw) const;
     QIcon padlockIcon(bool locked) const;
     QIcon iconCursor() const;
@@ -136,6 +138,7 @@ private:
     GraphEditorWidget* m_graph = nullptr;
     EffectsWidget* m_effects = nullptr;
     ExpressWidget* m_express = nullptr;
+    ClipPropertiesWidget* m_props = nullptr;
     FileBrowserWidget* m_fileBrowser = nullptr;
     MixerWidget* m_mixer = nullptr;
     MesaWidget* m_mesa = nullptr;

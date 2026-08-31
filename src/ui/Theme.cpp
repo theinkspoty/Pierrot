@@ -10,108 +10,109 @@
 static ThemeColors s_current;
 
 static ThemeColors makeDarkPalette() {
-    // Estilo Premiere Pro (escuro): painéis grafite #2A2A2A, superfícies
-    // profundas quase pretas, accent ciano #00A3E0 e playhead ciano claro.
+    // Estilo Premiere Pro (escuro): superfícies quase pretas e neutras
+    // (#1E1E1F painéis / #0F0F11 timeline), accent ciano #00A3E0 e playhead
+    // ciano claro. Mais escuro e neutro que a paleta anterior.
     ThemeColors c;
-    c.window            = QColor(42, 42, 44);
-    c.windowText        = QColor(214, 214, 218);
-    c.base              = QColor(26, 27, 29);
-    c.alternateBase     = QColor(31, 32, 35);
-    c.text              = QColor(210, 210, 214);
-    c.button            = QColor(62, 63, 67);
-    c.buttonText        = QColor(235, 235, 238);
+    c.window            = QColor(30, 30, 32);
+    c.windowText        = QColor(208, 208, 212);
+    c.base              = QColor(17, 17, 19);
+    c.alternateBase     = QColor(22, 22, 24);
+    c.text              = QColor(202, 202, 206);
+    c.button            = QColor(54, 55, 58);
+    c.buttonText        = QColor(230, 230, 233);
     c.brightText        = Qt::red;
     c.link              = QColor(0, 163, 224);
     c.highlight         = QColor(0, 140, 195);
     c.highlightedText   = Qt::white;
-    c.toolTipBase       = QColor(45, 47, 51);
-    c.toolTipText       = QColor(235, 235, 235);
-    c.placeholderText   = QColor(125, 125, 130);
-    c.disabledText      = QColor(96, 98, 102);
-    c.disabledWindowText= QColor(96, 98, 102);
+    c.toolTipBase       = QColor(36, 37, 40);
+    c.toolTipText       = QColor(232, 232, 232);
+    c.placeholderText   = QColor(116, 116, 122);
+    c.disabledText      = QColor(86, 86, 92);
+    c.disabledWindowText= QColor(86, 86, 92);
 
-    c.monitorBg         = QColor(17, 17, 19);
-    c.canvasBg          = QColor(8, 8, 10);
-    c.canvasBorder      = QColor(65, 65, 72);
-    c.monitorLabel      = QColor(170, 170, 178);
+    c.monitorBg         = QColor(14, 14, 16);
+    c.canvasBg          = QColor(7, 7, 8);
+    c.canvasBorder      = QColor(54, 54, 60);
+    c.monitorLabel      = QColor(148, 148, 156);
 
-    c.timelineBg        = QColor(22, 22, 25);
-    c.timelineGrid      = QColor(52, 52, 58);
-    c.rulerBg           = QColor(26, 26, 29);
-    c.rulerText         = QColor(158, 160, 168);
-    c.rulerTick         = QColor(50, 50, 56);
-    c.rulerTickMajor    = QColor(80, 80, 88);
-    c.trackBg           = QColor(40, 41, 44);
-    c.trackBgAlt        = QColor(33, 34, 37);
-    c.trackBorder       = QColor(56, 56, 61);
-    c.trackLabelBg      = QColor(30, 31, 34);
-    c.trackLabelText    = QColor(160, 162, 170);
-    c.clipBg            = QColor(58, 88, 120);
-    c.clipBorder        = QColor(76, 106, 142);
+    c.timelineBg        = QColor(15, 15, 17);
+    c.timelineGrid      = QColor(44, 44, 48);
+    c.rulerBg           = QColor(19, 19, 21);
+    c.rulerText         = QColor(146, 148, 154);
+    c.rulerTick         = QColor(44, 44, 50);
+    c.rulerTickMajor    = QColor(74, 74, 80);
+    c.trackBg           = QColor(32, 32, 34);
+    c.trackBgAlt        = QColor(27, 27, 29);
+    c.trackBorder       = QColor(45, 45, 49);
+    c.trackLabelBg      = QColor(24, 24, 26);
+    c.trackLabelText    = QColor(148, 148, 156);
+    c.clipBg            = QColor(50, 76, 108);
+    c.clipBorder        = QColor(62, 92, 128);
     c.clipBorderSelect  = QColor(0, 163, 224);
     c.clipBorderSecondary = QColor(0, 163, 224, 120);
-    c.clipText          = QColor(230, 230, 235);
-    c.clipThumbBorder   = QColor(38, 38, 43);
+    c.clipText          = QColor(228, 228, 233);
+    c.clipThumbBorder   = QColor(29, 29, 34);
     c.playhead          = QColor(150, 214, 252);
     c.playheadHandle    = QColor(190, 232, 255);
     c.selectionRect     = QColor(0, 150, 220, 60);
     c.selectionFill     = QColor(0, 150, 220, 28);
 
-    c.transportBg       = QColor(30, 31, 34);
-    c.transportBorder   = QColor(44, 46, 52);
+    c.transportBg       = QColor(23, 23, 25);
+    c.transportBorder   = QColor(38, 40, 44);
 
-    c.dockTitleBg       = QColor(48, 48, 51);
-    c.dockTitleBgHover  = QColor(54, 55, 59);
-    c.dockTitleText     = QColor(205, 208, 214);
-    c.dockBorder        = QColor(18, 19, 22);
+    c.dockTitleBg       = QColor(38, 38, 40);
+    c.dockTitleBgHover  = QColor(43, 44, 47);
+    c.dockTitleText     = QColor(158, 160, 166);
+    c.dockBorder        = QColor(14, 15, 17);
     c.dockCloseHover    = QColor(120, 34, 34);
 
-    c.inputBg           = QColor(36, 37, 40);
-    c.inputBorder       = QColor(68, 70, 76);
+    c.inputBg           = QColor(26, 27, 29);
+    c.inputBorder       = QColor(60, 61, 66);
     c.inputFocus        = QColor(0, 163, 224);
     c.spinText          = QColor(150, 215, 255);
 
-    c.btnPrimary        = QColor(0, 120, 185);
+    c.btnPrimary        = QColor(0, 112, 176);
     c.btnPrimaryText    = QColor(245, 247, 250);
-    c.btnHover          = QColor(66, 70, 80);
+    c.btnHover          = QColor(54, 57, 64);
     c.btnActive         = QColor(0, 155, 225);
 
     c.accent            = QColor(0, 163, 224);
     c.accentGold        = QColor(255, 179, 64);
-    c.iconNormal        = QColor(170, 172, 180);
-    c.iconMuted         = QColor(110, 116, 126);
+    c.iconNormal        = QColor(158, 160, 168);
+    c.iconMuted         = QColor(100, 104, 112);
 
-    c.tabBg             = QColor(44, 45, 49);
-    c.tabSelected       = QColor(30, 31, 34);
+    c.tabBg             = QColor(36, 37, 40);
+    c.tabSelected       = QColor(22, 23, 25);
     c.tabBorder         = QColor(0, 163, 224);
 
-    c.scrollbarBg       = QColor(24, 24, 27);
-    c.scrollbarHandle   = QColor(82, 84, 90);
-    c.scrollbarHover    = QColor(108, 110, 118);
+    c.scrollbarBg       = QColor(17, 17, 20);
+    c.scrollbarHandle   = QColor(72, 74, 80);
+    c.scrollbarHover    = QColor(96, 98, 104);
 
-    c.welcomeBgTop      = QColor(32, 34, 40);
-    c.welcomeBgBottom   = QColor(16, 17, 21);
-    c.welcomeBtnGradStart = QColor(0, 120, 185);
+    c.welcomeBgTop      = QColor(26, 28, 34);
+    c.welcomeBgBottom   = QColor(12, 13, 16);
+    c.welcomeBtnGradStart = QColor(0, 112, 176);
     c.welcomeBtnGradEnd   = QColor(0, 160, 228);
 
-    c.expressBg         = QColor(46, 47, 51);
-    c.expressCardBg     = QColor(58, 60, 66);
-    c.expressDescText   = QColor(116, 120, 130);
-    c.effectsSearchBg   = QColor(30, 31, 34);
-    c.effectsTreeBg     = QColor(36, 38, 42);
-    c.effectsPreviewBg  = QColor(20, 21, 25);
+    c.expressBg         = QColor(36, 37, 40);
+    c.expressCardBg     = QColor(46, 48, 52);
+    c.expressDescText   = QColor(110, 114, 122);
+    c.effectsSearchBg   = QColor(23, 24, 26);
+    c.effectsTreeBg     = QColor(28, 29, 32);
+    c.effectsPreviewBg  = QColor(15, 16, 19);
 
-    c.graphBg           = QColor(19, 20, 24);
-    c.graphGrid         = QColor(46, 49, 56);
+    c.graphBg           = QColor(14, 15, 18);
+    c.graphGrid         = QColor(40, 42, 48);
     c.graphLine         = QColor(0, 163, 224);
-    c.graphKeyframe     = QColor(200, 205, 215);
-    c.graphLabel        = QColor(140, 140, 150);
-    c.graphRuler        = QColor(24, 24, 27);
-    c.graphAxis         = QColor(58, 59, 66);
-    c.graphRulerText    = QColor(160, 163, 172);
+    c.graphKeyframe     = QColor(196, 200, 210);
+    c.graphLabel        = QColor(128, 128, 138);
+    c.graphRuler        = QColor(18, 18, 21);
+    c.graphAxis         = QColor(50, 51, 57);
+    c.graphRulerText    = QColor(150, 153, 160);
     c.graphHandle       = QColor(0, 163, 224);
 
-    c.pancropBg         = QColor(20, 21, 25);
+    c.pancropBg         = QColor(15, 16, 19);
     c.pancropRegion     = QColor(0, 163, 224, 60);
     c.pancropHandle     = QColor(0, 163, 224);
 
@@ -276,9 +277,8 @@ QString globalStyleSheet(AppTheme theme) {
         QDockWidget::title {
             background-color: %2;
             border-bottom: 1px solid %3;
-            border-top: 1px solid %4;
-            padding: 4px 5px 4px 10px;
-            spacing: 4px;
+            padding: 3px 5px 3px 10px;
+            spacing: 5px;
         }
         QDockWidget::title:hover {
             background-color: %5;
@@ -287,8 +287,8 @@ QString globalStyleSheet(AppTheme theme) {
         QDockWidget::close-button {
             background: transparent;
             border: none;
-            padding: 2px;
-            icon-size: 14px;
+            padding: 1px;
+            icon-size: 12px;
             subcontrol-position: top right;
         }
         QDockWidget::float-button:hover,
@@ -332,6 +332,11 @@ QString flatControlStyleSheet(AppTheme theme) {
     const QString scH      = c.scrollbarHandle.name();
     const QString scHo     = c.scrollbarHover.name();
     const QString btnPrimaryTxt = c.btnPrimaryText.name();
+    // Foco neutro (Premiere): sem borda ciano em hover/focus de inputs.
+    const QString fneut = (theme == AppTheme::Light) ? QColor(180, 182, 188).name()
+                                                     : QColor(92, 96, 104).name();
+    // Divisória entre painéis: quase invisível, como no Premiere.
+    const QString div   = c.dockBorder.name();
 
     return QStringLiteral(R"(
         QMenuBar {
@@ -374,7 +379,7 @@ QString flatControlStyleSheet(AppTheme theme) {
         }
         QPushButton:hover { background: %5; }
         QPushButton:pressed { background: %14; }
-        QPushButton:checked { background: %14; border-color: %20; }
+        QPushButton:checked { background: %14; border-color: %27; }
         QPushButton:disabled { color: %13; background: %3; }
         QPushButton[primary="true"],
         QPushButton#primary {
@@ -393,7 +398,7 @@ QString flatControlStyleSheet(AppTheme theme) {
         QToolButton:hover { background: %5; border-color: %6; }
         QToolButton:pressed,
         QToolButton:checked {
-            background: %9; border-color: %20;
+            background: %9; border-color: %27;
         }
         QToolButton:disabled { color: %13; }
 
@@ -402,7 +407,7 @@ QString flatControlStyleSheet(AppTheme theme) {
             border: 1px solid %10; border-radius: 2px;
             padding: 3px 8px;
         }
-        QComboBox:hover, QComboBox:focus { border-color: %20; }
+        QComboBox:hover, QComboBox:focus { border-color: %27; }
         QComboBox:disabled { color: %13; background: %3; }
         QComboBox::drop-down {
             subcontrol-origin: padding; subcontrol-position: center right;
@@ -426,7 +431,7 @@ QString flatControlStyleSheet(AppTheme theme) {
         }
         QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus,
         QDateTimeEdit:focus, QDateEdit:focus, QTimeEdit:focus {
-            border-color: %20;
+            border-color: %27;
         }
         QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled {
             color: %13; background: %3;
@@ -450,7 +455,7 @@ QString flatControlStyleSheet(AppTheme theme) {
             background: %16; border: 1px solid %10; border-radius: 2px;
         }
         QRadioButton::indicator { border-radius: 7px; }
-        QCheckBox::indicator:hover, QRadioButton::indicator:hover { border-color: %20; }
+        QCheckBox::indicator:hover, QRadioButton::indicator:hover { border-color: %27; }
         QCheckBox::indicator:checked {
             background: %21; border-color: %21;
             image: url(:/icons/check.png);
@@ -511,7 +516,7 @@ QString flatControlStyleSheet(AppTheme theme) {
         QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
         QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
 
-        QSplitter::handle { background: %6; }
+        QSplitter::handle { background: %28; }
         QSplitter::handle:horizontal { width: 3px; }
         QSplitter::handle:vertical { height: 3px; }
 
@@ -529,9 +534,10 @@ QString flatControlStyleSheet(AppTheme theme) {
             selection-background-color: %11; selection-color: %12;
         }
     )")
-        .arg(win, txt, base, brd, hover, brd,
-             btn, btntxt, press, inputbrd,
-             hl, hltxt, disabled, press, primary,
-             input, tooltip, tiptext, btnPrimaryTxt, focus,
-             accent, titleTxt, alt, scBg, scH, scHo);
+.arg(win, txt, base, brd, hover, brd,
+         btn, btntxt, press, inputbrd,
+         hl, hltxt, disabled, press, primary,
+         input, tooltip, tiptext, btnPrimaryTxt, focus,
+         accent, titleTxt, alt, scBg, scH, scHo,
+         fneut, div);
 }

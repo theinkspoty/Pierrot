@@ -22,6 +22,7 @@ struct OfxPluginInfo {
     QString grouping;           // categoria/grouping do efeito
     QString description;        // curta descrição
     QString pluginPath;         // caminho para o bundle .ofx no disco
+    QString iconPath;           // caminho ABSOLUTO do ícone (kOfxPropIcon do plugin)
     int versionMajor = 1;
     int versionMinor = 0;
 };
@@ -254,6 +255,16 @@ struct MesaComposition {
     QVector<Keyframe> kfCamY;
     QVector<Keyframe> kfCamZoom;
     QVector<Keyframe> kfCamRotation;
+
+    // ── Motion blur por amostragem temporal (estilo AE) ─────────────────
+    // Quando ligado, o quadro é integrado por `motionBlurSamples`
+    // sub-passadas distribuídas em volta do tempo atual, cobrindo
+    // `motionBlurShutter` fração de quadro (1.0 = "obturador de 360°").
+    // No canvas cada camada rastra o próprio transform; no preview/export a
+    // câmera também rastra (redefine o enquadramento por amostra).
+    bool motionBlur = false;
+    int motionBlurSamples = 8;
+    double motionBlurShutter = 0.5;
 };
 
 // Tipos de transição de saída de um clipe (aplicada quando ele se sobrepõe ao
@@ -484,6 +495,9 @@ struct Track {
     // nem transformável (cadeado).
     bool mesaHidden = false;
     bool mesaLocked = false;
+    // Motion blur desta camada (Vegas: "Allow motion blur" por clipe). O blur
+    // global da composição (Ctrl+Shift+B) só borra camadas com este flag ON.
+    bool mesaMotionBlur = true;
 
     // Keyframes das propriedades de canvas (tempos em segundos da timeline).
     QVector<Keyframe> kfMesaX;

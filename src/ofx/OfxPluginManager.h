@@ -94,4 +94,8 @@ private:
     bool loadOfxLibrary(const QString& libPath, const QString& pluginId);
     void describePlugin(OfxPluginInfo& info);
     void cleanupLibs();
+
+    // kOfxPropIcon traz um caminho RELATIVO à pasta Resources do bundle.
+    // Resolve para um caminho absoluto existente (svg/png) ou vazio.
+    QString resolveIconPath(const QString& libPath, const QString& relPath) const;
 };
