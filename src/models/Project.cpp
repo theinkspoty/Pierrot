@@ -305,6 +305,36 @@ static QJsonObject clipToJson(const Clip& c) {
         ofxArr.append(fxo);
     }
     o["ofxFx"] = ofxArr;
+    // ── Máscaras ─────────────────────────────────────────────────────────
+    QJsonArray maskArr;
+    for (const Mask& m : c.masks) {
+        QJsonObject mo;
+        mo["type"] = m.type;
+        mo["enabled"] = m.enabled;
+        mo["cx"] = m.cx;
+        mo["cy"] = m.cy;
+        mo["rx"] = m.rx;
+        mo["ry"] = m.ry;
+        mo["rotation"] = m.rotation;
+        mo["feather"] = m.feather;
+        mo["invert"] = m.invert;
+        QJsonArray pa;
+        for (const QPointF& pt : m.poly) {
+            QJsonArray qa;
+            qa.append(pt.x());
+            qa.append(pt.y());
+            pa.append(qa);
+        }
+        mo["poly"] = pa;
+        mo["kfCx"] = kfToJson(m.kfCx);
+        mo["kfCy"] = kfToJson(m.kfCy);
+        mo["kfRx"] = kfToJson(m.kfRx);
+        mo["kfRy"] = kfToJson(m.kfRy);
+        mo["kfRotation"] = kfToJson(m.kfRotation);
+        mo["kfFeather"] = kfToJson(m.kfFeather);
+        maskArr.append(mo);
+    }
+    o["masks"] = maskArr;
     return o;
 }
 
@@ -436,6 +466,34 @@ static Clip clipFromJson(const QJsonObject& o) {
             fx.params.append(p);
         }
         c.ofxFx.append(fx);
+    }
+    // ── Máscaras ─────────────────────────────────────────────────────────
+    const QJsonArray maskArr = o["masks"].toArray();
+    for (const QJsonValue& v : maskArr) {
+        const QJsonObject mo = v.toObject();
+        Mask m;
+        m.type = mo["type"].toString();
+        m.enabled = mo["enabled"].toBool(true);
+        m.cx = mo["cx"].toDouble(0.5);
+        m.cy = mo["cy"].toDouble(0.5);
+        m.rx = mo["rx"].toDouble(0.4);
+        m.ry = mo["ry"].toDouble(0.4);
+        m.rotation = mo["rotation"].toDouble(0.0);
+        m.feather = mo["feather"].toDouble(0.0);
+        m.invert = mo["invert"].toBool(false);
+        const QJsonArray pa = mo["poly"].toArray();
+        for (const QJsonValue& pv : pa) {
+            const QJsonArray pta = pv.toArray();
+            if (pta.size() >= 2)
+                m.poly.append(QPointF(pta.at(0).toDouble(), pta.at(1).toDouble()));
+        }
+        m.kfCx = kfFromJson(mo["kfCx"]);
+        m.kfCy = kfFromJson(mo["kfCy"]);
+        m.kfRx = kfFromJson(mo["kfRx"]);
+        m.kfRy = kfFromJson(mo["kfRy"]);
+        m.kfRotation = kfFromJson(mo["kfRotation"]);
+        m.kfFeather = kfFromJson(mo["kfFeather"]);
+        if (!m.type.isEmpty()) c.masks.append(m);
     }
     return c;
 }

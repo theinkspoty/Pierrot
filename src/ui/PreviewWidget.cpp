@@ -7,6 +7,7 @@
 
 #include "ui/SettingsDialog.h"
 #include "ui/TlLog.h"
+#include "ffmpeg/ProxyManager.h"
 #include "ofx/OfxRenderer.h"
 #include "ofx/OfxPluginManager.h"
 #include "export/LainkaFx.h"
@@ -1198,7 +1199,7 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
                                                   c->lainkaTargetFps, c->lainkaAntialias,
                                                   QImage());
                     }
-                    applyBasicEffectsOn(clipFrame, *c);
+                    applyBasicEffectsOn(clipFrame, *c, m_playhead - c->pos);
                 } else {
                     {
                         QMutexLocker l(&m_frameMutex);
@@ -2218,20 +2219,22 @@ void PreviewWidget::updateFrame() {
             std::clamp(kfValue(under->kfCropB, under->cropB, rel), 0.0, 0.9) * 1000.0);
         const MediaItem* um = m_project->findMedia(under->mediaId);
         if (um && um->hasVideo && m_frameWorker) {
+            const QString uvpath = ProxyManager::instance().resolveVideo(um->filePath);
             const double uSrcT = clipSrcTime(*under, m_playhead - under->pos);
             QMutexLocker l(&m_frameMutex);
-            const bool already = m_underRequested && m_underPath == um->filePath
+            const bool already = m_underRequested && m_underPath == uvpath
                                  && m_underW == decW
                                  && std::fabs(m_underT - uSrcT) <= 0.5 / projFps(m_project)
                                  && !m_underFrame.isNull();
             if (!already) {
-                m_underPath = um->filePath;
+                m_underPath = uvpath;
                 m_underT = uSrcT;
                 m_underW = decW;
+                m_underCropL = m_underCropR = m_underCropT = m_underCropB = 0; // recortado no onFrame
                 m_underRequested = true;
                 m_underFrame = QImage();
                 QMetaObject::invokeMethod(m_frameWorker, "decodePrefetch", Qt::QueuedConnection,
-                                          Q_ARG(QString, um->filePath),
+                                          Q_ARG(QString, uvpath),
                                           Q_ARG(double, uSrcT),
                                           Q_ARG(int, decW),
                                           Q_ARG(double, 1.0 / projFps(m_project)));
@@ -2243,21 +2246,25 @@ void PreviewWidget::updateFrame() {
         m_underRequested = false;
     }
 
+    // Path efetivo de vídeo do clipe do topo: proxy se houver (consistente com
+    // requestFrame/onFrameReady e o cache).
+    const QString vpath = ProxyManager::instance().resolveVideo(m->filePath);
+
     // Se temos um quadro pré-carregado que bate com a posição de entrada do novo clipe, exibe imediatamente.
     bool usedPrefetch = false;
     if (m_transAlpha < 0.0) {
         QMutexLocker l(&m_frameMutex);
         const double frameDur = 1.0 / projFps(m_project);
-        if (m_prefetch.valid && m_prefetch.path == m->filePath
+        if (m_prefetch.valid && m_prefetch.path == vpath
             && std::fabs(m_prefetch.t - srcT) <= frameDur * 0.5
             && m_prefetch.maxW == decW) {
             m_frameFull = m_prefetch.img;
-            m_shownPath = m->filePath;
+            m_shownPath = vpath;
             m_shownT = srcT;
             m_shownW = decW;
             m_lastSrcT = srcT;
             m_lastDecodeW = decW;
-            m_lastFile = m->filePath;
+            m_lastFile = vpath;
             m_prefetch.valid = false;
             m_prefetch.requested = false;
             usedPrefetch = true;
@@ -2270,7 +2277,7 @@ void PreviewWidget::updateFrame() {
     // pan/crop (por exemplo quando só o corte mudou) sem decodificar de novo.
     {
         QMutexLocker l(&m_frameMutex);
-        if (!usedPrefetch && m_shownPath == m->filePath && std::fabs(m_shownT - srcT) < 1e-6
+        if (!usedPrefetch && m_shownPath == vpath && std::fabs(m_shownT - srcT) < 1e-6
             && m_shownW == decW) {
             applyCrop();
             update();
@@ -2280,10 +2287,10 @@ void PreviewWidget::updateFrame() {
     if (usedPrefetch) {
         // Já no tick do corte, dispara o próximo frame: o decoder trocado está
         // posicionado e decodifica adiante, evitando "segurar" o frame do corte.
-        requestFrame(clip->id, m->filePath, srcT + 1.0 / projFps(m_project), decW);
+        requestFrame(clip->id, vpath, srcT + 1.0 / projFps(m_project), decW);
         return;
     }
-    requestFrame(clip->id, m->filePath, srcT, decW);
+    requestFrame(clip->id, vpath, srcT, decW);
 }
 
 // Pedido "assíncrono": a decodificação acontece na thread do FrameWorker.
@@ -2339,14 +2346,15 @@ void PreviewWidget::requestLowerLayers(int decW) {
         // Cor sólida não tem arquivo: é gerada na pintura, não pede decode.
         if (m->isSolid) continue;
         const double srcT = clipSrcTime(*c, m_playhead - c->pos);
+        const QString vpath = ProxyManager::instance().resolveVideo(m->filePath);
         {
             QMutexLocker l(&m_frameMutex);
             const auto it = m_layerCache.constFind(c->id);
-            if (it != m_layerCache.constEnd() && it->path == m->filePath
+            if (it != m_layerCache.constEnd() && it->path == vpath
                 && std::fabs(it->t - srcT) < 1e-6 && it->maxW == decW && !it->img.isNull())
                 continue; // já em cache
         }
-        requestFrame(c->id, m->filePath, srcT, decW);
+        requestFrame(c->id, vpath, srcT, decW);
     }
 
     // Tracks Mesa: decodifica o frame individual de cada track via MesaRenderer
@@ -2447,7 +2455,7 @@ void PreviewWidget::onFrameReady(const QString& clipId, const QString& path, dou
             if (c.id == clipId) { clip = &c; break; }
     if (!clip) return;
     const MediaItem* m = m_project->findMedia(clip->mediaId);
-    if (!m || m->filePath != path) return;
+    if (!m || ProxyManager::instance().resolveVideo(m->filePath) != path) return;
 
     // Ignora quadros decodificados para outra posição (scrub/seek rápido muito distante).
     const double wantT = clipSrcTime(*clip, m_playhead - clip->pos);
@@ -2502,7 +2510,7 @@ void PreviewWidget::onFrameReady(const QString& clipId, const QString& path, dou
                                 QImage());
     }
     // Aplica efeitos básicos também em camadas inferiores.
-    applyBasicEffectsOn(cropped, *clip);
+    applyBasicEffectsOn(cropped, *clip, m_playhead - clip->pos);
     {
         QMutexLocker l(&m_frameMutex);
         m_layerCache[clipId] = {cropped, path, t, maxW};
@@ -2566,15 +2574,16 @@ void PreviewWidget::updatePrefetch() {
     // Prefetch no mesmo tamanho do quadro com qualidade (nunca abaixo da tela).
     const int widgetW = m_videoRect.width() > 0 ? m_videoRect.width() : 960;
     const int decW = qMax(160, qMax(m_previewQuality, widgetW));
+    const QString vpath = ProxyManager::instance().resolveVideo(nextMedia->filePath);
 
     {
         QMutexLocker l(&m_frameMutex);
         if (m_perfT.isValid()) m_perfPrefetchStartNs = m_perfT.nsecsElapsed();
-        if (m_prefetch.requested && m_prefetch.path == nextMedia->filePath
+        if (m_prefetch.requested && m_prefetch.path == vpath
             && std::fabs(m_prefetch.t - srcT) < 1e-4 && m_prefetch.maxW == decW) {
             return; // já solicitado ou já pronto
         }
-        m_prefetch.path = nextMedia->filePath;
+        m_prefetch.path = vpath;
         m_prefetch.t = srcT;
         m_prefetch.maxW = decW;
         m_prefetch.img = QImage();
@@ -2584,7 +2593,7 @@ void PreviewWidget::updatePrefetch() {
     }
 
     QMetaObject::invokeMethod(m_frameWorker, "decodePrefetch", Qt::QueuedConnection,
-                              Q_ARG(QString, nextMedia->filePath),
+                              Q_ARG(QString, vpath),
                               Q_ARG(double, srcT),
                               Q_ARG(int, decW),
                               Q_ARG(double, 1.0 / projFps(m_project)));
@@ -2620,8 +2629,75 @@ void PreviewWidget::applyBasicEffects(QImage& img) {
     applyBasicEffectsOn(img, c);
 }
 
-void PreviewWidget::applyBasicEffectsOn(QImage& img, const Clip& c) {
+// Aplica as máscaras do clipe ao quadro: multiplica o alpha pela cobertura da
+// forma (rect/ellipse), com feather (borda suave por distância assinada) e
+// invert, combinadas em união. Avalia os keyframes em `rel` (tempo relativo).
+void PreviewWidget::applyMasks(QImage& img, const Clip& c, double rel) {
+    const int w = img.width();
+    const int h = img.height();
+    if (w < 1 || h < 1) return;
+    if (img.format() != QImage::Format_ARGB32
+        && img.format() != QImage::Format_ARGB32_Premultiplied)
+        return; // precisa de canal alpha por byte
+
+    std::vector<float> cov((size_t)w * (size_t)h, 0.0f);
+    for (const Mask& m : c.masks) {
+        if (!m.hasMask()) continue;
+        if (m.type != QLatin1String("rect") && m.type != QLatin1String("ellipse"))
+            continue; // poly: v1 não exporta ainda — ignorar p/ manter paridade
+        const double cx = m.cxAt(rel) * w;
+        const double cy = m.cyAt(rel) * h;
+        const double rx = std::max(0.001, m.rxAt(rel) * w);
+        const double ry = std::max(0.001, m.ryAt(rel) * h);
+        const double rotRad = m.rotAt(rel) * M_PI / 180.0;
+        const double cosR = std::cos(-rotRad);
+        const double sinR = std::sin(-rotRad);
+        const double fp = m.featherAt(rel) * (double)std::max(w, h);
+        const bool invert = m.invert;
+        const bool ellipse = (m.type == QLatin1String("ellipse"));
+
+        for (int y = 0; y < h; ++y) {
+            const double ly0 = y - cy;
+            size_t idx = (size_t)y * w;
+            for (int x = 0; x < w; ++x, ++idx) {
+                const double lx0 = x - cx;
+                const double lx = lx0 * cosR - ly0 * sinR;
+                const double ly = lx0 * sinR + ly0 * cosR;
+                double d;
+                if (ellipse) {
+                    const double n = (lx * lx) / (rx * rx) + (ly * ly) / (ry * ry);
+                    d = (std::sqrt(std::max(0.0, n)) - 1.0) * std::min(rx, ry);
+                } else {
+                    d = std::max(std::abs(lx) - rx, std::abs(ly) - ry);
+                }
+                double v = (fp > 0.5) ? std::clamp(0.5 - d / fp, 0.0, 1.0)
+                                      : ((d < 0.0) ? 1.0 : 0.0);
+                if (invert) v = 1.0 - v;
+                if (v > cov[idx]) cov[idx] = (float)v;
+            }
+        }
+    }
+
+    // Multiplica o alpha do quadro pela cobertura acumulada. (Em imagens
+    // premultiplied, só o alpha muda; o RGB já guarda cor · alpha.)
+    for (int y = 0; y < h; ++y) {
+        uchar* line = img.scanLine(y);
+        const float* cv = &cov[(size_t)y * w];
+        for (int x = 0; x < w; ++x) {
+            uchar& a = line[x * 4 + 3];
+            a = (uchar)std::lround(a * cv[x]);
+        }
+    }
+}
+
+void PreviewWidget::applyBasicEffectsOn(QImage& img, const Clip& c, double rel) {
     if (img.isNull()) return;
+
+    // Máscaras: recorta o quadro por forma (rect/ellipse), com feather e
+    // invert, em união. Rodam antes do chroma/desfoque/cor para que esses
+    // efeitos respeitem a área visível.
+    if (c.hasMask())
+        applyMasks(img, c, rel);
 
     // Chroma Key: remove cor específica.
     if (c.chromaKey) {

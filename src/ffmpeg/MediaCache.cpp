@@ -5,6 +5,7 @@
 
 #include "MediaCache.h"
 #include "util.h"
+#include "ffmpeg/ProxyManager.h"
 
 #include <QThread>
 #include <QMetaType>
@@ -51,8 +52,11 @@ void CacheWorker::generateThumb(const QString& filePath, double seconds) {
     if (isImageFile(filePath)) {
         img = loadImageThumb(filePath, kThumbMaxWidth);
     } else {
-        if (!m_decoder.isOpen() || m_decoder.source() != filePath) {
-            m_decoder.open(filePath);
+        // Decodifica a partir do proxy (vídeo leve) quando houver — olhar do
+        // thumb igual ao do preview, sem carregar o arquivo grande.
+        const QString vpath = ProxyManager::instance().resolveVideo(filePath);
+        if (!m_decoder.isOpen() || m_decoder.source() != vpath) {
+            m_decoder.open(vpath);
         }
         if (m_decoder.isOpen()) {
             img = m_decoder.frameAt(seconds, kThumbMaxWidth);
@@ -72,8 +76,9 @@ void CacheWorker::generateThumbs(const QString& filePath, const QList<double>& s
             emit thumbReady(filePath, s, img);
         return;
     }
-    if (!m_decoder.isOpen() || m_decoder.source() != filePath) {
-        m_decoder.open(filePath);
+    const QString vpath = ProxyManager::instance().resolveVideo(filePath);
+    if (!m_decoder.isOpen() || m_decoder.source() != vpath) {
+        m_decoder.open(vpath);
     }
     QList<double> sorted = seconds;
     std::sort(sorted.begin(), sorted.end());

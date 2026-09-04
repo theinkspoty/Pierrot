@@ -95,7 +95,11 @@ private:
     void updateFrame();
     void applyCrop();
     void applyBasicEffects(QImage& img);
-    static void applyBasicEffectsOn(QImage& img, const Clip& c);
+    static void applyBasicEffectsOn(QImage& img, const Clip& c, double rel = 0.0);
+    // Aplica as máscaras (shapes rect/ellipse) do clipe ao quadro, multiplicando
+    // o alpha pela cobertura (feather + invert, em união). `rel` = tempo
+    // relativo do clipe (avalia os keyframes das máscaras).
+    static void applyMasks(QImage& img, const Clip& c, double rel);
     QImage applyCropTo(const QImage& img, int cL, int cR, int cT, int cB);
     // Pedidos asíncronos de quadro: primário (clipe do topo) e camadas
     // inferiores (empilhamento multi-faixa). clipId identifica o destino.

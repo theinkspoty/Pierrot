@@ -6,6 +6,7 @@
 #include "MediaPoolWidget.h"
 #include "ffmpeg/FFmpegDecoder.h"
 #include "ffmpeg/MediaCache.h"
+#include "ffmpeg/ProxyManager.h"
 #include "ui/TimelineWidget.h"
 #include "ui/SettingsDialog.h"
 #include "generators.h"
@@ -614,6 +615,10 @@ void MediaPoolWidget::importPaths(const QStringList& files) {
             m.audioChannels = info.audioChannels;
             m_project->media.append(m);
             imported.append(r.path);
+            // Gera proxy em background para mídia alta (2K+) — o preview passa
+            // a decodificar o proxy (rápido) sem travar a UI.
+            if (m.hasVideo)
+                ProxyManager::instance().probeAndQueue(r.path);
             ++added;
         }
         SettingsDialog::warnMkvIfNeeded(this, imported);

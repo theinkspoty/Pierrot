@@ -5,6 +5,7 @@
 
 #include "MesaRenderer.h"
 #include "ffmpeg/FFmpegDecoder.h"
+#include "ffmpeg/ProxyManager.h"
 #include "generators.h"
 
 #include <QPainter>
@@ -60,19 +61,39 @@ void MesaRenderer::compositeToCache(const CompositeKey& key, const QImage& img) 
 }
 
 QImage MesaRenderer::decodeFrame(const QString& filePath, double time, int maxW) {
-    QMutexLocker l(&m_mutex);
-    if (m_frameCache.key.path == filePath && qFuzzyCompare(m_frameCache.key.time, time)
-        && m_frameCache.key.maxW == maxW && !m_frameCache.frame.isNull()) {
-        return m_frameCache.frame;
+    // Decodifica a partir do proxy (vídeo leve) quando houver; a chave de cache
+    // é o vpath, para não misturar original e proxy do mesmo clipe.
+    const QString vpath = ProxyManager::instance().resolveVideo(filePath);
+
+    FFmpegDecoder* dec = nullptr;
+    {
+        // Seção CURTA com o lock global: só o mapa de decoders e o cache de
+        // quadro único são compartilhados entre threads. O decode pesado fica
+        // FORA do lock para arquivos distintos decodarem em paralelo.
+        QMutexLocker l(&m_mutex);
+        if (m_frameCache.key.path == vpath && qFuzzyCompare(m_frameCache.key.time, time)
+            && m_frameCache.key.maxW == maxW && !m_frameCache.frame.isNull()) {
+            return m_frameCache.frame;
+        }
+        dec = m_decoders.value(vpath);
+        if (!dec) {
+            dec = new FFmpegDecoder();
+            m_decoders.insert(vpath, dec);
+        }
     }
-    FFmpegDecoder* dec = m_decoders.value(filePath);
-    if (!dec) {
-        dec = new FFmpegDecoder();
-        if (!dec->open(filePath)) { delete dec; return {}; }
-        m_decoders.insert(filePath, dec);
+
+    // Decode sem o lock global: cada FFmpegDecoder serializa o PRÓPRIO acesso
+    // internamente (m_mutex do decoder), então dois arquivos diferentes podem
+    // ser decodificados por threads distintas ao mesmo tempo (worker de decode
+    // e thread da UI via requestLowerLayers) sem risco de SIGSEGV.
+    if (!dec->isOpen()) {
+        if (!dec->open(vpath)) return {};
     }
     QImage frame = dec->frameAt(time, maxW);
-    m_frameCache = { { filePath, time, maxW }, frame };
+    {
+        QMutexLocker l(&m_mutex);
+        m_frameCache = { { vpath, time, maxW }, frame };
+    }
     return frame;
 }
 

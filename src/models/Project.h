@@ -9,7 +9,9 @@
 #include <QVector>
 #include <QUuid>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QColor>
+#include <QPointF>
 #include <algorithm>
 #include <cmath>
 
@@ -276,6 +278,43 @@ inline bool isTransition(const QString& type) {
     return !type.isEmpty();
 }
 
+// ── Máscara (recorte de forma, animável por clipe) ────────────────────────
+// Recorta a região visível do clipe em formas (retângulo/elipse/polígono),
+// com feather (borda suave) e opção de inverter a seleção. Centro, tamanho e
+// rotação podem ser animados por keyframes no tempo RELATIVO do clipe,
+// seguindo o mesmo modelo dos keyframes de transform/crop. As coordenadas são
+// NORMALIZADAS (0..1) em relação ao quadro do clipe, para o mesmo clipe se
+// comportar igual em qualquer resolução (preview e export usa o mesmo espaço).
+// Vários Masks no Clip::masks são aplicados em união (aditivo), como no Vegas.
+struct Mask {
+    QString type;               // "" | "rect" | "ellipse" | "poly"
+    bool enabled = true;
+    double cx = 0.5;            // centro X (normalizado 0..1)
+    double cy = 0.5;            // centro Y (normalizado 0..1)
+    double rx = 0.4;            // meia-largura / raio X (normalizado)
+    double ry = 0.4;            // meia-altura / raio Y (normalizado)
+    double rotation = 0.0;      // graus ao redor do centro
+    double feather = 0.0;       // 0..0.25 (fração do quadro — faixa de borda suave)
+    bool invert = false;
+    QVector<QPointF> poly;      // vértices do polígono (normalizados) p/ type=="poly"
+
+    QVector<Keyframe> kfCx;
+    QVector<Keyframe> kfCy;
+    QVector<Keyframe> kfRx;
+    QVector<Keyframe> kfRy;
+    QVector<Keyframe> kfRotation;
+    QVector<Keyframe> kfFeather;
+
+    bool hasMask() const { return !type.isEmpty() && enabled; }
+
+    double cxAt(double rel) const { return kfValue(kfCx, cx, rel); }
+    double cyAt(double rel) const { return kfValue(kfCy, cy, rel); }
+    double rxAt(double rel) const { return kfValue(kfRx, std::max(0.001, rx), rel); }
+    double ryAt(double rel) const { return kfValue(kfRy, std::max(0.001, ry), rel); }
+    double rotAt(double rel) const { return kfValue(kfRotation, rotation, rel); }
+    double featherAt(double rel) const { return kfValue(kfFeather, std::clamp(feather, 0.0, 0.25), rel); }
+};
+
 struct Clip {
     QString id;
     QString mediaId;
@@ -388,6 +427,18 @@ struct Clip {
 
     // ── Efeitos OFX (plugins de terceiros) ──────────────────────────────
     QVector<OfxPluginInstance> ofxFx;  // stack de efeitos OFX (ordem = ordem de aplicação)
+
+    // ── Máscaras (recorte de forma animável) ────────────────────────────
+    // Uma ou mais máscaras em união (aditivo). Aplicadas após o crop e antes
+    // do transform, sobre o quadro do clipe. Serializadas no .Blanc.
+    QVector<Mask> masks;
+
+    // True se o clipe tem alguma máscara ativa.
+    bool hasMask() const {
+        for (const Mask& m : masks)
+            if (m.hasMask()) return true;
+        return false;
+    }
 
     // Keyframes animados (tempos em segundos da timeline).
     QVector<Keyframe> kfOpacity;

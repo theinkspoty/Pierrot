@@ -469,7 +469,62 @@ QString cropFilter(const Clip& c, double pos) {
                    .arg(l, r, t, b);
     return QStringLiteral("crop=w='iw*(1-(%1)-(%2))':h='ih*(1-(%3)-(%4))':"
                           "x='iw*(%1)':y='ih*(%3)'")
-               .arg(num(c.cropL), num(c.cropR), num(c.cropT), num(c.cropB));
+                .arg(num(c.cropL), num(c.cropR), num(c.cropT), num(c.cropB));
+}
+
+// Expressão de cobertura (0..1) da máscara `m` num instante da timeline,
+// usando variáveis do geq (X, Y, W, H, t). Paridade com PreviewWidget::applyMasks:
+//   • centro/tamanho/rotação/feather normalizados → px via W/H
+//   • rotação aplicada em frame local (mesma fórmula do preview)
+//   • feather por distância assinada: cov = clamp(0.5 - d/FP, 0, 1)
+static QString maskCoverageExpr(const Mask& m, double pos) {
+    const QString cx = kfExpr(m.kfCx, m.cx, pos);
+    const QString cy = kfExpr(m.kfCy, m.cy, pos);
+    const QString rx = kfExpr(m.kfRx, m.rx, pos); // normalizado → *W
+    const QString ry = kfExpr(m.kfRy, m.ry, pos); // normalizado → *H
+    const QString rot = kfExpr(m.kfRotation, m.rotation, pos); // graus
+    const QString fe = kfExpr(m.kfFeather, m.feather, pos);    // normalizado
+
+    const QString CX = QString("((%1)*W)").arg(cx);
+    const QString CY = QString("((%1)*H)").arg(cy);
+    const QString RX = QString("((%1)*W)").arg(rx);
+    const QString RY = QString("((%1)*H)").arg(ry);
+    const QString ra = QString("((%1)*0.0174532925)").arg(rot); // graus → rad
+    const QString u = QString("(X-%1)").arg(CX);
+    const QString v = QString("(Y-%1)").arg(CY);
+    const QString lx = QString("((%1)*cos(%2)+(%3)*sin(%2))").arg(u).arg(ra).arg(v);
+    const QString ly = QString("(-(%1)*sin(%2)+(%3)*cos(%2))").arg(u).arg(ra).arg(v);
+
+    QString d;
+    if (m.type == QLatin1String("ellipse")) {
+        const QString n = QString("(pow((%1)/(%2),2)+pow((%3)/(%4),2))")
+                              .arg(lx, RX, ly, RY);
+        d = QString("((sqrt(max(%1,0))-1)*min(%2,%3))").arg(n, RX, RY);
+    } else {
+        d = QString("max(abs(%1)-%2,abs(%3)-%4)").arg(lx, RX, ly, RY);
+    }
+    const QString FP = QString("max((%1)*max(W,H),1)").arg(fe);
+    const QString cov = QString("clamp(0.5-(%1)/(%2),0,1)").arg(d, FP);
+    if (m.invert)
+        return QString("(1-%1)").arg(cov);
+    return cov;
+}
+
+// Cadeia geq que multiplica o ALPHA do clipe pela união (max) das máscaras.
+// Vazio se o clipe não tem máscara ativa. Deve ser aplicado após format=rgba.
+static QString masksFilter(const Clip& c, double pos) {
+    if (!c.hasMask()) return QString();
+    QString maxExpr;
+    for (const Mask& m : c.masks) {
+        if (!m.hasMask()) continue;
+        if (m.type != QLatin1String("rect") && m.type != QLatin1String("ellipse"))
+            continue; // poly: v1 não exportado — mantém paridade com o preview.
+        const QString e = maskCoverageExpr(m, pos);
+        if (maxExpr.isEmpty()) maxExpr = e;
+        else maxExpr = QString("max(%1,%2)").arg(maxExpr, e);
+    }
+    if (maxExpr.isEmpty()) return QString();
+    return QStringLiteral(",geq=A='p(3)*clamp(%1,0,1)'").arg(maxExpr);
 }
 
 // Fonte TTF disponível no sistema para o drawtext (com fallback fontconfig).
@@ -1223,6 +1278,13 @@ QStringList ProjectExporter::buildCommand(const Project& project,
             if (hasTrans && transType == QStringLiteral("dissolve"))
                 fc.last().append(QStringLiteral(",fade=t=in:st=%1:d=%2:alpha=1")
                                      .arg(num(pos)).arg(num(transDur)));
+            // Máscaras: aplicadas ANTES dos efeitos de cor/chroma (paridade com
+            // o preview, onde applyMasks roda no início de applyBasicEffectsOn).
+            {
+                const QString msk = masksFilter(*v.c, pos);
+                if (!msk.isEmpty())
+                    fc.last().append(QLatin1Char(',') + msk);
+            }
             if (v.c->chromaKey)
                 fc.last().append(QStringLiteral(",chromakey=color=%1:similarity=%2:blend=0.1")
                                      .arg(hexColor(v.c->chromaKeyColor))

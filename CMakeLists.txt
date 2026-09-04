@@ -37,6 +37,7 @@ set(SOURCES
     src/models/Project.cpp
     src/ffmpeg/FFmpegDecoder.cpp
     src/ffmpeg/MediaCache.cpp
+    src/ffmpeg/ProxyManager.cpp
     src/export/ProjectExporter.cpp
     src/export/LainkaRenderer.cpp
     src/export/OfxExportRenderer.cpp
@@ -97,6 +98,7 @@ set(HEADERS
     src/models/Project.h
     src/ffmpeg/FFmpegDecoder.h
     src/ffmpeg/MediaCache.h
+    src/ffmpeg/ProxyManager.h
     src/export/ProjectExporter.h
     src/export/LainkaFx.h
     src/export/LainkaRenderer.h
@@ -212,6 +214,7 @@ add_executable(tst_exporter
     src/ffmpeg/FFmpegDecoder.cpp
     src/render/MesaRenderer.cpp
     src/export/ProjectExporter.cpp
+    src/ffmpeg/ProxyManager.cpp
 )
 target_include_directories(tst_exporter PRIVATE src src/ofx/sdk)
 target_link_libraries(tst_exporter PRIVATE

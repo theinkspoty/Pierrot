@@ -146,8 +146,12 @@ private:
 
     // O MESMO MesaRenderer é usado por threads diferentes no PreviewWidget:
     // tryRenderMesa roda no worker de decode e requestLowerLayers na thread da
-    // UI — o FFmpegDecoder NÃO é thread-safe (concorrência em avcodec_send_packet
-    // derrubava o app com SIGSEGV). O mutex serializa todo acesso aos decoders
-    // e ao cache entre essas threads.
+    // UI. A thread-safety é em DOIS níveis:
+    //   • m_mutex protege APENAS o mapa de decoders e o cache de quadro curto
+    //     (seções breves, sem segurar durante o decode pesado).
+    //   • Cada FFmpegDecoder serializa o PRÓPRIO acesso internamente
+    //     (m_mutex do decoder), então arquivos DIFERENTES decodam em paralelo
+    //     (worker de decode + thread da UI) sem risco de SIGSEGV em
+    //     avcodec_send_packet; apenas o MESMO arquivo é serializado por decoder.
     mutable QMutex m_mutex;
 };
