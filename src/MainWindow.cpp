@@ -19,6 +19,7 @@
 #include "ui/MesaWidget.h"
 #include "ui/ExportDialog.h"
 #include "ui/RenderQueueDialog.h"
+#include "export/NleInterchange.h"
 #include "ui/ScopeWidget.h"
 #include "ui/PreviewMonitor.h"
 #include "ui/ProjectSettingsDialog.h"
@@ -292,6 +293,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         m_playAction->setIcon(playing ? iconPause() : iconPlay());
         // Durante a reprodução os thumbs ficam adiados (ver MediaCache).
         MediaCache::instance().setPlaybackActive(playing);
+    });
+    // Automação do mixer: gravação segue o playhead e o estado de reprodução.
+    connect(m_preview, &PreviewWidget::playheadMoved, m_mixer, &MixerWidget::setPlayhead);
+    connect(m_preview, &PreviewWidget::stateChanged, m_mixer, &MixerWidget::setPlaying);
+    // Ao parar, consolida a automação gravada em uma única entrada de undo.
+    connect(m_preview, &PreviewWidget::stateChanged, this, [this](bool playing) {
+        if (playing) return;
+        if (mixerHasAutomation())
+            pushUndo();
     });
     connect(m_timeline, &TimelineWidget::modified, this, [this]() {
         m_preview->refreshView();
@@ -881,6 +891,14 @@ void MainWindow::createActions() {
         dlg.exec();
     });
 
+    QAction* edlExportAct = new QAction(tr("Exportar EDL…"), this);
+    edlExportAct->setToolTip(tr("Exportar apenas cortes como EDL CMX3600 (compatível com Davinci, Premiere)."));
+    connect(edlExportAct, &QAction::triggered, this, &MainWindow::exportEdl);
+
+    QAction* edlImportAct = new QAction(tr("Importar EDL…"), this);
+    edlImportAct->setToolTip(tr("Importar EDL CMX3600 em um novo projeto (apenas cortes)."));
+    connect(edlImportAct, &QAction::triggered, this, &MainWindow::importEdl);
+
     QAction* quit = new QAction(tr("Sair"), this);
     quit->setShortcut(QKeySequence::Quit);
     connect(quit, &QAction::triggered, this, &MainWindow::close);
@@ -998,6 +1016,9 @@ void MainWindow::createActions() {
     fileMenu->addSeparator();
     fileMenu->addAction(exportAct);
     fileMenu->addAction(queueAct);
+    fileMenu->addSeparator();
+    fileMenu->addAction(edlExportAct);
+    fileMenu->addAction(edlImportAct);
     fileMenu->addSeparator();
     QAction* stillAct = new QAction(tr("Exportar quadro atual (PNG)…"), this);
     stillAct->setShortcut(QKeySequence("Ctrl+Shift+F"));
@@ -1786,8 +1807,13 @@ void MainWindow::applyUndoState() {
 
 void MainWindow::setModified() {
     m_modified = true;
+    m_project.touch(); // invalida caches de composição (MesaRenderer)
     updateTitle();
     updateUndoActions();
+}
+
+bool MainWindow::mixerHasAutomation() const {
+    return m_mixer && m_mixer->hasAutomation();
 }
 
 void MainWindow::updateUndoActions() {
@@ -2017,4 +2043,57 @@ void MainWindow::exportVideo() {
     ExportDialog dlg(&m_project, this);
     dlg.setOfxManager(m_ofxManager);
     dlg.exec();
+}
+
+void MainWindow::exportEdl() {
+    QString path = QFileDialog::getSaveFileName(
+        this, tr("Exportar EDL"), QStringLiteral("timeline.edl"),
+        tr("EDL CMX3600 (*.edl);;Todos os arquivos (*)"));
+    if (path.isEmpty()) return;
+    if (!path.endsWith(".edl", Qt::CaseInsensitive))
+        path += QLatin1String(".edl");
+    QString err;
+    if (!NleInterchange::exportEdl(m_project, path, &err))
+        QMessageBox::warning(this, tr("Exportar EDL"), err);
+    else
+        statusBar()->showMessage(tr("EDL exportado: %1").arg(path));
+}
+
+void MainWindow::importEdl() {
+    const QString path = QFileDialog::getOpenFileName(
+        this, tr("Importar EDL"), QString(),
+        tr("EDL CMX3600 (*.edl);;Todos os arquivos (*)"));
+    if (path.isEmpty()) return;
+
+    NleInterchange::EdlImportResult res;
+    if (!NleInterchange::importEdl(path, res)) {
+        QMessageBox::warning(this, tr("Importar EDL"), tr("Não foi possível ler o arquivo."));
+        return;
+    }
+
+    // Substitui o projeto atual pelo importado (novo contexto de edição).
+    m_project = res.project;
+    if (m_project.videoTracks.isEmpty()) m_project.addTrack(false);
+    if (m_project.audioTracks.isEmpty()) m_project.addTrack(true);
+    m_undoStack.clear();
+    m_undoStack.append(snapshotState());
+    m_undoLabels.clear();
+    m_undoLabels.append(tr("Início"));
+    m_undoIndex = 0;
+    updateHistoryList();
+    m_currentFile.clear();
+    m_modified = true;
+    applyUndoState();
+    updateTitle();
+
+    if (!res.unresolvedReels.isEmpty())
+        QMessageBox::information(
+            this, tr("Importar EDL"),
+            tr("Alguns Reels não tinham caminho absoluto e ficaram sem mídia:\n%1")
+                .arg(res.unresolvedReels.join(QLatin1String(", "))));
+    if (!res.warnings.isEmpty())
+        statusBar()->showMessage(res.warnings.join(QLatin1String(" | ")),
+                                 8000);
+    else
+        statusBar()->showMessage(tr("EDL importado: %1").arg(path));
 }

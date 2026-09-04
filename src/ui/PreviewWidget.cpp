@@ -938,10 +938,14 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     lay->addWidget(m_topBar);
     lay->addStretch(1);
 
+    // O PlaybackEngine controla o transporte; o timer é deste widget (tem
+    // QObject/parent) e repassa o timeout para o motor via tick().
     m_timer = new QTimer(this);
     m_timer->setTimerType(Qt::PreciseTimer);
     m_timer->setInterval(33);
-    connect(m_timer, &QTimer::timeout, this, &PreviewWidget::tick);
+    setTimer(m_timer);
+    setPlayButton(m_playBtn);
+    connect(m_timer, &QTimer::timeout, this, [this]() { PlaybackEngine::tick(); });
     connect(m_playBtn, &QPushButton::clicked, this, &PreviewWidget::togglePlay);
 
     // Thread de vídeo: decodificar quadros aqui tira a decodificação (que é
@@ -975,9 +979,9 @@ PreviewWidget::~PreviewWidget() {
 }
 
 void PreviewWidget::setProject(Project* p) {
-    m_project = p;
+    PlaybackEngine::setProject(p); // seta m_project e para o transporte
     m_playhead = 0.0;
-    stopPlayback();
+    m_mesaRenderer.clearCompositeCache(); // composto do projeto anterior não vale
     m_frame = QImage();
     m_frameFull = QImage();
     m_compositedCache = QImage();  // invalida cache do frame composto
@@ -1182,7 +1186,7 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
                     const int sh = qMax(1, sw * h / w);
                     clipFrame = generatorFrame(*mm, sw, sh);
                     if (c->lainkaEnabled) {
-                        const double srcT = c->in + (m_playhead - c->pos) * c->speed;
+                        const double srcT = clipSrcTime(*c, m_playhead - c->pos);
                         clipFrame = lainkaApplyFx(clipFrame, c->id, srcT,
                                                   c->lainkaSkip, c->lainkaJitterPos,
                                                   c->lainkaJitterRot, c->lainkaJitterScale,
@@ -1534,50 +1538,22 @@ void PreviewWidget::drawEmptyMonitor(QPainter& p, const QRect& canvas) {
 }
 
 void PreviewWidget::seek(double t) {
-    // O pedido de seek nasceu quase no zero com a agulha longe? Quem emitiu
-    // o playheadChanged mandou valor errado — registra para o dump automático.
-    if (t < 0.25 && m_playhead > 10.0)
-        TlLog::note(QStringLiteral("seek(≈0) pedido com playhead em %1 (playing=%2)")
-                        .arg(m_playhead, 0, 'f', 2).arg(m_playing ? 1 : 0));
-    // Snap ao frame do projeto (playhead sempre em frame cheio).
-    const double fps = projFps(m_project);
-    const double snapped = (fps > 0.0) ? std::round(t * fps) / fps : std::max(0.0, t);
-    if (m_playing) {
-        // Scrub durante a reprodução: reancora os dois relógios na nova
-        // posição e reposiciona os decoders de áudio (antes o tick ignorava
-        // o salto e o playhead voltava na próxima passada). O reposicionamento
-        // do mixer é assíncrono: com arquivos grandes ele leva tempo demais
-        // para a UI (e congelava o sink, derrubando o relógio de áudio).
-        m_playStart = snapped;
-        m_clock.restart();
-        m_audioLastRaw = -1.0; // próxima leitura só serve para detectar progresso
-        anchorAudioClock(snapped);
-        updateMixAudio(snapped, true);
-        TlLog::note(QStringLiteral("seek playing -> %1").arg(snapped, 0, 'f', 2));
-    } else if (std::fabs(snapped - m_playhead) > 0.25) {
-        TlLog::note(QStringLiteral("seek pausado %1 -> %2")
-                        .arg(m_playhead, 0, 'f', 2).arg(snapped, 0, 'f', 2));
-    }
-    applySeek(snapped);
+    PlaybackEngine::seek(t);
 }
 
-void PreviewWidget::applySeek(double t) {
-    const double fps = projFps(m_project);
-    const double prev = m_playhead;
-    m_playhead = (fps > 0.0) ? std::round(t * fps) / fps : std::max(0.0, t);
-    // Salto grande aplicado: entra no histórico do diagnóstico.
-    if (std::fabs(m_playhead - prev) > 0.25)
-        TlLog::note(QStringLiteral("applySeek %1 -> %2 (playing=%3)")
-                        .arg(prev, 0, 'f', 3).arg(m_playhead, 0, 'f', 3)
-                        .arg(m_playing ? 1 : 0));
-    m_currentFrameIndex = std::llround(m_playhead * fps);
+void PreviewWidget::onSeek(double t) {
+    applySeekVisual(t);
+}
+
+// Decodifica e desenha o quadro na posição `t` (o transporte/relógio é do
+// PlaybackEngine; aqui só a parte visual/decodificação).
+void PreviewWidget::applySeekVisual(double t) {
+    Q_UNUSED(t);
+    if (m_timeLabel) m_timeLabel->setText(fmtTimecode(m_playhead, projFps(m_project)));
     updateFrame();
     update();
-    emit playheadMoved(m_playhead);
 }
 
-// Segundos de áudio efetivamente consumidos pelo dispositivo de saída desde
-// o start() do sink — o "relógio do decoder". -1 quando não há sink ativo.
 double PreviewWidget::audioClockSec() const {
 #if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
     if (m_audioSink) return m_audioSink->processedUSecs() / 1.0e6;
@@ -1587,102 +1563,48 @@ double PreviewWidget::audioClockSec() const {
     return -1.0;
 }
 
-void PreviewWidget::anchorAudioClock(double t) {
-    const double raw = audioClockSec();
-    if (raw < 0.0) { m_audioClockOn = false; return; }
-    m_audioAnchor = t - raw;
-    m_audioClockOn = true;
-    m_lastAnchorClockMs = m_clock.elapsed();
-}
-
 void PreviewWidget::togglePlay() {
-    if (m_playing) {
-        stopPlayback();
-        return;
-    }
-    if (!m_project || m_project->duration() <= 0) return;
-    if (m_playhead >= m_project->duration() - 1e-6) m_playhead = 0.0;
-    if (m_loopEnabled && m_loopOut > m_loopIn) {
-        if (m_playhead < m_loopIn || m_playhead >= m_loopOut)
-            m_playhead = m_loopIn;
-    }
-    const double fps = projFps(m_project);
-    m_currentFrameIndex = std::llround(m_playhead * fps);
-    m_playStart = m_playhead;
-    m_clock.start();
-    m_playRate = 1.0;
-    m_audioClockOn = false; // sink novo: reancora no primeiro tick
-    m_playing = true;
-    // Dispara em metade do período do frame: o tick calcula o frame alvo pelo
-    // clock de alta precisão e avança exatamente 1 frame por vez. Com timer
-    // grosseiro (1x/frame), o QTimer atrasado pela UI fazia o llround pular frames.
-    m_timer->setInterval(fps > 0.0 ? qBound(8, (int)std::lround(1000.0 / fps / 2.0), 40) : 33);
-    m_timer->start();
-    m_playBtn->setText(tr("Pausar"));
-    startAudio(m_playhead);
-    emit stateChanged(true);
+    PlaybackEngine::togglePlay();
 }
 
 void PreviewWidget::shuttle(int dir) {
-    if (dir == 0) { // K: pausa (zera a taxa — o próximo Espaço toca 1x normal)
-        stopPlayback();
-        return;
-    }
-    // J/L repetidos aceleram (1x→2x→4x); a direção oposta reinicia em 1x.
-    if (m_playing) {
-        if (dir > 0)
-            m_playRate = (m_playRate > 0.0) ? std::min(4.0, m_playRate * 2.0) : 1.0;
-        else
-            m_playRate = (m_playRate < 0.0) ? std::max(-4.0, m_playRate * 2.0) : -1.0;
-    } else {
-        m_playRate = (dir > 0) ? 1.0 : -1.0;
-    }
-    // Áudio só em 1x dianteiro: ré/acelerado deixa o sink mudo (o relógio de
-    // áudio não representa velocidade ≠1 e rolaria dessincronizado).
-    if (m_playRate == 1.0)
-        startAudio(m_playhead);
-    else
-        stopAudio();
-    if (m_playing) return;
-    if (!m_project || m_project->duration() <= 0) return;
-    const double fps = projFps(m_project);
-    m_currentFrameIndex = std::llround(m_playhead * fps);
-    m_playStart = m_playhead;
-    m_clock.start();
-    m_audioClockOn = false;
-    m_playing = true;
-    m_timer->setInterval(fps > 0.0 ? qBound(8, (int)std::lround(1000.0 / fps / 2.0), 40) : 33);
-    m_timer->start();
-    m_playBtn->setText(tr("Pausar"));
-    emit stateChanged(true);
+    PlaybackEngine::shuttle(dir);
 }
 
 void PreviewWidget::playFrom(double t) {
-    // Enter (estilo Vegas): busca para a posição e começa a reproduzir dali,
-    // mesmo se já estivesse tocando.
-    if (!m_project || m_project->duration() <= 0) return;
-    seek(std::clamp(t, 0.0, m_project->duration()));
-    const double fps = projFps(m_project);
-    m_currentFrameIndex = std::llround(m_playhead * fps);
-    m_playStart = m_playhead;
-    m_clock.start();
-    m_playRate = 1.0;
-    m_audioClockOn = false; // sink novo: reancora no primeiro tick
-    m_playing = true;
-    m_timer->setInterval(fps > 0.0 ? qBound(8, (int)std::lround(1000.0 / fps / 2.0), 40) : 33);
-    m_timer->start();
-    m_playBtn->setText(tr("Pausar"));
-    startAudio(m_playhead);
-    emit stateChanged(true);
+    PlaybackEngine::playFrom(t);
 }
 
 void PreviewWidget::setLoopRange(double in, double out) {
-    m_loopIn = in;
-    m_loopOut = out;
+    PlaybackEngine::setLoopRange(in, out);
 }
 
 void PreviewWidget::setLoopEnabled(bool enabled) {
-    m_loopEnabled = enabled;
+    PlaybackEngine::setLoopEnabled(enabled);
+}
+
+// Hooks do PlaybackEngine: o transporte decide quando; aqui a PreviewWidget
+// faz o áudio e o rendering.
+
+void PreviewWidget::onStartAudio(double t) { startAudio(t); }
+void PreviewWidget::onStopAudio() { stopAudio(); }
+void PreviewWidget::onMixAudio(double t, bool reseek) { updateMixAudio(t, reseek); }
+void PreviewWidget::onPrefetch() { updatePrefetch(); }
+
+// Limpa buffers de frame quando o transporte para (sem duplicar o estado do
+// PlaybackEngine, que já zera o relógio).
+void PreviewWidget::onStopPlaybackUI() {
+    QMutexLocker l(&m_frameMutex);
+    m_prefetch = PrefetchFrame();
+}
+
+void PreviewWidget::onPlayheadMoved(double t) {
+    emit playheadMoved(t);
+}
+
+void PreviewWidget::onStateChanged(bool playing) {
+    if (m_timeLabel) m_timeLabel->setText(fmtTimecode(m_playhead, projFps(m_project)));
+    emit stateChanged(playing);
 }
 
 void PreviewWidget::setZoom(double z) {
@@ -1719,142 +1641,6 @@ void PreviewWidget::setPreviewQuality(int width) {
     updateFrame();
 }
 
-void PreviewWidget::stopPlayback() {
-    m_playing = false;
-    m_playRate = 1.0;
-    m_timer->stop();
-    m_playBtn->setText(tr("Reproduzir"));
-    m_currentFrameIndex = -1;
-    m_audioClockOn = false;
-    m_audioLastRaw = -1.0;
-    stopAudio();
-    {
-        QMutexLocker l(&m_frameMutex);
-        m_prefetch = PrefetchFrame();
-    }
-    emit stateChanged(false);
-}
-
-void PreviewWidget::tick() {
-    if (!m_project) { stopPlayback(); return; }
-    const double fps = projFps(m_project);
-    const double dur = m_project->duration();
-
-    // Tempo esperado pelo relógio de parede…
-    const double elapsed = m_clock.elapsed() / 1000.0;
-    double t = m_playStart + elapsed * m_playRate;
-
-    // …corrigido pelo relógio do áudio (o que se ouve de verdade). Em
-    // reproduções longas o relógio de parede desvia do consumo real do sink;
-    // seguir o áudio evita o acúmulo de dessincronia. A correção é suave
-    // (slew) para não tremer a imagem; desvio grande (underrun longo) faz a
-    // imagem saltar de volta para o áudio — MAS só quando o relógio do áudio
-    // está realmente avançando. Durante um seek/scrub com arquivo pesado o
-    // sink entra em underrun e processedUSecs() congela: corrigir para um
-    // relógio parado fazia a agulha saltar DE VOLTA (muitas vezes para perto
-    // do início). Se o áudio não avançou desde o tick anterior, confia no
-    // relógio de parede até ele voltar a correr.
-    const double raw = (m_playRate == 1.0) ? audioClockSec() : -1.0;
-    if (raw >= 0.0) {
-        const bool audioAdvanced = m_audioLastRaw < 0.0 || raw > m_audioLastRaw + 1e-6;
-        m_audioLastRaw = raw;
-        if (!m_audioClockOn) anchorAudioClock(t);
-        if (m_audioClockOn && audioAdvanced) {
-            const double diff = (raw + m_audioAnchor) - t;
-            // Período de graça: nos primeiros 400ms após uma ancoragem (seek,
-            // loop, play) o desvio ainda é resíduo da troca de posição — os
-            // decoders estão sendo reposicionados. Corrigir nesse intervalo
-            // teleportava a agulha para a posição velha do áudio.
-            const bool graceOver = m_lastAnchorClockMs < 0
-                                   || m_clock.elapsed() - m_lastAnchorClockMs > 400;
-            if (std::fabs(diff) > 0.30 && graceOver) {
-                if (diff < -2.0) {
-                    // Áudio MUITO atrás do vídeo embora avançando: os decoders
-                    // ficaram numa posição errada (seek impreciso em arquivos
-                    // longos, índice esparso). O vídeo é a referência — reancora
-                    // o relógio na posição atual em vez de arrastar a agulha
-                    // para trás (era o "volta pro começo").
-                    TlLog::note(QStringLiteral("tick: reancora (áudio atrás %1s)")
-                                    .arg(-diff, 0, 'f', 1));
-                    m_audioAnchor = t - raw;
-                } else {
-                    // Drift moderado ou áudio à frente: vídeo alcança o áudio.
-                    TlLog::note(QStringLiteral("tick: pula pra frente %1 -> %2")
-                                    .arg(t, 0, 'f', 2).arg(raw + m_audioAnchor, 0, 'f', 2));
-                    m_playStart = raw + m_audioAnchor;
-                    m_clock.restart();
-                    t = m_playStart;
-                    m_lastAnchorClockMs = 0;
-                }
-            } else {
-                t += qBound(-0.0025, diff * 0.12, 0.0025);
-            }
-        }
-    }
-
-    // Determina o índice de frame com base no clock de alta precisão
-    const qint64 targetFrame = std::llround(t * fps);
-
-    // Se o timer acordou ligeiramente antes de 1 frame inteiro passar, não
-    // repete nem duplica o frame. No shuttle o frame anda para trás (ré):
-    // avança só quando o alvo cruzou o frame atual na direção da taxa.
-    if (m_playRate >= 0.0) {
-        if (targetFrame <= m_currentFrameIndex) return;
-    } else {
-        if (targetFrame >= m_currentFrameIndex) return;
-    }
-
-    m_currentFrameIndex = targetFrame;
-    if (fps <= 0.0) t = m_playStart + elapsed * m_playRate;
-
-    if (m_loopEnabled && m_loopOut > m_loopIn) {
-        if (t >= m_loopOut - 1e-9) {
-            m_playStart = m_loopIn;
-            m_currentFrameIndex = std::llround(m_loopIn * fps);
-            m_clock.restart();
-            anchorAudioClock(m_loopIn); // o sink continua rodando: compensa no anchor
-            applySeek(m_loopIn);
-            if (m_playRate == 1.0) updateMixAudio(m_loopIn, true);
-            return;
-        }
-        if (t <= m_loopIn + 1e-9) {
-            // Ré/negativo alcançou o início do loop: volta ao fim.
-            m_playStart = m_loopOut;
-            m_currentFrameIndex = std::llround(m_loopOut * fps);
-            m_clock.restart();
-            anchorAudioClock(m_loopOut);
-            applySeek(m_loopOut);
-            return;
-        }
-    }
-    if (t >= dur) {
-        applySeek(dur);
-        stopPlayback();
-        return;
-    }
-    if (t <= 0.0) {
-        applySeek(0.0);
-        stopPlayback();
-        return;
-    }
-    // Diagnóstico de perf: quanto cada fase deste tick custou (ms).
-    if (!m_perfT.isValid()) m_perfT.start();
-    const QString prevTopId = clipAt(m_playhead) ? clipAt(m_playhead)->id : QString();
-    QElapsedTimer pt; pt.start();
-    applySeek(t);
-    m_perf.seekMs = pt.restart();
-    updatePrefetch();
-    m_perf.prefetchMs = pt.restart();
-    // Mixer acompanha o playhead: volumes/fades e troca de clipes acontecem
-    // aqui, sem reiniciar o sink a cada transição. No shuttle (≠1x) o sink
-    // fica mudo (stopAudio) e não deve ser reposicionado por frame.
-    if (m_playRate == 1.0) updateMixAudio(t, false);
-    m_perf.mixMs = pt.restart();
-    const QString newTopId = clipAt(m_playhead) ? clipAt(m_playhead)->id : QString();
-    m_perf.cut = !prevTopId.isEmpty() && prevTopId != newTopId;
-    if (m_perf.cut) ++m_perf.cutCount;
-    m_perf.totalMs = m_perf.seekMs + m_perf.prefetchMs + m_perf.mixMs;
-}
 
 // Clipe de vídeo (com mídia) no topo em `t`. Clipes de texto independentes são
 // ignorados aqui (não têm quadro para decodificar); o texto é desenhado por
@@ -2331,7 +2117,7 @@ void PreviewWidget::updateFrame() {
     m_clipChromaKeySimilarity = clip->chromaKeySimilarity;
     m_clipOfxFx = clip->ofxFx;
 
-    double srcT = clip->in + (m_playhead - clip->pos) * clip->speed;
+    double srcT = clipSrcTime(*clip, m_playhead - clip->pos);
 
     // LAINKA: quantiza o tempo para simular stop motion.
     // Usa targetFps para calcular o skip (projectFps / targetFps).
@@ -2432,7 +2218,7 @@ void PreviewWidget::updateFrame() {
             std::clamp(kfValue(under->kfCropB, under->cropB, rel), 0.0, 0.9) * 1000.0);
         const MediaItem* um = m_project->findMedia(under->mediaId);
         if (um && um->hasVideo && m_frameWorker) {
-            const double uSrcT = under->in + (m_playhead - under->pos) * under->speed;
+            const double uSrcT = clipSrcTime(*under, m_playhead - under->pos);
             QMutexLocker l(&m_frameMutex);
             const bool already = m_underRequested && m_underPath == um->filePath
                                  && m_underW == decW
@@ -2552,7 +2338,7 @@ void PreviewWidget::requestLowerLayers(int decW) {
         if (!m || !m->hasVideo) continue;
         // Cor sólida não tem arquivo: é gerada na pintura, não pede decode.
         if (m->isSolid) continue;
-        const double srcT = c->in + (m_playhead - c->pos) * c->speed;
+        const double srcT = clipSrcTime(*c, m_playhead - c->pos);
         {
             QMutexLocker l(&m_frameMutex);
             const auto it = m_layerCache.constFind(c->id);
@@ -2664,7 +2450,7 @@ void PreviewWidget::onFrameReady(const QString& clipId, const QString& path, dou
     if (!m || m->filePath != path) return;
 
     // Ignora quadros decodificados para outra posição (scrub/seek rápido muito distante).
-    const double wantT = clip->in + (m_playhead - clip->pos) * clip->speed;
+    const double wantT = clipSrcTime(*clip, m_playhead - clip->pos);
     if (std::fabs(wantT - t) > 1.5) return;
 
     // Quadro do clipe do TOPO: caminho atual do preview (com prefetch/pan-crop).
@@ -2697,7 +2483,7 @@ void PreviewWidget::onFrameReady(const QString& clipId, const QString& path, dou
     QImage cropped = applyCropTo(img, cL, cR, cT, cB);
     // Aplica LAINKA também em camadas inferiores.
     if (clip->lainkaEnabled) {
-        double srcT = clip->in + (m_playhead - clip->pos) * clip->speed;
+        double srcT = clipSrcTime(*clip, m_playhead - clip->pos);
         const double pfps = projFps(m_project);
         const int effSkip = (clip->lainkaTargetFps > 0 && pfps > 1.0)
             ? std::max(1, (int)std::lround(pfps / clip->lainkaTargetFps))

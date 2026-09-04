@@ -7,6 +7,7 @@
 
 #include <QImage>
 #include <QHash>
+#include <QList>
 #include <QMutex>
 #include "models/Project.h"
 
@@ -77,8 +78,42 @@ public:
 
     void clearCache();
 
+    // Descarta o cache de quadros compostos (não fecha os decoders). Chamado
+    // ao trocar de projeto (PreviewWidget::setProject) — os decoders podem ser
+    // reaproveitados, mas o composto do projeto anterior não serve mais.
+    void clearCompositeCache();
+
 private:
     int blendModeFor(const QString& blend) const;
+
+    // ── Cache de composição (Fase 1) ─────────────────────────────────────
+    // Guarda o quadro COMPOSTO final de render() (empilhamento + câmera +
+    // motion blur), não só o decode. Chave = (mesaId, timeBucket, outW, outH,
+    // revision): o `revision` do projeto (Project::touch) invalida entradas
+    // quando qualquer edição acontece, evitando quadro obsoleto após cortes/
+    // efeitos. Busca linear — o cache é pequeno (kCompositeMax).
+    struct CompositeKey {
+        QString mesaId;
+        qint64 bucket = 0;      // qRound64(time * fps): agrupa o mesmo quadro
+        int outW = 0, outH = 0;
+        quint64 revision = 0;
+        bool operator==(const CompositeKey& o) const {
+            return mesaId == o.mesaId && bucket == o.bucket
+                && outW == o.outW && outH == o.outH && revision == o.revision;
+        }
+    };
+    struct CompositeEntry {
+        CompositeKey key;
+        QImage img;
+    };
+    // Cada quadro é armazenado em resolução CHEIA do projeto (1920×1080 ≈ 8 MB,
+    // 4K ≈ 33 MB). 8 quadros mantêm o cache enxuto (~64 MB a 1080p, ~260 MB a
+    // 4K) e ainda aceleram o scrub de vai-e-vem sobre trechos já vistos.
+    static constexpr int kCompositeMax = 8;
+    QList<CompositeEntry> m_compositeLru; // frente = mais recente
+
+    QImage compositeFromCache(const CompositeKey& key);
+    void compositeToCache(const CompositeKey& key, const QImage& img);
 
     // Renderiza uma única passada com o enquadramento da câmera no instante
     // `time` (usado tanto pelo caminho limpo quanto pela integração temporal

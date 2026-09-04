@@ -404,6 +404,9 @@ struct Clip {
     QVector<Keyframe> kfCropR;
     QVector<Keyframe> kfCropT;
     QVector<Keyframe> kfCropB;
+    // Curva de velocidade (velocity envelope / rampas): multiplicador animado
+    // ao longo do tempo RELATIVO do clipe. Vazio = velocidade constante `speed`.
+    QVector<Keyframe> kfSpeed;
 
     // True se o clipe possui qualquer transformação ativa.
     bool hasTransform() const {
@@ -429,6 +432,39 @@ struct Clip {
             || reverb;
     }
 };
+
+// ── Velocity envelope (velocidade variável / rampas) ────────────────────
+// Um clipe pode ter a velocidade animada ao longo do tempo (rampas), além do
+// valor base `speed`. `kfSpeed` guarda a curva do multiplicador; a posição na
+// MÍDIA (source time) é a integral da velocidade ao longo do tempo relativo do
+// clipe (rel = tempo da timeline − pos). Com velocidade constante v, isso
+// reduz a srcTime = in + rel·v — o comportamento antigo.
+
+// Multiplicador de velocidade em `rel` (sempre ≥ 0.01, evita divisão/0).
+inline double clipSpeedAt(const Clip& c, double rel) {
+    return std::max(0.01, kfValue(c.kfSpeed, c.speed, rel));
+}
+
+// true se o clipe tem uma rampa de velocidade (curva além do valor base).
+inline bool hasVelocityEnvelope(const Clip& c) {
+    return !c.kfSpeed.isEmpty();
+}
+
+// Posição na mídia (segundos da fonte) correspondente ao tempo relativo `rel`.
+// Integra clipSpeedAt por trapézios — exato para rampas lineares e consistente
+// com a pré-renderização de velocidade da exportação.
+inline double clipSrcTime(const Clip& c, double rel) {
+    if (rel <= 0.0) return c.in;
+    if (c.kfSpeed.isEmpty())
+        return c.in + rel * std::max(0.01, c.speed);
+    const double upper = std::min(rel, c.dur > 0.0 ? c.dur : rel);
+    const int N = std::clamp((int)std::ceil(upper * 60.0), 8, 256);
+    const double h = upper / N;
+    double sum = 0.5 * (clipSpeedAt(c, 0.0) + clipSpeedAt(c, upper));
+    for (int i = 1; i < N; ++i)
+        sum += clipSpeedAt(c, i * h);
+    return c.in + sum * h;
+}
 
 struct TrackGroup {
     QString id;
@@ -460,10 +496,28 @@ struct Track {
         return std::fabs(eqLow) > 0.01 || std::fabs(eqMid) > 0.01
             || std::fabs(eqHigh) > 0.01 || denoise || invertPhase || reverb;
     }
+    // ── Automação de áudio (mixer) ─────────────────────────────────────
     // Envelopes de áudio por faixa (tempos em segundos da timeline, absolutos).
     // kfVolume: ganho linear 0..2; kfPan: -1..+1 (equal-power).
     QVector<Keyframe> kfVolume;
     QVector<Keyframe> kfPan;
+    // TRUE = o mixer está gravando automação desta faixa (modos de escrita).
+    // `automationMode` nesta faixa indica o modo atual do strip.
+    mutable bool automationArmed = false;
+    mutable int automationMode = 0; // 0 = Touch, 1 = Write, 2 = Latch
+
+    // Se a faixa tem qualquer envelope de automação gravado.
+    bool hasAutomation() const {
+        return !kfVolume.isEmpty() || !kfPan.isEmpty();
+    }
+
+    // Valor efetivo de volume em `t` (combina o volume estático com o envelope).
+    double automationVolume(double t) const {
+        return hasAutomation() ? kfValue(kfVolume, volume, t) : volume;
+    }
+    double automationPan(double t) const {
+        return hasAutomation() ? kfValue(kfPan, pan, t) : pan;
+    }
     // Opacidade da faixa de vídeo (0..1, estilo Vegas/FCE): a faixa inteira
     // composta com transparência sobre as de baixo.
     double opacity = 1.0;
@@ -533,6 +587,13 @@ public:
     int fps = 30;
     double audioRate = 48000.0;
     double masterVolume = 1.0; // Volume geral do mixer
+
+    // Revisão do projeto: incrementada a cada edição (MainWindow::setModified)
+    // e a cada carregamento (fromJson). Caches de composição (MesaRenderer)
+    // usam este contador como parte da chave, invalidando quadros compostos
+    // quando o conteúdo muda sem precisar limpar o cache manualmente.
+    quint64 revision = 0;
+    void touch() { ++revision; }
 
     QVector<MediaItem> media;
     QVector<Track> videoTracks;

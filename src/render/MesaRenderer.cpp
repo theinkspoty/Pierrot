@@ -23,6 +23,40 @@ void MesaRenderer::clearCache() {
         delete it.value();
     }
     m_decoders.clear();
+    m_compositeLru.clear();
+}
+
+void MesaRenderer::clearCompositeCache() {
+    QMutexLocker l(&m_mutex);
+    m_compositeLru.clear();
+}
+
+QImage MesaRenderer::compositeFromCache(const CompositeKey& key) {
+    QMutexLocker l(&m_mutex);
+    for (int i = 0; i < m_compositeLru.size(); ++i) {
+        if (m_compositeLru[i].key == key) {
+            CompositeEntry e = m_compositeLru.takeAt(i);
+            m_compositeLru.prepend(e);
+            return e.img;
+        }
+    }
+    return QImage();
+}
+
+void MesaRenderer::compositeToCache(const CompositeKey& key, const QImage& img) {
+    QMutexLocker l(&m_mutex);
+    for (int i = 0; i < m_compositeLru.size(); ++i) {
+        if (m_compositeLru[i].key == key) {
+            m_compositeLru[i].img = img;
+            return;
+        }
+    }
+    CompositeEntry e;
+    e.key = key;
+    e.img = img;
+    m_compositeLru.prepend(e);
+    while (m_compositeLru.size() > kCompositeMax)
+        m_compositeLru.removeLast();
 }
 
 QImage MesaRenderer::decodeFrame(const QString& filePath, double time, int maxW) {
@@ -48,7 +82,13 @@ QImage MesaRenderer::render(const MesaComposition& mesa, const Project& project,
     const int outH = project.height;
     if (outW <= 0 || outH <= 0 || mesa.canvasW <= 0 || mesa.canvasH <= 0) return {};
 
-    const double frameDur = 1.0 / qMax(1, project.fps);
+    const int fps = qMax(1, project.fps);
+    const CompositeKey key{ mesa.id, qRound64(time * fps), outW, outH, project.revision };
+    const QImage cached = compositeFromCache(key);
+    if (!cached.isNull()) return cached;
+
+    QImage result;
+    const double frameDur = 1.0 / fps;
     const double extent = mesa.motionBlurShutter * frameDur;
 
     // Motion blur de CÂMERA: o enquadramento é redefinido em cada sub-passada
@@ -72,10 +112,14 @@ QImage MesaRenderer::render(const MesaComposition& mesa, const Project& project,
             p.drawImage(0, 0, sample);
             p.restore();
         }
-        return out;
+        result = out;
+    } else {
+        result = renderSample(mesa, project, time, nullptr);
     }
 
-    return renderSample(mesa, project, time, nullptr);
+    if (!result.isNull())
+        compositeToCache(key, result);
+    return result;
 }
 
 // Desenha uma passada inteira: câmera (no instante `time`) + todas as layers.
@@ -215,7 +259,7 @@ bool MesaRenderer::prepareLayer(LayerPrep& out, const MesaComposition& mesa,
                     const int fh = mi->height > 0 ? mi->height : (int)mesa.canvasH;
                     frame = generatorFrame(*mi, fw, fh);
                 } else if (!mi->filePath.isEmpty()) {
-                    const double srcT = c.in + cRel * c.speed;
+                    const double srcT = clipSrcTime(c, cRel);
                     frame = decodeFrame(mi->filePath, srcT, mesa.canvasW);
                 }
             }

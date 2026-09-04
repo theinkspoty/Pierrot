@@ -16,6 +16,7 @@
 #include "models/Project.h"
 #include "ffmpeg/FFmpegDecoder.h"
 #include "render/MesaRenderer.h"
+#include "ui/PlaybackEngine.h"
 
 class QTimer;
 class QPushButton;
@@ -33,7 +34,7 @@ class QMenu;
 
 class OfxPluginManager;
 
-class PreviewWidget : public QWidget {
+class PreviewWidget : public QWidget, public PlaybackEngine {
     Q_OBJECT
 public:
     explicit PreviewWidget(QWidget* parent = nullptr);
@@ -42,7 +43,7 @@ public:
     void setOfxManager(OfxPluginManager* m) { m_ofxManager = m; }
     void refreshView();
     AudioMixer* audioMixer() const { return m_audioFeed; }
-    double playhead() const { return m_playhead; }
+    // playhead()/isPlaying()/playRate()/loopEnabled() vêm de PlaybackEngine
 
     // Retorna uma cópia REDUZIDA (160×90) do quadro composto atual, para os
     // analisadores (waveform/vectorscope/histograma). Vazio se sem quadro.
@@ -60,15 +61,14 @@ public:
     };
     AudioLevels audioLevels() const;
 public slots:
+    // Transporte: repassa ao PlaybackEngine. Necessário para os connect() de
+    // QAction/QPushButton continuarem funcionando via slots do widget.
     void seek(double t);
     void togglePlay();
-    // Shuttle JKL (estilo Vegas): dir > 0 = frente (L), dir < 0 = ré (J),
-    // dir == 0 = pausa (K). Pressionar de novo acelera (1x→2x→4x).
     void shuttle(int dir);
-    // Toca a partir de uma posição (Enter: início no ponteiro da timeline).
     void playFrom(double t);
     void setLoopRange(double in, double out);
-    void setLoopEnabled(bool enabled); // "Q": liga/desliga o loop de reprodução
+    void setLoopEnabled(bool enabled);
     void setZoom(double z);
     void setPreviewQuality(int width); // largura máxima de decodificação (360/480/720/1080/3840)
 signals:
@@ -77,11 +77,19 @@ signals:
 protected:
     void paintEvent(QPaintEvent*) override;
     void resizeEvent(QResizeEvent*) override;
+    const Clip* clipAt(double t) const override;
+    double audioClockSec() const override;
 private:
-    void tick();
-    void applySeek(double t);        // caminho comum do seek (não mexe nos relógios)
-    double audioClockSec() const;    // segundos consumidos pelo sink de áudio (-1 = sem áudio)
-    void anchorAudioClock(double t); // mapeia o relógio do áudio para o tempo do projeto
+    // ── Hooks do PlaybackEngine (chamados por onSeek/onPrefetch/...) ──
+    void applySeekVisual(double t);  // decodifica e desenha o quadro em `t`
+    void onSeek(double t) override;
+    void onPrefetch() override;
+    void onMixAudio(double t, bool reseek) override;
+    void onStartAudio(double t) override;
+    void onStopAudio() override;
+    void onStopPlaybackUI() override;
+    void onPlayheadMoved(double t) override;
+    void onStateChanged(bool playing) override;
     void drawEmptyMonitor(QPainter& p, const QRect& canvas);
     void drawClipText(QPainter& p, const QRect& canvas, const Clip* clip, double k);
     void updateFrame();
@@ -98,50 +106,14 @@ private:
     void onFrameReady(const QString& clipId, const QString& path, double t, int maxW, const QImage& img);
     void onPrefetchReady(const QString& path, double t, int maxW, const QImage& img);
     void updatePrefetch();
-    void stopPlayback();
-    void startAudio(double t);
     void stopAudio();
+    void startAudio(double t);
     void updateMixAudio(double t, bool reseek);
-    const Clip* clipAt(double t) const;
     // Se o clipe ativo pertence a um grupo Mesa, renderiza a composição
     // (com transform de câmera) e devolve true preenchendo m_frameFull/m_frame.
     bool tryRenderMesa(const Clip* clip);
-    Project* m_project = nullptr;
-    double m_playhead = 0.0;
-    double m_loopIn = -1.0;
-    double m_loopOut = -1.0;
-    bool m_loopEnabled = false; // loop de reprodução só quando ativado ("Q")
     QImage m_frame;
     QImage m_frameFull;
-    QTimer* m_timer = nullptr;
-    QElapsedTimer m_clock;
-    double m_playStart = 0.0;
-    // Sincronismo A/V: o playhead segue o relógio do sink de áudio (o que se
-    // ouve), evitando o desvio acumulado do relógio de parede em reproduções
-    // longas. m_audioAnchor converte processedUSecs() -> tempo do projeto.
-    double m_audioAnchor = 0.0;
-    bool m_audioClockOn = false;
-    // Última leitura bruta do relógio do sink. Serve para detectar underrun:
-    // quando processedUSecs() congela (decoder de áudio reabrindo/seek lento em
-    // arquivos grandes), a correção A/V NÃO pode puxar o vídeo para trás — é
-    // exatamente isso que fazia a agulha "voltar ao início" ao clicar na
-    // timeline durante a reprodução.
-    double m_audioLastRaw = -1.0;
-    // m_clock.elapsed() registrado na última ancoragem do relógio de áudio.
-    // Dá um período de graça após seek/loop: nesse intervalo o desvio ainda é
-    // resíduo da troca de posição, não drift real — corrigir nele é o que
-    // teleportava a agulha para trás em arquivos longos.
-    qint64 m_lastAnchorClockMs = -1;
-    // Geração do sink de áudio: invalida a criação async pendente quando o
-    // stopAudio() roda no meio (evita sink órfão tocando após parar).
-    std::atomic<int> m_audioGen{0};
-    qint64 m_currentFrameIndex = -1;
-    bool m_playing = true;
-    // Velocidade de reprodução do shuttle JKL: 1.0 normal, negativa = ré,
-    // >1 (até 4) = acelerado. Ajusta o avanço do tick e silencia o áudio
-    // fora de 1x dianteiro (o sink não acompanha velocidade/reverso).
-    double m_playRate = 1.0;
-    QPushButton* m_playBtn = nullptr;
     QLabel* m_timeLabel = nullptr;
     QComboBox* m_zoomCombo = nullptr;
     QWidget* m_topBar = nullptr;

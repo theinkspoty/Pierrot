@@ -1093,6 +1093,7 @@ void TimelineWidget::pasteAttributes() {
             dst->volume = src.volume;
             dst->opacity = src.opacity;
             dst->speed = src.speed;
+            dst->kfSpeed = src.kfSpeed;
             dst->fadeIn = src.fadeIn; dst->fadeOut = src.fadeOut;
         }
         if (chkKeyframes->isChecked()) {

@@ -284,6 +284,7 @@ static QJsonObject clipToJson(const Clip& c) {
     o["kfCropR"] = kfToJson(c.kfCropR);
     o["kfCropT"] = kfToJson(c.kfCropT);
     o["kfCropB"] = kfToJson(c.kfCropB);
+    o["kfSpeed"] = kfToJson(c.kfSpeed);
     // ── Efeitos OFX ─────────────────────────────────────────────────────
     QJsonArray ofxArr;
     for (const OfxPluginInstance& fx : c.ofxFx) {
@@ -407,6 +408,7 @@ static Clip clipFromJson(const QJsonObject& o) {
     c.kfCropR = kfFromJson(o["kfCropR"]);
     c.kfCropT = kfFromJson(o["kfCropT"]);
     c.kfCropB = kfFromJson(o["kfCropB"]);
+    c.kfSpeed = kfFromJson(o["kfSpeed"]);
     // ── Efeitos OFX ─────────────────────────────────────────────────────
     const QJsonArray ofxArr = o["ofxFx"].toArray();
     for (const QJsonValue& v : ofxArr) {
@@ -520,7 +522,7 @@ static Track trackFromJson(const QJsonObject& o, bool audio) {
     t.volume = o["volume"].toDouble(1.0);
     t.pan = o["pan"].toDouble(0.0);
     const QString col = o["color"].toString();
-    if (!col.isEmpty() && QColor::isValidColor(col)) t.color = QColor(col);
+    if (!col.isEmpty() && QColor::isValidColorName(col)) t.color = QColor(col);
     t.eqLow = o["eqLow"].toDouble(0.0);
     t.eqMid = o["eqMid"].toDouble(0.0);
     t.eqHigh = o["eqHigh"].toDouble(0.0);
@@ -679,6 +681,10 @@ void Project::fromJson(const QJsonObject& o) {
     // da comp (default 0 = centro). Agora são px ABSOLUTOS com origem no canto
     // superior esquerdo (default = centro). Desloca valores estáticos E os
     // keyframes, preservando a aparência dos projetos antigos.
+    // Cada carregamento é uma nova revisão: invalida qualquer cache de
+    // composição que ainda referencie o conteúdo anterior.
+    ++revision;
+
     if (!o.contains("mesaPosAbs") || !o["mesaPosAbs"].toBool()) {
         for (MesaComposition& m : mesas) {
             const double dX = m.canvasW / 2.0;

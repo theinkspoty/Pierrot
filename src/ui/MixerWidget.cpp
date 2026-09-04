@@ -197,6 +197,7 @@ void PanKnob::paintEvent(QPaintEvent*) {
 void PanKnob::mousePressEvent(QMouseEvent* e) {
     if (e->button() == Qt::LeftButton) {
         m_dragging = true;
+        emit panTouchedUp();
         // Calcula pan a partir da posição Y relativa ao centro.
         const double cy = height() / 2.0;
         const double dy = -(e->pos().y() - cy) / cy;
@@ -259,6 +260,10 @@ MixerStrip::MixerStrip(const QString& name, int trackIndex, bool isAudio,
             if (m_updating) return;
             emit panChanged(m_trackIndex, m_isAudio, pan);
         });
+        // Toque no knob (Touch/Latch de pan).
+        connect(m_panKnob, &PanKnob::panTouchedUp, this, [this]() {
+            emit panTouched(m_trackIndex, m_isAudio);
+        });
     }
 
     // VU meter + fader lado a lado.
@@ -293,16 +298,21 @@ MixerStrip::MixerStrip(const QString& name, int trackIndex, bool isAudio,
         btnRow->setSpacing(2);
         m_muteBtn = new QPushButton(QStringLiteral("M"));
         m_soloBtn = new QPushButton(QStringLiteral("S"));
+        m_autoBtn = new QPushButton(QStringLiteral("R"));
         const QSize btnSize(22, 16);
         m_muteBtn->setFixedSize(btnSize);
         m_soloBtn->setFixedSize(btnSize);
+        m_autoBtn->setFixedSize(btnSize);
         m_muteBtn->setCheckable(true);
         m_soloBtn->setCheckable(true);
         m_muteBtn->setToolTip(tr("Mudo"));
         m_soloBtn->setToolTip(tr("Solo"));
         btnRow->addWidget(m_muteBtn);
         btnRow->addWidget(m_soloBtn);
+        btnRow->addWidget(m_autoBtn);
         lay->addLayout(btnRow);
+
+        updateAutoButton();
 
         connect(m_muteBtn, &QPushButton::toggled, this, [this](bool checked) {
             if (m_updating) return;
@@ -320,6 +330,21 @@ MixerStrip::MixerStrip(const QString& name, int trackIndex, bool isAudio,
                 : QString());
             emit soloChanged(m_trackIndex, m_isAudio, checked);
         });
+        connect(m_autoBtn, &QPushButton::clicked, this, [this]() {
+            // Ciclo: desligado → Touch → Write → Latch → desligado.
+            if (!m_autoArmed) {
+                m_autoArmed = true;
+                m_autoMode = 0;
+            } else if (m_autoMode == 0) {
+                m_autoMode = 1;
+            } else if (m_autoMode == 1) {
+                m_autoMode = 2;
+            } else {
+                m_autoArmed = false;
+            }
+            updateAutoButton();
+            emit automationToggled(m_trackIndex, m_isAudio, m_autoArmed, m_autoMode);
+        });
     }
 
     // Conexão do fader (depois do bloqueio ser seguro).
@@ -330,6 +355,14 @@ MixerStrip::MixerStrip(const QString& name, int trackIndex, bool isAudio,
         m_volLabel->setText(QStringLiteral("%1 dB")
                                 .arg(db > -90.0 ? QString::number(db, 'f', 1) : QStringLiteral("-∞")));
         emit volumeChanged(m_trackIndex, m_isAudio, vol);
+    });
+
+    // Toque no fader (para automação Touch/Latch).
+    connect(m_fader, &QSlider::sliderPressed, this, [this]() {
+        emit volumeTouched(m_trackIndex, m_isAudio);
+    });
+    connect(m_fader, &QSlider::sliderReleased, this, [this]() {
+        emit volumeReleased(m_trackIndex, m_isAudio);
     });
 
     // Trigger inicial do label.
@@ -377,6 +410,38 @@ void MixerStrip::setSolo(bool s) {
 
 void MixerStrip::setRmsLevel(float rms) {
     m_meter->setLevel(rms);
+}
+
+double MixerStrip::volume() const { return m_fader ? m_fader->value() / 100.0 : 1.0; }
+double MixerStrip::pan() const { return m_panKnob ? m_panKnob->value() : 0.0; }
+
+void MixerStrip::updateAutoButton() {
+    if (!m_autoBtn) return;
+    if (!m_autoArmed) {
+        // Read: mostra a curva (sem gravar).
+        m_autoBtn->setText(QStringLiteral("R"));
+        m_autoBtn->setStyleSheet(QString());
+        m_autoBtn->setToolTip(tr("Automação desligada (ler envelope). Clique para gravar."));
+        return;
+    }
+    const char* t = (m_autoMode == 0) ? "T" : (m_autoMode == 1) ? "W" : "L";
+    m_autoBtn->setText(QString::fromLatin1(t));
+    const QColor c = (m_autoMode == 0) ? QColor(230, 150, 40)
+                    : (m_autoMode == 1) ? QColor(210, 60, 60)
+                    : QColor(60, 160, 90);
+    m_autoBtn->setStyleSheet(
+        QStringLiteral("background-color: %1; color: white; border: 1px solid %1; font-weight: bold;")
+            .arg(c.name()));
+    const QString desc = (m_autoMode == 0) ? tr("Touch (grava enquanto segura)")
+                       : (m_autoMode == 1) ? tr("Write (grava durante a reprodução)")
+                       : tr("Latch (começa a gravar ao tocar)");
+    m_autoBtn->setToolTip(tr("Modo de automação: %1. Clique para alternar T→W→L→desligado.").arg(desc));
+}
+
+void MixerStrip::setAutomationArmed(bool armed, int mode) {
+    m_autoArmed = armed;
+    m_autoMode = mode;
+    updateAutoButton();
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -445,6 +510,8 @@ void MixerWidget::refresh() {
                 Track& tr = audio ? m_project->audioTracks[idx]
                                   : m_project->videoTracks[idx];
                 tr.volume = vol;
+                // Grava automação se a faixa estiver armada (Touch/Latch/Write).
+                writeAutoPoint(audio, idx, QStringLiteral("volume"), vol);
                 emit modified();
             });
         connect(strip, &MixerStrip::panChanged, this,
@@ -453,7 +520,32 @@ void MixerWidget::refresh() {
                 Track& tr = audio ? m_project->audioTracks[idx]
                                   : m_project->videoTracks[idx];
                 tr.pan = pan;
+                writeAutoPoint(audio, idx, QStringLiteral("pan"), pan);
                 emit modified();
+            });
+        connect(strip, &MixerStrip::volumeTouched, this,
+            [this](int idx, bool audio) {
+                beginTouch(audio, idx, QStringLiteral("volume"));
+            });
+        connect(strip, &MixerStrip::volumeReleased, this,
+            [this](int idx, bool audio) {
+                endTouch(audio, idx, QStringLiteral("volume"));
+            });
+        connect(strip, &MixerStrip::panTouched, this,
+            [this](int idx, bool audio) {
+                beginTouch(audio, idx, QStringLiteral("pan"));
+            });
+        connect(strip, &MixerStrip::panReleased, this,
+            [this](int idx, bool audio) {
+                endTouch(audio, idx, QStringLiteral("pan"));
+            });
+        connect(strip, &MixerStrip::automationToggled, this,
+            [this](int idx, bool audio, bool armed, int mode) {
+                if (!m_project) return;
+                Track& tr = audio ? m_project->audioTracks[idx]
+                                  : m_project->videoTracks[idx];
+                tr.automationArmed = armed;
+                tr.automationMode = mode;
             });
         connect(strip, &MixerStrip::muteChanged, this,
             [this](int idx, bool audio, bool muted) {
@@ -488,6 +580,7 @@ void MixerWidget::refresh() {
         strip->setPan(t.pan);
         strip->setMuted(t.muted);
         strip->setSolo(t.solo);
+        strip->setAutomationArmed(t.automationArmed, t.automationMode);
         m_videoStrips.append(strip);
         addStrip(strip, pos++);
     }
@@ -500,6 +593,7 @@ void MixerWidget::refresh() {
         strip->setPan(t.pan);
         strip->setMuted(t.muted);
         strip->setSolo(t.solo);
+        strip->setAutomationArmed(t.automationArmed, t.automationMode);
         m_audioStrips.append(strip);
         addStrip(strip, pos++);
     }
@@ -543,4 +637,68 @@ void MixerWidget::updateLevels() {
     }
     if (m_masterStrip)
         m_masterStrip->setRmsLevel(levels.masterRms);
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Automação gravável (estilo Vegas: Touch / Write / Latch)
+// ══════════════════════════════════════════════════════════════════════
+
+Track* MixerWidget::findTrack(bool isAudio, int index) {
+    if (!m_project) return nullptr;
+    QVector<Track>& tracks = isAudio ? m_project->audioTracks : m_project->videoTracks;
+    if (index < 0 || index >= tracks.size()) return nullptr;
+    return &tracks[index];
+}
+
+void MixerWidget::setPlayhead(double t) {
+    m_playhead = t;
+    if (!m_playing) return;
+    // Durante a reprodução: grava automação em modo Write (contínuo) e em Touch
+    // (apenas enquanto o fader/knob está sendo segurado).
+    for (auto* strip : m_videoStrips) {
+        Track* tr = findTrack(false, strip->trackIndex());
+        if (tr && tr->automationArmed) writeAutoPoint(false, strip->trackIndex(), QStringLiteral("volume"), strip->volume());
+        if (tr && tr->automationArmed) writeAutoPoint(false, strip->trackIndex(), QStringLiteral("pan"), strip->pan());
+    }
+    for (auto* strip : m_audioStrips) {
+        Track* tr = findTrack(true, strip->trackIndex());
+        if (tr && tr->automationArmed) writeAutoPoint(true, strip->trackIndex(), QStringLiteral("volume"), strip->volume());
+        if (tr && tr->automationArmed) writeAutoPoint(true, strip->trackIndex(), QStringLiteral("pan"), strip->pan());
+    }
+}
+
+void MixerWidget::setPlaying(bool playing) {
+    m_playing = playing;
+}
+
+bool MixerWidget::hasAutomation() const {
+    if (!m_project) return false;
+    for (const Track& t : m_project->videoTracks)
+        if (t.hasAutomation()) return true;
+    for (const Track& t : m_project->audioTracks)
+        if (t.hasAutomation()) return true;
+    return false;
+}
+
+void MixerWidget::beginTouch(bool isAudio, int index, const QString& prop) {
+    m_touching.insert(qMakePair(qMakePair(isAudio, index), prop));
+}
+
+void MixerWidget::endTouch(bool isAudio, int index, const QString& prop) {
+    m_touching.remove(qMakePair(qMakePair(isAudio, index), prop));
+}
+
+void MixerWidget::writeAutoPoint(bool isAudio, int index, const QString& prop,
+                                 double value) {
+    Track* tr = findTrack(isAudio, index);
+    if (!tr || !tr->automationArmed) return;
+
+    // Modo Touch: só grava enquanto o usuário segura o fader/knob.
+    const auto touchKey = qMakePair(qMakePair(isAudio, index), prop);
+    if (tr->automationMode == 0 && !m_touching.contains(touchKey))
+        return;
+
+    QVector<Keyframe>& keys = (prop == QStringLiteral("volume"))
+                                  ? tr->kfVolume : tr->kfPan;
+    upsertKeyframe(keys, m_playhead, value);
 }

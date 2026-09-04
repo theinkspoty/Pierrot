@@ -7,6 +7,7 @@
 #include "util.h"
 #include "generators.h"
 #include "render/MesaRenderer.h"
+#include "ffmpeg/FFmpegDecoder.h"
 
 #include <QColor>
 #include <QFile>
@@ -109,6 +110,45 @@ static QString renderMesaSequence(MesaRenderer& renderer, const Project& project
             ++written;
         } else {
             qWarning() << "[export] falha ao salvar frame Mesa" << name;
+        }
+    }
+    if (written == 0) return QString();
+    return pattern;
+}
+
+// Pré-renderiza um clipe com velocity envelope (rampa de velocidade) numa
+// sequência PNG, um quadro por frame na taxa FPS. Cada frame é decodificado na
+// posição de fonte clipSrcTime(c, rel) — a MESMA usada pelo preview, garantindo
+// paridade. O image2 resultante é alimentado como um input normal (cadência já
+// correta), então o setpts da cadeia usa velocidade 1.0 (só reposiciona).
+// Decodifica na largura `maxW` (largura do projeto): reduz 4K sem perda notável
+// e evita PNGs gigantes. Retorna o padrão image2 ou vazio se nada foi gerado.
+static QString renderVelocitySequence(const Clip& c, const QString& filePath,
+                                      int fps, int k, int maxW) {
+    const double dur = c.dur;
+    if (dur <= 0.0 || fps <= 0) return QString();
+    const int frameCount = std::max(1, (int)std::ceil(dur * fps));
+    const QString dir = QDir::tempPath();
+    const QString pattern =
+        QStringLiteral("%1/pierrot-vel-%2-%05d.png").arg(dir).arg(k);
+
+    FFmpegDecoder dec;
+    if (!dec.open(filePath)) return QString();
+
+    int written = 0;
+    for (int i = 0; i < frameCount; ++i) {
+        const double rel = double(i) / fps;
+        if (rel >= dur - 1e-9) break;
+        const double srcT = clipSrcTime(c, rel);
+        QImage frame = dec.frameAt(srcT, maxW);
+        if (frame.isNull()) continue;
+        const QString name =
+            QStringLiteral("%1/pierrot-vel-%2-%3.png").arg(dir).arg(k)
+                .arg(i + 1, 5, 10, QLatin1Char('0'));
+        if (frame.save(name, "PNG")) {
+            ++written;
+        } else {
+            qWarning() << "[export] falha ao salvar frame de velocidade" << name;
         }
     }
     if (written == 0) return QString();
@@ -551,12 +591,12 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     if (project.duration() <= 0)
         return fail(QStringLiteral("Timeline vazia — nada para exportar."));
 
-    // Limpa PNGs temporários (texto, geradores e sequências Mesa) de
-    // exportações anteriores.
+    // Limpa PNGs temporários (texto, geradores, sequências Mesa e de
+    // velocidade) de exportações anteriores.
     const QDir tmp(QDir::tempPath());
     for (const QFileInfo& fi : tmp.entryInfoList(
              {QStringLiteral("pierrot-text-*.png"), QStringLiteral("pierrot-gen-*.png"),
-              QStringLiteral("pierrot-mesa-*.png")},
+              QStringLiteral("pierrot-mesa-*.png"), QStringLiteral("pierrot-vel-*.png")},
              QDir::Files))
         QFile::remove(fi.absoluteFilePath());
 
@@ -639,6 +679,9 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     QVector<QString> textPngs;
     // Banda Mesa por entrada de vclips (padrão da sequência; vazio p/ normal).
     QVector<MesaBandRef> mesaBands;
+    // Padrão da sequência pré-renderizada de clipes com velocity envelope
+    // (paralelo a vclips; vazio = clipe com velocidade constante).
+    QVector<QString> velocityPatterns;
     for (int tr = (int)project.videoTracks.size() - 1; tr >= 0; --tr) {
         const Track& track = project.videoTracks[tr];
         if (!mesaTrackIds.contains(track.id)) {
@@ -649,6 +692,7 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                     vclips.push_back({&c, nullptr, track.blendMode, trOp});
                     textPngs.push_back(QString());
                     mesaBands.push_back(MesaBandRef());
+                    velocityPatterns.push_back(QString());
                     continue;
                 }
                 const MediaItem* m = project.findMedia(c.mediaId);
@@ -656,6 +700,7 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                     vclips.push_back({&c, m, track.blendMode, trOp});
                     textPngs.push_back(QString());
                     mesaBands.push_back(MesaBandRef());
+                    velocityPatterns.push_back(QString());
                 }
             }
         }
@@ -676,16 +721,18 @@ QStringList ProjectExporter::buildCommand(const Project& project,
             vclips.push_back(v);
             textPngs.push_back(QString());
             mesaBands.push_back(MesaBandRef{bp.mc, 0, bp.pattern, bp.start, bp.end});
+            velocityPatterns.push_back(QString());
         }
     }
     std::stable_sort(vclips.begin(), vclips.end(),
                      [](const VideoClipRef& a, const VideoClipRef& b) {
                          return vclipPos(a) < vclipPos(b);
                      });
-    // Mantém textPngs e mesaBands alinhados a vclips reordenado.
+    // Mantém textPngs, mesaBands e velocityPatterns alinhados a vclips reordenado.
     {
         QVector<QString> reordered(textPngs.size());
         QVector<MesaBandRef> reorderedBands(mesaBands.size());
+        QVector<QString> reorderedVelocity(velocityPatterns.size());
         QVector<int> order(vclips.size());
         for (int i = 0; i < order.size(); ++i) order[i] = i;
         std::stable_sort(order.begin(), order.end(),
@@ -693,9 +740,28 @@ QStringList ProjectExporter::buildCommand(const Project& project,
         for (int i = 0; i < (int)vclips.size(); ++i) {
             reordered[i] = textPngs[order[i]];
             reorderedBands[i] = mesaBands[order[i]];
+            reorderedVelocity[i] = velocityPatterns[order[i]];
         }
         textPngs = reordered;
         mesaBands = reorderedBands;
+        velocityPatterns = reorderedVelocity;
+    }
+
+    // Pré-renderiza clipes com velocity envelope (rampa de velocidade) numa
+    // sequência PNG — a velocidade variável não é expressável num setpts simples
+    // e a pré-renderização garante paridade exata com o preview (mesma
+    // clipSrcTime). Clipes sem envelope seguem o caminho normal (setpts /speed).
+    {
+        int vk = 0;
+        for (int i = 0; i < (int)vclips.size(); ++i) {
+            const VideoClipRef& v = vclips[i];
+            if (!v.c || !v.m || v.m->isSolid || isImageFile(v.m->filePath))
+                continue;
+            if (!hasVelocityEnvelope(*v.c))
+                continue;
+            velocityPatterns[i] =
+                renderVelocitySequence(*v.c, v.m->filePath, FPS, vk++, W);
+        }
     }
 
     // Transições: para cada clipe de vídeo, verifica se ele se sobrepõe ao
@@ -773,6 +839,13 @@ QStringList ProjectExporter::buildCommand(const Project& project,
             // começa no PTS 0 = bandStart; o graph reposiciona com setpts.
             args << "-framerate" << num(FPS) << "-start_number" << "1"
                  << "-t" << num(mb.end - mb.start) << "-i" << mb.pattern;
+            continue;
+        }
+        if (!velocityPatterns[i].isEmpty()) {
+            // Clipe com velocity envelope: sequência pré-renderizada (image2),
+            // cadência já correta — o graph só reposiciona (setpts com speed 1).
+            args << "-framerate" << num(FPS) << "-start_number" << "1"
+                 << "-t" << num(v.c->dur) << "-i" << velocityPatterns[i];
             continue;
         }
         if (v.m == nullptr) {
@@ -931,7 +1004,10 @@ QStringList ProjectExporter::buildCommand(const Project& project,
             const double pos = v.c->pos;
             const double end = v.c->pos + v.c->dur;
             const double dur = v.c->dur;
-            const double speed = std::max(0.1, v.c->speed);
+            // Clipe com velocity envelope: a cadência já vem correta da
+            // sequência pré-renderizada; o setpts só reposiciona (speed 1).
+            const bool velocity = !velocityPatterns[i].isEmpty();
+            const double speed = velocity ? 1.0 : std::max(0.1, v.c->speed);
             const double fadeIn = std::min(std::max(v.c->fadeIn, 0.0), dur);
             const double fadeOut = std::min(std::max(v.c->fadeOut, 0.0), dur - fadeIn);
             const bool hasT = v.c->hasTransform();
@@ -967,8 +1043,17 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                     premultiplied = true;
                 }
             } else {
-                chain = QStringLiteral("[%1:v]setpts=(PTS-STARTPTS)/%2+%3/TB,trim=duration=%4")
-                            .arg(inIdx).arg(num(speed)).arg(num(pos)).arg(num(dur));
+                if (velocity) {
+                    // Cadência e timebase da sequência pré-renderizada são
+                    // normalizadas antes de reposicionar (igual ao clipe de texto
+                    // e à banda Mesa), evitando desvio do image2.
+                    chain = QStringLiteral("[%1:v]fps=%2,settb=AVTB,setpts=(PTS-STARTPTS)+%3/TB,"
+                                           "trim=duration=%4")
+                                .arg(inIdx).arg(FPS).arg(num(pos)).arg(num(dur));
+                } else {
+                    chain = QStringLiteral("[%1:v]setpts=(PTS-STARTPTS)/%2+%3/TB,trim=duration=%4")
+                                .arg(inIdx).arg(num(speed)).arg(num(pos)).arg(num(dur));
+                }
                 if (alphaMedia) {
                     // Pré-multiplica ANTES do enquadramento: o downscale do
                     // contain é o maior gerador da franja escura.

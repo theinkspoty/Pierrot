@@ -93,6 +93,8 @@ private:
     QIcon iconGrid() const;
     QIcon iconRuler() const;
     void exportVideo();
+    void exportEdl();
+    void importEdl();
     void newProject();
     void openProject();
     void showWelcomeWindow();
@@ -109,6 +111,7 @@ private:
     void applyUndoState();
     QByteArray snapshotState() const;
     void restoreSnapshot(const QByteArray& snap);
+    bool mixerHasAutomation() const;
     void updateTitle();
     void updateUndoActions();
     void addRecentProject(const QString& path);

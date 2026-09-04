@@ -149,6 +149,7 @@ inline QJsonObject toJson(const Clip& c) {
     o["kfCropR"] = kfArr(c.kfCropR);
     o["kfCropT"] = kfArr(c.kfCropT);
     o["kfCropB"] = kfArr(c.kfCropB);
+    o["kfSpeed"] = kfArr(c.kfSpeed);
     return o;
 }
 
@@ -276,6 +277,7 @@ inline void applyJson(Clip& c, const QJsonObject& o) {
     if (key("kfCropR")) c.kfCropR = kfVec(o["kfCropR"]);
     if (key("kfCropT")) c.kfCropT = kfVec(o["kfCropT"]);
     if (key("kfCropB")) c.kfCropB = kfVec(o["kfCropB"]);
+    if (key("kfSpeed")) c.kfSpeed = kfVec(o["kfSpeed"]);
 }
 
 } // namespace clipattrs
