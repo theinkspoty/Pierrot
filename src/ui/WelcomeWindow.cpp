@@ -27,6 +27,14 @@
 #include <QSize>
 #include <QCoreApplication>
 #include <QPixmap>
+#include <QIcon>
+#include <QLinearGradient>
+#include <QImage>
+#include <QWidget>
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QJsonObject>
+#include "ffmpeg/MediaCache.h"
 #include <QStyle>
 #include <QPainter>
 #include <QPainterPath>
@@ -40,22 +48,176 @@ QStringList loadRecentList() {
     return QSettings().value("recentProjects").toStringList();
 }
 
-// Recorta uma imagem com os cantos arredondados (moldura).
-QPixmap makeRounded(const QPixmap& src, int radius) {
-    if (src.isNull()) return src;
-    QPixmap out(src.size());
+// Primeira mídia de vídeo (com arquivo) do projeto .Blanc: o frame dela vira a
+// miniatura real do projeto. Percorre o JSON direto, sem instanciar o projeto.
+constexpr double kProjectThumbTime = 0.5;
+QString firstVideoMedia(const QString& projectPath) {
+    QFile f(projectPath);
+    if (!f.open(QIODevice::ReadOnly)) return {};
+    QJsonParseError err;
+    const QJsonDocument doc = QJsonDocument::fromJson(f.readAll(), &err);
+    if (err.error != QJsonParseError::NoError) return {};
+    const QJsonObject root = doc.object();
+    if (!root.contains("media")) return {};
+    const QJsonArray media = root["media"].toArray();
+    for (const QJsonValue& v : media) {
+        const QJsonObject o = v.toObject();
+        const QString file = o["filePath"].toString();
+        if (o["hasVideo"].toBool() && !file.isEmpty() && QFile::exists(file)) {
+            return file;
+        }
+    }
+    return {};
+}
+
+// Recorta a imagem para preencher exatamente w×h (semântica "cover", central).
+QPixmap coverThumb(const QImage& img, int w, int h) {
+    if (img.isNull()) return {};
+    QImage tmp = img;
+    if (tmp.width() < w && tmp.height() < h) {
+        tmp = tmp.scaled(w, h, Qt::KeepAspectRatioByExpanding,
+                         Qt::SmoothTransformation);
+    }
+    const double scale = qMax(w / double(tmp.width()), h / double(tmp.height()));
+    const int W = qCeil(tmp.width() * scale);
+    const int H = qCeil(tmp.height() * scale);
+    tmp = tmp.scaled(W, H, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    tmp = tmp.copy((W - w) / 2, (H - h) / 2, w, h);
+    return QPixmap::fromImage(tmp);
+}
+
+// "Miniatura" de um projeto recente: mesmo esquema visual dos clipes da
+// timeline (clipBg) — um tom mais claro no topo, mais escuro embaixo, borda
+// sutil e nome na barra inferior. Se houver frame real (vídeo/proxy), ele
+// preenche por cima; sem frame fica o placeholder escuro estilo timeline.
+QPixmap makeProjectThumb(const QString& path, const QString& name,
+                         const QImage& frame = QImage()) {
+    Q_UNUSED(path);
+    const int W = 132, H = 74;
+    const auto& tc = themeColors();
+    QPixmap out(W, H);
     out.fill(Qt::transparent);
-    QPainterPath path;
-    path.addRoundedRect(QRectF(0, 0, src.width(), src.height()), radius, radius);
     QPainter p(&out);
     p.setRenderHint(QPainter::Antialiasing);
-    p.setClipPath(path);
-    p.drawPixmap(0, 0, src);
+
+    QLinearGradient g(0, 0, W, H);
+    g.setColorAt(0, tc.clipBg.lighter(115));
+    g.setColorAt(1, tc.clipBg.darker(150));
+    p.setPen(Qt::NoPen);
+    p.setBrush(g);
+    p.drawRoundedRect(0, 0, W - 1, H - 1, 6, 6);
+
+    QPainterPath clipPath;
+    clipPath.addRoundedRect(2, 2, W - 4, H - 4, 5, 5);
+    p.save();
+    p.setClipPath(clipPath);
+    if (!frame.isNull()) {
+        const QPixmap pm = coverThumb(frame, W - 4, H - 4);
+        p.drawPixmap(2, 2, pm);
+    } else {
+        // Placeholder sem frame: "janela" escura no centro, sem tons claros.
+        p.setBrush(QColor(0, 0, 0, 90));
+        p.drawRect(0, 0, W, H);
+        p.setPen(QPen(QColor(0, 0, 0, 160), 1));
+        p.setBrush(QColor(0, 0, 0, 60));
+        p.drawRoundedRect((W - 34) / 2, H / 2 - 12, 34, 24, 3, 3);
+        p.setPen(QColor(255, 255, 255, 40));
+        p.drawLine((W - 16) / 2, H / 2 - 4, (W - 16) / 2 + 12, H / 2);
+        p.drawLine((W - 16) / 2, H / 2, (W - 16) / 2 + 12, H / 2 + 4);
+    }
+    // Faixa escura inferior com o nome (legível em qualquer frame).
+    p.fillRect(0, H - 15, W, 15, QColor(0, 0, 0, 110));
+    p.setPen(QColor(255, 255, 255, 235));
+    QFont f;
+    f.setPointSize(6);
+    f.setBold(true);
+    p.setFont(f);
+    p.drawText(QRect(3, H - 15, W - 6, 14), Qt::AlignCenter, name.left(15));
+    p.restore();
+
+    p.setPen(QPen(tc.clipBorder, 1));
+    p.setBrush(Qt::NoBrush);
+    p.drawRoundedRect(0, 0, W - 1, H - 1, 6, 6);
+    p.end();
     return out;
 }
 
-// Região de cantos arredondados para recortar a janela (borda arredondada).
+// Estilo dos campos (nome, resolução, fps, intervalo…): fundo sempre escuro e
+// borda limpa, com foco ciano sutil — fixado no nível do grupo (independe do
+// fallback de tema, como a lista e os botões).
+QString inputSheet() {
+    return QStringLiteral(
+        "QLineEdit,QComboBox,QSpinBox{background:#17191C;"
+        " border:1px solid #383C42; border-radius:7px;"
+        " padding:7px 11px; color:#DCDEE2; selection-background-color:#0086C8;}"
+        "QLineEdit:focus,QComboBox:focus,QSpinBox:focus{border-color:#00A3E4;}"
+        "QComboBox::drop-down{border:none; width:24px;}"
+        "QComboBox QAbstractItemView{background:#1E2024;"
+        " border:1px solid #383C42; selection-background-color:#0086C8;"
+        " border-radius:5px;}");
 }
+
+// Botão primário azul (gradiente) com letras brancas — usado no Criar projeto,
+// Abrir e Excluir. Estilo fixado no widget para não depender do fallback de tema.
+QString primaryBtnSheet(int fontSize = 13) {
+    return QStringLiteral(
+        "QPushButton{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+        " stop:0 %1, stop:1 %2);"
+        " border:none; border-radius:8px;"
+        " color:%3; padding:10px 28px; font-weight:bold; font-size:%7px;}"
+        "QPushButton:hover{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+        " stop:0 %4, stop:1 %5);}"
+        "QPushButton:pressed{background:%6;}")
+        .arg(themeColors().welcomeBtnGradStart.name())
+        .arg(themeColors().welcomeBtnGradEnd.name())
+        .arg(themeColors().highlightedText.name())
+        .arg(themeColors().btnPrimary.name())
+        .arg(themeColors().accent.name())
+        .arg(themeColors().btnActive.name())
+        .arg(fontSize);
+}
+}
+
+// Cor média de uma faixa horizontal central da imagem (a região que fica
+// visível na faixa do topo), usada para o degradê de transição com o fundo.
+QColor avgBandColor(const QImage& img) {
+    if (img.isNull()) return QColor(8, 10, 14);
+    const int y0 = img.height() * 45 / 100;
+    const int y1 = qMax(y0 + 1, img.height() * 55 / 100);
+    qlonglong r = 0, g = 0, b = 0, n = 0;
+    for (int y = y0; y < y1; y += 3) {
+        const QRgb* line = reinterpret_cast<const QRgb*>(img.constScanLine(y));
+        for (int x = 0; x < img.width(); x += 4) {
+            const QRgb px = line[x];
+            r += qRed(px); g += qGreen(px); b += qBlue(px); ++n;
+        }
+    }
+    if (!n) return QColor(8, 10, 14);
+    return QColor(int(r / n), int(g / n), int(b / n));
+}
+
+// Widget que desenha o banner cobrindo toda a área (semântica "cover"): a
+// imagem é escalada para preencher a largura E a altura, e o excesso é cortado
+// (crop) — vira uma faixa de ponta a ponta sem distorcer a proporção.
+// Vivo no escopo global pois WelcomeWindow.h o declara (membro do tipo ponteiro).
+class BannerWidget : public QWidget {
+public:
+    explicit BannerWidget(QWidget* parent = nullptr) : QWidget(parent) {}
+    void setImage(const QPixmap& pm) { m_pm = pm; update(); }
+protected:
+    void paintEvent(QPaintEvent*) override {
+        if (m_pm.isNull()) return;
+        QPainter p(this);
+        p.setRenderHint(QPainter::SmoothPixmapTransform);
+        const double scale = qMax(rect().width() / double(m_pm.width()),
+                                  rect().height() / double(m_pm.height()));
+        const int w = qCeil(m_pm.width() * scale);
+        const int h = qCeil(m_pm.height() * scale);
+        p.drawPixmap((rect().width() - w) / 2, (rect().height() - h) / 2, w, h, m_pm);
+    }
+private:
+    QPixmap m_pm;
+};
 
 WelcomeWindow::WelcomeWindow(QWidget* parent) : QDialog(parent) {
     // Janela sem as bordas do sistema: a barra de título é personalizada.
@@ -65,11 +227,17 @@ WelcomeWindow::WelcomeWindow(QWidget* parent) : QDialog(parent) {
     // transparente, dando os cantos arredondados à janela.
     setAttribute(Qt::WA_TranslucentBackground);
     setWindowTitle(tr("Bem-vindo ao Pierrot"));
-    setMinimumSize(820, 560);
-    resize(1000, 660);
+    setMinimumSize(880, 600);
+    resize(1100, 700);
 
     buildLayout();
     loadRecentProjects();
+
+    // Miniatura real chega em segundo plano (decodificação no MediaCache).
+    connect(&MediaCache::instance(), &MediaCache::thumbnailReady, this,
+            [this](const QString& filePath, double seconds) {
+                if (qAbs(seconds - kProjectThumbTime) < 0.051) applyThumb(filePath);
+            });
 
     QSettings s;
     m_autoSave->setChecked(s.value("autosaveEnabled", false).toBool());
@@ -110,60 +278,35 @@ WelcomeWindow::WelcomeWindow(QWidget* parent) : QDialog(parent) {
 }
 
 void WelcomeWindow::buildLayout() {
-    // Imagem da marca com bordas arredondadas (moldura), no lado esquerdo.
-    QPixmap pm;
-    if (pm.load(":/pierrot.png")
-        || pm.load("imagens/pierrot.png")
-        || pm.load(QCoreApplication::applicationDirPath() + "/imagens/pierrot.png")) {
-        m_img = pm;
+    // Faixa do topo: a imagem vai de ponta a ponta (faixa fina) — a janela
+    // corta o excesso para se adequar, sem distorcer a proporção. BannerWidget
+    // desenha com semântica "cover". Embaixo entra um degradê de transição.
+    m_banner = new BannerWidget(this);
+    m_banner->setObjectName(QStringLiteral("welcomeBanner"));
+    m_banner->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_banner->setFixedHeight(96);
+    m_bannerImg = QPixmap();
+    if (m_bannerImg.load(":/pierrot_banner.png")
+        || m_bannerImg.load("imagens/pierrot banner.jpg")
+        || m_bannerImg.load(QCoreApplication::applicationDirPath() + "/imagens/pierrot banner.jpg")) {
+        // carregou da resource ou do disco
     } else {
-        m_img = QPixmap(360, 480);
-        m_img.fill(QColor(30, 32, 38));
-        QPainter pt(&m_img);
-        pt.setPen(Qt::NoPen);
-        pt.setBrush(QColor(60, 90, 130));
-        pt.drawEllipse(m_img.rect().center(), 80, 80);
+        m_bannerImg = QPixmap(8, 8);
+        m_bannerImg.fill(Qt::transparent);
     }
-    auto* imageFrame = new QLabel(this);
-    m_imageFrame = imageFrame;
-    imageFrame->setAlignment(Qt::AlignCenter);
-    imageFrame->setMinimumSize(300, 400);
-    imageFrame->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::MinimumExpanding);
-    imageFrame->setPixmap(makeRounded(m_img.scaled(QSize(320, 440), Qt::KeepAspectRatio,
-                                                   Qt::SmoothTransformation), 18));
+    m_banner->setImage(m_bannerImg);
 
-    // Nome + versão pequena ao lado (mesma fonte/bold, menor), centralizado.
-    auto* nameLabel = new QLabel(tr("Pierrot"), this);
-    QFont nf = nameLabel->font();
-    nf.setPointSize(30);
-    nf.setBold(true);
-    nameLabel->setFont(nf);
-    nameLabel->setStyleSheet(QStringLiteral("color:%1;").arg(themeColors().highlightedText.name()));
-
-    auto* verLabel = new QLabel(PIERROT_VERSION, this);
-    QFont vf = verLabel->font();
-    vf.setPointSize(12);
-    vf.setBold(true);
-    verLabel->setFont(vf);
-    verLabel->setStyleSheet(QStringLiteral("color:%1;").arg(themeColors().accent.name()));
-
-    auto* nameRow = new QHBoxLayout;
-    nameRow->setSpacing(6);
-    nameRow->addStretch(1);
-    nameRow->addWidget(nameLabel);
-    verLabel->setContentsMargins(0, -6, 0, 6); // sobe alguns pixels
-    nameRow->addWidget(verLabel, 0, Qt::AlignVCenter);
-    nameRow->addStretch(1);
-
-    auto* slogan = new QLabel(tr("para Linux"), this);
-    slogan->setStyleSheet(QStringLiteral("color:%1; font-size:13px; letter-spacing:1px;").arg(themeColors().text.name()));
-    slogan->setAlignment(Qt::AlignHCenter);
-
-    auto* imageCol = new QVBoxLayout;
-    imageCol->setSpacing(6);
-    imageCol->addWidget(imageFrame, 1);
-    imageCol->addLayout(nameRow);
-    imageCol->addWidget(slogan);
+    // Degradê de transição entre a faixa e o fundo da janela (usa a cor média
+    // da faixa visível, então combina com qualquer imagem).
+    auto* fade = new QWidget(this);
+    fade->setAttribute(Qt::WA_StyledBackground, true);
+    fade->setFixedHeight(28);
+    const QColor band = avgBandColor(m_bannerImg.toImage());
+    const int fadeA = band.lightness() < 120 ? 92 : 65;
+    fade->setStyleSheet(QStringLiteral(
+        "background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+        " stop:0 rgba(%1,%2,%3,%4), stop:1 rgba(%1,%2,%3,0));")
+        .arg(band.red()).arg(band.green()).arg(band.blue()).arg(fadeA));
 
     auto* credits = new QLabel(tr("by InkSpoty"), this);
     credits->setStyleSheet(QStringLiteral("color: %1; font-size: 11px;").arg(themeColors().disabledText.name()));
@@ -178,6 +321,18 @@ void WelcomeWindow::buildLayout() {
     recentBox->setMinimumHeight(320);
     m_recent = new QListWidget(recentBox);
     m_recent->setMinimumHeight(260);
+    m_recent->setIconSize(QSize(132, 74));
+    m_recent->setUniformItemSizes(true);
+    m_recent->setSpacing(2);
+    // Fundo sempre escuro (estilo da timeline), item texto claro — não depende
+    // do fallback de tema (evita lista branca no tema escuro).
+    m_recent->setStyleSheet(
+        "QListWidget{background:#131518; border:1px solid #23262c;"
+        " border-radius:8px; padding:5px; outline:none;}"
+        "QListWidget::item{padding:13px 14px; border-radius:6px; margin:3px;"
+        " color:#dcdfe4;}"
+        "QListWidget::item:hover{background:rgba(110,160,230,0.12);}"
+        "QListWidget::item:selected{background:rgba(70,130,210,0.32); color:white;}");
     connect(m_recent, &QListWidget::itemDoubleClicked, this,
             &WelcomeWindow::openSelected);
 
@@ -187,10 +342,12 @@ void WelcomeWindow::buildLayout() {
 
     auto* openBtn = new QPushButton(tr("Abrir"), recentBox);
     openBtn->setToolTip(tr("Abrir o projeto selecionado"));
+    openBtn->setStyleSheet(primaryBtnSheet());
     connect(openBtn, &QPushButton::clicked, this, &WelcomeWindow::openSelected);
 
     auto* delBtn = new QPushButton(tr("Excluir"), recentBox);
     delBtn->setToolTip(tr("Remover o projeto selecionado dos recentes"));
+    delBtn->setStyleSheet(primaryBtnSheet());
     connect(delBtn, &QPushButton::clicked, this, &WelcomeWindow::removeSelected);
 
     auto* recentBtnRow = new QHBoxLayout;
@@ -205,6 +362,7 @@ void WelcomeWindow::buildLayout() {
     // Novo projeto
     auto* newBox = new QGroupBox(tr("Novo projeto"), this);
     newBox->setMinimumHeight(320);
+    newBox->setStyleSheet(inputSheet());
 
     m_name = new QLineEdit(newBox);
     m_name->setPlaceholderText(tr("Nome do projeto"));
@@ -254,21 +412,7 @@ void WelcomeWindow::buildLayout() {
     createBtn->setDefault(true);
     createBtn->setCursor(Qt::PointingHandCursor);
     createBtn->setMinimumHeight(40);
-    createBtn->setStyleSheet(
-        QStringLiteral(
-        "QPushButton{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-        " stop:0 %1, stop:1 %2);"
-        " border:none; border-radius:8px;"
-        " color:%3; padding:10px 28px; font-weight:bold; font-size:14px;}"
-        "QPushButton:hover{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-        " stop:0 %4, stop:1 %5);}"
-        "QPushButton:pressed{background:%6;}")
-        .arg(themeColors().welcomeBtnGradStart.name())
-        .arg(themeColors().welcomeBtnGradEnd.name())
-        .arg(themeColors().highlightedText.name())
-        .arg(themeColors().btnPrimary.name())
-        .arg(themeColors().accent.name())
-        .arg(themeColors().btnActive.name()));
+    createBtn->setStyleSheet(primaryBtnSheet(14));
     connect(createBtn, &QPushButton::clicked, this, &WelcomeWindow::requestNewProject);
 
     auto* newLay = new QVBoxLayout(newBox);
@@ -283,6 +427,7 @@ void WelcomeWindow::buildLayout() {
 
     // Coluna direita: salvamento automático
     auto* autoBox = new QGroupBox(tr("Salvamento automático"), this);
+    autoBox->setStyleSheet(inputSheet());
     m_autoSave = new QCheckBox(tr("Ativar salvamento automático"), autoBox);
 
     m_autoInterval = new QComboBox(autoBox);
@@ -334,12 +479,10 @@ void WelcomeWindow::buildLayout() {
         .arg(themeColors().accentGold.name()));
     m_devWarn->setVisible(false);
 
-    // Montagem geral: imagem (moldura) à esquerda, recentes ao centro,
+    // Montagem principal: recentes à esquerda (destaque, como no Vegas),
     // "Novo projeto" + auto-save à direita.
-    auto* midCol = new QVBoxLayout;
-    midCol->addStretch(1);
-    midCol->addWidget(recentBox);
-    midCol->addStretch(1);
+    auto* leftCol = new QVBoxLayout;
+    leftCol->addWidget(recentBox, 1);
 
     auto* rightCol = new QVBoxLayout;
     rightCol->addWidget(newBox);
@@ -349,9 +492,8 @@ void WelcomeWindow::buildLayout() {
 
     auto* body = new QHBoxLayout;
     body->setSpacing(24);
-    body->addLayout(imageCol, 0);
-    body->addLayout(midCol, 1);
-    body->addLayout(rightCol, 1);
+    body->addLayout(leftCol, 3);
+    body->addLayout(rightCol, 2);
 
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
@@ -360,10 +502,14 @@ void WelcomeWindow::buildLayout() {
     auto* titleBar = new TitleBar(tr("Bem-vindo ao Pierrot"), this);
     root->addWidget(titleBar);
 
+    // Faixa do topo + degradê, sem margens: vão de um canto a outro da janela.
+    root->addWidget(m_banner);
+    root->addWidget(fade);
+
     auto* content = new QWidget(this);
     auto* contentLay = new QVBoxLayout(content);
-    contentLay->setContentsMargins(28, 20, 28, 12);
-    contentLay->setSpacing(8);
+    contentLay->setContentsMargins(28, 10, 28, 12);
+    contentLay->setSpacing(10);
     contentLay->addLayout(body, 1);
     // Rodapé: aviso à esquerda; créditos e versão no canto inferior direito.
     auto* footer = new QHBoxLayout;
@@ -392,8 +538,8 @@ void WelcomeWindow::buildLayout() {
         "QGroupBox{border:1px solid %1; border-radius:12px; margin-top:18px;"
         " background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
         "  stop:0 %2, stop:1 %3);}"
-        "QGroupBox::title{subcontrol-origin:margin; left:15px; top:3px; padding:0 9px;"
-        " color:%4; font-weight:bold; font-size:12px; letter-spacing:0.6px;}"
+        "QGroupBox::title{subcontrol-origin:margin; left:15px; top:2px; padding:0 9px;"
+        " color:white; font-weight:700; font-size:13px; letter-spacing:0.5px;}"
         "QListWidget{background:%5; border:1px solid %6;"
         " border-radius:8px; padding:5px; outline:none;}"
         "QListWidget::item{padding:13px 14px; border-radius:6px; margin:3px; color:%7;}"
@@ -439,19 +585,47 @@ void WelcomeWindow::buildLayout() {
 }
 
 void WelcomeWindow::loadRecentProjects() {
+    m_pendingThumbs.clear();
     m_recent->clear();
-    const QIcon fileIcon = style()->standardIcon(QStyle::SP_FileIcon);
     for (const QString& path : loadRecentList()) {
         if (!QFile::exists(path)) continue;
-        auto* it = new QListWidgetItem(fileIcon, QFileInfo(path).fileName(), m_recent);
+        auto* it = new QListWidgetItem(
+            QIcon(makeProjectThumb(path, QFileInfo(path).fileName())),
+            QFileInfo(path).fileName(), m_recent);
         it->setData(Qt::UserRole, path);
         it->setToolTip(path);
+        // Miniatura real: o primeiro vídeo do projeto vira a thumb, decodificada
+        // em segundo plano pelo MediaCache (não bloqueia a janela). O tile
+        // gradiente fica como placeholder até o frame chegar.
+        const QString media = firstVideoMedia(path);
+        if (media.isEmpty()) continue;
+        const QImage cached = MediaCache::instance().thumb(media, kProjectThumbTime);
+        const QString fn = QFileInfo(path).fileName();
+        if (!cached.isNull()) {
+            it->setIcon(QIcon(makeProjectThumb(path, fn, cached)));
+        } else {
+            m_pendingThumbs[media].append(it);
+            MediaCache::instance().requestThumb(media, kProjectThumbTime);
+        }
     }
     if (m_recent->count() == 0) {
         auto* it = new QListWidgetItem(tr("Nenhum projeto recente."), m_recent);
         it->setFlags(Qt::NoItemFlags);
         it->setForeground(QColor(120, 124, 132));
     }
+}
+
+void WelcomeWindow::applyThumb(const QString& filePath) {
+    const QImage img = MediaCache::instance().thumb(filePath, kProjectThumbTime);
+    if (img.isNull()) return; // falhou: mantém o tile placeholder
+    const auto it = m_pendingThumbs.constFind(filePath);
+    if (it == m_pendingThumbs.constEnd()) return;
+    for (QListWidgetItem* item : it.value()) {
+        if (item->listWidget() != m_recent) continue; // item foi removido
+        const QString path = item->data(Qt::UserRole).toString();
+        item->setIcon(QIcon(makeProjectThumb(path, QFileInfo(path).fileName(), img)));
+    }
+    m_pendingThumbs.remove(filePath);
 }
 
 void WelcomeWindow::openSelected() {
@@ -555,15 +729,5 @@ void WelcomeWindow::paintEvent(QPaintEvent*) {
 
 void WelcomeWindow::resizeEvent(QResizeEvent* ev) {
     update(); // repinta com o novo tamanho (cantos arredondados)
-    if (m_img.isNull() || !m_imageFrame) { QDialog::resizeEvent(ev); return; }
-    const QSize ls = m_imageFrame->size();
-    const int w = qMax(200, ls.width() - 8);
-    const int h = qMax(240, ls.height() - 8);
-    const int radius = 16;
-    const QPixmap scaled = m_img.scaled(QSize(qMin(w, 480), qMin(h, 640)),
-                                        Qt::KeepAspectRatio, Qt::SmoothTransformation);
-    const QPixmap cur = m_imageFrame->pixmap();
-    if (cur.isNull() || cur.size() != scaled.size())
-        m_imageFrame->setPixmap(makeRounded(scaled, radius));
     QDialog::resizeEvent(ev);
 }

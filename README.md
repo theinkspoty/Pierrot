@@ -1,4 +1,4 @@
-# Pierrot v0.5 alpha
+# Pierrot v0.6 alpha
 
 Editor de vídeo simples — O estilo vem do **Sony Vegas Pro** e **Final Cut Express (2003)**,
 desenvolvido **exclusivamente para Linux**, escrito em

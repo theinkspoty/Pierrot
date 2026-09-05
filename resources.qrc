@@ -2,7 +2,7 @@
     <qresource prefix="/">
         <file alias="pierrot.ico">imagens/pierrot.ico</file>
         <file alias="pierrot.png">imagens/pierrot.png</file>
-        <file alias="pierrot_banner.png">imagens/pierrot banner.png</file>
+        <file alias="pierrot_banner.png">imagens/pierrot banner.jpg</file>
         <file alias="fx/lainka.ico">imagens/efeitos/Lainka.ico</file>
         <file alias="fx/motion.ico">imagens/efeitos/Motion.ico</file>
         <file alias="fx/focus.ico">imagens/efeitos/Focus.ico</file>

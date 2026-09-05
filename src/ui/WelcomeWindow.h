@@ -7,6 +7,7 @@
 
 #include <QDialog>
 #include <QPixmap>
+#include <QHash>
 
 class QComboBox;
 class QSpinBox;
@@ -14,6 +15,9 @@ class QLineEdit;
 class QListWidget;
 class QCheckBox;
 class QLabel;
+class QListWidgetItem;
+
+class BannerWidget;
 
 class WelcomeWindow : public QDialog {
     Q_OBJECT
@@ -37,14 +41,15 @@ private slots:
 private:
     void buildLayout();
     void loadRecentProjects();
+    void applyThumb(const QString& filePath);
     int autosaveMinutes() const;
     void saveAutoSettings() const;
     void paintEvent(QPaintEvent* e) override;
     void resizeEvent(QResizeEvent* e) override;
 
     QListWidget* m_recent = nullptr;
-    QPixmap m_img;                  // imagem da marca (cortada arredondada)
-    QLabel* m_imageFrame = nullptr; // moldura com a imagem (redimensionável)
+    BannerWidget* m_banner = nullptr;  // faixa do topo (de ponta a ponta, crop)
+    QPixmap m_bannerImg;               // imagem original do banner
     QLineEdit* m_name = nullptr;
     QComboBox* m_resolution = nullptr;
     QWidget* m_customWidget = nullptr;
@@ -62,4 +67,6 @@ private:
     int m_h = 1080;
     int m_fps = 30;
     bool m_newRequested = false;
+    // Mídia -> itens da lista que aguardam a miniatura real (MediaCache).
+    QHash<QString, QList<QListWidgetItem*>> m_pendingThumbs;
 };
