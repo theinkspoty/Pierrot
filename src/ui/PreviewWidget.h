@@ -13,6 +13,7 @@
 #include <QHash>
 #include <QPair>
 #include <QImage>
+#include <QTransform>
 #include "models/Project.h"
 #include "ffmpeg/FFmpegDecoder.h"
 #include "render/MesaRenderer.h"
@@ -60,6 +61,14 @@ public:
         float masterRms = 0.0;
     };
     AudioLevels audioLevels() const;
+
+    // ── Overlay de edição de máscara ─────────────────────────────────
+    // Ativa o desenho interativo das forma(s) do clipe `clipId` sobre o
+    // monitor, com alças arrastáveis (mover, redimensionar, rotacionar).
+    // `masks` vazio ou `clipId` vazio desliga o overlay.
+    void setMaskOverlay(const QString& clipId, const QVector<Mask>& masks);
+    // Devemos tratar clique/arrasto do mouse aqui (senão repassa ao QWidget).
+    bool allowsMaskDrag(const QPoint& pos) const;
 public slots:
     // Transporte: repassa ao PlaybackEngine. Necessário para os connect() de
     // QAction/QPushButton continuarem funcionando via slots do widget.
@@ -74,9 +83,16 @@ public slots:
 signals:
     void playheadMoved(double t);
     void stateChanged(bool playing);
+    // Durante o arrasto das alças do overlay de máscara: índice + máscara
+    // atualizada (já aplicada ao overlay). O dialog aplica à cópia de trabalho.
+    void maskEdited(int maskIndex, const Mask& updated);
+    void maskDragEnd();
 protected:
     void paintEvent(QPaintEvent*) override;
     void resizeEvent(QResizeEvent*) override;
+    void mousePressEvent(QMouseEvent*) override;
+    void mouseMoveEvent(QMouseEvent*) override;
+    void mouseReleaseEvent(QMouseEvent*) override;
     const Clip* clipAt(double t) const override;
     double audioClockSec() const override;
 private:
@@ -168,6 +184,7 @@ private:
     bool m_clipChromaKey = false;
     QColor m_clipChromaKeyColor{Qt::green};
     double m_clipChromaKeySimilarity = 0.15;
+    QVector<Mask> m_clipMasks; // máscaras do clipe ativo (aplicadas no crop)
 
     // Áudio do preview (mixer com um decoder por clipe ativo).
     AudioMixer* m_audioFeed = nullptr;
@@ -251,6 +268,21 @@ private:
     int m_gridDivisions = 3; // NxN linhas de grade
     QToolButton* m_gridBtn = nullptr;
     void drawGrid(QPainter& p, const QRect& canvas);
+
+    // ── Overlay de edição de máscara ─────────────────────────────────
+    QString m_maskOverlayClipId;   // clipe sob edição (vazio = nenhum)
+    QVector<Mask> m_maskOverlay;   // cópia de trabalho das máscaras
+    int m_maskDragIndex = -1;      // máscara sob o mouse durante o arrasto
+    int m_maskDragHandle = -1;     // 0=centro, 1=topo(rotação), 2..5=bordas
+    QPoint m_maskDragLast;         // último ponto do mouse (coords do widget)
+    double m_maskDragPressRot = 0.0; // rotação no início do arrasto (graus)
+    double m_maskDragPressAng = 0.0; // ângulo cursor→centro no início (rad)
+    QTransform m_maskToScreen;     // imagem (crop) do clipe → monitor
+    QSize m_maskAnchorSize;        // dimensões da imagem de referência
+    void drawMaskOverlay(QPainter& p, const QRect& canvas, double k);
+    // Marca a alça sob `pos` como arrastada; false se não houver alça.
+    bool pickMaskHandle(const QPoint& pos);
+    void applyMaskDrag(const QPoint& pos);
 
     // Renderiza o canvas de uma Mesa (sem câmera) quando o clipe ativo
     // pertence a um grupo Mesa. Usa um MesaRenderer dedicado.

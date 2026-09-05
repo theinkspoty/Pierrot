@@ -8,21 +8,23 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 COMPONENTS Widgets Concurrent Multimedia Test QUIET)
+find_package(Qt6 COMPONENTS Widgets Concurrent Multimedia Svg Test QUIET)
 if(Qt6_FOUND)
     set(PIERROT_QT_LIB Qt6::Widgets)
     set(PIERROT_QT_CONCURRENT Qt6::Concurrent)
     set(PIERROT_QT_MULTIMEDIA Qt6::Multimedia)
     set(PIERROT_QT_CORE Qt6::Core)
     set(PIERROT_QT_GUI Qt6::Gui)
+    set(PIERROT_QT_SVG Qt6::Svg)
     set(PIERROT_QT_TEST Qt6::Test)
 else()
-    find_package(Qt5 5.15 COMPONENTS Widgets Concurrent Multimedia Test REQUIRED)
+    find_package(Qt5 5.15 COMPONENTS Widgets Concurrent Multimedia Svg Test REQUIRED)
     set(PIERROT_QT_LIB Qt5::Widgets)
     set(PIERROT_QT_CONCURRENT Qt5::Concurrent)
     set(PIERROT_QT_MULTIMEDIA Qt5::Multimedia)
     set(PIERROT_QT_CORE Qt5::Core)
     set(PIERROT_QT_GUI Qt5::Gui)
+    set(PIERROT_QT_SVG Qt5::Svg)
     set(PIERROT_QT_TEST Qt5::Test)
 endif()
 
@@ -60,6 +62,7 @@ set(SOURCES
     src/ui/SettingsDialog.cpp
     src/ui/Theme.cpp
     src/ui/TransformDialog.cpp
+    src/ui/MaskEditorDialog.cpp
     src/ui/AudioEffectsDialog.cpp
     src/ui/TrackAudioFxDialog.cpp
     src/ui/TextEditorDialog.cpp
@@ -119,6 +122,7 @@ set(HEADERS
     src/ui/SettingsDialog.h
     src/ui/Theme.h
     src/ui/TransformDialog.h
+    src/ui/MaskEditorDialog.h
     src/ui/AudioEffectsDialog.h
     src/ui/TrackAudioFxDialog.h
     src/ui/TextEditorDialog.h
@@ -143,6 +147,7 @@ target_link_libraries(pierrot PRIVATE
     ${PIERROT_QT_LIB}
     ${PIERROT_QT_CONCURRENT}
     ${PIERROT_QT_MULTIMEDIA}
+    ${PIERROT_QT_SVG}
     FFmpeg::avformat
     FFmpeg::avcodec
     FFmpeg::avutil

@@ -12,5 +12,21 @@
         <file alias="icons/arrow-left.png">imagens/icons/arrow-left.png</file>
         <file alias="icons/check.png">imagens/icons/check.png</file>
         <file alias="icons/radio.png">imagens/icons/radio.png</file>
+        <file alias="icons/cursor.svg">imagens/icons svg/cursor.svg</file>
+        <file alias="icons/move.svg">imagens/icons svg/move.svg</file>
+        <file alias="icons/razor.svg">imagens/icons svg/razor.svg</file>
+        <file alias="icons/envelope.svg">imagens/icons svg/envelope.svg</file>
+        <file alias="icons/zoom.svg">imagens/icons svg/zoom.svg</file>
+        <file alias="icons/magnet.svg">imagens/icons svg/magnet.svg</file>
+        <file alias="icons/trackstyle.svg">imagens/icons svg/trackstyle.svg</file>
+        <file alias="icons/ripple.svg">imagens/icons svg/ripple.svg</file>
+        <file alias="icons/rolling.svg">imagens/icons svg/rolling.svg</file>
+        <file alias="icons/slip.svg">imagens/icons svg/slip.svg</file>
+        <file alias="icons/slide.svg">imagens/icons svg/slide.svg</file>
+        <file alias="icons/ratestretch.svg">imagens/icons svg/ratestretch.svg</file>
+        <file alias="icons/loopclear.svg">imagens/icons svg/loopclear.svg</file>
+        <file alias="icons/rippledelete.svg">imagens/icons svg/rippledelete.svg</file>
+        <file alias="icons/grid.svg">imagens/icons svg/grid.svg</file>
+        <file alias="icons/ruler.svg">imagens/icons svg/ruler.svg</file>
     </qresource>
 </RCC>

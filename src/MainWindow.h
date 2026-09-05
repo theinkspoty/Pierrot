@@ -13,6 +13,7 @@
 #include <QJsonDocument>
 #include <QIcon>
 #include <QDockWidget>
+#include <QPointer>
 class QVBoxLayout;
 #include <functional>
 #include "models/Project.h"
@@ -37,6 +38,7 @@ class QTimer;
 class QProgressBar;
 class QComboBox;
 class ScopeWidget;
+class MaskEditorDialog;
 class PreviewMonitor;
 
 class MainWindow : public QMainWindow {
@@ -63,9 +65,12 @@ private:
     void saveSettings();
     void restoreSettings();
     void scheduleLayoutSave();
+    void openMaskEditor(const QString& id);
     void setDockLocked(bool locked);
     void showPropsWindow();
     QIcon makeIcon(const std::function<void(QPainter&, const QColor&)>& draw) const;
+    // Ícone SVG (recurso) recolorido para a cor do tema, hiDPI. Vazio se não existir.
+    QIcon makeSvgIcon(const QString& resourcePath) const;
     QIcon padlockIcon(bool locked) const;
     QIcon iconCursor() const;
     QIcon iconMove() const;
@@ -145,6 +150,8 @@ private:
     FileBrowserWidget* m_fileBrowser = nullptr;
     MixerWidget* m_mixer = nullptr;
     MesaWidget* m_mesa = nullptr;
+    QPointer<MaskEditorDialog> m_maskDialog;  // janela de máscara (única)
+    QString m_maskDialogClipId;               // clipe que está sendo editado no momento
     QDockWidget* m_poolDock = nullptr;
     QDockWidget* m_timelineDock = nullptr;
     QDockWidget* m_pancropDock = nullptr;

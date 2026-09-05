@@ -10,6 +10,7 @@
 #include "ui/TimelineWidget.h"
 #include "ui/PreviewWidget.h"
 #include "ui/PancropWidget.h"
+#include "ui/MaskEditorDialog.h"
 #include "ui/GraphEditorWidget.h"
 #include "ui/EffectsWidget.h"
 #include "ui/ClipPropertiesWidget.h"
@@ -33,6 +34,17 @@ static QKeySequence appKey(const char* id, const QKeySequence& fallback) {
     const QString v = QSettings().value(QStringLiteral("shortcuts/") + QLatin1String(id)).toString();
     return v.isEmpty() ? fallback : QKeySequence(v);
 }
+
+namespace {
+// Ícones SVG monocromáticos são recoloridos para a cor do tema (WindowText).
+// Troca qualquer token de cor hex (#rgb/#rrggbb) pela cor alvo; "none" não casa
+// e é preservado. Assim um mesmo SVG serve no tema claro e escuro.
+QString recolorSvg(const QByteArray& raw, const QColor& color) {
+    static const QRegularExpression hexRe(
+        QStringLiteral("#[0-9a-fA-F]{6}\\b|#[0-9a-fA-F]{3}\\b"));
+    return QString::fromUtf8(raw).replace(hexRe, color.name());
+}
+} // namespace
 #include "ui/WelcomeWindow.h"
 #include "ffmpeg/MediaCache.h"
 
@@ -51,6 +63,8 @@ static QKeySequence appKey(const char* id, const QKeySequence& fallback) {
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFile>
+#include <QRegularExpression>
+#include <QSvgRenderer>
 #include <QJsonDocument>
 #include <QJsonParseError>
 #include <QMessageBox>
@@ -445,6 +459,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         m_pancropDock->show();
         m_pancropDock->raise();
     });
+    connect(m_timeline, &TimelineWidget::maskRequested, this, &MainWindow::openMaskEditor);
     connect(m_pancrop, &PancropWidget::keyframeJump, this, [this](double t) {
         m_timeline->setPlayhead(t);
         m_preview->seek(t);
@@ -681,6 +696,60 @@ void MainWindow::showPropsWindow() {
     }
     m_props->raise();
     m_props->activateWindow();
+}
+
+void MainWindow::openMaskEditor(const QString& id) {
+    Clip* clip = m_timeline->findClipById(id);
+    if (!clip) return;
+
+    // Reaproveita a janela para o MESMO clipe; para outro, troca de alvo.
+    if (m_maskDialog && m_maskDialogClipId == id) {
+        m_maskDialog->raise();
+        m_maskDialog->activateWindow();
+        return;
+    }
+    if (m_maskDialog) {
+        m_maskDialog->close();
+        m_preview->setMaskOverlay(QString(), {});
+    }
+    m_maskDialogClipId = id;
+
+    auto* dlg = new MaskEditorDialog(clip, this);
+    m_maskDialog = dlg;
+
+    // Overlay no monitor: a cópia de trabalho do dialog vira as formas
+    // desenhadas sobre o preview (o clipe só muda ao Aplicar).
+    m_preview->setMaskOverlay(id, dlg->masks());
+    connect(dlg, &MaskEditorDialog::masksChanged, this, [this, id](const QVector<Mask>& masks) {
+        m_preview->setMaskOverlay(id, masks);
+    });
+    // Arrasto no preview → dialog (atualiza sliders e a cópia em tempo real).
+    connect(m_preview, &PreviewWidget::maskEdited, dlg, &MaskEditorDialog::applyExternalEdit);
+
+    // Commit ("Aplicar"): undo antes de gravar, estado sujo após (padrão
+    // TransformDialog/ClipPropertiesWidget).
+    connect(dlg, &MaskEditorDialog::editStart, this, &MainWindow::pushUndo);
+    connect(dlg, &MaskEditorDialog::modified, this, [this]() {
+        m_timeline->update();
+        m_preview->refreshView();
+        setModified();
+    });
+
+    // Ao fechar sem aplicar (cancelar/✕), o overlay some. Ao aplicar, o preview
+    // já renderiza a máscara no próprio vídeo, então o overlay se desliga junto.
+    connect(dlg, &QDialog::rejected, this, [this]() {
+        m_maskDialogClipId.clear();
+        m_preview->setMaskOverlay(QString(), {});
+    });
+    connect(dlg, &QDialog::accepted, this, [this]() {
+        m_maskDialogClipId.clear();
+        m_preview->setMaskOverlay(QString(), {});
+    });
+
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->show();
+    dlg->raise();
+    dlg->activateWindow();
 }
 
 void MainWindow::showEvent(QShowEvent* event) {
@@ -1335,32 +1404,70 @@ QIcon MainWindow::makeIcon(const std::function<void(QPainter&, const QColor&)>& 
     return QIcon(pm);
 }
 
+// Ícone a partir de SVG embutido (recurso), recolorido com a cor do tema e
+// rasterizado em várias densidades (hiDPI). Vazio se o recurso faltar — o
+// chamador mantém o fallback em QPainter.
+QIcon MainWindow::makeSvgIcon(const QString& resourcePath) const {
+    QFile f(resourcePath);
+    if (!f.open(QIODevice::ReadOnly)) return QIcon();
+    const QString fg = palette().color(QPalette::WindowText).name();
+    QSvgRenderer renderer(recolorSvg(f.readAll(), QColor(fg)).toUtf8());
+    if (!renderer.isValid()) return QIcon();
+    const qreal dpr = devicePixelRatioF();
+    QIcon icon;
+    const int sizes[] = {16, 20, 24, 32, 48};
+    for (int size : sizes) {
+        QPixmap pm(qRound(size * dpr), qRound(size * dpr));
+        pm.setDevicePixelRatio(dpr);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        renderer.render(&p, QRectF(0, 0, size, size));
+        p.end();
+        icon.addPixmap(pm);
+    }
+    return icon;
+}
+
 QIcon MainWindow::iconCursor() const {
+    const QIcon svg = makeSvgIcon(QStringLiteral(":/icons/cursor.svg"));
+    if (!svg.isNull()) return svg;
     return makeIcon([](QPainter& p, const QColor& c) {
-        p.setPen(Qt::NoPen);
+        // Cursor gordinho: seta clássica preenchida com contorno arredondado.
+        QPainterPath path;
+        path.moveTo(4.5, 5);
+        path.lineTo(4.5, 16);
+        path.lineTo(7.6, 13.6);
+        path.lineTo(10.6, 23);
+        path.lineTo(13.6, 21.5);
+        path.lineTo(10.8, 15.2);
+        path.lineTo(14.8, 15.2);
+        path.closeSubpath();
+        p.setPen(QPen(c, 2.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
         p.setBrush(c);
-        QPolygonF arrow;
-        arrow << QPointF(5, 2) << QPointF(5, 16) << QPointF(8, 13)
-              << QPointF(13, 21) << QPointF(16, 19) << QPointF(12, 11)
-              << QPointF(17, 11);
-        p.drawPolygon(arrow);
+        p.drawPath(path);
     });
 }
 
 QIcon MainWindow::iconMove() const {
+    const QIcon svg = makeSvgIcon(QStringLiteral(":/icons/move.svg"));
+    if (!svg.isNull()) return svg;
     return makeIcon([](QPainter& p, const QColor& c) {
-        // Track Select do Premiere: trilho de filme perfurado + seta à direita.
+        // Mover em cruz: 4 setas grossas a partir do centro (estilo move).
+        QPen pen(c, 2.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+        p.setPen(pen);
+        p.setBrush(Qt::NoBrush);
+        p.drawLine(QPointF(16, 14), QPointF(16, 9));
+        p.drawLine(QPointF(16, 18), QPointF(16, 23));
+        p.drawLine(QPointF(14, 16), QPointF(9, 16));
+        p.drawLine(QPointF(18, 16), QPointF(23, 16));
         p.setPen(Qt::NoPen);
         p.setBrush(c);
-        p.drawRect(QRectF(6, 6, 22, 3.2));
-        p.drawRect(QRectF(6, 13.8, 22, 3.2));
-        const double xs[] = {8.5, 13.5, 18.5, 23.5};
-        for (double x : xs)
-            p.drawRect(QRectF(x, 9, 3.2, 6.5));
-        QPolygonF head;
-        head << QPointF(19, 19) << QPointF(19, 28) << QPointF(27, 23.5);
-        p.drawPolygon(head);
-        p.drawRect(QRectF(11, 20.5, 8, 3.4));
+        QPolygonF up; up << QPointF(16, 4.5)  << QPointF(12.5, 9.5)  << QPointF(19.5, 9.5);
+        QPolygonF dn; dn << QPointF(16, 27.5) << QPointF(12.5, 22.5) << QPointF(19.5, 22.5);
+        QPolygonF lf; lf << QPointF(4.5, 16)  << QPointF(9.5, 12.5)  << QPointF(9.5, 19.5);
+        QPolygonF rg; rg << QPointF(27.5, 16) << QPointF(22.5, 12.5) << QPointF(22.5, 19.5);
+        p.drawPolygon(up); p.drawPolygon(dn); p.drawPolygon(lf); p.drawPolygon(rg);
     });
 }
 
@@ -1378,25 +1485,29 @@ QIcon MainWindow::iconScissors() const {
 }
 
 QIcon MainWindow::iconRazor() const {
+    const QIcon svg = makeSvgIcon(QStringLiteral(":/icons/razor.svg"));
+    if (!svg.isNull()) return svg;
     return makeIcon([](QPainter& p, const QColor& c) {
-        // Lâmina diagonal clássica do Premiere (Razor) com cabo.
-        QPen pen(c, 2.0);
-        pen.setCapStyle(Qt::RoundCap);
-        pen.setJoinStyle(Qt::RoundJoin);
-        p.setPen(pen);
+        // Lâmina diagonal clássica do Premiere (Razor) com cabo gordinho.
+        QPainterPath blade;
+        blade.moveTo(9, 10);
+        blade.lineTo(12, 7);
+        blade.lineTo(27.5, 22.5);
+        blade.lineTo(24.5, 25.5);
+        blade.closeSubpath();
+        p.setPen(QPen(c, 2.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
         p.setBrush(c);
-        QPolygonF blade;
-        blade << QPointF(8.5, 9) << QPointF(11.5, 6.5)
-              << QPointF(27.5, 22.5) << QPointF(24.5, 25);
-        p.drawPolygon(blade);
-        p.drawRoundedRect(QRectF(5, 12, 4, 12), 2, 2);
+        p.drawPath(blade);
+        p.setPen(Qt::NoPen);
+        p.drawRoundedRect(QRectF(5, 12.5, 5, 13), 2.5, 2.5);
     });
 }
 
 QIcon MainWindow::iconEnvelope() const {
+    const QIcon svg = makeSvgIcon(QStringLiteral(":/icons/envelope.svg"));
+    if (!svg.isNull()) return svg;
     return makeIcon([](QPainter& p, const QColor& c) {
-        QPen pen(c, 1.8);
-        pen.setCapStyle(Qt::RoundCap);
+        QPen pen(c, 2.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
         p.setPen(pen);
         p.setBrush(Qt::NoBrush);
         QPainterPath path;
@@ -1406,114 +1517,112 @@ QIcon MainWindow::iconEnvelope() const {
         p.setPen(Qt::NoPen);
         p.setBrush(c);
         const QPointF nodes[] = {QPointF(5, 22), QPointF(17, 19), QPointF(27, 8)};
-        for (const QPointF& pt : nodes) {
-            QPolygonF d;
-            d << pt + QPointF(0, -3) << pt + QPointF(3, 0)
-              << pt + QPointF(0, 3) << pt + QPointF(-3, 0);
-            p.drawPolygon(d);
-        }
+        for (const QPointF& pt : nodes)
+            p.drawEllipse(pt, 3.4, 3.4);
     });
 }
 
 QIcon MainWindow::iconZoom() const {
+    const QIcon svg = makeSvgIcon(QStringLiteral(":/icons/zoom.svg"));
+    if (!svg.isNull()) return svg;
     return makeIcon([](QPainter& p, const QColor& c) {
-        // Lupa do Premiere: lente vazia (sem "+") + cabo diagonal.
-        QPen pen(c, 2.6);
-        pen.setCapStyle(Qt::RoundCap);
-        pen.setJoinStyle(Qt::RoundJoin);
+        // Lupa gordinha: lente vazia (sem "+") + cabo grosso arredondado.
+        QPen pen(c, 3.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
         p.setPen(pen);
         p.setBrush(Qt::NoBrush);
         p.drawEllipse(QPointF(12, 13), 7.5, 7.5);
-        p.drawLine(QPointF(17.5, 18.5), QPointF(27, 28));
+        p.drawLine(QPointF(18, 19), QPointF(27, 28));
     });
 }
 
 QIcon MainWindow::iconRipple() const {
+    const QIcon svg = makeSvgIcon(QStringLiteral(":/icons/ripple.svg"));
+    if (!svg.isNull()) return svg;
     return makeIcon([](QPainter& p, const QColor& c) {
-        // Ripple do Premiere: três ondulações verticais.
-        QPen pen(c, 2.0);
-        pen.setCapStyle(Qt::RoundCap);
-        pen.setJoinStyle(Qt::RoundJoin);
+        // Ripple do Premiere: três ondulações verticais grossas.
+        QPen pen(c, 2.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
         p.setPen(pen);
         p.setBrush(Qt::NoBrush);
         const double cx[] = {9.5, 16.0, 22.5};
         for (double xc : cx) {
             QPolygonF w;
-            const double amp[7] = {1.8, -1.8, 1.8, -1.8, 1.8, -1.8, 1.8};
+            const double amp[7] = {2.2, -2.2, 2.2, -2.2, 2.2, -2.2, 2.2};
             for (int k = 0; k < 7; ++k)
-                w << QPointF(xc + amp[k], 8.0 + k * 2.45);
+                w << QPointF(xc + amp[k], 7.5 + k * 2.55);
             p.drawPolyline(w);
         }
     });
 }
 
 QIcon MainWindow::iconRolling() const {
+    const QIcon svg = makeSvgIcon(QStringLiteral(":/icons/rolling.svg"));
+    if (!svg.isNull()) return svg;
     return makeIcon([](QPainter& p, const QColor& c) {
         // Rolling do Premiere: setas opostas (→|←) com divisória central.
-        QPen pen(c, 2.0);
-        pen.setCapStyle(Qt::RoundCap);
-        pen.setJoinStyle(Qt::RoundJoin);
+        QPen pen(c, 2.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
         p.setPen(pen);
+        p.setBrush(Qt::NoBrush);
+        p.drawLine(QPointF(5, 16), QPointF(11, 16));
+        p.drawLine(QPointF(27, 16), QPointF(21, 16));
+        p.setPen(QPen(c, 2.4, Qt::SolidLine, Qt::RoundCap));
+        p.drawLine(QPointF(16, 8), QPointF(16, 24));
+        p.setPen(Qt::NoPen);
         p.setBrush(c);
-        p.drawLine(QPointF(5, 16), QPointF(14, 16));
         QPolygonF l;
-        l << QPointF(11, 12.5) << QPointF(15.5, 16) << QPointF(11, 19.5);
+        l << QPointF(3.5, 16) << QPointF(9, 12.5) << QPointF(9, 19.5);
         p.drawPolygon(l);
-        p.drawLine(QPointF(27, 16), QPointF(18, 16));
         QPolygonF r;
-        r << QPointF(21, 12.5) << QPointF(16.5, 16) << QPointF(21, 19.5);
+        r << QPointF(28.5, 16) << QPointF(23, 12.5) << QPointF(23, 19.5);
         p.drawPolygon(r);
-        p.setPen(QPen(c, 1.4));
-        p.drawLine(QPointF(16, 9), QPointF(16, 23));
     });
 }
 
 QIcon MainWindow::iconSlip() const {
+    const QIcon svg = makeSvgIcon(QStringLiteral(":/icons/slip.svg"));
+    if (!svg.isNull()) return svg;
     return makeIcon([](QPainter& p, const QColor& c) {
         // Slip do Premiere: quadro de filme com seta deslizando ao centro.
-        QPen pen(c, 2.0);
-        pen.setCapStyle(Qt::RoundCap);
-        pen.setJoinStyle(Qt::RoundJoin);
+        QPen pen(c, 2.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
         p.setPen(pen);
         p.setBrush(Qt::NoBrush);
-        p.drawRect(QRectF(6, 7, 20, 18));
+        p.drawRoundedRect(QRectF(6, 7, 20, 18), 4, 4);
         p.setPen(Qt::NoPen);
         p.setBrush(c);
         QPolygonF head;
-        head << QPointF(18, 13.5) << QPointF(18, 18.5) << QPointF(25, 16);
+        head << QPointF(18, 13) << QPointF(18, 19) << QPointF(25.5, 16);
         p.drawPolygon(head);
-        p.drawRect(QRectF(9, 14.6, 8, 2.8));
+        p.drawRoundedRect(QRectF(8.5, 14, 9, 4), 2, 2);
     });
 }
 
 QIcon MainWindow::iconSlide() const {
+    const QIcon svg = makeSvgIcon(QStringLiteral(":/icons/slide.svg"));
+    if (!svg.isNull()) return svg;
     return makeIcon([](QPainter& p, const QColor& c) {
         // Slide do Premiere: quadro de filme com setas em cima e embaixo.
-        QPen pen(c, 2.0);
-        pen.setCapStyle(Qt::RoundCap);
-        pen.setJoinStyle(Qt::RoundJoin);
+        QPen pen(c, 2.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
         p.setPen(pen);
         p.setBrush(Qt::NoBrush);
-        p.drawRect(QRectF(7, 10, 18, 12));
+        p.drawRoundedRect(QRectF(7, 10, 18, 12), 3.5, 3.5);
         p.setPen(Qt::NoPen);
         p.setBrush(c);
         QPolygonF top;
-        top << QPointF(13, 6.5) << QPointF(13, 11) << QPointF(21, 8.75);
+        top << QPointF(13, 6) << QPointF(13, 11) << QPointF(21.5, 8.5);
         p.drawPolygon(top);
-        p.drawRect(QRectF(8, 7.8, 5.5, 1.9));
+        p.drawRoundedRect(QRectF(7.5, 7.6, 6.5, 2.8), 1.4, 1.4);
         QPolygonF bot;
-        bot << QPointF(13, 21) << QPointF(13, 25.5) << QPointF(21, 23.25);
+        bot << QPointF(13, 21) << QPointF(13, 26) << QPointF(21.5, 23.5);
         p.drawPolygon(bot);
-        p.drawRect(QRectF(8, 22.3, 5.5, 1.9));
+        p.drawRoundedRect(QRectF(7.5, 21.6, 6.5, 2.8), 1.4, 1.4);
     });
 }
 
 QIcon MainWindow::iconRateStretch() const {
+    const QIcon svg = makeSvgIcon(QStringLiteral(":/icons/ratestretch.svg"));
+    if (!svg.isNull()) return svg;
     return makeIcon([](QPainter& p, const QColor& c) {
-        // Rate Stretch do Premiere: relógio + seta de velocidade.
-        QPen pen(c, 2.0);
-        pen.setCapStyle(Qt::RoundCap);
-        pen.setJoinStyle(Qt::RoundJoin);
+        // Rate Stretch do Premiere: relógio + seta de velocidade gordinha.
+        QPen pen(c, 2.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
         p.setPen(pen);
         p.setBrush(Qt::NoBrush);
         p.drawEllipse(QPointF(11, 16), 7, 7);
@@ -1521,29 +1630,30 @@ QIcon MainWindow::iconRateStretch() const {
         p.drawLine(QPointF(11, 16), QPointF(15.5, 16));
         p.setPen(Qt::NoPen);
         p.setBrush(c);
-        p.drawRect(QRectF(20, 13.7, 4.5, 4.6));
+        p.drawRoundedRect(QRectF(20.5, 13.5, 5, 5), 1.5, 1.5);
         QPolygonF arrow;
-        arrow << QPointF(24, 12) << QPointF(24, 20) << QPointF(29.5, 16);
+        arrow << QPointF(25.5, 11.5) << QPointF(25.5, 20.5) << QPointF(29.5, 16);
         p.drawPolygon(arrow);
     });
 }
 
 QIcon MainWindow::iconMagnet() const {
+    const QIcon svg = makeSvgIcon(QStringLiteral(":/icons/magnet.svg"));
+    if (!svg.isNull()) return svg;
     return makeIcon([](QPainter& p, const QColor& c) {
         QPainterPath path;
         path.moveTo(7, 24);
         path.lineTo(7, 12);
         path.arcTo(QRectF(7, 3, 18, 18), 180, -180);
         path.lineTo(25, 24);
-        QPen pen(c, 2.2);
-        pen.setCapStyle(Qt::RoundCap);
+        QPen pen(c, 3.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
         p.setPen(pen);
         p.setBrush(Qt::NoBrush);
         p.drawPath(path);
         p.setPen(Qt::NoPen);
         p.setBrush(c);
-        p.drawRoundedRect(QRectF(4, 24, 6, 4), 1, 1);
-        p.drawRoundedRect(QRectF(22, 24, 6, 4), 1, 1);
+        p.drawRoundedRect(QRectF(4, 24, 6, 4.5), 2, 2);
+        p.drawRoundedRect(QRectF(22, 24, 6, 4.5), 2, 2);
     });
 }
 
@@ -1653,9 +1763,11 @@ QIcon MainWindow::iconStepFwd() const {
 }
 
 QIcon MainWindow::iconLoopClear() const {
+    const QIcon svg = makeSvgIcon(QStringLiteral(":/icons/loopclear.svg"));
+    if (!svg.isNull()) return svg;
     return makeIcon([](QPainter& p, const QColor& c) {
-        QPen pen(c, 1.8);
-        pen.setCapStyle(Qt::RoundCap);
+        // Laço de loop + X de "remover", tudo grosso e redondo.
+        QPen pen(c, 2.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
         p.setPen(pen);
         p.setBrush(Qt::NoBrush);
         QPainterPath br;
@@ -1668,47 +1780,51 @@ QIcon MainWindow::iconLoopClear() const {
         br2.lineTo(28, 9);
         br2.lineTo(22, 9);
         p.drawPath(br2);
-        QPen xpen(c, 2.2);
-        xpen.setCapStyle(Qt::RoundCap);
-        p.setPen(xpen);
-        p.drawLine(QPointF(13, 12), QPointF(20, 19));
-        p.drawLine(QPointF(20, 12), QPointF(13, 19));
+        p.drawLine(QPointF(12.5, 11.5), QPointF(19.5, 18.5));
+        p.drawLine(QPointF(19.5, 11.5), QPointF(12.5, 18.5));
     });
 }
 
 QIcon MainWindow::iconRippleDelete() const {
+    const QIcon svg = makeSvgIcon(QStringLiteral(":/icons/rippledelete.svg"));
+    if (!svg.isNull()) return svg;
     return makeIcon([](QPainter& p, const QColor& c) {
-        QPen pen(c, 1.8);
-        pen.setCapStyle(Qt::RoundCap);
+        // Lixeira gordinha (excluir com ripple): tampa + corpo fechado.
+        QPen pen(c, 2.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
         p.setPen(pen);
-        p.drawRoundedRect(QRectF(9, 9, 14, 3), 1, 1);
+        p.setBrush(Qt::NoBrush);
+        p.drawRoundedRect(QRectF(9, 9, 14, 3.5), 1.75, 1.75);
         QPainterPath body;
-        body.moveTo(10.5, 13);
-        body.lineTo(12, 26);
-        body.lineTo(20, 26);
-        body.lineTo(21.5, 13);
+        body.moveTo(10.5, 13.5);
+        body.lineTo(12, 26.5);
+        body.lineTo(20, 26.5);
+        body.lineTo(21.5, 13.5);
+        body.closeSubpath();
         p.drawPath(body);
-        p.drawLine(QPointF(14, 16), QPointF(14, 23));
-        p.drawLine(QPointF(18, 16), QPointF(18, 23));
+        p.drawLine(QPointF(14, 16), QPointF(14, 23.5));
+        p.drawLine(QPointF(18, 16), QPointF(18, 23.5));
     });
 }
 
 QIcon MainWindow::iconTrackStyle() const {
+    const QIcon svg = makeSvgIcon(QStringLiteral(":/icons/trackstyle.svg"));
+    if (!svg.isNull()) return svg;
     return makeIcon([](QPainter& p, const QColor& c) {
-        QPen pen(c, 1.6);
-        pen.setCapStyle(Qt::RoundCap);
-        p.setPen(pen);
-        p.setBrush(Qt::NoBrush);
-        p.drawRoundedRect(QRectF(7, 6, 18, 4), 1, 1);
-        p.drawRoundedRect(QRectF(7, 12.5, 18, 5), 1, 1);
-        p.drawRoundedRect(QRectF(7, 20.5, 18, 7), 1, 1);
+        // Estilo das faixas: três pastilhas de altura crescente.
+        p.setPen(Qt::NoPen);
+        p.setBrush(c);
+        p.drawRoundedRect(QRectF(7, 6, 18, 4), 2, 2);
+        p.drawRoundedRect(QRectF(7, 12.5, 18, 5), 2.5, 2.5);
+        p.drawRoundedRect(QRectF(7, 20, 18, 7), 3.5, 3.5);
     });
 }
 
 QIcon MainWindow::iconGrid() const {
+    const QIcon svg = makeSvgIcon(QStringLiteral(":/icons/grid.svg"));
+    if (!svg.isNull()) return svg;
     return makeIcon([](QPainter& p, const QColor& c) {
-        QPen pen(c, 1.2);
-        pen.setStyle(Qt::DotLine);
+        // Grade pontilhada, traço mais grosso e arredondado.
+        QPen pen(c, 1.8, Qt::DotLine, Qt::RoundCap);
         p.setPen(pen);
         for (int x = 8; x <= 24; x += 4)
             p.drawLine(QPointF(x, 6), QPointF(x, 26));
@@ -1718,14 +1834,17 @@ QIcon MainWindow::iconGrid() const {
 }
 
 QIcon MainWindow::iconRuler() const {
+    const QIcon svg = makeSvgIcon(QStringLiteral(":/icons/ruler.svg"));
+    if (!svg.isNull()) return svg;
     return makeIcon([](QPainter& p, const QColor& c) {
-        QPen pen(c, 1.6);
-        pen.setCapStyle(Qt::RoundCap);
+        // Régua gordinha: corpo arredondado com marcas de medição.
+        QPen pen(c, 2.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
         p.setPen(pen);
-        p.drawLine(QPointF(5, 21), QPointF(27, 21));
+        p.setBrush(Qt::NoBrush);
+        p.drawRoundedRect(QRectF(5, 19, 22, 5), 2.5, 2.5);
         for (int x = 7; x <= 25; x += 2) {
-            const int h = (x % 4 == 3) ? 8 : 4;
-            p.drawLine(QPointF(x, 21), QPointF(x, 21 - h));
+            const int h = (x % 4 == 3) ? 8 : 5;
+            p.drawLine(QPointF(x, 24), QPointF(x, 24 - h));
         }
     });
 }

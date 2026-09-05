@@ -1529,12 +1529,14 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         QAction* transform = nullptr;
         QAction* textAction = nullptr;
         QAction* panCrop = nullptr;
+        QAction* maskAction = nullptr;
         if (!audio) {
             fx = menu.addAction(tr("Efeitos de vídeo…"));
             grade = menu.addAction(tr("Correção de cor…"));
             transform = menu.addAction(tr("Transformar…"));
             textAction = menu.addAction(tr("Texto…"));
             panCrop = menu.addAction(tr("Pancrop…"));
+            maskAction = menu.addAction(tr("Máscara…"));
         } else {
             audioFx = menu.addAction(tr("Efeitos de áudio…"));
         }
@@ -1635,6 +1637,7 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         else if (act == transform) showTransformDialog(clip);
         else if (act == textAction) showTextEditorDialog(clip);
         else if (act == panCrop) emit pancropRequested(clip->id);
+        else if (act == maskAction) emit maskRequested(clip->id);
         else if (act == transDissolve || act == transWipeL || act == transWipeR
                  || act == transWipeU || act == transWipeD
                  || act == transWipeTL || act == transWipeTR

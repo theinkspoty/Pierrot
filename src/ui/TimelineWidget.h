@@ -60,6 +60,8 @@ public:
     double cursorPos() const { return m_cursorT; }
     // IDs dos clipes selecionados (seleção primária — borda laranja).
     QStringList selectedIds() const { return m_selected; }
+    // Localiza um clipe (vídeo ou áudio) pelo id — usado pelo editor de máscara.
+    Clip* findClipById(const QString& id);
     // IDs dos clipes com seleção secundária (tom suave, criados pelo último corte).
     QStringList secondarySelectedIds() const { return m_secondarySelected; }
     // Limpa a seleção primária.
@@ -152,6 +154,7 @@ signals:
     void mesaChanged(const QString& mesaId);
     void selectionChanged(const QString& id);
     void pancropRequested(const QString& id);
+    void maskRequested(const QString& id);
     void propertiesRequested(const QString& id);
     void mediaImported();
 protected:
@@ -196,7 +199,6 @@ private:
     bool rowFromY(int y, int& row, bool& audio) const;
     int resizeHandleAt(const QPoint& pos, int& row, bool& audio) const;
     Clip* clipAt(int row, bool audio, double t) const;
-    Clip* findClipById(const QString& id);
     Track* trackOf(Clip* c);
     QVector<Clip*> groupMembers(const QString& gid);
     QStringList expandToGroups(const QStringList& ids);

@@ -204,6 +204,9 @@ class BannerWidget : public QWidget {
 public:
     explicit BannerWidget(QWidget* parent = nullptr) : QWidget(parent) {}
     void setImage(const QPixmap& pm) { m_pm = pm; update(); }
+    // Cor média da faixa visível: a metade inferior da imagem derrete nessa cor
+    // para a transição com o fundo ficar contínua (sem costura).
+    void setFadeColor(const QColor& c) { m_fade = c; update(); }
 protected:
     void paintEvent(QPaintEvent*) override {
         if (m_pm.isNull()) return;
@@ -213,10 +216,25 @@ protected:
                                   rect().height() / double(m_pm.height()));
         const int w = qCeil(m_pm.width() * scale);
         const int h = qCeil(m_pm.height() * scale);
-        p.drawPixmap((rect().width() - w) / 2, (rect().height() - h) / 2, w, h, m_pm);
+        QPointF origin((rect().width() - w) / 2.0, (rect().height() - h) / 2.0);
+        p.translate(origin);
+        p.scale(scale, scale);
+        p.drawPixmap(0, 0, m_pm);
+        if (m_fade.isValid()) {
+            // Suaviza a parte de baixo da faixa visível até a cor média
+            // (dissolve) — em coordenadas do widget, então acompanha o crop.
+            p.resetTransform();
+            QLinearGradient g(0, rect().height() * 0.45, 0, rect().height());
+            QColor c0 = m_fade; c0.setAlpha(0);
+            QColor c1 = m_fade; c1.setAlpha(150);
+            g.setColorAt(0.0, c0);
+            g.setColorAt(1.0, c1);
+            p.fillRect(rect(), g);
+        }
     }
 private:
     QPixmap m_pm;
+    QColor m_fade;
 };
 
 WelcomeWindow::WelcomeWindow(QWidget* parent) : QDialog(parent) {
@@ -296,13 +314,17 @@ void WelcomeWindow::buildLayout() {
     }
     m_banner->setImage(m_bannerImg);
 
-    // Degradê de transição entre a faixa e o fundo da janela (usa a cor média
-    // da faixa visível, então combina com qualquer imagem).
+    // Cor média da faixa visível: usada para o banner derreter nela e para o
+    // degradê de transição com o fundo (combina com qualquer imagem).
+    const QColor band = avgBandColor(m_bannerImg.toImage());
+    m_banner->setFadeColor(band);
+
+    // Degradê de transição entre a faixa e o fundo da janela: começa na mesma
+    // cor média em que o banner já dissolveu e vai até transparente.
     auto* fade = new QWidget(this);
     fade->setAttribute(Qt::WA_StyledBackground, true);
-    fade->setFixedHeight(28);
-    const QColor band = avgBandColor(m_bannerImg.toImage());
-    const int fadeA = band.lightness() < 120 ? 92 : 65;
+    fade->setFixedHeight(24);
+    const int fadeA = band.lightness() < 120 ? 120 : 85;
     fade->setStyleSheet(QStringLiteral(
         "background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
         " stop:0 rgba(%1,%2,%3,%4), stop:1 rgba(%1,%2,%3,0));")
