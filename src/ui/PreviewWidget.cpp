@@ -733,6 +733,9 @@ public:
         // da camada (raro e, na prática, eco).
         struct SeenWin { QString ps; qint64 os, oe, rf; };
         QVector<SeenWin> seenWin;
+        // Última amostra bruta (pós-FX) dos trechos que terminam no meio do
+        // chunk, por faixa e índice: alimenta o declick por detecção.
+        QHash<QPair<bool,int>, QHash<int, int32_t>> tailXX;
         const auto windowKey = [](const Source* s0) {
             return s0->path + QLatin1Char('|') + QString::number(s0->stream);
         };
@@ -831,31 +834,76 @@ public:
 
             s->fx.process(srcBuf.data(), nFrames);
 
-            // De-click curto nas bordas de contribuição (corte duro sem fade):
-            // rampa suave ~4ms (cosseno) no início e no fim do trecho, forçando
-            // a soma a ~0 na costura — elimina o "pop" da descontinuidade entre
-            // a última amostra do clipe A e a primeira do B.
-            constexpr int kDeclick = 64; // ~1.3ms @48k (dip inaudível em cortes densos)
-            const int prod = i1 - i0;
-            if (i0 > 0 ||
-                (s->srcOutStart == m_outFrame && s->srcOutStart > 0)) {
-                const int n = qMin(kDeclick, prod);
-                for (int k = 0; k < n; ++k) {
-                    const float g =
-                        0.5f * (1.0f - std::cos(float(M_PI * (k + 1)) / n));
-                    const int idx = (i0 + k) * 2;
-                    srcBuf[idx] = (int16_t)(srcBuf[idx] * g);
-                    srcBuf[idx + 1] = (int16_t)(srcBuf[idx + 1] * g);
-                }
+            // Registra a última amostra deste trecho se ele termina no meio
+            // do chunk (será a "costura"): o próximo contribuinte compara com
+            // a própria primeira amostra para só suavizar quando houver salto
+            // real (descontinuidade). Registro por faixa e índice de fim.
+            if (i1 < nFrames) {
+                const int li = (i1 - 1) * 2;
+                QHash<int, int32_t>& m =
+                    tailXX[qMakePair(s->isAudioTrack, s->trackIndex)];
+                m.insert(i1, ((int32_t)srcBuf[li]) << 16
+                                 | ((uint16_t)(uint16_t)srcBuf[li + 1]));
             }
-            if (i1 < nFrames || s->srcOutEnd == chunkEnd) {
+
+            // De-click POR DETECÇÃO (corte duro sem fade): mede o salto entre
+            // a última amostra do trecho anterior (já no barramento) e a
+            // primeira deste. Só aplica crossfade curto (~1.3ms) quando há
+            // descontinuidade real. Costura CONTÍNUA (subclipes do mesmo
+            // arquivo) fica intacta — sem dip = sem "flicada".
+            constexpr int kDeclick = 64; // ~1.3ms @48k
+            const int prod = i1 - i0;
+            const bool headSeam = i0 > 0
+                || (s->srcOutStart == m_outFrame && s->srcOutStart > 0);
+            if (headSeam && prod > 0) {
                 const int n = qMin(kDeclick, prod);
-                for (int k = 0; k < n; ++k) {
-                    const float g =
-                        0.5f * (1.0f + std::cos(float(M_PI * (k + 1)) / n));
-                    const int idx = (i1 - 1 - k) * 2;
-                    srcBuf[idx] = (int16_t)(srcBuf[idx] * g);
-                    srcBuf[idx + 1] = (int16_t)(srcBuf[idx + 1] * g);
+                bool doCrossfade = false;
+                const int16_t firstL = srcBuf[i0 * 2];
+                const int16_t firstR = srcBuf[i0 * 2 + 1];
+                const auto tit =
+                    tailXX.constFind(qMakePair(s->isAudioTrack, s->trackIndex));
+                bool havePred = false;
+                if (tit != tailXX.cend()) {
+                    const auto sit = tit->constFind(i0);
+                    if (sit != tit->cend()) {
+                        havePred = true;
+                        const int32_t v = sit.value();
+                        const int16_t prevL = (int16_t)(v >> 16);
+                        const int16_t prevR = (int16_t)(v & 0xffff);
+                        const float jL = std::fabs((float)prevL - firstL) / 32768.0f;
+                        const float jR = std::fabs((float)prevR - firstR) / 32768.0f;
+                        if (std::max(jL, jR) > 0.25f) doCrossfade = true;
+                    }
+                }
+                if (!havePred
+                    && std::max(qAbs((int)firstL), qAbs((int)firstR)) > 8192) {
+                    // Início sem antecessor (início de clipe/gap): fade-in se
+                    // alto; custura exatamente no limite de chunk rara.
+                    doCrossfade = true;
+                }
+                if (doCrossfade) {
+                    if (i0 > 0) {
+                        // Fade out do trecho anterior já no barramento, junto
+                        // com o fade in deste → crossfade anti-pop sem dip.
+                        int16_t* busf =
+                            buses[busOf(s->isAudioTrack, s->trackIndex)].data();
+                        for (int k = 0; k < n; ++k) {
+                            const float g = 0.5f
+                                * (1.0f + std::cos(float(M_PI * (k + 1)) / n));
+                            const int idx = (i0 - 1 - k) * 2;
+                            busf[idx] = (int16_t)std::lround(busf[idx] * g);
+                            busf[idx + 1] =
+                                (int16_t)std::lround(busf[idx + 1] * g);
+                        }
+                    }
+                    for (int k = 0; k < n; ++k) {
+                        const float g = 0.5f
+                            * (1.0f - std::cos(float(M_PI * (k + 1)) / n));
+                        const int idx = (i0 + k) * 2;
+                        srcBuf[idx] = (int16_t)std::lround(srcBuf[idx] * g);
+                        srcBuf[idx + 1] =
+                            (int16_t)std::lround(srcBuf[idx + 1] * g);
+                    }
                 }
             }
 
