@@ -630,12 +630,6 @@ public:
 
     void setMasterVolume(double v) { m_masterVolume = v; }
 
-    // Relógio de saída em segundos (frames entregues ao sink / 48k).
-    double outputClockSec() {
-        QMutexLocker l(&m_mutex);
-        return (double)m_outFrame / AudioConformCache::kSampleRate;
-    }
-
     // Espera (com timeout) o head de QUEM vai tocar já agora estar conformado,
     // antes de o sink começar a puxar. Elimina o "começa mudo / dessincronizado"
     // do warm-up frio: o áudio começa do conteúdo certo.
@@ -709,7 +703,6 @@ public:
         // barramentos normalmente (sem FX de faixa), preservando a soma.
         QList<QPair<bool,int>> busOrder;
         QHash<QPair<bool,int>, int> busIdx;
-        QHash<QPair<bool,int>, int> trackContrib;
         QVector<QVector<int16_t>> buses;
         auto busOf = [&](bool a, int ti) -> int {
             const QPair<bool,int> k{a, ti};
@@ -763,25 +756,13 @@ public:
                 }
             }
             if (dupWin) {
-                if (audioDbg())
-                    audioLog(QStringLiteral("  dup  ") + s->path.section('/', -1)
-                             + QStringLiteral(" key=") + s->key
-                             + QStringLiteral(" audio=")
-                             + QString::number((int)s->isAudioTrack)
-                             + QStringLiteral(" ti=")
-                             + QString::number(s->trackIndex)
-                             + QStringLiteral(" out[")
-                             + QString::number(s->srcOutStart) + QStringLiteral(",")
-                             + QString::number(s->srcOutEnd) + QStringLiteral(") rf=")
-                             + QString::number(s->readFrame));
                 continue;
             }
             seenWin.append({windowKey(s), s->srcOutStart, s->srcOutEnd,
                             s->readFrame});
             memset(srcBuf.data(), 0, capacity);
 
-            int produced = i1 - i0;
-            int readAvail = produced;
+            const int produced = i1 - i0;
             if (qAbs(s->step - 1.0) < 1e-6) {
                 // Caminho rápido (speed 1x): leitura em bloco + silêncio nas
                 // lacunas ainda não conformadas. `avail` pode ser menor que a
@@ -792,7 +773,6 @@ public:
                     conform.readFrames(s->cache, s->readFrame, i1 - i0,
                                        srcBuf.data() + i0 * 2);
                 s->readFrame += avail;
-                readAvail = avail;
             } else {
                 // speed ≠ 1: interpolação linear posicional — corrige pitch e
                 // duração, que o playback por decoder fazia errado em fluxo.
@@ -819,7 +799,6 @@ public:
                         -32768, std::lround(ar + (br - ar) * frac), 32767);
                 }
                 s->readFrame += (qint64)std::llround((i1 - i0) * step);
-                readAvail = i1 - i0;
             }
 
             // Conform autossustentado: a janela pedida segue o relógio de LEITURA
@@ -939,47 +918,9 @@ public:
             }
             // RMS deste clipe para a faixa correspondente.
             const float rms = std::sqrt(localSumSq / std::max(1, produced * ch));
-            // Diagnóstico temporário (PIERROT_AUDIO_DEBUG): costura/curto.
-            const bool isSeam = (i0 > 0) || (i1 < nFrames)
-                || (s->srcOutStart > 0 && s->srcOutStart == m_outFrame)
-                || s->srcOutEnd == chunkEnd;
-            if (audioDbg() && (isSeam || readAvail != produced)) {
-                audioLog(QStringLiteral(" seam ") + s->path.section('/', -1)
-                         + QStringLiteral(" key=") + s->key
-                         + QStringLiteral(" audio=")
-                         + QString::number((int)s->isAudioTrack)
-                         + QStringLiteral(" ti=")
-                         + QString::number(s->trackIndex)
-                         + QStringLiteral(" ofr=")
-                         + QString::number(m_outFrame)
-                         + QStringLiteral(" out[")
-                         + QString::number(s->srcOutStart) + QStringLiteral(",")
-                         + QString::number(s->srcOutEnd) + QStringLiteral(") i[")
-                         + QString::number(i0) + QStringLiteral(",")
-                         + QString::number(i1) + QStringLiteral(") want=")
-                         + QString::number(produced) + QStringLiteral(" avail=")
-                         + QString::number(readAvail) + QStringLiteral(" vol=")
-                         + QString::number(s->vol, 'f', 3) + QStringLiteral(" step=")
-                         + QString::number(s->step, 'f', 2) + QStringLiteral(" rms=")
-                         + QString::number(rms * 100.0, 'f', 1) + QStringLiteral("%"));
-            }
             const auto key = qMakePair(s->isAudioTrack, s->trackIndex);
             sumSq[key] += rms * rms;
             countSq[key] += 1;
-            ++trackContrib[key];
-        }
-        if (audioDbg()) {
-            static QElapsedTimer tcT;
-            static bool tcReady = false;
-            if (!tcReady) { tcReady = true; tcT.start(); }
-            for (auto it = trackContrib.cbegin(); it != trackContrib.cend(); ++it)
-                if (it.key().first && it.value() > 1 && tcT.elapsed() > 300) {
-                    tcT.restart();
-                    audioLog(QStringLiteral(" multi faixa=")
-                             + QString::number(it.key().second)
-                             + QStringLiteral(" fontes=")
-                             + QString::number(it.value()));
-                }
         }
         // O relógio de saída avança uma "chunk" por leitura — sempre.
         m_outFrame += nFrames;
@@ -1022,26 +963,6 @@ public:
             masterSq += s * s;
         }
         const float masterRms = std::sqrt(masterSq / std::max(1, totalSamples));
-
-        // Diagnóstico temporário (PIERROT_AUDIO_DEBUG): pico de amplitude do
-        // chunk final. Flag quando passa de ~61% do fundo de escala — os
-        // "estouros" de volume costumam aparecer aqui como picos curtos
-        // correlacionados com as costuras (ofr dos seams).
-        if (audioDbg()) {
-            int peakAmp = 0;
-            for (int i = 0; i < totalSamples; ++i) {
-                const int a = qAbs((int)final[i]);
-                if (a > peakAmp) peakAmp = a;
-            }
-            if (peakAmp >= 20000)
-                audioLog(QStringLiteral(" PICO ofr=")
-                         + QString::number(m_outFrame - nFrames)
-                         + QStringLiteral(" pico=")
-                         + QString::number(peakAmp)
-                         + QStringLiteral(" rms=")
-                         + QString::number(masterRms * 100.0, 'f', 1)
-                         + QStringLiteral("%"));
-        }
 
         // Salva níveis (thread-safe).
         {
@@ -2291,23 +2212,6 @@ void PreviewWidget::stopAudio() {
 void PreviewWidget::updateMixAudio(double t, bool reseek) {
     if (!m_audioFeed) return;
     m_audioFeed->setMasterVolume(m_project ? m_project->masterVolume : 1.0);
-    // Diagnóstico de fase A/V (PIERROT_AUDIO_DEBUG): se as fontes são lidas no
-    // mesmo ritmo do playhead, o desvio t - saída fica pequeno e constante.
-    if (audioDbg()) {
-        const double avDelta = t - m_audioFeed->outputClockSec();
-        static bool etInit = false;
-        static quint64 avLastMs = 0;
-        static QElapsedTimer avLog;
-        if (!etInit) { avLog.start(); etInit = true; }
-        const quint64 ms = (quint64)avLog.elapsed();
-        if (ms - avLastMs > 400 && std::fabs(avDelta) > 0.05) {
-            avLastMs = ms;
-            qDebug().noquote() << QStringLiteral("[audio] fase A/V: %1 s (vídeo=%2, saída=%3)")
-                                      .arg(avDelta, 0, 'f', 3)
-                                      .arg(t, 0, 'f', 3)
-                                      .arg(t - avDelta, 0, 'f', 3);
-        }
-    }
     const QVector<AudioMixer::SourceInfo> sources = buildMixSources(m_project, t);
     const QVector<AudioMixer::SourceInfo> warm =
         buildWarmSources(m_project, t, sources);
