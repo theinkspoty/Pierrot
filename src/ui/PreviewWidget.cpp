@@ -52,11 +52,42 @@
 #include <vector>
 #include <QHash>
 #include <QMutex>
+#include <QFile>
+#include <QDir>
+#include <QStandardPaths>
+#include <QTime>
 
 // Diagnóstico do caminho de áudio do preview: ligue com PIERROT_AUDIO_DEBUG=1.
 static bool audioDbg() {
     static const bool on = qEnvironmentVariableIsSet("PIERROT_AUDIO_DEBUG");
     return on;
+}
+
+// Log de áudio em arquivo + console. Arquivo: $QStandardPaths::AppConfigLocation
+// (ex.: ~/.config/Pierrot/pierrot_audio.log), append, reaberto a cada execução.
+static QFile* audioLogFile() {
+    static QFile* f = [] {
+        QFile* fp = nullptr;
+        if (qEnvironmentVariableIsSet("PIERROT_AUDIO_DEBUG")) {
+            const QString dir =
+                QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+            QDir().mkpath(dir);
+            fp = new QFile(dir + QStringLiteral("/pierrot_audio.log"));
+            fp->open(QIODevice::Append | QIODevice::Text);
+        }
+        return fp;
+    }();
+    return f;
+}
+static void audioLog(const QString& s) {
+    if (QFile* f = audioLogFile()) {
+        f->write(QStringLiteral("%1 %2\n")
+                     .arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss.zzz")),
+                          s)
+                     .toUtf8());
+        f->flush();
+    }
+    if (audioDbg()) qDebug().noquote() << "[audio]" << s;
 }
 
 // Diagnóstico da composição multi-faixa do preview: ligue com PIERROT_COMPOSE_DEBUG=1.
@@ -492,8 +523,47 @@ public:
         };
         const bool jumping = reseek;
 
+        // Dedupe por GEOMETRIA DE MÍDIA sobreposta (mesmo arquivo + stream e
+        // janelas de saída que se INTERCEPTAM). É a duplicação real: duas
+        // cópias do mesmo trecho (ex.: clipe de vídeo + clipe de áudio do
+        // mesmo grupo, ou clipe duplicado) contribuem juntas → soma ~2x no
+        // corte (pico de volume) e eco (mesmo conteúdo defasado). Mantém a
+        // PRIMEIRA cópia vista; a seguinte é descartada. Se a ordem alternar
+        // entre ticks, o Source sobrevive sem reinicialização (não-fresh), então
+        // a leitura contínua não quebra.
+        struct GeomRec { QString ps; qint64 os, oe; };
+        QVector<GeomRec> geomSeen;
+        auto geomDup = [&](const SourceInfo& w) {
+            const qint64 cStartSr = (qint64)std::llround(w.clipPos * sr);
+            const qint64 os = qMax(cStartSr, m_outFrame);
+            const qint64 oe = (qint64)std::llround((w.clipPos + w.clipDur) * sr);
+            const QString ps = w.path + QLatin1Char('|')
+                             + QString::number(w.audioStream);
+            for (const GeomRec& g : geomSeen)
+                if (g.ps == ps && os < g.oe && g.os < oe) return true;
+            geomSeen.append({ps, os, oe});
+            return false;
+        };
+
+        // Ordena as entradas de forma DETERMINÍSTICA (cópia da faixa de áudio
+        // primeiro; desempate por key). O overvivente do dedupe de geometria
+        // depende da ordem: se ela oscilar entre ticks (QHash do `reps`),
+        // a cada tick um Source é apagado e o outro recriado → churn do cache
+        // do conform → micro-silêncios = a "flicada". Com ordem estável, o
+        // mesmo Source sobrevive a reprodução inteira.
+        QVector<SourceInfo> wantO = want;
+        QVector<SourceInfo> warmO = warm;
+        const auto preferStable = [](const SourceInfo& a, const SourceInfo& b) {
+            if (a.isAudioTrack != b.isAudioTrack) return a.isAudioTrack;
+            if (a.key != b.key) return a.key < b.key;
+            return false;
+        };
+        std::stable_sort(wantO.begin(), wantO.end(), preferStable);
+        std::stable_sort(warmO.begin(), warmO.end(), preferStable);
+
         QSet<QString> keep;
-        for (const SourceInfo& w : want) {
+        for (const SourceInfo& w : wantO) {
+            if (geomDup(w)) continue; // duplicata: a primeira cópia já é suficiente
             keep.insert(w.key);
             Source* s = findLocked(w.key);
             if (!s) { s = new Source; s->key = w.key; m_sources.append(s); }
@@ -520,8 +590,9 @@ public:
         // Lookahead (janela adiante): fontes criadas ATIVAS, mas contribuindo
         // zero até o seu frame de saída de início (gating). No corte, o clipe
         // direito já estará no mix na chunk que atravessa a costura.
-        for (const SourceInfo& w : warm) {
+        for (const SourceInfo& w : warmO) {
             if (keep.contains(w.key)) continue;
+            if (geomDup(w)) continue; // duplicata: a primeira cópia já é suficiente
             keep.insert(w.key);
             Source* s = findLocked(w.key);
             if (!s) { s = new Source; s->key = w.key; m_sources.append(s); }
@@ -638,6 +709,7 @@ public:
         // barramentos normalmente (sem FX de faixa), preservando a soma.
         QList<QPair<bool,int>> busOrder;
         QHash<QPair<bool,int>, int> busIdx;
+        QHash<QPair<bool,int>, int> trackContrib;
         QVector<QVector<int16_t>> buses;
         auto busOf = [&](bool a, int ti) -> int {
             const QPair<bool,int> k{a, ti};
@@ -650,6 +722,20 @@ public:
             return idx;
         };
 
+        // Dedupe: duas fontes com a MESMA janela de mídia (mesmo arquivo,
+        // stream, inicio/fim de saida e frame de leitura) só contribuem uma
+        // vez. Antes, um clipe duplicado/travado no mesmo spot somava 2x no
+        // barramento (volume "estoura" no corte). A tolerância de ~16 frames
+        // cobre duplicatas levemente deslocadas (que soariam como COMB/ECO).
+        //
+        // NOTA: um crossfade legítimo entre clipes do MESMO arquivo na mesma
+        // posição é indistinguível de duplicação — nestes casos o mix abre mão
+        // da camada (raro e, na prática, eco).
+        struct SeenWin { QString ps; qint64 os, oe, rf; };
+        QVector<SeenWin> seenWin;
+        const auto windowKey = [](const Source* s0) {
+            return s0->path + QLatin1Char('|') + QString::number(s0->stream);
+        };
         for (Source* s : m_sources) {
             if (!s->cache) continue;
             // Gating por tempo de SAÍDA absoluto: esta fonte só contribui nos
@@ -663,9 +749,36 @@ public:
             if (cEnd <= cStart) continue; // totalmente fora da janela
             const int i0 = (int)(cStart - m_outFrame);
             const int i1 = (int)(cEnd - m_outFrame);
+            if (i1 <= i0) continue;
+            bool dupWin = false;
+            for (const SeenWin& w : seenWin) {
+                if (w.ps == windowKey(s) && qAbs(w.os - s->srcOutStart) <= 16
+                    && qAbs(w.oe - s->srcOutEnd) <= 16
+                    && qAbs(w.rf - s->readFrame) <= 16) {
+                    dupWin = true;
+                    break;
+                }
+            }
+            if (dupWin) {
+                if (audioDbg())
+                    audioLog(QStringLiteral("  dup  ") + s->path.section('/', -1)
+                             + QStringLiteral(" key=") + s->key
+                             + QStringLiteral(" audio=")
+                             + QString::number((int)s->isAudioTrack)
+                             + QStringLiteral(" ti=")
+                             + QString::number(s->trackIndex)
+                             + QStringLiteral(" out[")
+                             + QString::number(s->srcOutStart) + QStringLiteral(",")
+                             + QString::number(s->srcOutEnd) + QStringLiteral(") rf=")
+                             + QString::number(s->readFrame));
+                continue;
+            }
+            seenWin.append({windowKey(s), s->srcOutStart, s->srcOutEnd,
+                            s->readFrame});
             memset(srcBuf.data(), 0, capacity);
 
             int produced = i1 - i0;
+            int readAvail = produced;
             if (qAbs(s->step - 1.0) < 1e-6) {
                 // Caminho rápido (speed 1x): leitura em bloco + silêncio nas
                 // lacunas ainda não conformadas. `avail` pode ser menor que a
@@ -676,6 +789,7 @@ public:
                     conform.readFrames(s->cache, s->readFrame, i1 - i0,
                                        srcBuf.data() + i0 * 2);
                 s->readFrame += avail;
+                readAvail = avail;
             } else {
                 // speed ≠ 1: interpolação linear posicional — corrige pitch e
                 // duração, que o playback por decoder fazia errado em fluxo.
@@ -702,6 +816,7 @@ public:
                         -32768, std::lround(ar + (br - ar) * frac), 32767);
                 }
                 s->readFrame += (qint64)std::llround((i1 - i0) * step);
+                readAvail = i1 - i0;
             }
 
             // Conform autossustentado: a janela pedida segue o relógio de LEITURA
@@ -715,6 +830,35 @@ public:
                             3.0);
 
             s->fx.process(srcBuf.data(), nFrames);
+
+            // De-click curto nas bordas de contribuição (corte duro sem fade):
+            // rampa suave ~4ms (cosseno) no início e no fim do trecho, forçando
+            // a soma a ~0 na costura — elimina o "pop" da descontinuidade entre
+            // a última amostra do clipe A e a primeira do B.
+            constexpr int kDeclick = 64; // ~1.3ms @48k (dip inaudível em cortes densos)
+            const int prod = i1 - i0;
+            if (i0 > 0 ||
+                (s->srcOutStart == m_outFrame && s->srcOutStart > 0)) {
+                const int n = qMin(kDeclick, prod);
+                for (int k = 0; k < n; ++k) {
+                    const float g =
+                        0.5f * (1.0f - std::cos(float(M_PI * (k + 1)) / n));
+                    const int idx = (i0 + k) * 2;
+                    srcBuf[idx] = (int16_t)(srcBuf[idx] * g);
+                    srcBuf[idx + 1] = (int16_t)(srcBuf[idx + 1] * g);
+                }
+            }
+            if (i1 < nFrames || s->srcOutEnd == chunkEnd) {
+                const int n = qMin(kDeclick, prod);
+                for (int k = 0; k < n; ++k) {
+                    const float g =
+                        0.5f * (1.0f + std::cos(float(M_PI * (k + 1)) / n));
+                    const int idx = (i1 - 1 - k) * 2;
+                    srcBuf[idx] = (int16_t)(srcBuf[idx] * g);
+                    srcBuf[idx + 1] = (int16_t)(srcBuf[idx + 1] * g);
+                }
+            }
+
             const int16_t* src = srcBuf.constData();
             int16_t* bus = buses[busOf(s->isAudioTrack, s->trackIndex)].data();
             // Pan por canal, mesma regra do export: centro = 1:1 (0dB, sem
@@ -747,9 +891,47 @@ public:
             }
             // RMS deste clipe para a faixa correspondente.
             const float rms = std::sqrt(localSumSq / std::max(1, produced * ch));
+            // Diagnóstico temporário (PIERROT_AUDIO_DEBUG): costura/curto.
+            const bool isSeam = (i0 > 0) || (i1 < nFrames)
+                || (s->srcOutStart > 0 && s->srcOutStart == m_outFrame)
+                || s->srcOutEnd == chunkEnd;
+            if (audioDbg() && (isSeam || readAvail != produced)) {
+                audioLog(QStringLiteral(" seam ") + s->path.section('/', -1)
+                         + QStringLiteral(" key=") + s->key
+                         + QStringLiteral(" audio=")
+                         + QString::number((int)s->isAudioTrack)
+                         + QStringLiteral(" ti=")
+                         + QString::number(s->trackIndex)
+                         + QStringLiteral(" ofr=")
+                         + QString::number(m_outFrame)
+                         + QStringLiteral(" out[")
+                         + QString::number(s->srcOutStart) + QStringLiteral(",")
+                         + QString::number(s->srcOutEnd) + QStringLiteral(") i[")
+                         + QString::number(i0) + QStringLiteral(",")
+                         + QString::number(i1) + QStringLiteral(") want=")
+                         + QString::number(produced) + QStringLiteral(" avail=")
+                         + QString::number(readAvail) + QStringLiteral(" vol=")
+                         + QString::number(s->vol, 'f', 3) + QStringLiteral(" step=")
+                         + QString::number(s->step, 'f', 2) + QStringLiteral(" rms=")
+                         + QString::number(rms * 100.0, 'f', 1) + QStringLiteral("%"));
+            }
             const auto key = qMakePair(s->isAudioTrack, s->trackIndex);
             sumSq[key] += rms * rms;
             countSq[key] += 1;
+            ++trackContrib[key];
+        }
+        if (audioDbg()) {
+            static QElapsedTimer tcT;
+            static bool tcReady = false;
+            if (!tcReady) { tcReady = true; tcT.start(); }
+            for (auto it = trackContrib.cbegin(); it != trackContrib.cend(); ++it)
+                if (it.key().first && it.value() > 1 && tcT.elapsed() > 300) {
+                    tcT.restart();
+                    audioLog(QStringLiteral(" multi faixa=")
+                             + QString::number(it.key().second)
+                             + QStringLiteral(" fontes=")
+                             + QString::number(it.value()));
+                }
         }
         // O relógio de saída avança uma "chunk" por leitura — sempre.
         m_outFrame += nFrames;
@@ -792,6 +974,26 @@ public:
             masterSq += s * s;
         }
         const float masterRms = std::sqrt(masterSq / std::max(1, totalSamples));
+
+        // Diagnóstico temporário (PIERROT_AUDIO_DEBUG): pico de amplitude do
+        // chunk final. Flag quando passa de ~61% do fundo de escala — os
+        // "estouros" de volume costumam aparecer aqui como picos curtos
+        // correlacionados com as costuras (ofr dos seams).
+        if (audioDbg()) {
+            int peakAmp = 0;
+            for (int i = 0; i < totalSamples; ++i) {
+                const int a = qAbs((int)final[i]);
+                if (a > peakAmp) peakAmp = a;
+            }
+            if (peakAmp >= 20000)
+                audioLog(QStringLiteral(" PICO ofr=")
+                         + QString::number(m_outFrame - nFrames)
+                         + QStringLiteral(" pico=")
+                         + QString::number(peakAmp)
+                         + QStringLiteral(" rms=")
+                         + QString::number(masterRms * 100.0, 'f', 1)
+                         + QStringLiteral("%"));
+        }
 
         // Salva níveis (thread-safe).
         {

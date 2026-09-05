@@ -81,6 +81,11 @@ protected:
     bool m_audioClockOn = false;
     double m_audioLastRaw = -1.0;
     qint64 m_lastAnchorClockMs = -1;
+    // Segura o vídeo no frame inicial até o sink de áudio começar a consumir
+    // de verdade (dispositivo a acordar): evita o vídeo andar adiante e
+    // "pular" a agulha quando o áudio finalmente toca. Timeout opcional em ms.
+    bool m_awaitingAudio = false;
+    qint64 m_awaitAudioDeadlineMs = -1;
     std::atomic<int> m_audioGen{0};
     qint64 m_currentFrameIndex = -1;
     bool m_playing = true;

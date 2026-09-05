@@ -56,6 +56,8 @@ void PlaybackEngine::seek(double t) {
         m_playStart = snapped;
         m_clock.restart();
         m_audioLastRaw = -1.0; // próxima leitura só serve para detectar progresso
+        m_awaitingAudio = false; // scrub: solta o gate do dispositivo
+        m_awaitAudioDeadlineMs = -1;
         anchorAudioClock(snapped);
         onMixAudio(snapped, true);
         TlLog::note(QStringLiteral("seek playing -> %1").arg(snapped, 0, 'f', 2));
@@ -104,6 +106,8 @@ void PlaybackEngine::togglePlay() {
     m_clock.start();
     m_playRate = 1.0;
     m_audioClockOn = false; // sink novo: reancora no primeiro tick
+    m_awaitingAudio = true;
+    m_awaitAudioDeadlineMs = m_clock.elapsed() + 2000;
     m_playing = true;
     setFrameInterval();
     if (m_timer) m_timer->start();
@@ -139,6 +143,8 @@ void PlaybackEngine::shuttle(int dir) {
     m_playStart = m_playhead;
     m_clock.start();
     m_audioClockOn = false;
+    m_awaitingAudio = (m_playRate == 1.0);
+    m_awaitAudioDeadlineMs = m_awaitingAudio ? (m_clock.elapsed() + 2000) : -1;
     m_playing = true;
     setFrameInterval();
     if (m_timer) m_timer->start();
@@ -157,6 +163,8 @@ void PlaybackEngine::playFrom(double t) {
     m_clock.start();
     m_playRate = 1.0;
     m_audioClockOn = false; // sink novo: reancora no primeiro tick
+    m_awaitingAudio = true;
+    m_awaitAudioDeadlineMs = m_clock.elapsed() + 2000;
     m_playing = true;
     setFrameInterval();
     if (m_timer) m_timer->start();
@@ -177,6 +185,8 @@ void PlaybackEngine::setLoopEnabled(bool enabled) {
 void PlaybackEngine::stopPlaybackInternal() {
     m_playing = false;
     m_playRate = 1.0;
+    m_awaitingAudio = false;
+    m_awaitAudioDeadlineMs = -1;
     if (m_timer) m_timer->stop();
     if (m_playBtn) m_playBtn->setText(QStringLiteral("Reproduzir"));
     m_currentFrameIndex = -1;
@@ -207,6 +217,28 @@ void PlaybackEngine::tick() {
     // do início). Se o áudio não avançou desde o tick anterior, confia no
     // relógio de parede até ele voltar a correr.
     const double raw = (m_playRate == 1.0) ? audioClockSec() : -1.0;
+
+    // Espera de dispositivo: no início do play o sink pode demorar a começar
+    // a consumir (device "suspend", PulseAudio a acordar). Durante isso, segura
+    // o vídeo no frame inicial e, quando o áudio avança de VERDADE, descarta o
+    // tempo morto — senão a agulha percorre a timeline "no escuro" e o áudio,
+    // ao entrar, puxa a agulha de volta (o "pula uma boa parte das faixas").
+    if (m_awaitingAudio) {
+        const bool live = raw > 0.0
+            && (m_audioLastRaw < 0.0 || raw > m_audioLastRaw + 1e-6);
+        if (!live) {
+            if (m_awaitAudioDeadlineMs >= 0
+                && m_clock.elapsed() < m_awaitAudioDeadlineMs) {
+                return; // dispositivo ainda acordando: mantém o frame
+            }
+            m_awaitAudioDeadlineMs = -1; // timeout: segue no relógio de parede
+        }
+        m_awaitingAudio = false;
+        m_clock.restart();
+        m_audioClockOn = false; // re-ancora no áudio real no bloco abaixo
+        t = m_playStart;
+    }
+
     if (raw >= 0.0) {
         const bool audioAdvanced = m_audioLastRaw < 0.0 || raw > m_audioLastRaw + 1e-6;
         m_audioLastRaw = raw;

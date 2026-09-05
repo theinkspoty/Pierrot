@@ -280,7 +280,7 @@ void AudioConformCache::doFill(Chunk* c, double startSec, double horizonSec,
             const int got = dec.decodeAudio(buf.data(),
                                             (int)(buf.size() * sizeof(int16_t)));
             if (got <= 0) {
-                if (++zeros >= 8) return; // provavelmente fim de arquivo
+                if (++zeros >= 8) break; // fim de arquivo
                 continue;
             }
             zeros = 0;
@@ -289,6 +289,19 @@ void AudioConformCache::doFill(Chunk* c, double startSec, double horizonSec,
             fillRegion(c, decPos, buf.data(), frames);
             decPos += frames;
             sessionWritten += frames;
+        }
+        // Fim de arquivo antes do fim da janela: o restante é silêncio. Marca a
+        // cauda como coberta para o worker NÃO re-buscar o mesmo ponto sem fim
+        // (busy-loop de re-seek + "decodeAudio -> 0 bytes" para sempre).
+        if (zeros >= 8 && decPos < wantEnd) {
+            static const std::vector<int16_t> zbuf(4096 * kChannels, 0);
+            while (decPos < wantEnd) {
+                const qint64 f = qMin<qint64>(zbuf.size() / (2 * kChannels),
+                                              wantEnd - decPos);
+                if (f <= 0) break;
+                fillRegion(c, decPos, zbuf.data(), f);
+                decPos += f;
+            }
         }
     }
 }
