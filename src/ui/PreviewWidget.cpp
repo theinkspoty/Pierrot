@@ -8,6 +8,7 @@
 #include "ui/SettingsDialog.h"
 #include "ui/TlLog.h"
 #include "ffmpeg/ProxyManager.h"
+#include "ffmpeg/AudioConformCache.h"
 #include "ofx/OfxRenderer.h"
 #include "ofx/OfxPluginManager.h"
 #include "export/LainkaFx.h"
@@ -26,7 +27,6 @@
 #include <QComboBox>
 #include <QSignalBlocker>
 #include <QPointer>
-#include <QtConcurrent/QtConcurrent>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QShortcut>
@@ -181,9 +181,11 @@ private:
 
 // Mixer de áudio: soma o PCM de todos os clipes ativos em `t` (clipe de vídeo
 // + faixas de áudio), cada um com volume próprio (clipe, envelope e faixa).
-// Todos os FFmpegDecoder resampleiam para S16/48 kHz/estéreo, então misturar
-// é alinhar amostra a amostra. A thread do QAudioSink chama readData(); a UI
-// chama updateSources() conforme o playhead avança.
+// A camada de conform (AudioConformCache) decodifica cada arquivo+stream UMA
+// vez, em background, para S16/48 kHz/estéreo; o mixer só lê fatias por índice
+// — um corte é leitura contígua do mesmo buffer, então eco de junção é
+// impossível. A thread do QAudioSink chama readData(); a UI chama updateSources()
+// conforme o playhead avança.
 
 // DSP dos efeitos de áudio do preview — réplica em tempo real do que a
 // exportação aplica via ffmpeg:
@@ -401,6 +403,10 @@ public:
         int trackIndex = -1;   // índice da faixa (dentro de video/audio)
         bool isAudioTrack = false;
         double pan = 0.0;      // -1..+1, 0=centro
+        double speed = 1.0;     // frames de mídia por frame de saída (=taxa do clipe)
+        double clipPos = 0.0;   // início do clipe na linha do tempo (s)
+        double clipDur = 0.0;   // duração do clipe na linha do tempo (s)
+        double mediaStart = 0.0; // início do intervalo de mídia do clipe (in, s)
         // FX de áudio da FAIXA (aplicados ao barramento da faixa de áudio,
         // depois da soma dos clipes dela; iguais para todas as fontes dela).
         bool trackFxOn = false;
@@ -418,198 +424,171 @@ public:
     explicit AudioMixer(QObject* parent = nullptr) : QIODevice(parent) {
         setOpenMode(ReadOnly | Unbuffered);
     }
-    // O m_jobMutex é adquirido por TODO updateSources/shutdown/destrutor:
-    // jobs rodando no pool de threads nunca se sobrepõem nem correm contra a
-    // destruição do mixer. O m_jobSeq descarta pedidos velhos (cliques rápidos
-    // na timeline: só o último seek precisa executar).
     ~AudioMixer() override {
         QMutexLocker job(&m_jobMutex);
         QMutexLocker l(&m_mutex);
-        for (Source* s : m_sources) { s->dec.close(); delete s; }
+        qDeleteAll(m_sources);
         m_sources.clear();
-        drainClosing();
     }
 
-    // atualiza o conjunto de fontes ativas para o playhead atual.
-    // reseek=true: reposiciona as fontes existentes (loop, salto de playhead).
-    // seq >= 0: só executa se ainda for o pedido mais recente (cliques
-    // rápidos — pedidos intermediários são descartados antes de abrir/seek).
+    // Atualiza o conjunto de fontes para o playhead atual. Com a camada de
+    // conform (AudioConformCache) aqui NÃO há mais decoders: cada fonte lê, por
+    // índice de amostra, uma fatia do PCM já decodificado em background.
     //
-    // Executa em 3 fases para NÃO segurar m_mutex durante open()/seekAudio():
-    // esses dois custam segundos em arquivos grandes e, com o mutex tomado,
-    // readData (thread do sink) ficava bloqueada → underrun → relógio de
-    // áudio congelava. Cada FFmpegDecoder tem mutex próprio, então abrir/
-    // reposicionar fora do lock é seguro; enquanto isso readData simplesmente
-    // não encontra amostras da fonte ainda não pronta (silêncio momentâneo).
+    // COSTURA SEM LACUNA: cada Source contribui apenas dentro do seu intervalo
+    // de TEMPO DE SAÍDA absoluto [srcOutStart, srcOutEnd). O clipe à direita de
+    // um corte é criado como fonte ATIVA já no lookahead (warm) — mas gated
+    // (contribui zero até o seu início). Assim, na "chunk" que cruza a costura,
+    // a esquerda contribui [.., corte) e a direita [corte, ..): é uma troca de
+    // contribuição no MESMO buffer, amostra-exata, sem eco nem vazio. O antigo
+    // clamp por média (endFrame) injetava silêncio no sink → era o "flick".
+    //
+    // reseek=true re-ancora o relógio de saída (m_outFrame) no novo playhead e
+    // re-inicializa todas as fontes; `seq` ficou sem efeito.
     void updateSources(const QVector<SourceInfo>& want, bool reseek,
                        const QVector<SourceInfo>& warm = QVector<SourceInfo>(),
-                       int seq = -1) {
+                       int seq = -1, double anchorSec = 0.0) {
         QMutexLocker job(&m_jobMutex);
-        if (m_shutdown || (seq >= 0 && seq != m_jobSeq.load())) return;
-        struct Job {
-            Source* s = nullptr;
-            QString path;
-            int stream = 0;
-            double pos = 0.0;
-            bool open = false;
-            bool seek = false;
-            bool failed = false;
+        Q_UNUSED(seq);
+        QMutexLocker l(&m_mutex);
+        if (m_shutdown) return;
+
+        auto& conform = AudioConformCache::instance();
+
+        if (reseek) {
+            // Re-âncora o tempo de saída no novo playhead.
+            m_outFrame =
+                (qint64)std::llround(anchorSec * AudioConformCache::kSampleRate);
+        }
+
+        // Reconstrói as cadeias FX por faixa a cada atualização: evita
+        // entradas órfãs e garante que o estado acompanhe os parâmetros.
+        m_trackFx.clear();
+
+        // Fixa a contribuição de um Source no tempo de saída: gating por
+        // [srcOutStart, srcOutEnd) e ponteiro de mídia ancorado no frame de
+        // saída em que a fonte passa a contribuir (leitura contínua do conform).
+        const qint64 sr = AudioConformCache::kSampleRate;
+        auto initSource = [&](Source* s, const SourceInfo& w) {
+            const qint64 clipStartSr = (qint64)std::llround(w.clipPos * sr);
+            const qint64 outStart = qMax(clipStartSr, m_outFrame);
+            s->srcOutStart = outStart;
+            s->srcOutEnd = (qint64)std::llround((w.clipPos + w.clipDur) * sr);
+            s->readFrame = (qint64)std::llround(w.mediaStart * sr)
+                         + (qint64)std::llround((outStart - clipStartSr) * w.speed);
+            s->step = qMax(0.01, w.speed);
+            s->fx.resetState();
         };
-        QVector<Job> jobs;
-        QSet<QString> wantKeys;
-        {
-            QMutexLocker l(&m_mutex);
-            if (m_shutdown) return;
-            // Reconstrói as cadeias FX por faixa a cada atualização: evita
-            // entradas órfãs e garante que o estado acompanhe os parâmetros.
-            m_trackFx.clear();
-            for (const SourceInfo& w : want) {
-                wantKeys.insert(w.key);
-                Source* s = findLocked(w.key);
-                if (!s) {
-                    s = new Source;
-                    s->key = w.key;
-                    s->active = true; // visível já na fase 1; silêncio até abrir
-                    m_sources.append(s);
-                }
-                s->vol = w.vol;
-                s->pan = w.pan;
-                s->trackIndex = w.trackIndex;
-                s->isAudioTrack = w.isAudioTrack;
-                s->fx.configure(w.eqLow, w.eqMid, w.eqHigh, w.denoise,
-                                w.denoiseAmount, w.invertPhase, w.normalize,
-                                w.reverb, w.reverbMix, w.reverbSize);
-                if (w.isAudioTrack) {
-                    AudioFx& tfx = m_trackFx[qMakePair(w.isAudioTrack, w.trackIndex)];
-                    tfx.configure(w.trackFxEqLow, w.trackFxEqMid, w.trackFxEqHigh,
-                                  w.trackFxDenoise, w.trackFxDenoiseAmount,
-                                  w.trackFxInvertPhase, false,
-                                  w.trackFxReverb, w.trackFxReverbMix, w.trackFxReverbSize);
-                }
-                s->active = true;
-                Job j;
-                j.s = s;
-                j.path = w.path;
-                j.stream = w.audioStream;
-                j.pos = w.mediaPos;
-                if (!s->opened || s->path != w.path || s->stream != w.audioStream) {
-                    j.open = true;  // arquivo/stream novo: precisa reabrir
-                    j.seek = true;
-                } else if (reseek) {
-                    j.seek = true;
-                }
-                jobs.append(j);
+        auto applyParams = [&](Source* s, const SourceInfo& w) {
+            s->vol = w.vol;
+            s->pan = w.pan;
+            s->trackIndex = w.trackIndex;
+            s->isAudioTrack = w.isAudioTrack;
+            s->step = qMax(0.01, w.speed);
+            s->srcOutEnd = (qint64)std::llround((w.clipPos + w.clipDur) * sr);
+            s->fx.configure(w.eqLow, w.eqMid, w.eqHigh, w.denoise,
+                            w.denoiseAmount, w.invertPhase, w.normalize,
+                            w.reverb, w.reverbMix, w.reverbSize);
+        };
+        const bool jumping = reseek;
+
+        QSet<QString> keep;
+        for (const SourceInfo& w : want) {
+            keep.insert(w.key);
+            Source* s = findLocked(w.key);
+            if (!s) { s = new Source; s->key = w.key; m_sources.append(s); }
+            const bool fresh = jumping || !s->cache
+                || s->path != w.path || s->stream != w.audioStream;
+            if (fresh) {
+                s->cache = conform.get(w.path, w.audioStream);
+                s->path = w.path;
+                s->stream = w.audioStream;
+                initSource(s, w);
             }
-            // Pré-aquecimento (lookahead): abre/posiciona decoders dos clipes
-            // que entram dentro da janela adiante, mas SEM ativá-los (ficam em
-            // silêncio até o playhead chegar). Assim o corte de uma faixa para
-            // a outra não tem janela de silêncio — a fonte já está pronta.
-            for (const SourceInfo& w : warm) {
-                if (wantKeys.contains(w.key)) continue; // já ativo neste tick
-                Source* s = findLocked(w.key);
-                if (!s) {
-                    s = new Source;
-                    s->key = w.key;
-                    s->active = false;
-                    m_sources.append(s);
-                }
-                s->active = false; // só sai do silêncio quando virar want
-                s->vol = w.vol;
-                s->pan = w.pan;
-                s->trackIndex = w.trackIndex;
-                s->isAudioTrack = w.isAudioTrack;
-                s->fx.configure(w.eqLow, w.eqMid, w.eqHigh, w.denoise,
-                                w.denoiseAmount, w.invertPhase, w.normalize,
-                                w.reverb, w.reverbMix, w.reverbSize);
-                Job j;
-                j.s = s;
-                j.path = w.path;
-                j.stream = w.audioStream;
-                j.pos = w.mediaPos;
-                if (!s->opened || s->path != w.path || s->stream != w.audioStream) {
-                    j.open = true;
-                    j.seek = true;
-                } else if (reseek) {
-                    j.seek = true;
-                }
-                jobs.append(j);
+            // Conform: garante o trecho sob o playhead + horizonte de leitura.
+            conform.request(s->cache, w.mediaPos, 3.0);
+            applyParams(s, w);
+            if (w.isAudioTrack) {
+                AudioFx& tfx = m_trackFx[qMakePair(w.isAudioTrack, w.trackIndex)];
+                tfx.configure(w.trackFxEqLow, w.trackFxEqMid, w.trackFxEqHigh,
+                              w.trackFxDenoise, w.trackFxDenoiseAmount,
+                              w.trackFxInvertPhase, false,
+                              w.trackFxReverb, w.trackFxReverbMix, w.trackFxReverbSize);
             }
         }
-        // Fase 2 — SEM lock: abre/reposiciona decoders.
-        for (Job& j : jobs) {
-            if (j.open) {
-                if (!j.s->dec.open(j.path, j.stream)) { j.failed = true; continue; }
+
+        // Lookahead (janela adiante): fontes criadas ATIVAS, mas contribuindo
+        // zero até o seu frame de saída de início (gating). No corte, o clipe
+        // direito já estará no mix na chunk que atravessa a costura.
+        for (const SourceInfo& w : warm) {
+            if (keep.contains(w.key)) continue;
+            keep.insert(w.key);
+            Source* s = findLocked(w.key);
+            if (!s) { s = new Source; s->key = w.key; m_sources.append(s); }
+            if (jumping || !s->cache
+                || s->path != w.path || s->stream != w.audioStream) {
+                s->cache = conform.get(w.path, w.audioStream);
+                s->path = w.path;
+                s->stream = w.audioStream;
+                initSource(s, w);
             }
-            if (j.seek && !j.failed) {
-                j.s->dec.seekAudio(j.pos);
-                j.s->fx.resetState();
-            }
+            conform.request(s->cache, w.mediaPos, 6.0);
+            applyParams(s, w);
         }
-        // Fase 3 — com lock: aplica resultados e recolhe fontes que saíram.
-        QVector<Source*> retire;
-        {
-            QMutexLocker l(&m_mutex);
-            if (m_shutdown) return;
-            for (Job& j : jobs) {
-                if (j.failed) { j.s->active = false; continue; }
-                j.s->opened = true;
-                j.s->path = j.path;
-                j.s->stream = j.stream;
-            }
-            // Única passada: remove toda fonte não desejada (já inativa ou
-            // ativa mas fora do intervalo) — cada uma entra em `retire` UMA vez.
-            // Fontes pré-aquecidas (warm) são preservadas enquanto na janela.
-            m_sources.erase(std::remove_if(m_sources.begin(), m_sources.end(),
-                                           [&](Source* s) {
-                                               const bool keep =
-                                                   (s->active && usedLocked(s->key, want))
-                                                   || usedLocked(s->key, warm);
-                                               if (!keep) {
-                                                   retire.append(s);
-                                                   return true;
-                                               }
-                                               return false;
-                                           }),
-                            m_sources.end());
-        }
-        // Fecha/deleta os aposentados no POOL, e não na UI thread: o
-        // close() precisa travar m_mutex E m_audioMutex, e a thread do sink
-        // segura o m_audioMutex durante o decodeAudio — fechar inline aqui
-        // congelava a interface por alguns ms a cada corte. O QPointer evita
-        // tocar num mixer já destruído (o destrutor drena o que sobrar).
-        if (!retire.isEmpty()) {
-            {
-                QMutexLocker lc(&m_closingMutex);
-                for (Source* s : retire) m_closing.append(s);
-            }
-            QPointer<AudioMixer> guard(this);
-            (void)QtConcurrent::run([guard]() {
-                AudioMixer* m = guard.data();
-                if (!m) return;
-                QVector<Source*> batch;
-                {
-                    QMutexLocker lc(&m->m_closingMutex);
-                    batch.swap(m->m_closing);
-                }
-                for (Source* s : batch) { s->dec.close(); delete s; }
-            });
-        }
+
+        // Recolhe fontes fora da janela (dropa o Ref; o LRU libera a memória).
+        m_sources.erase(std::remove_if(m_sources.begin(), m_sources.end(),
+                                       [&](Source* s) {
+                                           if (keep.contains(s->key)) return false;
+                                           delete s;
+                                           return true;
+                                       }),
+                        m_sources.end());
     }
 
-    // Desliga o mixer de forma síncrona antes do deleteLater: espera job em
-    // curso terminar, rejeita os próximos e invalida os enfileirados.
+    // Desliga o mixer de forma síncrona antes do deleteLater: rejeita novos
+    // updates e derruba as fontes (os Refs saem; a conform continua viva no
+    // registro e será reaproveitada no próximo startAudio).
     void shutdown() {
         QMutexLocker job(&m_jobMutex);
         QMutexLocker l(&m_mutex);
         m_shutdown = true;
-        m_jobSeq.fetch_add(1);
-        drainClosing();
+        qDeleteAll(m_sources);
+        m_sources.clear();
     }
 
-    // Número de sequência para um novo pedido de seek (clique na timeline).
-    int beginJob() { return m_jobSeq.fetch_add(1) + 1; }
-
     void setMasterVolume(double v) { m_masterVolume = v; }
+
+    // Relógio de saída em segundos (frames entregues ao sink / 48k).
+    double outputClockSec() {
+        QMutexLocker l(&m_mutex);
+        return (double)m_outFrame / AudioConformCache::kSampleRate;
+    }
+
+    // Espera (com timeout) o head de QUEM vai tocar já agora estar conformado,
+    // antes de o sink começar a puxar. Elimina o "começa mudo / dessincronizado"
+    // do warm-up frio: o áudio começa do conteúdo certo.
+    void waitReadyBeforeSink(int framesAhead, int timeoutMs) {
+        if (framesAhead <= 0) return;
+        AudioConformCache& conform = AudioConformCache::instance();
+        struct Need { AudioConformCache::Ref cache; qint64 frame; int frames; };
+        QVector<Need> needs;
+        {
+            QMutexLocker l(&m_mutex);
+            for (Source* s : m_sources) {
+                if (!s->cache) continue;
+                if (s->srcOutStart > m_outFrame) continue; // só quem toca agora
+                if (s->srcOutEnd <= m_outFrame) continue;
+                const qint64 needEnd = qMin(s->srcOutEnd,
+                                            s->readFrame + framesAhead);
+                if (needEnd > s->readFrame)
+                    needs.append({s->cache, s->readFrame,
+                                  (int)(needEnd - s->readFrame)});
+            }
+        }
+        for (const Need& n : needs) conform.waitReady(n.cache, n.frame, n.frames,
+                                                      timeoutMs);
+    }
 
     // Níveis de áudio por faixa e master (thread-safe para MixerWidget).
     struct TrackLevels {
@@ -629,15 +608,25 @@ public:
         const int capacity = (maxBytes / bytesPerSample) * bytesPerSample;
         memset(data, 0, capacity);
 
-        if (m_shutdown || m_sources.isEmpty() || capacity <= 0) {
-            if (audioDbg() && !m_shutdown)
+        if (m_shutdown || capacity <= 0) return capacity;
+
+        // Sem fontes no instante (lacuna entre clipes, fim): silêncio, mas o
+        // relógio de saída SEGUE em tempo real — do contrário, na volta de um
+        // clipe o srcOutStart estaria muito à frente de um m_outFrame congelado
+        // (i0 além do buffer) e o áudio perderia o passo com o vídeo.
+        if (m_sources.isEmpty()) {
+            if (audioDbg())
                 qDebug() << "[audio] readData: sem fontes (silêncio)";
+            m_outFrame += capacity / bytesPerSample;
             return capacity;
         }
 
-        QVector<int16_t> tmp;
-        tmp.resize(capacity / 2); // um sample por amostra (ch compensado abaixo)
-        int16_t* out = reinterpret_cast<int16_t*>(data);
+        // Scratch de leitura por fonte: PCM S16 do conform. `winBuf` (8x) cobre
+        // a interpolação de speed até ~8x (além disso os índices saturaram).
+        const int nFrames = capacity / bytesPerSample;
+        QVector<int16_t> srcBuf(capacity / 2);
+        QVector<int16_t> winBuf((qMax(16, nFrames * 8 + 4)) * 2);
+        AudioConformCache& conform = AudioConformCache::instance();
 
         // Acumuladores de RMS por faixa.
         QHash<QPair<bool,int>, double> sumSq;
@@ -662,42 +651,108 @@ public:
         };
 
         for (Source* s : m_sources) {
-            if (!s->opened || !s->active) continue;
-            const int got = s->dec.decodeAudio(tmp.data(), capacity);
-            if (audioDbg() && got == 0)
-                qDebug() << "[audio] readData: decodeAudio retornou 0 (silêncio)";
-            const int n = got / bytesPerSample;
-            if (n > 0) {
-                s->fx.process(tmp.data(), n);
-                const int16_t* src = tmp.constData();
-                int16_t* bus = buses[busOf(s->isAudioTrack, s->trackIndex)].data();
-                // Gains de pan por canal (potência equal-power).
-                const float pan = (float)s->pan;
-                const float gL = std::sqrt(std::max(0.0f, (1.0f - pan) * 0.5f));
-                const float gR = std::sqrt(std::max(0.0f, (1.0f + pan) * 0.5f));
-                const float volL = (float)s->vol * gL;
-                const float volR = (float)s->vol * gR;
-                double localSumSq = 0.0;
-                for (int i = 0; i < n; ++i) {
-                    const int li = i * 2;
-                    const int ri = li + 1;
-                    // Soma SEM clamp intermediário de [-1,1]: o barramento acumula
-                    // o som real da faixa (o clamp só ocorre na escrita final).
-                    bus[li] = (int16_t)std::lround(
-                        qBound(-32768.0f, bus[li] + src[li] * volL, 32767.0f));
-                    bus[ri] = (int16_t)std::lround(
-                        qBound(-32768.0f, bus[ri] + src[ri] * volR, 32767.0f));
-                    const float sL = src[li] / 32768.0f * volL;
-                    const float sR = src[ri] / 32768.0f * volR;
-                    localSumSq += sL * sL + sR * sR;
+            if (!s->cache) continue;
+            // Gating por tempo de SAÍDA absoluto: esta fonte só contribui nos
+            // frames de saída [srcOutStart, srcOutEnd) ∩ [m_outFrame, chunkEnd).
+            // Na costura de um corte, esquerda cobre [.., corte) e direita já
+            // está no mix cobrindo [corte, ..): troca amostra-exata, sem lacuna
+            // (o antigo clamp de mídia injetava silêncio no sink = flick).
+            const qint64 chunkEnd = m_outFrame + nFrames;
+            const qint64 cStart = qMax(m_outFrame, s->srcOutStart);
+            const qint64 cEnd = qMin(chunkEnd, s->srcOutEnd);
+            if (cEnd <= cStart) continue; // totalmente fora da janela
+            const int i0 = (int)(cStart - m_outFrame);
+            const int i1 = (int)(cEnd - m_outFrame);
+            memset(srcBuf.data(), 0, capacity);
+
+            int produced = i1 - i0;
+            if (qAbs(s->step - 1.0) < 1e-6) {
+                // Caminho rápido (speed 1x): leitura em bloco + silêncio nas
+                // lacunas ainda não conformadas. `avail` pode ser menor que a
+                // janela se o worker ainda não cobriu: a fonte ESPERA ali (não
+                // avança sobre o vazio) — a lacuna é retentada no próximo chunk
+                // sem perder trecho nem acelerar o relógio.
+                const int avail =
+                    conform.readFrames(s->cache, s->readFrame, i1 - i0,
+                                       srcBuf.data() + i0 * 2);
+                s->readFrame += avail;
+            } else {
+                // speed ≠ 1: interpolação linear posicional — corrige pitch e
+                // duração, que o playback por decoder fazia errado em fluxo.
+                const double step = qBound(0.01, s->step, 8.0);
+                memset(winBuf.data(), 0, (size_t)winBuf.size() * sizeof(int16_t));
+                const int winFrames = winBuf.size() / 2;
+                const int spanF = (int)qMin<qint64>(
+                    (qint64)winFrames, (qint64)std::llround((i1 - i0) * step) + 2);
+                if (spanF > 0)
+                    (void)conform.readFrames(s->cache, s->readFrame, spanF,
+                                             winBuf.data());
+                const int16_t* p = winBuf.constData();
+                const int wc = qMax(0, qMin(spanF, winFrames) - 1);
+                for (int i = i0; i < i1; ++i) {
+                    const double rel = (i - i0) * step;
+                    const int f0 = qMin((qint64)wc, (qint64)rel);
+                    const double frac = qBound(0.0, rel - f0, 1.0);
+                    const int f1 = qMin(f0 + 1, wc);
+                    const int al = p[f0 * 2], ar = p[f0 * 2 + 1];
+                    const int bl = p[f1 * 2], br = p[f1 * 2 + 1];
+                    srcBuf[i * 2] = (int16_t)qBound(
+                        -32768, std::lround(al + (bl - al) * frac), 32767);
+                    srcBuf[i * 2 + 1] = (int16_t)qBound(
+                        -32768, std::lround(ar + (br - ar) * frac), 32767);
                 }
-                // RMS deste clipe para a faixa correspondente.
-                const float rms = std::sqrt(localSumSq / std::max(1, n * ch));
-                const auto key = qMakePair(s->isAudioTrack, s->trackIndex);
-                sumSq[key] += rms * rms;
-                countSq[key] += 1;
+                s->readFrame += (qint64)std::llround((i1 - i0) * step);
             }
+
+            // Conform autossustentado: a janela pedida segue o relógio de LEITURA
+            // desta fonte (não o tick do frame). Ex.: só-áudio (fps<=0) o tick
+            // retorna cedo no PlaybackEngine e nunca re-pediria o trecho —
+            // o áudio ia mudo depois da 1ª janela (~metade). Aqui o worker está
+            // sempre sendo alimentado na frente do que o sink lê.
+            conform.request(s->cache,
+                            (double)s->readFrame
+                                / (double)AudioConformCache::kSampleRate,
+                            3.0);
+
+            s->fx.process(srcBuf.data(), nFrames);
+            const int16_t* src = srcBuf.constData();
+            int16_t* bus = buses[busOf(s->isAudioTrack, s->trackIndex)].data();
+            // Pan por canal, mesma regra do export: centro = 1:1 (0dB, sem
+            // atenuação — senão o preview tocaria ~3dB abaixo) e equal-power
+            // quando deslocado. Preserva o stereo na posição central.
+            const float pan = (float)s->pan;
+            float gL, gR;
+            if (std::fabs(pan) <= 1e-3f) {
+                gL = 1.0f;
+                gR = 1.0f;
+            } else {
+                gL = std::sqrt(std::max(0.0f, (1.0f - pan) * 0.5f));
+                gR = std::sqrt(std::max(0.0f, (1.0f + pan) * 0.5f));
+            }
+            const float volL = (float)s->vol * gL;
+            const float volR = (float)s->vol * gR;
+            double localSumSq = 0.0;
+            for (int i = i0; i < i1; ++i) {
+                const int li = i * 2;
+                const int ri = li + 1;
+                // Soma SEM clamp intermediário de [-1,1]: o barramento acumula
+                // o som real da faixa (o clamp só ocorre na escrita final).
+                bus[li] = (int16_t)std::lround(
+                    qBound(-32768.0f, bus[li] + src[li] * volL, 32767.0f));
+                bus[ri] = (int16_t)std::lround(
+                    qBound(-32768.0f, bus[ri] + src[ri] * volR, 32767.0f));
+                const float sL = src[li] / 32768.0f * volL;
+                const float sR = src[ri] / 32768.0f * volR;
+                localSumSq += sL * sL + sR * sR;
+            }
+            // RMS deste clipe para a faixa correspondente.
+            const float rms = std::sqrt(localSumSq / std::max(1, produced * ch));
+            const auto key = qMakePair(s->isAudioTrack, s->trackIndex);
+            sumSq[key] += rms * rms;
+            countSq[key] += 1;
         }
+        // O relógio de saída avança uma "chunk" por leitura — sempre.
+        m_outFrame += nFrames;
 
         // Aplica o FX de cada faixa de áudio e soma os barramentos no master.
         {
@@ -757,36 +812,24 @@ public:
 private:
     static constexpr int kChannels = 2;
     struct Source {
-        FFmpegDecoder dec;
         QString key;
-        QString path;          // arquivo aberto no decoder
-        int stream = -1;       // stream de áudio aberto
-        bool opened = false;   // dec.open() já concluiu
+        AudioConformCache::Ref cache; // conform PCM do arquivo+stream
+        QString path;                 // arquivo de mídia
+        int stream = -1;              // stream de áudio
+        qint64 readFrame = 0;   // mídia (frame S16/48k/estéreo) do 1º frame de
+                                // contribuição desta fonte (== mídia(srcOutStart))
+        qint64 srcOutStart = 0; // frame de saída absoluto: começa a contribuir
+        qint64 srcOutEnd = 0;   // frame de saída absoluto (exclusivo): para
+        double step = 1.0;      // frames de mídia por frame de saída (=speed)
         double vol = 1.0;
-        bool active = false;
         AudioFx fx;
         int trackIndex = -1;
         bool isAudioTrack = false;
         double pan = 0.0;
     };
-    // Aposentados (retire) aguardando close no pool — ver updateSources.
-    QVector<Source*> m_closing;
-    QMutex m_closingMutex;
-    void drainClosing() {
-        QVector<Source*> batch;
-        {
-            QMutexLocker lc(&m_closingMutex);
-            batch.swap(m_closing);
-        }
-        for (Source* s : batch) { s->dec.close(); delete s; }
-    }
     Source* findLocked(const QString& key) const {
         for (Source* s : m_sources) if (s->key == key) return s;
         return nullptr;
-    }
-    static bool usedLocked(const QString& key, const QVector<SourceInfo>& want) {
-        for (const SourceInfo& w : want) if (w.key == key) return true;
-        return false;
     }
     QVector<Source*> m_sources;
     // Cadeia FX por faixa de áudio (chave = {isAudioTrack, trackIndex});
@@ -794,9 +837,9 @@ private:
     QHash<QPair<bool,int>, AudioFx> m_trackFx;
     QMutex m_mutex;
     QMutex m_jobMutex;          // serializa updateSources/shutdown/destrutor
-    std::atomic<int> m_jobSeq{0}; // só o pedido mais recente de seek executa
     bool m_shutdown = false; // stopAudio(): rejeita novos updates/decodes
     double m_masterVolume = 1.0;
+    qint64 m_outFrame = 0;    // frame de saída absoluto da próxima leitura
     mutable QMutex m_levelMutex;
     TrackLevels m_levels;
 };
@@ -1790,6 +1833,10 @@ QVector<AudioMixer::SourceInfo> buildMixSources(const Project* p, double t) {
         si.path = m->filePath;
         si.audioStream = c->audioStreamIndex;
         si.mediaPos = c->in + (t - c->pos) * c->speed;
+        si.speed = c->speed;
+        si.clipPos = c->pos;
+        si.clipDur = c->dur;
+        si.mediaStart = c->in;
         si.vol = it.value().vol;
         si.eqLow = c->eqLow;
         si.eqMid = c->eqMid;
@@ -1826,15 +1873,15 @@ QVector<AudioMixer::SourceInfo> buildMixSources(const Project* p, double t) {
 }
 
 // Fontes "pré-aquecidas": clipes de áudio que começam dentro da janela de
-// lookahead à frente do playhead. O mixer abre/posiciona esses decoders sem
-// ativá-los, para que ao chegar no corte a fonte já esteja pronta — antes,
-// a abertura do clipe seguinte acontecia só no tick do corte e deixava uma
-// janela de silêncio audível ("flick").
+// lookahead à frente do playhead. Entram no mix JÁ ATIVAS, mas contribuindo
+// zero até o seu frame de saída de início (gating por [srcOutStart, srcOutEnd)).
+// Assim, o clipe que começa num corte já está no mix na "chunk" que atravessa
+// a costura → a troca esquerda→direita é amostra-exata, sem lacuna nem eco.
 QVector<AudioMixer::SourceInfo> buildWarmSources(
     const Project* p, double t, const QVector<AudioMixer::SourceInfo>& active) {
     QVector<AudioMixer::SourceInfo> out;
     if (!p) return out;
-    constexpr double kWarmWin = 0.3; // segundos à frente do playhead
+    constexpr double kWarmWin = 0.6; // segundos à frente do playhead
     bool anySolo = false;
     for (const Track& tr : p->videoTracks)
         if (tr.solo) { anySolo = true; break; }
@@ -1862,6 +1909,10 @@ QVector<AudioMixer::SourceInfo> buildWarmSources(
                 si.path = m->filePath;
                 si.audioStream = c.audioStreamIndex;
                 si.mediaPos = c.in; // começo do áudio do clipe
+                si.speed = c.speed;
+                si.clipPos = c.pos;
+                si.clipDur = c.dur;
+                si.mediaStart = c.in;
                 si.vol = c.volume;
                 si.pan = 0.0;
                 si.trackIndex = ti;
@@ -1929,73 +1980,34 @@ void PreviewWidget::startAudio(double t) {
     m_audioFeed->setMasterVolume(m_project ? m_project->masterVolume : 1.0);
     m_audioFeed->open(QIODevice::ReadOnly | QIODevice::Unbuffered);
 
-    // Abre os decoders de áudio em background para não travar a UI.
-    // O mixer retorna silêncio (readData preenche com zeros) enquanto os
-    // decoders são abertos — sem cliques porque o audioSink ainda não começou.
-    if (!sources.isEmpty()) {
-        auto* mixer = m_audioFeed;
-        // QPointer: o widget/mixer podem ser destruídos (stopAudio) antes do
-        // lambda rodar no pool de threads.
-        QPointer<PreviewWidget> selfGuard(this);
-        QPointer<AudioMixer> mixerGuard(mixer);
-        const int gen = m_audioGen.load();
-        (void)QtConcurrent::run([selfGuard, mixerGuard, sources, gen]() {
-            if (!selfGuard || !mixerGuard) return;
-            mixerGuard->updateSources(sources, true);
-            if (!selfGuard || !mixerGuard) return;
-            // Conecta o sink na UI thread depois que os decoders estão prontos.
-            QMetaObject::invokeMethod(selfGuard, [selfGuard, mixerGuard, gen]() {
-                if (!selfGuard || !mixerGuard) return;
-                // Só cria o sink se esta tentativa ainda é a atual (o stop/
-                // start no meio incrementa a geração) e não há sink já ativo.
-                if (selfGuard->m_audioFeed != mixerGuard.data()) return;
-                if (selfGuard->m_audioSink || selfGuard->m_audioOut) return;
-                if (selfGuard->m_audioGen.load() != gen) return;
+    // O mixer lê SÓ do conform (PCM já decodificado em background) → está
+    // sempre "pronto": não há decoders a abrir, então o sink já começa. Faltas
+    // de trecho são silêncio momentâneo até o worker terminar a janela pedida.
+    m_audioFeed->updateSources(sources, /*reseek=*/true,
+                               QVector<AudioMixer::SourceInfo>(), -1, t);
+
+    // Pré-aquece o head do playhead ANTES de o sink puxar (até ~300ms): sem
+    // isso os primeiros chunks do warm-up frio saem mudo e o áudio parece
+    // atrasado/dessincronizado em relação ao vídeo.
+    m_audioFeed->waitReadyBeforeSink((int)(0.15 * AudioConformCache::kSampleRate),
+                                     300);
+
 #if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
-                const QAudioDevice def = QMediaDevices::defaultAudioOutput();
-                if (def.isNull()) return;
-                QAudioFormat fmt;
-                fmt.setSampleFormat(QAudioFormat::Int16);
-                fmt.setSampleRate(48000);
-                fmt.setChannelCount(2);
-                selfGuard->m_audioSink = new QAudioSink(def, fmt, selfGuard);
-                selfGuard->m_audioSink->start(selfGuard->m_audioFeed);
+    const QAudioDevice def = QMediaDevices::defaultAudioOutput();
+    if (def.isNull()) {
+        if (audioDbg()) qDebug() << "[audio] defaultAudioOutput nulo — sem saída de áudio";
+        return;
+    }
+    m_audioSink = new QAudioSink(def, fmt, this);
+    m_audioSink->start(m_audioFeed);
 #else
-                const QAudioDeviceInfo def = QAudioDeviceInfo::defaultOutputDevice();
-                if (def.isNull()) return;
-                QAudioFormat fmt;
-                fmt.setCodec(QStringLiteral("audio/pcm"));
-                fmt.setSampleSize(16);
-                fmt.setSampleRate(48000);
-                fmt.setChannelCount(2);
-                fmt.setSampleType(QAudioFormat::SignedInt);
-                fmt.setByteOrder(QAudioFormat::LittleEndian);
-                selfGuard->m_audioOut = new QAudioOutput(def, fmt, selfGuard);
-                selfGuard->m_audioOut->start(selfGuard->m_audioFeed);
-#endif
-            });
-        });
+    const QAudioDeviceInfo def = QAudioDeviceInfo::defaultOutputDevice();
+    if (def.isNull()) {
+        if (audioDbg()) qDebug() << "[audio] defaultOutputDevice nulo — sem saída de áudio";
+        return;
     }
-#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
-    else {
-        const QAudioDevice def = QMediaDevices::defaultAudioOutput();
-        if (def.isNull()) {
-            if (audioDbg()) qDebug() << "[audio] defaultAudioOutput nulo — sem saída de áudio";
-            return;
-        }
-        m_audioSink = new QAudioSink(def, fmt, this);
-        m_audioSink->start(m_audioFeed);
-    }
-#else
-    else {
-        const QAudioDeviceInfo def = QAudioDeviceInfo::defaultOutputDevice();
-        if (def.isNull()) {
-            if (audioDbg()) qDebug() << "[audio] defaultOutputDevice nulo — sem saída de áudio";
-            return;
-        }
-        m_audioOut = new QAudioOutput(def, fmt, this);
-        m_audioOut->start(m_audioFeed);
-    }
+    m_audioOut = new QAudioOutput(def, fmt, this);
+    m_audioOut->start(m_audioFeed);
 #endif
 }
 
@@ -2014,40 +2026,42 @@ void PreviewWidget::stopAudio() {
     }
 #endif
     if (m_audioFeed) {
-        // shutdown() síncrono: jobs de mix ainda em voo no pool de threads
-        // passam a retornar sem tocar no mixer que está sendo descartado.
+        // shutdown() síncrono: bloqueia novos updates e libera as fontes antes
+        // do mixer ser descartado. As caches do conform continuam no registro.
         m_audioFeed->shutdown();
         m_audioFeed->deleteLater();
         m_audioFeed = nullptr;
     }
-    // Invalida qualquer criação de sink pendente em QtConcurrent: sem isso,
-    // um lambda antigo podia criar um sink DEPOIS do stop e o áudio/relógio
-    // ficavam num estado fantasma.
-    ++m_audioGen;
 }
 
 // Recalcula as fontes de áudio ativas no instante `t` e empurra ao mixer.
-// A parte pesada (abrir decoders, seekAudio com descarte por PTS) roda no
-// pool de threads: na UI ela travava o clique na timeline em arquivos grandes
-// e, segurando o mutex do mixer, derrubava o relógio do sink (underrun).
-// Serialização e descarte de pedidos velhos ficam DENTRO do mixer (m_jobMutex/
-// m_jobSeq): cliques rápidos só executam o último seek, sem tocar em estado
-// do widget a partir do pool de threads.
+// Com o conform, tudo aqui é barato e síncrono (sem open/seekAudio no caminho):
+// updateSources só troca ponteiros de leitura e emite pedidos de conform para
+// o worker — que decodifica em background, em região por região.
 void PreviewWidget::updateMixAudio(double t, bool reseek) {
     if (!m_audioFeed) return;
     m_audioFeed->setMasterVolume(m_project ? m_project->masterVolume : 1.0);
-    // Fontes são coletadas na UI thread (leitura leve dos clipes ativos);
-    // só o trabalho pesado desce para o pool.
+    // Diagnóstico de fase A/V (PIERROT_AUDIO_DEBUG): se as fontes são lidas no
+    // mesmo ritmo do playhead, o desvio t - saída fica pequeno e constante.
+    if (audioDbg()) {
+        const double avDelta = t - m_audioFeed->outputClockSec();
+        static bool etInit = false;
+        static quint64 avLastMs = 0;
+        static QElapsedTimer avLog;
+        if (!etInit) { avLog.start(); etInit = true; }
+        const quint64 ms = (quint64)avLog.elapsed();
+        if (ms - avLastMs > 400 && std::fabs(avDelta) > 0.05) {
+            avLastMs = ms;
+            qDebug().noquote() << QStringLiteral("[audio] fase A/V: %1 s (vídeo=%2, saída=%3)")
+                                      .arg(avDelta, 0, 'f', 3)
+                                      .arg(t, 0, 'f', 3)
+                                      .arg(t - avDelta, 0, 'f', 3);
+        }
+    }
     const QVector<AudioMixer::SourceInfo> sources = buildMixSources(m_project, t);
     const QVector<AudioMixer::SourceInfo> warm =
         buildWarmSources(m_project, t, sources);
-    auto* feed = m_audioFeed;
-    // reseek=true (seek/loop): executa síncrono para garantir que decoders
-    // antigos com chave obsoleta (ex: primeiro corte muda id→groupId) sejam
-    // removidos IMEDIATAMENTE — o caminho async capturava a lista want
-    // ANTES do corte e o decoder velho sobrevivia causando duplicação de áudio.
-    // Fase 2 (open/seek) roda fora do lock, então a UI não congela.
-    feed->updateSources(sources, reseek, warm);
+    m_audioFeed->updateSources(sources, reseek, warm, -1, t);
 }
 
 void PreviewWidget::updateFrame() {

@@ -38,6 +38,7 @@ set(SOURCES
     src/MainWindow.cpp
     src/models/Project.cpp
     src/ffmpeg/FFmpegDecoder.cpp
+    src/ffmpeg/AudioConformCache.cpp
     src/ffmpeg/MediaCache.cpp
     src/ffmpeg/ProxyManager.cpp
     src/export/ProjectExporter.cpp
