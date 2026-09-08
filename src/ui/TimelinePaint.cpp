@@ -46,8 +46,8 @@ QString fmtRuler(double t) {
         .arg(total % 60, 2, 10, QLatin1Char('0'));
 }
 
-// Paleta automática de cores de faixa (estilo Vegas), usada quando a faixa
-// não tem cor própria definida pelo usuário.
+// Paleta automática de cores de faixa de VÍDEO (estilo Vegas), usada quando
+// a faixa não tem cor própria definida pelo usuário.
 QColor autoTrackColor(int index) {
     // Paleta em tons de azul (estilo "cool"): matizes que variam de nobre
     // profundo a ciano, mantendo distinção entre faixas vizinhas.
@@ -66,9 +66,37 @@ QColor autoTrackColor(int index) {
     return pal[index % (int)(sizeof pal / sizeof pal[0])];
 }
 
+// Paleta automática de cores de faixas de ÁUDIO (labels padrão do Adobe
+// Premiere), usada quando a faixa não tem cor própria definida pelo usuário.
+// A1 verde, A2 verde-água, A3 azul, A4 violeta, A5 âmbar, A6 cinza.
+QColor autoAudioColor(int index) {
+    static const QColor pal[] = {
+        QColor(80, 168, 94),   // geo
+        QColor(62, 152, 168),  // verde-água
+        QColor(84, 112, 190),  // azul
+        QColor(132, 100, 178), // violeta
+        QColor(180, 136, 68),  // âmbar
+        QColor(122, 132, 142), // cinza
+    };
+    return pal[index % (int)(sizeof pal / sizeof pal[0])];
+}
+
 // Cor efetiva de uma faixa para desenho (própria se definida, senão paleta).
 QColor trackColorAt(const Track& tr, int index) {
-    return tr.color.isValid() ? tr.color : autoTrackColor(index);
+    if (tr.color.isValid()) return tr.color;
+    return tr.audio ? autoAudioColor(index) : autoTrackColor(index);
+}
+
+// Cor sólida de uma faixa de ÁUDIO no matiz/saturação do label, com a
+// luminosidade `val` fornecida (estilo Premiere: pista/clipe/header pintados
+// na cor da faixa em tons sólidos, nunca em cinza escuro).
+QColor audioSolidColor(const Track& tr, int index, qreal val) {
+    QColor c = trackColorAt(tr, index);
+    qreal hue = c.hslHueF();
+    if (hue < 0.0) hue = 0.36;
+    qreal sat = c.hslSaturationF();
+    if (sat <= 0.0) sat = 0.65;
+    return QColor::fromHslF(hue, sat, val);
 }
 }
 
@@ -476,6 +504,8 @@ void TimelineWidget::renderScene(QPainter& p) {
         const int y = rowY(-1, i);
         const int rowH = trackH(i, true);
         const bool sel = isTrackSelected(i, true);
+        // A pista vazia fica escura (como no Premiere); a cor do label é
+        // aplicada apenas nas faixas (clipes de áudio) e no header.
         p.fillRect(0, y, width(), rowH, sel ? QColor(42, 48, 62)
                                             : ((i % 2) ? themeColors().trackBg : themeColors().trackBgAlt));
         if (sel) {
@@ -740,14 +770,25 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
     if (r.width() <= 0 || r.height() <= 0) return;
     const bool sel = isSelected(c.id);
     const bool sel2 = !sel && isSecondarySelected(c.id);
-    QColor fill = audio ? QColor(26, 86, 66) : themeColors().clipBg;
-    QColor border = audio ? QColor(70, 160, 120) : themeColors().clipBorder;
-    if (sel) {
-        fill = audio ? QColor(40, 120, 92) : QColor(46, 96, 168);
-        border = themeColors().clipBorderSelect;
-    } else if (sel2) {
-        fill = audio ? QColor(32, 100, 78) : QColor(38, 78, 138);
-        border = themeColors().clipBorderSecondary;
+    const QColor tint = trackColorAt(tr, trackIndex);
+    QColor fill;
+    QColor border;
+    if (audio) {
+        // Clipe de áudio estilo Adobe Premiere: corpo sólido na cor do label
+        // (verde por padrão), borda mais clara na mesma cor. Seleção = borda
+        // ciano + corpo mais claro. Não é clipe escuro com onda colorida
+        // (Vegas).
+        fill = sel ? audioSolidColor(tr, trackIndex, 0.50)
+                   : sel2 ? audioSolidColor(tr, trackIndex, 0.34)
+                          : audioSolidColor(tr, trackIndex, 0.38);
+        border = sel ? themeColors().clipBorderSelect
+                     : sel2 ? themeColors().clipBorderSecondary
+                            : audioSolidColor(tr, trackIndex, 0.55);
+    } else {
+        fill = sel ? QColor(46, 96, 168) : themeColors().clipBg;
+        border = sel ? themeColors().clipBorderSelect
+                     : sel2 ? themeColors().clipBorderSecondary
+                            : themeColors().clipBorder;
     }
     p.setPen(QPen(border, sel ? 2 : sel2 ? 1.5 : 1));
     p.setBrush(fill);
@@ -755,7 +796,6 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
 
     const MediaItem* mi = m_project ? m_project->findMedia(c.mediaId) : nullptr;
     const QString path = mi ? mi->filePath : QString();
-    const QColor tint = trackColorAt(tr, trackIndex);
     const ClipVisKey key{c.id, r.width(), r.height(), m_clipEpoch,
                          tint.rgba()};
     QPixmap content = m_clipPix.value(key);
@@ -787,6 +827,18 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
         m_clipPix.insert(key, content);
     }
     p.drawPixmap(r.topLeft(), content);
+
+    // Alças de seleção estilo Premiere: quadrados brancos nos cantos de
+    // clipes de áudio selecionados (apenas visuais; o redimensionar é
+    // feito pelas bordas/ferramentas).
+    if (audio && sel && r.width() >= 28 && r.height() >= 18) {
+        const int hs = 5;
+        QColor hc(255, 255, 255);
+        p.fillRect(QRect(r.left() + 1, r.top() + 1, hs, hs), hc);
+        p.fillRect(QRect(r.right() - hs, r.top() + 1, hs, hs), hc);
+        p.fillRect(QRect(r.left() + 1, r.bottom() - hs, hs, hs), hc);
+        p.fillRect(QRect(r.right() - hs, r.bottom() - hs, hs, hs), hc);
+    }
 
     if (m_tool != ToolEnvelope)
         drawKeyframeDiamonds(p, r, c, audio);
@@ -898,10 +950,14 @@ void TimelineWidget::drawTextClipBody(QPainter& p, const QRect& r, const Clip& c
 void TimelineWidget::drawAudioWaveform(QPainter& p, const QRect& r, const Clip& c,
                                        const QString& path, const QColor& tint) {
     if (path.isEmpty() || r.width() < 2) return;
+    const qreal hue = tint.hslHueF() < 0.0 ? 0.36 : tint.hslHueF();
+    const qreal sat = tint.hslSaturationF() > 0.0 ? tint.hslSaturationF() : 0.65;
+
     MediaCache& cache = MediaCache::instance();
     if (!cache.hasPeaks(path, c.audioStreamIndex)) {
         cache.requestPeaks(path, c.audioStreamIndex);
-        p.setPen(QColor(255, 255, 255, 45));
+        p.fillRect(r, QColor::fromHslF(hue, sat, 0.38));
+        p.setPen(QColor(10, 10, 12, 80));
         p.drawLine(r.left(), r.center().y(), r.right(), r.center().y());
         return;
     }
@@ -914,113 +970,69 @@ void TimelineWidget::drawAudioWaveform(QPainter& p, const QRect& r, const Clip& 
     const int x1 = r.right();
     const double dur = c.dur;
     const int midY = r.center().y();
-    const double amp = r.height() / 2.0 - 2.0;
+    const double amp = qMax(1.0, r.height() / 2.0 - 4.0);
     const bool sel = isSelected(c.id);
     const bool sel2 = !sel && isSecondarySelected(c.id);
 
-    // ── Fundo: faixa escura com leve gradiente para profundidade ──────
-    p.fillRect(r, sel ? QColor(18, 52, 42) : sel2 ? QColor(16, 44, 36) : QColor(14, 14, 17));
+    // Corpo do clipe = cor sólida do label, ton escuro (Premiere); a onda clara
+    // fica em destaque por cima.
+    p.fillRect(r, sel ? QColor::fromHslF(hue, sat, 0.50)
+                      : sel2 ? QColor::fromHslF(hue, sat, 0.34)
+                             : QColor::fromHslF(hue, sat, 0.38));
 
-    // ── Grade de referência dB (estilo profissional) ──────────────────
-    // -6dB = 50%, -12dB = 25%, -18dB = 12.5% — linhas horizontais
-    // Tracejas sutis para não poluir, mas visíveis o suficiente para
-    // medir dynamic range durante a edição.
-    struct DbLine { double frac; QColor color; };
-    const DbLine dbLines[] = {
-        { 0.50, QColor(80, 80, 90, 100) },   // -6dB
-        { 0.25, QColor(65, 65, 75, 80) },     // -12dB
-        { 0.125, QColor(55, 55, 65, 60) },    // -18dB
-    };
-    for (const DbLine& dl : dbLines) {
-        const int dy = (int)std::lround(dl.frac * amp);
-        p.setPen(QPen(dl.color, 1, Qt::DotLine));
-        p.drawLine(x0, midY - dy, x1, midY - dy);
-        p.drawLine(x0, midY + dy, x1, midY + dy);
-    }
-
-    // ── Linha zero (centro exato da onda) ────────────────────────────
-    p.setPen(QPen(QColor(255, 255, 255, 50), 1));
-    p.drawLine(x0, midY, x1, midY);
-
-    // ── Marcadores de tempo (a cada 0.5s ou 1s conforme zoom) ─────────
-    const double pxPerSec = r.width() / dur;
-    const double timeStep = (pxPerSec > 200.0) ? 0.1 : (pxPerSec > 80.0) ? 0.25 : 0.5;
-    const double startTime = std::ceil(c.in / timeStep) * timeStep;
-    for (double t = startTime; t < c.in + dur; t += timeStep) {
-        const int mx = x0 + (int)std::lround((t - c.in) / dur * r.width());
-        if (mx < x0 || mx > x1) continue;
-        const bool major = std::fabs(std::fmod(t, 1.0)) < 1e-6
-                           || std::fabs(std::fmod(t, 1.0) - 1.0) < 1e-6;
-        p.setPen(QPen(major ? QColor(255, 255, 255, 35) : QColor(255, 255, 255, 18), 1));
-        p.drawLine(mx, midY - 3, mx, midY + 3);
-    }
-
-    // ── Onda preenchida (simétrica, estilo profissional) ──────────────
-    // Cada coluna de pixel: preenche da borda superior (max) até a
-    // inferior (min) com cor que escala com a amplitude. Seções mais
-    // altas ficam mais brilhantes — permite identificar picos e silêncio
-    // rapidamente ao editar.
-    for (int x = x0; x <= x1; ++x) {
+    // Agrega min/max por coluna de pixel e descobre o pico global do clipe,
+    // para normalizar a altura (autogain) como o Premiere faz.
+    const auto colMinMax = [&](int x, float& mn, float& mx) {
+        mn = 0.0f;
+        mx = 0.0f;
         const double t0 = c.in + (x - x0) * dur / (double)(x1 - x0 + 1);
         const double t1 = c.in + (x + 1 - x0) * dur / (double)(x1 - x0 + 1);
         int b0 = (int)std::floor(t0 * bps);
         int b1 = (int)std::floor(t1 * bps);
         if (b0 < 0) b0 = 0;
         if (b1 >= pk.min.size()) b1 = pk.min.size() - 1;
-        if (b0 > b1) continue;
-
-        float mn = 0.0f;
-        float mx = 0.0f;
+        if (b0 > b1) return;
         for (int b = b0; b <= b1; ++b) {
             if (pk.min[b] < mn) mn = pk.min[b];
             if (pk.max[b] > mx) mx = pk.max[b];
         }
+    };
 
-        const int py0 = (int)std::lround(midY - mx * amp);
-        const int py1 = (int)std::lround(midY - mn * amp);
+    float gPeak = 0.0f;
+    for (int x = x0; x <= x1; ++x) {
+        float mn = 0.0f, mx = 0.0f;
+        colMinMax(x, mn, mx);
+        const float p = std::max(std::fabs(mx), std::fabs(mn));
+        if (p > gPeak) gPeak = p;
+    }
+    const double gain = gPeak > 1e-4 ? (0.92 / gPeak) : 1.0;
+
+    // Onda em tom escuro do label, alpha cresce com a amplitude. Sem grade
+    // dB, sem linha zero, sem marcadores de tempo — fidelidade ao Premiere.
+    // Onda BEM clara (tom quase branco no matiz do label), alpha cresce com a
+    // amplitude — destaque forte sobre o fundo colorido, ideal para cortes.
+    const qreal waveVal = 0.90;
+
+    for (int x = x0; x <= x1; ++x) {
+        float mn = 0.0f, mx = 0.0f;
+        colMinMax(x, mn, mx);
+        if (mx <= 1e-4f && mn >= -1e-4f) continue;
+
+        const int py0 = (int)std::lround(midY - mx * amp * gain);
+        const int py1 = (int)std::lround(midY - mn * amp * gain);
         const int top = qBound(r.top(), py0, r.bottom());
         const int bot = qBound(r.top(), py1, r.bottom());
         if (top >= bot) continue;
 
-        // Amplitude normalizada (0..1) para escalar cor e brilho.
-        const float peakAmp = std::max(std::fabs(mx), std::fabs(mn));
-        const float norm = std::clamp(peakAmp, 0.0f, 1.0f);
-
-        // Gradiente por matiz da faixa (estilo Vegas: o waveform usa a cor da
-        // faixa). Silêncio = tom escuro, alto = matiz vivo e brilhante.
-        qreal hue = tint.hslHueF();
-        if (hue < 0.0) hue = 0.36; // cor indefinida → verde
-        const qreal sat = qBound(0.55, 0.55 + norm * 0.35, 0.95);
-        const qreal val = qBound(0.42, 0.42 + norm * 0.42, 0.88);
-        const qreal alph = qBound(0.55, 0.55 + norm * 0.4, 1.0);
-        const QColor col = QColor::fromHslF(hue, sat, val, alph);
-
-        // Preenchimento simétrico: espelha a onda acima e abaixo do zero.
-        // A parte "positiva" (topo) fica levemente mais clara; a
-        // "negativa" (base) fica levemente mais escura — dá noção de
-        // polaridade sem precisar de channel split.
+        const float norm = std::clamp((float)(std::max(std::fabs(mx), std::fabs(mn)) * gain),
+                                      0.0f, 1.0f);
+        const qreal alph = qBound(0.55, 0.68 + 0.30 * norm, 1.0);
         p.setPen(Qt::NoPen);
-        if (top < midY) {
-            p.setBrush(col.lighter(106));
-            p.drawRect(x, top, 1, midY - top);
-        }
-        if (bot > midY) {
-            p.setBrush(col.darker(106));
-            p.drawRect(x, midY, 1, bot - midY);
-        }
-
-        // Borda de pico (1px branco sutil no extremo) para definir contorno.
-        if (peakAmp > 0.01f) {
-            p.setPen(QPen(QColor(255, 255, 255, (int)(40 + norm * 60)), 1));
-            if (mx > 0.01f) p.drawPoint(x, top);
-            if (mn < -0.01f) p.drawPoint(x, bot);
-        }
+        p.setBrush(QColor::fromHslF(hue, sat, waveVal, alph));
+        // Coluna sólida de -pico a +pico, espelhada em torno do zero, como o
+        // waveform "unificado" (mono/estéreo somados) do Premiere.
+        p.drawRect(x, top, 1, bot - top + 1);
     }
-
-    // ── Borda do clipe (contorno sutil) ──────────────────────────────
-    p.setPen(QPen(sel ? themeColors().clipBorderSecondary : QColor(70, 160, 120, 80), 1));
-    p.setBrush(Qt::NoBrush);
-    p.drawRect(r.adjusted(0, 0, -1, -1));
 }
 
 void TimelineWidget::drawVideoThumbs(QPainter& p, const QRect& r, const Clip& c,
@@ -1295,8 +1307,8 @@ void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& 
             for (const Track& t : m_project->audioTracks) if (t.solo) { anySolo = true; break; }
     }
 
-    // ── Fundo: neutro escuro, como os cabeçalhos do Premiere (sem tinta por
-    // faixa). A cor da faixa fica nos acentos (tira, nome, %, chip FX).
+    // ── Fundo: neutro escuro, como os cabeçalhos do Premiere; a cor da faixa
+    // fica nos acentos (tira, nome, %, chip FX) e nas faixas (clipes).
     QColor base = selected
         ? (tr.audio ? QColor(38, 43, 54) : QColor(40, 45, 56))
         : themeColors().trackLabelBg;

@@ -693,8 +693,17 @@ void TimelineWidget::applyTrackPreset(int preset) {
 Clip* TimelineWidget::findClipById(const QString& id) {
     if (!m_project) return nullptr;
     auto it = m_clipIndex.find(id);
-    if (it != m_clipIndex.end())
+    if (it != m_clipIndex.end() && (*it) && (*it)->id == id)
         return *it;
+    // O índice pode guardar um ponteiro obsoleto se um vetor de clipes foi
+    // mutado sem rebuild (ex.: moveClipToTrack/duplicateClip durante um
+    // arrasto). Cai para a varredura para nunca devolver memória pendurada.
+    for (Track& t : m_project->videoTracks)
+        for (Clip& c : t.clips)
+            if (c.id == id) return &c;
+    for (Track& t : m_project->audioTracks)
+        for (Clip& c : t.clips)
+            if (c.id == id) return &c;
     return nullptr;
 }
 
@@ -1979,6 +1988,10 @@ void TimelineWidget::duplicateClip(Clip* c) {
             if (id == c->id) firstDup = b.id;
         }
     }
+    // O push_back pode realocar o vetor: reconstrói o índice para que o
+    // deslocamento da cópia durante o Ctrl-arrasto (findClipById logo após)
+    // encontre os clipes duplicados e o par não fique separado do mouse.
+    rebuildClipIndex();
     if (!firstDup.isEmpty()) setSelection(firstDup);
     updateScrollRanges();
     update();
@@ -2457,6 +2470,10 @@ bool TimelineWidget::moveClipToTrack(const QString& id, int row, bool audio) {
     auto it = dst.clips.begin();
     while (it != dst.clips.end() && it->pos <= copy.pos) ++it;
     dst.clips.insert(it, copy);
+    // O erase+insert mexeu nos vetores: reconstrói o índice para os ponteiros
+    // não ficarem pendurados durante o arrasto (MoveClip usa findClipById
+    // logo depois e leria memória inválida, "separando" o par e travando).
+    rebuildClipIndex();
     return true;
 }
 
