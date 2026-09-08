@@ -12,6 +12,7 @@
 
 #include <QPainter>
 #include <QPainterPath>
+#include <QLinearGradient>
 #include <QStyleOptionRubberBand>
 #include <QRubberBand>
 #include <QStyle>
@@ -1225,38 +1226,82 @@ void TimelineWidget::drawOpacityHandle(QPainter& p, const QRect& r, const Clip& 
 void TimelineWidget::drawTransitionIndicator(QPainter& p, const QRect& r,
                                              const QString& type) {
     if (r.width() < 3 || r.height() < 3) return;
-    p.fillRect(r, QColor(255, 170, 40, 70));
-    p.setPen(QPen(QColor(255, 190, 80, 120), 1));
-    const int step = 5;
-    for (int x = r.left() - r.height(); x < r.right() + r.height(); x += step)
-        p.drawLine(x, r.bottom(), x + r.height(), r.top());
+
+    // ── Fundo: gradiente sutil branco→transparente (estilo Premiere/Vegas).
+    // Sem risquinhos diagonais — limpo e profissional.
+    {
+        QLinearGradient g(r.topLeft(), r.bottomRight());
+        g.setColorAt(0.0, QColor(255, 255, 255, 55));
+        g.setColorAt(0.5, QColor(255, 255, 255, 30));
+        g.setColorAt(1.0, QColor(255, 255, 255, 55));
+        p.fillRect(r, g);
+    }
+
+    // ── Borda arredondada translúcida.
+    {
+        p.setPen(QPen(QColor(255, 255, 255, 70), 1));
+        p.setBrush(Qt::NoBrush);
+        QPainterPath borderPath;
+        borderPath.addRoundedRect(QRectF(r), 3.0, 3.0);
+        p.drawPath(borderPath);
+    }
+
+    // ── Linha diagonal separadora (base→topo, única, limpa).
+    // Clipped no retângulo da transição.
+    {
+        p.setClipRect(r, Qt::IntersectClip);
+        p.setPen(QPen(QColor(255, 255, 255, 120), 1.5));
+        p.drawLine(r.left(), r.bottom(), r.right(), r.top());
+        p.setClipping(false);
+    }
+
+    // ── Label pequeno centralizado (nome da transição).
     QFont f = p.font();
-    f.setPointSizeF(8.5);
+    f.setPointSizeF(7.5);
     f.setBold(true);
     p.setFont(f);
     QFontMetrics fm(f);
-    QString glyph;
-    if (type == QStringLiteral("wipeleft"))
-        glyph = QStringLiteral("\u2190");
+    QString label;
+    if (type == QStringLiteral("dissolve"))
+        label = tr("Dissolver");
+    else if (type == QStringLiteral("wipeleft"))
+        label = tr("Wipe \u2190");
     else if (type == QStringLiteral("wiperight"))
-        glyph = QStringLiteral("\u2192");
+        label = tr("Wipe \u2192");
     else if (type == QStringLiteral("wipeup"))
-        glyph = QStringLiteral("\u2191");
+        label = tr("Wipe \u2191");
     else if (type == QStringLiteral("wipedown"))
-        glyph = QStringLiteral("\u2193");
+        label = tr("Wipe \u2193");
     else if (type == QStringLiteral("wipetl"))
-        glyph = QStringLiteral("\u2196");
+        label = tr("Wipe \u2196");
     else if (type == QStringLiteral("wipetr"))
-        glyph = QStringLiteral("\u2197");
+        label = tr("Wipe \u2197");
     else if (type == QStringLiteral("wipebl"))
-        glyph = QStringLiteral("\u2199");
+        label = tr("Wipe \u2199");
     else if (type == QStringLiteral("wipebr"))
-        glyph = QStringLiteral("\u2198");
+        label = tr("Wipe \u2198");
     else
-        glyph = QStringLiteral("\u2715");
-    const QRect symRect(r.left(), r.top(), r.width(), fm.height());
-    p.setPen(QColor(255, 220, 140));
-    p.drawText(symRect, Qt::AlignHCenter | Qt::AlignTop, glyph);
+        label = tr("Transição");
+
+    if (r.width() > fm.horizontalAdvance(label) + 10) {
+        const QRect lr = fm.boundingRect(label);
+        const int lw = lr.width() + 8;
+        const int lh = lr.height() + 3;
+        const int lx = r.left() + (r.width() - lw) / 2;
+        const int ly = r.top() + (r.height() - lh) / 2;
+        const QRect labelRect(lx, ly, lw, lh);
+
+        // Fundo do label: escuro translúcido.
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0, 0, 0, 140));
+        QPainterPath labelBg;
+        labelBg.addRoundedRect(QRectF(labelRect), 2.0, 2.0);
+        p.drawPath(labelBg);
+
+        // Texto branco.
+        p.setPen(QColor(255, 255, 255, 220));
+        p.drawText(labelRect, Qt::AlignCenter, label);
+    }
 }
 
 void TimelineWidget::drawKeyframeDiamonds(QPainter& p, const QRect& r,
