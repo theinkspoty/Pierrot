@@ -6,6 +6,7 @@
 #include "ui/TrimmerDialog.h"
 
 #include "ffmpeg/FFmpegDecoder.h"
+#include "ffmpeg/ProxyManager.h"
 
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
@@ -38,7 +39,7 @@ TrimmerDialog::TrimmerDialog(const MediaItem& media, QWidget* parent)
 
     m_decoder = new FFmpegDecoder();
     if (!media.filePath.isEmpty())
-        m_decoder->open(media.filePath, -1);
+        m_decoder->open(ProxyManager::instance().resolveVideo(media.filePath), -1);
 
     const double dur = qMax(media.duration, 0.0);
     m_out = dur;

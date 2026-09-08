@@ -5,6 +5,7 @@
 
 #include "PancropWidget.h"
 #include "ui/Theme.h"
+#include "ffmpeg/ProxyManager.h"
 
 #include <QPainter>
 #include <QPainterPath>
@@ -680,8 +681,9 @@ void PancropWidget::loadFrame() {
     }
     const MediaItem* mi = m_project->findMedia(c->mediaId);
     if (!mi || !mi->hasVideo) { m_frame = QImage(); m_framePath.clear(); return; }
-    if (!m_decoder.isOpen() || m_decoder.source() != mi->filePath)
-        m_decoder.open(mi->filePath);
+    const QString vpath = ProxyManager::instance().resolveVideo(mi->filePath);
+    if (!m_decoder.isOpen() || m_decoder.source() != vpath)
+        m_decoder.open(vpath);
     if (!m_decoder.isOpen()) { m_frame = QImage(); m_framePath.clear(); return; }
     // Decodifica o frame na posição atual do playhead para preview em tempo real.
     const double t = std::clamp(m_playhead - c->pos, 0.0, std::max(0.0, c->dur - 0.05));

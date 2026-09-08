@@ -17,6 +17,7 @@
 #include <QJsonArray>
 #include <QCryptographicHash>
 #include <QMutexLocker>
+#include <QSettings>
 #include <QtDebug>
 
 namespace {
@@ -87,6 +88,7 @@ ProxyManager::~ProxyManager() {
 }
 
 ProxyManager::ProxyManager() {
+    m_enabled = QSettings().value("proxiesEnabled", true).toBool();
     QDir().mkpath(proxyDir());
     m_stateFile = proxyDir() + QStringLiteral("/metadata.json");
     loadState();

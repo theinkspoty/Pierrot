@@ -5,6 +5,7 @@
 
 #include "SettingsDialog.h"
 #include "Theme.h"
+#include "ffmpeg/ProxyManager.h"
 
 #include <QCheckBox>
 #include <QGroupBox>
@@ -224,8 +225,14 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
         m_hwDecode = new QCheckBox(tr("Decodificação de vídeo por hardware (VAAPI)"), page);
         m_hwDecode->setChecked(s.value("hwDecode", true).toBool());
         m_hwDecode->setToolTip(tr("Usa a GPU para decodificar H.264/HEVC/MJPEG. "
-                                  "Requer suporte VAAPI no Linux (Intel/AMD/NVIDIA com driver)."));
+                                   "Requer suporte VAAPI no Linux (Intel/AMD/NVIDIA com driver)."));
         perfLay->addWidget(m_hwDecode);
+        m_proxies = new QCheckBox(tr("Usar proxies em previews e pan/crop (alta resolução)"), page);
+        m_proxies->setChecked(s.value("proxiesEnabled", true).toBool());
+        m_proxies->setToolTip(tr("Gera versões leves (H.264 baixo bitrate) de vídeos "
+                                  "2K ou maiores para preview, pan/crop e thumbnails. "
+                                  "A exportação sempre usa o original."));
+        perfLay->addWidget(m_proxies);
         auto* perfHint = new QLabel(tr("Transfere a decodificação de vídeo para a "
                                        "placa de vídeo, aliviando a CPU (útil em 4K e "
                                        "projetos com muitos cortes). Se algum arquivo "
@@ -518,6 +525,10 @@ bool SettingsDialog::hwDecodeEnabled() {
 bool SettingsDialog::hwEncodeEnabled() {
     return QSettings().value("exportHwEncode", false).toBool();
 }
+
+bool SettingsDialog::proxiesEnabled() {
+    return QSettings().value("proxiesEnabled", true).toBool();
+}
 int SettingsDialog::autoSaveMinutes() const { return m_autoInterval->value(); }
 bool SettingsDialog::mkvWarning() const { return m_mkvWarn->isChecked(); }
 
@@ -530,6 +541,8 @@ void SettingsDialog::accept() {
     s.setValue("timelineRippleDelete", m_rippleDelete->isChecked());
     s.setValue("timelineTrimmer", m_trimmer->isChecked());
     s.setValue("hwDecode", m_hwDecode->isChecked());
+    s.setValue("proxiesEnabled", m_proxies->isChecked());
+    ProxyManager::instance().setEnabled(m_proxies->isChecked());
     s.setValue("exportHwEncode", m_hwEncode->isChecked());
     s.setValue("graphSensitivity", m_graphSens->value());
     saveTheme(m_themeCombo->currentIndex() == 1 ? AppTheme::Light : AppTheme::Dark);
