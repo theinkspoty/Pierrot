@@ -58,7 +58,6 @@ QImage OfxRenderer::applySingleOfx(const QImage& input,
 
     OfxHostImpl& host = OfxHostImpl::instance();
 
-    // Tenta reutilizar instância do cache
     OfxEffectInstance* inst = nullptr;
     auto cacheIt = s_instanceCache.find(effect.pluginId);
     if (cacheIt != s_instanceCache.end()) {
@@ -67,11 +66,9 @@ QImage OfxRenderer::applySingleOfx(const QImage& input,
                 << "- clips:" << inst->clips.keys()
                 << "- params:" << inst->params.size();
     } else {
-        // Cria nova instância e cacheia
         inst = new OfxEffectInstance;
         host.initPlugin(*inst, lib->handle, lib->entry, effect.pluginId);
 
-        // Describe (necessário para criar a instância)
         qInfo() << "[OFX] Chamando describe para" << effect.pluginId;
         if (!host.describe(*inst)) {
             qWarning() << "[OFX] Describe falhou para" << effect.pluginId;
@@ -81,7 +78,6 @@ QImage OfxRenderer::applySingleOfx(const QImage& input,
         qInfo() << "[OFX] Describe OK - clips:" << inst->clips.keys()
                 << "- paramDefs:" << inst->paramDefs.size();
 
-        // Cria instância
         qInfo() << "[OFX] Chamando createInstance para" << effect.pluginId;
         if (!host.createInstance(*inst)) {
             qWarning() << "[OFX] createInstance falhou para" << effect.pluginId;
@@ -94,7 +90,6 @@ QImage OfxRenderer::applySingleOfx(const QImage& input,
         s_instanceCache[effect.pluginId] = inst;
     }
 
-    // Atualiza parâmetros na instância cacheada
     for (const OfxParam& p : effect.params) {
         for (auto& iparam : inst->params) {
             if (iparam.name == p.key) {
@@ -122,7 +117,6 @@ QImage OfxRenderer::applySingleOfx(const QImage& input,
         }
     }
 
-    // Renderiza
     QImage output;
     bool ok = host.render(*inst, input, output, time, input.width(), input.height());
 
@@ -131,6 +125,5 @@ QImage OfxRenderer::applySingleOfx(const QImage& input,
         return input;
     }
 
-    // Converte de volta para ARGB32_Premultiplied (formato nativo do preview)
     return output.convertToFormat(QImage::Format_ARGB32_Premultiplied);
 }

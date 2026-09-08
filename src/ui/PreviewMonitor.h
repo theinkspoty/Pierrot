@@ -3,8 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
-#ifndef PIERROT_UI_PREVIEWMONITOR_H
-#define PIERROT_UI_PREVIEWMONITOR_H
+#pragma once
 
 #include <QImage>
 #include <QWidget>
@@ -33,5 +32,3 @@ private:
     QImage m_frame;
     bool m_fullScreen = false;
 };
-
-#endif // PIERROT_UI_PREVIEWMONITOR_H

@@ -711,7 +711,6 @@ void ExpressWidget::createOfxTab(const QString& pluginId)
 
         qInfo() << "[OFX]   param:" << paramName << "type:" << paramType << "label:" << paramLabel;
 
-        // DEBUG: mostra se o tipo é reconhecido
         bool typeRecognized = (paramType == kOfxParamTypeDouble || paramType == kOfxParamTypeInteger
             || paramType == kOfxParamTypeBoolean || paramType == kOfxParamTypeChoice
             || paramType == kOfxParamTypeRGB || paramType == kOfxParamTypeRGBA

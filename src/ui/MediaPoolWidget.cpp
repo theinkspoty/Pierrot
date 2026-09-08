@@ -17,7 +17,6 @@
 #include <QPushButton>
 #include <QDebug>
 #include <QProgressBar>
-#include <QLineEdit>
 #include <QLabel>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -34,7 +33,6 @@
 #include <QRubberBand>
 #include <QScrollBar>
 #include <QItemSelection>
-#include <QLabel>
 #include <QMimeData>
 #include <QUrl>
 #include <QDragEnterEvent>

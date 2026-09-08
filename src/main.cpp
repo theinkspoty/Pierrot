@@ -39,9 +39,6 @@ int main(int argc, char** argv) {
 
     ClickLogger::install();
 
-    app.setStyle(QStyleFactory::create("Fusion"));
-    applyAppPalette(&app, savedTheme());
-
     // Se houve um crash na última execução, avisa o usuário e mostra onde está
     // o relatório (com opção de abrir o arquivo e de remover os antigos).
     const QStringList reports = CrashReporter::existingReports();

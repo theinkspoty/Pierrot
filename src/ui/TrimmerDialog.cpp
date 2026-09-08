@@ -45,14 +45,12 @@ TrimmerDialog::TrimmerDialog(const MediaItem& media, QWidget* parent)
 
     auto* lay = new QVBoxLayout(this);
 
-    // Preview
     m_preview = new QLabel(this);
     m_preview->setMinimumHeight(200);
     m_preview->setAlignment(Qt::AlignCenter);
     m_preview->setStyleSheet(QStringLiteral("background:#000;"));
     lay->addWidget(m_preview, /*stretch=*/1);
 
-    // Slider de posição
     m_seek = new QSlider(Qt::Horizontal, this);
     m_seek->setRange(0, 1000);
     lay->addWidget(m_seek);
@@ -61,7 +59,6 @@ TrimmerDialog::TrimmerDialog(const MediaItem& media, QWidget* parent)
     m_timeLbl->setAlignment(Qt::AlignCenter);
     lay->addWidget(m_timeLbl);
 
-    // In/Out
     auto* io = new QHBoxLayout;
     m_spIn = new QDoubleSpinBox(this);
     m_spOut = new QDoubleSpinBox(this);
@@ -83,7 +80,6 @@ TrimmerDialog::TrimmerDialog(const MediaItem& media, QWidget* parent)
     io->addWidget(btnSwap);
     lay->addLayout(io);
 
-    // Inserir/Cancelar
     auto* btnRow = new QHBoxLayout;
     m_playBtn = new QPushButton(tr("▶ Tocar"), this);
     btnRow->addWidget(m_playBtn);

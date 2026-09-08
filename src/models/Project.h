@@ -637,7 +637,7 @@ public:
     int height = 1080;
     int fps = 30;
     double audioRate = 48000.0;
-    double masterVolume = 1.0; // Volume geral do mixer
+    double masterVolume = 1.0;
 
     // Revisão do projeto: incrementada a cada edição (MainWindow::setModified)
     // e a cada carregamento (fromJson). Caches de composição (MesaRenderer)

@@ -57,14 +57,11 @@
 #include <QVBoxLayout>
 #include <QSlider>
 #include <QLabel>
-#include <QLineEdit>
 #include <QDialogButtonBox>
 #include <QRadioButton>
 #include <QInputDialog>
-#include <QSettings>
 #include <QMessageBox>
 #include <QPushButton>
-#include <QCheckBox>
 #include <QColorDialog>
 #include <QActionGroup>
 #include <QPair>

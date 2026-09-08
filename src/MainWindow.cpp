@@ -72,7 +72,6 @@ QString recolorSvg(const QByteArray& raw, const QColor& color) {
 #include <QAbstractButton>
 #include <QPainter>
 #include <QPixmap>
-#include <QSettings>
 #include <QCloseEvent>
 #include <QShowEvent>
 #include <QStyle>
