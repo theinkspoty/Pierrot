@@ -27,6 +27,7 @@ class QThread;
 
 class AudioMixer; // QIODevice que mistura o PCM de todos os clipes ativos
 class FrameWorker; // decodifica quadros de vídeo fora da thread da UI
+class BgPrefetchWorker; // prefetch em thread separada (não bloqueia o worker)
 class QAudioSink;
 class QAudioOutput;
 
@@ -125,6 +126,9 @@ private:
     void drawPerfOverlay(QPainter& p);
     void onFrameReady(const QString& clipId, const QString& path, double t, int maxW, const QImage& img);
     void onPrefetchReady(const QString& path, double t, int maxW, const QImage& img);
+    void onBgPrefetchDone(const QString& path, double t, int maxW,
+                          const QImage& frame0, const QImage& frame1, FFmpegDecoder* decoder);
+    void onBgPrefetchFailed(const QString& path);
     void updatePrefetch();
     void stopAudio();
     void startAudio(double t);
@@ -194,6 +198,12 @@ private:
     // Decodificação de vídeo em thread própria (não trava a UI na reprodução).
     QThread* m_frameThread = nullptr;
     FrameWorker* m_frameWorker = nullptr;
+    // Thread dedicada ao prefetch: decodifica o próximo clipe sem bloquear o
+    // FrameWorker principal (que mantém o pipeline m_ready em cadência).
+    QThread* m_bgPrefetchThread = nullptr;
+    BgPrefetchWorker* m_bgPrefetchWorker = nullptr;
+    // true enquanto um prefetch em background está em andamento
+    bool m_bgPrefetchBusy = false;
     // Pedido de decodificação. clipId diz para qual clipe o quadro se destina:
     // o clipe do topo alimenta m_frame; os demais alimentam m_layerCache.
     struct FrameReq {
@@ -211,6 +221,7 @@ private:
         QImage img;
         bool valid = false;
         bool requested = false;
+        bool invoked = false;   // decodePrefetch já foi despachado (não re-despachar)
     };
     // Quadro decodificado de um clipe de camada inferior (não-topo), com a
     // chave de cache para não re-decodificar enquanto o playhead não mudou.
@@ -239,9 +250,23 @@ private:
         qint64 prefetchLatMs = 0; // pedido -> prefetchReady (swap pronto?)
         bool cut = false;       // playhead cruzou para outro clipe
         int cutCount = 0;       // cortes cruzados (para estatística)
+        qint64 droppedTotal = 0; // frames perdidos (acumulado session)
     } m_perf;
+
+    // ── Adaptive quality ────────────────────────────────────────────
+    // Monitora latência do decode e baixa resolução automaticamente
+    // quando o decode não acompanha o playback.
+    double m_adaptiveDecodeMsAvg = 0.0;   // média móvel de latência decode
+    int m_adaptiveSlowCount = 0;          // ticks consecutivos onde decode > frame interval
+    int m_adaptiveBaseQuality = 720;      // qualidade original (antes de baixar)
+    bool m_adaptiveActive = false;        // estamos em modo adaptativo?
     double m_shownT = -1.0;
     int m_shownW = -1;
+    // Desengasgo periódico do vídeo: a cada ~10s de reprodução o FrameWorker
+    // dá um flush leve (libera DPB/caches). Vídeo longo engasga e áudio fica
+    // perfeito porque o decode contínuo degrada com o tempo.
+    QElapsedTimer m_desengasgaT;
+    qint64 m_desengasgaLastMs = 0;
 
     // Cache do frame composto (evita recomposição a cada paintEvent).
     QImage m_compositedCache;

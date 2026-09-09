@@ -39,6 +39,8 @@ public:
     bool isPlaying() const { return m_playing; }
     double playRate() const { return m_playRate; }
     bool loopEnabled() const { return m_loopEnabled; }
+    // Contador de frames perdidos (skip automático). Reseta ao ler.
+    qint64 consumeDroppedFrames();
 
     // Métodos de transporte (chamados pelos slots do widget).
     void seek(double t);
@@ -88,9 +90,11 @@ protected:
     qint64 m_awaitAudioDeadlineMs = -1;
     std::atomic<int> m_audioGen{0};
     qint64 m_currentFrameIndex = -1;
+    double m_lastTickSec = -1.0;   // momento do tick anterior (rate-limit do slew)
     bool m_playing = true;
     double m_playRate = 1.0;
     QPushButton* m_playBtn = nullptr;
+    qint64 m_droppedFrames = 0;
 
 private:
     void applySeekInternal(double t);

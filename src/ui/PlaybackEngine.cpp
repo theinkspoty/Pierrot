@@ -18,6 +18,12 @@ static double projFps(const Project* p) {
     return p ? p->fps : 0.0;
 }
 
+// Diagnóstico do playback: ligue com PIERROT_PLAY_DEBUG=1.
+static bool playDbg() {
+    static const bool on = qEnvironmentVariableIsSet("PIERROT_PLAY_DEBUG");
+    return on;
+}
+
 PlaybackEngine::PlaybackEngine() = default;
 PlaybackEngine::~PlaybackEngine() = default;
 
@@ -204,6 +210,8 @@ void PlaybackEngine::tick() {
 
     // Tempo esperado pelo relógio de parede…
     const double elapsed = m_clock.elapsed() / 1000.0;
+    const double dtTick = (m_lastTickSec < 0.0) ? 0.008 : (elapsed - m_lastTickSec);
+    m_lastTickSec = elapsed;
     double t = m_playStart + elapsed * m_playRate;
 
     // …corrigido pelo relógio do áudio (o que se ouve de verdade). Em
@@ -271,7 +279,16 @@ void PlaybackEngine::tick() {
                     m_lastAnchorClockMs = 0;
                 }
             } else {
-                t += qBound(-0.0025, diff * 0.12, 0.0025);
+                // Drift moderado ou áudio à frente: vídeo alcança o áudio. O
+                // slew é rate-limited pela fração do tick, não por tick: antes,
+                // com o timer rápido (8ms), o clamp fixo de ±2.5ms virava até
+                // ~312ms/s de correção e o playhead "tremia" em torno do
+                // boundary do frame (ora +0, ora +1, ora +2 por tick →
+                // frame-skip contado como dropped → engasgo contínuo, pior a
+                // cada segundo). Limite: ~6 frames/s de slew, suave e
+                // independente da frequência do timer.
+                const double maxSlew = qBound(0.0005, dtTick * 0.2, 0.004);
+                t += qBound(-maxSlew, diff * 0.12, maxSlew);
             }
         }
     }
@@ -284,8 +301,33 @@ void PlaybackEngine::tick() {
     // avança só quando o alvo cruzou o frame atual na direção da taxa.
     if (m_playRate >= 0.0) {
         if (targetFrame <= m_currentFrameIndex) return;
+        // Frame-skip: quantos frames o playhead pulou desde o último tick.
+        // Se >1, o decode não acompanhou — conta como dropped.
+        const qint64 skip = targetFrame - m_currentFrameIndex - 1;
+        if (skip > 0) m_droppedFrames += skip;
     } else {
         if (targetFrame >= m_currentFrameIndex) return;
+        const qint64 skip = m_currentFrameIndex - targetFrame - 1;
+        if (skip > 0) m_droppedFrames += skip;
+    }
+
+    // Log de diagnóstico: mostra a cada frame cruzado o estado do relógio.
+    // Consegue revelar se o slew está tremendo, se o áudio desvia em rajadas
+    // (→ re-seeks) ou se o skip cresce progressivamente com o tempo (=Decode
+    // não aguenta → vídeo engasga com áudio perfeito).
+    if (playDbg()) {
+        const double audioDiff = (raw >= 0 && m_audioClockOn)
+                                 ? (raw + m_audioAnchor) - t : 0.0;
+        const double ms = qBound(0.0005, dtTick * 0.2, 0.004);
+        const double slew = (raw >= 0 && m_audioClockOn)
+                            ? qBound(-ms, audioDiff * 0.12, ms) : 0.0;
+        qDebug().noquote() << QStringLiteral("[play] tick t=%1 dt=%2s audioDiff=%3s slew=%4s skip=%5 drop=%6")
+                  .arg(t, 0, 'f', 3)
+                  .arg(dtTick, 0, 'f', 4)
+                  .arg(audioDiff, 0, 'f', 4)
+                  .arg(slew, 0, 'f', 5)
+                  .arg(targetFrame - m_currentFrameIndex)
+                  .arg(m_droppedFrames);
     }
 
     m_currentFrameIndex = targetFrame;
@@ -351,4 +393,10 @@ const Clip* PlaybackEngine::clipAt(double t) const {
         if (best) return best;
     }
     return nullptr;
+}
+
+qint64 PlaybackEngine::consumeDroppedFrames() {
+    const qint64 n = m_droppedFrames;
+    m_droppedFrames = 0;
+    return n;
 }

@@ -96,6 +96,14 @@ static bool composeDbg() {
     return on;
 }
 
+// Diagnóstico do playback (tick/frame/pedidos): ligue com PIERROT_PLAY_DEBUG=1.
+// Revela o engasgo do vídeo (áudio perfeito): cadência dos ticks, latência do
+// decode, skew do relógio e decodes adicionais por frame (camadas inferiores).
+static bool playDbg() {
+    static const bool on = qEnvironmentVariableIsSet("PIERROT_PLAY_DEBUG");
+    return on;
+}
+
 // Decodifica quadros de vídeo na própria thread (com dois FFmpegDecoder dedicados:
 // um para o clipe principal e outro para pré-carregamento especulativo).
 // O PreviewWidget pede o "último" quadro desejado e descarta intermediários.
@@ -133,17 +141,32 @@ public slots:
         const double step = (dt > 0.0) ? dt
                             : ((m_mainDecoder->fps() > 0.0) ? 1.0 / m_mainDecoder->fps() : 1.0 / 30.0);
         QImage img;
+        static QElapsedTimer dbgClock;
+        const bool dbgOn = playDbg();
+        if (dbgOn && !dbgClock.isValid()) dbgClock.start();
+        const qint64 dbgT0 = dbgOn ? dbgClock.nsecsElapsed() : 0;
+        bool dbgWasReady = false, dbgWasPReady = false;
         if (m_readyValid && m_readyPath == path && m_readyMaxW == maxW
             && std::fabs(m_readyT - t) <= step * 0.5) {
             img = m_readyImg;
             m_readyValid = false;
+            dbgWasReady = true;
         } else if (m_pReadyValid && m_pReadyPath == path && m_pReadyMaxW == maxW
                    && std::fabs(m_pReadyT - t) <= step * 0.5) {
             // Quadro pré-decodificado do clip NOVO logo após o swap no corte.
             img = m_pReadyImg;
             m_pReadyValid = false;
+            dbgWasPReady = true;
         } else {
             img = m_mainDecoder->frameAt(t, maxW);
+        }
+        if (dbgOn) {
+            const double dbgMs = (dbgClock.nsecsElapsed() - dbgT0) / 1000000.0;
+            if (dbgMs > 3.0 || dbgWasReady || dbgWasPReady)
+                qDebug().noquote() << QStringLiteral("[w] t=%1 %2 %3ms")
+                          .arg(t, 0, 'f', 3)
+                          .arg(dbgWasPReady ? QStringLiteral("pready") : (dbgWasReady ? QStringLiteral("ready") : QStringLiteral("dec")), 6)
+                          .arg(dbgMs, 0, 'f', 1);
         }
         emit frameReady(clipId, path, t, maxW, img);
 
@@ -161,6 +184,10 @@ public slots:
     }
 
     void decodePrefetch(const QString& path, double t, int maxW, double step) {
+        static QElapsedTimer dbgClock;
+        const bool dbgOn = playDbg();
+        if (dbgOn && !dbgClock.isValid()) dbgClock.start();
+        const qint64 dbgT0 = dbgOn ? dbgClock.nsecsElapsed() : 0;
         m_pReadyValid = false;
         if (!m_prefetchDecoder->isOpen() || m_prefetchDecoder->source() != path) {
             if (!m_prefetchDecoder->open(path)) {
@@ -169,6 +196,12 @@ public slots:
             }
         }
         const QImage img = m_prefetchDecoder->frameAt(t, maxW);
+        if (dbgOn) {
+            const double dbgMs = (dbgClock.nsecsElapsed() - dbgT0) / 1000000.0;
+            qDebug().noquote() << QStringLiteral("[w] PREFETCH t=%1 %2ms")
+                      .arg(t, 0, 'f', 3)
+                      .arg(dbgMs, 0, 'f', 1);
+        }
         emit prefetchReady(path, t, maxW, img);
         // Pipeline de 1 frame à frente PARA O CLIPE NOVO: decodifica também o
         // segundo quadro. No corte, o primeiro uso do decoder trocado (swap)
@@ -184,6 +217,31 @@ public slots:
         } else {
             m_pReadyValid = false;
         }
+    }
+
+    void warmUpPrefetchDecoder(const QString& path, double t, int maxW,
+                                   const QImage& frame1, FFmpegDecoder* decoder) {
+        // O decoder chega JA ABERTO/AQUECIDO da thread de prefetch; não reabrimos
+        // aqui (abrir custa 500-800ms e congelaria o worker). Adota a posse e o
+        // guarda como m_prefetchDecoder para o swap instantâneo no corte.
+        if (decoder) m_prefetchDecoder.reset(decoder);
+        m_pReadyImg = frame1;
+        m_pReadyT = t;
+        m_pReadyPath = path;
+        m_pReadyMaxW = maxW;
+        m_pReadyValid = !frame1.isNull();
+    }
+
+    void desengasga() {
+        // Desengasgo periódico (a cada ~10s de reprodução): o decode contínuo
+        // deixa o decoder com o DPB em resolução cheia + caches de 2 frames
+        // retidos — degrada o frameAt ao longo de vídeos longos (vídeo engasga,
+        // áudio perfeito). Libera os buffers e invalida os ready para que o
+        // próximo pedido faça re-seek/flush limpo.
+        m_readyValid = false;
+        m_pReadyValid = false;
+        if (m_mainDecoder->isOpen()) m_mainDecoder->releaseBuffers();
+        if (m_prefetchDecoder->isOpen()) m_prefetchDecoder->releaseBuffers();
     }
 
 signals:
@@ -208,6 +266,56 @@ private:
     double m_pReadyT = -1.0;
     int m_pReadyMaxW = 0;
     bool m_pReadyValid = false;
+};
+
+// Thread separada para prefetch — decodifica o próximo clipe em background
+// sem bloquear o FrameWorker principal (decodePrefetch original levava
+// 500-800ms de open+frameAt, congelando o worker e quebrando o m_ready).
+// No fim, transfere a posse do decoder JA ABERTO/AQUECIDO para o worker, que o
+// adota como m_prefetchDecoder para o swap instantâneo no corte (sem jamais
+// acessar o decoder de duas threads ao mesmo tempo).
+class BgPrefetchWorker : public QObject {
+    Q_OBJECT
+public:
+    explicit BgPrefetchWorker(QObject* parent = nullptr)
+        : QObject(parent),
+          m_decoder(std::make_unique<FFmpegDecoder>()) {}
+
+public slots:
+    void decode(const QString& path, double t, int maxW, double step) {
+        static QElapsedTimer dbgClock;
+        const bool dbgOn = playDbg();
+        if (dbgOn && !dbgClock.isValid()) dbgClock.start();
+        const qint64 dbgT0 = dbgOn ? dbgClock.nsecsElapsed() : 0;
+
+        if (!m_decoder) m_decoder = std::make_unique<FFmpegDecoder>();
+        if (!m_decoder->isOpen() || m_decoder->source() != path) {
+            if (!m_decoder->open(path)) {
+                emit failed(path);
+                return;
+            }
+        }
+        QImage frame0 = m_decoder->source() == path ? m_decoder->frameAt(t, maxW) : QImage();
+        QImage frame1;
+        if (!frame0.isNull() && step > 0.0 && m_decoder->source() == path)
+            frame1 = m_decoder->frameAt(t + step, maxW);
+
+        if (dbgOn) {
+            const double dbgMs = (dbgClock.nsecsElapsed() - dbgT0) / 1000000.0;
+            qDebug().noquote() << QStringLiteral("[w] PREFETCH(bg) t=%1 %2ms")
+                      .arg(t, 0, 'f', 3)
+                      .arg(dbgMs, 0, 'f', 1);
+        }
+        emit done(path, t, maxW, frame0, frame1, m_decoder.release());
+    }
+
+signals:
+    void done(const QString& path, double t, int maxW,
+              const QImage& frame0, const QImage& frame1, FFmpegDecoder* decoder);
+    void failed(const QString& path);
+
+private:
+    std::unique_ptr<FFmpegDecoder> m_decoder;
 };
 
 // Mixer de áudio: soma o PCM de todos os clipes ativos em `t` (clipe de vídeo
@@ -1159,7 +1267,12 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     // QObject/parent) e repassa o timeout para o motor via tick().
     m_timer = new QTimer(this);
     m_timer->setTimerType(Qt::PreciseTimer);
-    m_timer->setInterval(33);
+    // Timer rápido (8ms): o avanço de frame NÃO é decidido pelo jitter do event
+    // loop (com 33ms fixo a cadência variava ±5ms → micro-engasgo contínuo).
+    // O frame-guard do tick() retorna cedo quando o relógio ainda não cruzou o
+    // frame boundary; com 8ms a resolução temporal é ~4x melhor e o playback
+    // avança pelo relógio monotônico, não pela chegada do timeout.
+    m_timer->setInterval(8);
     setTimer(m_timer);
     setPlayButton(m_playBtn);
     connect(m_timer, &QTimer::timeout, this, [this]() { PlaybackEngine::tick(); });
@@ -1177,6 +1290,19 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
             this, &PreviewWidget::onPrefetchReady, Qt::QueuedConnection);
     m_frameThread->start();
 
+    // Thread de prefetch em background: decodifica o próximo clipe fora do
+    // caminho do worker (que mantém o pipeline m_ready). Sem isto, o open+2
+    // frameAt do prefetch (500-800ms) congelava o worker por corte.
+    m_bgPrefetchThread = new QThread(this);
+    m_bgPrefetchWorker = new BgPrefetchWorker;
+    m_bgPrefetchWorker->moveToThread(m_bgPrefetchThread);
+    connect(m_bgPrefetchThread, &QThread::finished, m_bgPrefetchWorker, &QObject::deleteLater);
+    connect(m_bgPrefetchWorker, &BgPrefetchWorker::done,
+            this, &PreviewWidget::onBgPrefetchDone, Qt::QueuedConnection);
+    connect(m_bgPrefetchWorker, &BgPrefetchWorker::failed,
+            this, &PreviewWidget::onBgPrefetchFailed, Qt::QueuedConnection);
+    m_bgPrefetchThread->start();
+
     setMinimumSize(320, 200);
 }
 
@@ -1192,6 +1318,10 @@ PreviewWidget::~PreviewWidget() {
         }
         m_frameThread->quit();
         m_frameThread->wait(5000);
+    }
+    if (m_bgPrefetchThread) {
+        m_bgPrefetchThread->quit();
+        m_bgPrefetchThread->wait(5000);
     }
 }
 
@@ -1600,6 +1730,46 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
     // Overlay de edição de máscara (formas + alças do clipe sob edição).
     drawMaskOverlay(p, canvas, k);
 
+    // Indicador de frames perdidos (visível quando há drops, sem env var).
+    if (m_playing && m_perf.droppedTotal > 0) {
+        p.save();
+        p.resetTransform();
+        QFont df = p.font();
+        df.setPointSizeF(8);
+        df.setBold(true);
+        p.setFont(df);
+        const QString dropTxt = QStringLiteral("Dropped: %1").arg(m_perf.droppedTotal);
+        const QRect dropR(width() - 130, 8, 122, 18);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(180, 50, 50, 180));
+        QPainterPath dropBg;
+        dropBg.addRoundedRect(QRectF(dropR), 3.0, 3.0);
+        p.drawPath(dropBg);
+        p.setPen(QColor(255, 255, 255, 220));
+        p.drawText(dropR, Qt::AlignCenter, dropTxt);
+        p.restore();
+    }
+
+    // Indicador de qualidade adaptativa (mostra quando auto-baixou).
+    if (m_adaptiveActive) {
+        p.save();
+        p.resetTransform();
+        QFont af = p.font();
+        af.setPointSizeF(8);
+        af.setBold(true);
+        p.setFont(af);
+        const QString adpTxt = QStringLiteral("Auto: %1p").arg(m_previewQuality);
+        const QRect adpR(width() - 130, m_playing && m_perf.droppedTotal > 0 ? 30 : 8, 122, 18);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(50, 120, 180, 180));
+        QPainterPath adpBg;
+        adpBg.addRoundedRect(QRectF(adpR), 3.0, 3.0);
+        p.drawPath(adpBg);
+        p.setPen(QColor(255, 255, 255, 220));
+        p.drawText(adpR, Qt::AlignCenter, adpTxt);
+        p.restore();
+    }
+
     // Diagnóstico de performance (PIERROT_PERF_DEBUG=1).
     drawPerfOverlay(p);
 }
@@ -1609,7 +1779,7 @@ void PreviewWidget::drawPerfOverlay(QPainter& p) {
     if (!on) return;
     p.save();
     p.resetTransform();
-    const QRect box(8, 8, 320, 120);
+    const QRect box(8, 8, 340, 140);
     p.fillRect(box, QColor(0, 0, 0, 180));
     QFont f = p.font();
     f.setPointSizeF(8);
@@ -1619,13 +1789,18 @@ void PreviewWidget::drawPerfOverlay(QPainter& p) {
         "tick(ms): seek %1  prefetch %2  mix %3  total %4\n"
         "worker->frame: %5 ms   prefetch->ready: %6 ms\n"
         "corte: %7   (cortes cruzados: %8)\n"
-        "prefetch: req=%9 val=%10")
+        "prefetch: req=%9 val=%10\n"
+        "dropped: %11   adaptive: %12")
         .arg(m_perf.seekMs).arg(m_perf.prefetchMs).arg(m_perf.mixMs)
         .arg(m_perf.totalMs)
         .arg(m_perf.workerMs).arg(m_perf.prefetchLatMs)
         .arg(m_perf.cut ? QStringLiteral("SIM") : QStringLiteral("não"))
         .arg(m_perf.cutCount)
-        .arg(m_prefetch.requested ? 1 : 0).arg(m_prefetch.valid ? 1 : 0);
+        .arg(m_prefetch.requested ? 1 : 0).arg(m_prefetch.valid ? 1 : 0)
+        .arg(m_perf.droppedTotal)
+        .arg(m_adaptiveActive
+             ? QStringLiteral("ON (%1p)").arg(m_previewQuality)
+             : QStringLiteral("OFF"));
     p.drawText(box.adjusted(10, 8, -6, -6), Qt::AlignLeft | Qt::AlignTop, txt);
     p.restore();
 }
@@ -1772,6 +1947,23 @@ void PreviewWidget::onSeek(double t) {
 void PreviewWidget::applySeekVisual(double t) {
     Q_UNUSED(t);
     if (m_timeLabel) m_timeLabel->setText(fmtTimecode(m_playhead, projFps(m_project)));
+
+    // Desengasgo periódico: a cada ~10s durante playback contínuo, libera os
+    // buffers internos do decoder (DPB + caches de 2 frames) que degradam o
+    // frameAt em vídeos longos — a causa do vídeo engasgar com áudio perfeito.
+    // O flush é barato (releaseBuffers não fecha o arquivo; o próximo pedido
+    // faz re-seek) e roda no worker thread, seriado com os decodeOne.
+    if (m_playing && m_frameWorker) {
+        const qint64 nowMs = m_desengasgaT.isValid()
+                                 ? m_desengasgaT.elapsed() : 0;
+        if (!m_desengasgaT.isValid()) {
+            m_desengasgaT.start();
+            m_desengasgaLastMs = 0;
+        } else if (nowMs - m_desengasgaLastMs >= 10000) {
+            m_desengasgaLastMs = nowMs;
+            QMetaObject::invokeMethod(m_frameWorker, "desengasga", Qt::QueuedConnection);
+        }
+    }
     updateFrame();
     update();
 }
@@ -1845,6 +2037,10 @@ void PreviewWidget::setZoom(double z) {
 
 void PreviewWidget::setPreviewQuality(int width) {
     m_previewQuality = width;
+    // Se o usuário mudou manualmente, reseta o estado adaptativo.
+    m_adaptiveSlowCount = 0;
+    m_adaptiveActive = false;
+    m_adaptiveDecodeMsAvg = 0.0;
     // Invalida o quadro atual e força a reconversão na nova resolução.
     {
         QMutexLocker l(&m_frameMutex);
@@ -2498,6 +2694,10 @@ void PreviewWidget::requestFrame(const QString& clipId, const QString& path, dou
 void PreviewWidget::requestLowerLayers(int decW) {
     if (!m_project) return;
     const Clip* top = clipAt(m_playhead);
+    // Quantos decodes de camada inferior são pedidos por frame — candidato nº1
+    // a roubar slots do worker que deveria estar decodificando o clipe do topo
+    // (vídeo que engasga com áudio perfeito = o quadro do topo chega tarde).
+    int dbgLayerDecodes = 0;
     // Camadas que deixaram de estar ativas no playhead saem do cache (evita
     // crescimento sem limite conforme o usuário navega pelo projeto).
     {
@@ -2531,10 +2731,12 @@ void PreviewWidget::requestLowerLayers(int decW) {
             QMutexLocker l(&m_frameMutex);
             const auto it = m_layerCache.constFind(c->id);
             if (it != m_layerCache.constEnd() && it->path == vpath
-                && std::fabs(it->t - srcT) < 1e-6 && it->maxW == decW && !it->img.isNull())
-                continue; // já em cache
+                && std::fabs(it->t - srcT) < 3.0 / projFps(m_project)
+                && it->maxW == decW && !it->img.isNull())
+                continue; // já em cache (3 frames: evita re-decode de background a cada frame)
         }
         requestFrame(c->id, vpath, srcT, decW);
+        ++dbgLayerDecodes;
     }
 
     // Tracks Mesa: decodifica o frame individual de cada track via MesaRenderer
@@ -2563,17 +2765,21 @@ void PreviewWidget::requestLowerLayers(int decW) {
                                    m_playhead, decW};
         }
     }
+    // Log de diagnóstico: quantos decodes inferiores dispararam este frame — se
+    // houver, o worker está dividindo atenção entre o clipe do topo e N camadas
+    // novas ao mesmo tempo (candidato nº1 ao engasgo pós-20s em projetos com
+    // múltiplas faixas).
+    if (playDbg() && dbgLayerDecodes > 0)
+        qDebug().noquote() << QStringLiteral("[play] layers decode=%1 t=%2 top=%3 queue=%4")
+                  .arg(dbgLayerDecodes)
+                  .arg(m_playhead, 0, 'f', 3)
+                  .arg(top ? top->id.mid(0,8) : QString())
+                  .arg(m_reqQueue.size());
 }
 
 // Chamado com m_frameMutex segurado.
 void PreviewWidget::kickFrameWorker() {
     if (m_workerBusy || m_reqQueue.isEmpty() || !m_frameWorker) return;
-    // Prefetch: não segura os decodeOne's enquanto o prefetch trabalha (isso
-    // parava o clipe atual por ~30-150ms a cada corte). Só nos últimos 0.12s
-    // antes do corte, se o prefetch ainda não terminou, dá prioridade a ele —
-    // o m_pReady (2º quadro pré-decodificado) torna o swap instantâneo.
-    if (m_prefetch.requested && !m_prefetch.valid
-        && m_playhead >= m_prefetch.clipEnd - 0.12) return;
 
     // Podas pedidos órfãos: na virada de um corte, o pedido residual do clipe
     // antigo não é mais "vivo" — decodificá-lo gastava um slot inteiro e
@@ -2627,6 +2833,42 @@ void PreviewWidget::onFrameReady(const QString& clipId, const QString& path, dou
             m_perf.workerMs = (m_perfT.nsecsElapsed() - m_perfWorkerStartNs) / 1000000;
         kickFrameWorker(); // continua com o próximo pedido, se houver
     }
+
+    // ── Adaptive quality: monitora latência do decode ──────────────
+    if (m_playing && m_perf.workerMs > 0 && m_project && m_project->fps > 0.0) {
+        const double frameMs = 1000.0 / m_project->fps;
+        // Média móvel exponencial (suaviza spikes).
+        m_adaptiveDecodeMsAvg = m_adaptiveDecodeMsAvg * 0.8 + m_perf.workerMs * 0.2;
+        if (m_adaptiveDecodeMsAvg > frameMs * 1.2) {
+            ++m_adaptiveSlowCount;
+        } else {
+            m_adaptiveSlowCount = std::max(0, m_adaptiveSlowCount - 1);
+        }
+        // 5 ticks consecutivos lentos → baixa resolução.
+        if (m_adaptiveSlowCount >= 5 && !m_adaptiveActive) {
+            m_adaptiveBaseQuality = m_previewQuality;
+            const int levels[] = {3840, 1080, 720, 480, 360};
+            for (int i = 0; i < 5; ++i) {
+                if (m_previewQuality >= levels[i] && levels[i] < m_previewQuality) {
+                    setPreviewQuality(levels[i]);
+                    m_adaptiveActive = true;
+                    break;
+                }
+            }
+        }
+        // Recupera quando a latência normaliza por 30 ticks.
+        if (m_adaptiveActive && m_adaptiveDecodeMsAvg < frameMs * 0.7) {
+            m_adaptiveSlowCount -= 2;
+            if (m_adaptiveSlowCount <= 0) {
+                setPreviewQuality(m_adaptiveBaseQuality);
+                m_adaptiveActive = false;
+                m_adaptiveSlowCount = 0;
+            }
+        }
+        // Acumula dropped frames para o overlay.
+        m_perf.droppedTotal += consumeDroppedFrames();
+    }
+
     if (img.isNull() || !m_project) return;
 
     const Clip* clip = nullptr;
@@ -2640,6 +2882,20 @@ void PreviewWidget::onFrameReady(const QString& clipId, const QString& path, dou
     // Ignora quadros decodificados para outra posição (scrub/seek rápido muito distante).
     const double wantT = clipSrcTime(*clip, m_playhead - clip->pos);
     if (std::fabs(wantT - t) > 1.5) return;
+
+    // Quantum a que o playhead (já cruzou o frame) está à frente do quadro que
+    // acabou de decodificar. >1 frame em reprodução = o vídeo está atrasado e
+    // vai ENGASGAR (re-exibir) mesmo com o áudio perfeito.
+    if (playDbg() && m_playing && std::fabs(t - wantT) <= 1.5) {
+        const double aheadFrames = (wantT - t) * projFps(m_project);
+        if (std::fabs(aheadFrames) > 0.5)
+            qDebug().noquote() << QStringLiteral("[play] frame atraso %1f (dec %2s playhead %3s) lat %4ms q %5")
+                      .arg(aheadFrames, 4, 'f', 1)
+                      .arg(t, 0, 'f', 3)
+                      .arg(wantT, 0, 'f', 3)
+                      .arg(static_cast<double>(m_perf.workerMs), 0, 'f', 0)
+                      .arg(maxW);
+    }
 
     // Quadro do clipe do TOPO: caminho atual do preview (com prefetch/pan-crop).
     const Clip* top = clipAt(m_playhead);
@@ -2713,9 +2969,49 @@ void PreviewWidget::onPrefetchReady(const QString& path, double t, int maxW, con
         && std::fabs(m_prefetch.t - t) < 1e-4 && m_prefetch.maxW == maxW) {
         m_prefetch.img = img;
         m_prefetch.valid = !img.isNull();
+        m_prefetch.invoked = false; // pronto (ou falhou): permite novo ciclo
+        if (img.isNull()) m_prefetch.requested = false; // falhou: encerra o ciclo
     }
     // O prefetch liberou o caminho — retoma os decodeOne's que estavam esperando.
+    m_workerBusy = false;
     kickFrameWorker();
+}
+
+void PreviewWidget::onBgPrefetchDone(const QString& path, double t, int maxW,
+                                     const QImage& frame0, const QImage& frame1,
+                                     FFmpegDecoder* decoder) {
+    const double step = m_project ? 1.0 / projFps(m_project) : 1.0 / 30.0;
+    {
+        QMutexLocker l(&m_frameMutex);
+        if (m_perfT.isValid() && m_perfPrefetchStartNs > 0)
+            m_perf.prefetchLatMs = (m_perfT.nsecsElapsed() - m_perfPrefetchStartNs) / 1000000;
+        m_perfPrefetchStartNs = 0;
+        m_bgPrefetchBusy = false;
+        if (m_prefetch.requested && m_prefetch.path == path && m_prefetch.maxW == maxW) {
+            m_prefetch.img = frame0;
+            m_prefetch.valid = !frame0.isNull();
+            m_prefetch.invoked = false;
+            if (frame0.isNull()) m_prefetch.requested = false;
+        }
+    }
+    // Entrega o decoder AQUECIDO (aberto na posição do próximo clipe) ao worker,
+    // para o swap instantâneo no corte — sem nunca bloquear o worker com open().
+    if (decoder && m_frameWorker)
+        QMetaObject::invokeMethod(m_frameWorker, "warmUpPrefetchDecoder", Qt::QueuedConnection,
+                                  Q_ARG(QString, path),
+                                  Q_ARG(double, t + step),
+                                  Q_ARG(int, maxW),
+                                  Q_ARG(QImage, frame1),
+                                  Q_ARG(FFmpegDecoder*, decoder));
+}
+
+void PreviewWidget::onBgPrefetchFailed(const QString& path) {
+    QMutexLocker l(&m_frameMutex);
+    m_bgPrefetchBusy = false;
+    if (m_prefetch.requested && m_prefetch.path == path) {
+        m_prefetch.valid = false;
+        m_prefetch.requested = false;
+    }
 }
 
 void PreviewWidget::updatePrefetch() {
@@ -2769,10 +3065,12 @@ void PreviewWidget::updatePrefetch() {
         m_prefetch.img = QImage();
         m_prefetch.valid = false;
         m_prefetch.requested = true;
+        m_prefetch.invoked = true;  // despachado agora (só é re-despachado se o corte chegar sem terminar)
         m_prefetch.clipEnd = clip->pos + clip->dur;
     }
-
-    QMetaObject::invokeMethod(m_frameWorker, "decodePrefetch", Qt::QueuedConnection,
+    if (!m_bgPrefetchWorker || m_bgPrefetchBusy) return;
+    m_bgPrefetchBusy = true;
+    QMetaObject::invokeMethod(m_bgPrefetchWorker, "decode", Qt::QueuedConnection,
                               Q_ARG(QString, vpath),
                               Q_ARG(double, srcT),
                               Q_ARG(int, decW),
