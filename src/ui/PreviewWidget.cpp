@@ -236,10 +236,12 @@ public slots:
         // Desengasgo periódico (a cada ~10s de reprodução): o decode contínuo
         // deixa o decoder com o DPB em resolução cheia + caches de 2 frames
         // retidos — degrada o frameAt ao longo de vídeos longos (vídeo engasga,
-        // áudio perfeito). Libera os buffers e invalida os ready para que o
-        // próximo pedido faça re-seek/flush limpo.
-        m_readyValid = false;
-        m_pReadyValid = false;
+        // áudio perfeito). Libera os buffers internos SEM invalidar os ready:
+        // m_ready/m_pReady são QImage JÁ decodificadas (snapshots) — valem
+        // mesmo após o flush. Invalidá-los era o que criava um buraco de 1-2
+        // frames: o primeiro pedido pós-flush caía em decode síncrono e chegava
+        // atrasado em relação ao relógio. Com os ready vivos, o próximo frame
+        // continua instantâneo e o re-seek frio fica só no pre-decode seguinte.
         if (m_mainDecoder->isOpen()) m_mainDecoder->releaseBuffers();
         if (m_prefetchDecoder->isOpen()) m_prefetchDecoder->releaseBuffers();
     }
