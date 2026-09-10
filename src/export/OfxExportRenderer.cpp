@@ -6,6 +6,7 @@
 #include "OfxExportRenderer.h"
 #include "ofx/OfxRenderer.h"
 #include "ofx/OfxPluginManager.h"
+#include "ofx/OfxHost.h"
 #include "models/Project.h"
 #include "ffmpeg/FFmpegDecoder.h"
 
@@ -99,8 +100,9 @@ QString OfxExportRenderer::renderClip(const Project& project,
 
     // Decodifica e processa frame a frame.
     for (int f = 0; f < totalFrames; ++f) {
-        // Verifica cancelamento.
-        if (progress && !progress(f, totalFrames)) {
+        // Verifica cancelamento (via progress lambda OU abort direto).
+        if (OfxHostImpl::abortRequested() ||
+            (progress && !progress(f, totalFrames))) {
             ffmpeg.kill();
             ffmpeg.waitForFinished(3000);
             if (error) *error = "Pré-renderização OFX cancelada";

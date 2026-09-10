@@ -8,6 +8,7 @@
 #include "export/LainkaRenderer.h"
 #include "export/OfxExportRenderer.h"
 #include "ofx/OfxPluginManager.h"
+#include "ofx/OfxHost.h"
 
 #include <QLineEdit>
 #include <QComboBox>
@@ -29,6 +30,7 @@
 #include <QFileInfo>
 #include <QDateTime>
 #include <QMessageBox>
+#include <QHash>
 
 ExportDialog::ExportDialog(Project* project, QWidget* parent, Mode mode)
     : QDialog(parent), m_project(project), m_mode(mode) {
@@ -148,8 +150,8 @@ ExportDialog::ExportDialog(Project* project, QWidget* parent, Mode mode)
 }
 
 ExportDialog::~ExportDialog() {
-    restoreLainkaMedia();
-    restoreOfxMedia();
+    OfxHostImpl::setAbort(true);
+    deleteTempFiles();
     if (m_process && m_process->state() != QProcess::NotRunning) {
         m_process->kill();
         log(tr("Exportação cancelada pelo encerramento da janela."));
@@ -159,6 +161,7 @@ ExportDialog::~ExportDialog() {
 void ExportDialog::requestCancel() {
     if (m_mode == Configure) { reject(); return; }
     if (!m_process || m_process->state() == QProcess::NotRunning) {
+        OfxHostImpl::setAbort(true);
         reject();
         return;
     }
@@ -170,8 +173,7 @@ void ExportDialog::requestCancel() {
         m_process->kill();
         m_process->deleteLater();
         m_process = nullptr;
-        restoreLainkaMedia();
-        restoreOfxMedia();
+        deleteTempFiles();
         m_startBtn->setEnabled(true);
         m_progress->setValue(0);
         log(tr("Renderização cancelada pelo usuário."));
@@ -235,13 +237,20 @@ void ExportDialog::startExport() {
     const ExportSettings s = currentSettings();
     if (s.outputPath.isEmpty()) { log(tr("Informe o caminho de saída.")); return; }
 
+    // Trabalha numa CÓPIA do projeto: pré-renderização substitui mediaId dos
+    // clipes e cria MediaItems temporários, mas o projeto vivo nunca é tocado.
+    // Um crash ou o fechamento da janela durante o export não corrompe o
+    // projeto aberto no editor.
+    Project work = *m_project;
+    m_tempFiles.clear();
+
     // ── Pré-renderização LAINKA ────────────────────────────────────────
     // Antes de montar o comando ffmpeg, renderiza clipes com LAINKA
     // frame-a-frame para garantir consistência preview↔export.
     QHash<QString, QString> lainkaRenders; // clipId → arquivo temporário
     {
         bool hasLainka = false;
-        for (const Track& t : m_project->videoTracks)
+        for (const Track& t : work.videoTracks)
             for (const Clip& c : t.clips)
                 if (c.lainkaEnabled) { hasLainka = true; break; }
         if (hasLainka) {
@@ -250,7 +259,7 @@ void ExportDialog::startExport() {
             QApplication::processEvents();
 
             QString lainkaError;
-            lainkaRenders = LainkaRenderer::renderAll(*m_project, s.fps,
+            lainkaRenders = LainkaRenderer::renderAll(work, s.fps,
                 [this](int cur, int total) -> bool {
                     if (total > 0)
                         log(tr("LAINKA: frame %1/%2").arg(cur + 1).arg(total));
@@ -269,15 +278,11 @@ void ExportDialog::startExport() {
             if (!lainkaRenders.isEmpty()) {
                 log(tr("LAINKA pré-renderizado: %1 clipe(s)").arg(lainkaRenders.size()));
 
-                // Substitui temporariamente os mediaId dos clipes pré-renderizados.
-                // Salva os originais para restaurar depois.
-                for (Track& t : m_project->videoTracks)
+                // Substitui temporariamente os mediaId dos clipes pré-renderizados
+                // na cópia (o projeto vivo fica intocado).
+                for (Track& t : work.videoTracks)
                     for (Clip& c : t.clips)
                         if (lainkaRenders.contains(c.id)) {
-                            m_lainkaOriginalMedia.insert(c.id, c.mediaId);
-                            // Salva in e lainkaEnabled originais para restaurar depois.
-                            m_lainkaOriginalIn.insert(c.id, c.in);
-                            m_lainkaOriginalEnabled.insert(c.id, c.lainkaEnabled);
                             // Cria um MediaItem temporário para o arquivo pré-renderizado.
                             const QString tmpPath = lainkaRenders[c.id];
                             MediaItem mi;
@@ -287,9 +292,9 @@ void ExportDialog::startExport() {
                                 ? QString("LAINKA_%1").arg(c.id.left(8))
                                 : c.name;
                             mi.hasVideo = true;
-                            mi.width = m_project->width;
-                            mi.height = m_project->height;
-                            m_project->media.append(mi);
+                            mi.width = work.width;
+                            mi.height = work.height;
+                            work.media.append(mi);
                             c.mediaId = mi.id;
                             // Desabilita LAINKA no clip para que buildCommand()
                             // NÃO aplique os filtros ffmpeg LAINKA novamente
@@ -297,7 +302,7 @@ void ExportDialog::startExport() {
                             c.lainkaEnabled = false;
                             // O arquivo pré-renderizado começa do frame correto.
                             c.in = 0.0;
-                            m_lainkaTempMedia.append(mi.id);
+                            m_tempFiles.append(tmpPath);
                         }
             }
         }
@@ -309,7 +314,7 @@ void ExportDialog::startExport() {
     QHash<QString, QString> ofxRenders; // clipId → arquivo temporário
     if (m_ofxManager) {
         bool hasOfx = false;
-        for (const Track& t : m_project->videoTracks)
+        for (const Track& t : work.videoTracks)
             for (const Clip& c : t.clips)
                 if (!c.ofxFx.isEmpty()) {
                     for (const OfxPluginInstance& fx : c.ofxFx)
@@ -320,14 +325,15 @@ void ExportDialog::startExport() {
             log(tr("Pré-renderizando efeitos OFX…"));
             m_progress->setRange(0, 0);
             QApplication::processEvents();
+            OfxHostImpl::setAbort(false);
 
             QString ofxError;
-            ofxRenders = OfxExportRenderer::renderAll(*m_project, s.fps, m_ofxManager,
+            ofxRenders = OfxExportRenderer::renderAll(work, s.fps, m_ofxManager,
                 [this](int cur, int total) -> bool {
                     if (total > 0)
                         log(tr("OFX: frame %1/%2").arg(cur + 1).arg(total));
                     QApplication::processEvents();
-                    return true;
+                    return !OfxHostImpl::abortRequested();
                 }, &ofxError);
 
             m_progress->setRange(0, 100);
@@ -340,11 +346,9 @@ void ExportDialog::startExport() {
                 log(tr("OFX pré-renderizado: %1 clipe(s)").arg(ofxRenders.size()));
 
                 // Substitui temporariamente os mediaId dos clipes pré-renderizados.
-                for (Track& t : m_project->videoTracks)
+                for (Track& t : work.videoTracks)
                     for (Clip& c : t.clips)
                         if (ofxRenders.contains(c.id)) {
-                            m_ofxOriginalMedia.insert(c.id, c.mediaId);
-                            m_ofxOriginalIn.insert(c.id, c.in);
                             const QString tmpPath = ofxRenders[c.id];
                             MediaItem mi;
                             mi.id = newId();
@@ -353,26 +357,26 @@ void ExportDialog::startExport() {
                                 ? QString("OFX_%1").arg(c.id.left(8))
                                 : c.name;
                             mi.hasVideo = true;
-                            mi.width = m_project->width;
-                            mi.height = m_project->height;
-                            m_project->media.append(mi);
+                            mi.width = work.width;
+                            mi.height = work.height;
+                            work.media.append(mi);
                             c.mediaId = mi.id;
                             // Remove efeitos OFX do clipe (já baked no pré-renderizado).
                             c.ofxFx.clear();
                             c.in = 0.0;
-                            m_ofxTempMedia.append(mi.id);
+                            m_tempFiles.append(tmpPath);
                         }
             }
         }
     }
 
     QString err;
-    const QStringList args = ProjectExporter::buildCommand(*m_project, s, &err);
+    const QStringList args = ProjectExporter::buildCommand(work, s, &err);
     if (args.isEmpty() && err.isEmpty())
         err = tr("Falha ao montar o comando de exportação.");
-    if (!err.isEmpty()) { log(tr("Erro: %1").arg(err)); return; }
+    if (!err.isEmpty()) { log(tr("Erro: %1").arg(err)); deleteTempFiles(); return; }
 
-    m_total = m_project->duration();
+    m_total = work.duration();
     m_progress->setValue(0);
     m_logEdit->clear();
     m_logFile = QFileInfo(s.outputPath).dir().filePath(
@@ -393,6 +397,7 @@ void ExportDialog::startExport() {
         log(tr("Não foi possível iniciar o ffmpeg. Instale o ffmpeg e tente novamente."));
         m_process->deleteLater();
         m_process = nullptr;
+        deleteTempFiles();
         return;
     }
     m_startBtn->setEnabled(false);
@@ -421,8 +426,7 @@ void ExportDialog::onReadyRead() {
 }
 
 void ExportDialog::onFinished(int exitCode) {
-    restoreLainkaMedia();
-    restoreOfxMedia();
+    deleteTempFiles();
     m_startBtn->setEnabled(true);
     if (m_process) {
         m_process->deleteLater();
@@ -451,62 +455,11 @@ void ExportDialog::log(const QString& line) {
     }
 }
 
-void ExportDialog::restoreLainkaMedia() {
-    if (m_lainkaOriginalMedia.isEmpty()) return;
-
-    // Restaura os mediaId, in e lainkaEnabled originais nos clipes.
-    for (Track& t : m_project->videoTracks)
-        for (Clip& c : t.clips)
-            if (m_lainkaOriginalMedia.contains(c.id)) {
-                c.mediaId = m_lainkaOriginalMedia[c.id];
-                if (m_lainkaOriginalIn.contains(c.id))
-                    c.in = m_lainkaOriginalIn[c.id];
-                if (m_lainkaOriginalEnabled.contains(c.id))
-                    c.lainkaEnabled = m_lainkaOriginalEnabled[c.id];
-            }
-
-    // Remove os mediaIds temporários do projeto.
-    for (const QString& tmpId : m_lainkaTempMedia) {
-        for (int i = m_project->media.size() - 1; i >= 0; --i) {
-            if (m_project->media[i].id == tmpId) {
-                // Remove o arquivo temporário do disco.
-                QFile::remove(m_project->media[i].filePath);
-                m_project->media.removeAt(i);
-                break;
-            }
-        }
-    }
-
-    m_lainkaOriginalMedia.clear();
-    m_lainkaOriginalIn.clear();
-    m_lainkaOriginalEnabled.clear();
-    m_lainkaTempMedia.clear();
-}
-
-void ExportDialog::restoreOfxMedia() {
-    if (m_ofxOriginalMedia.isEmpty()) return;
-
-    // Restaura os mediaId e in originais nos clipes.
-    for (Track& t : m_project->videoTracks)
-        for (Clip& c : t.clips)
-            if (m_ofxOriginalMedia.contains(c.id)) {
-                c.mediaId = m_ofxOriginalMedia[c.id];
-                if (m_ofxOriginalIn.contains(c.id))
-                    c.in = m_ofxOriginalIn[c.id];
-            }
-
-    // Remove os mediaIds temporários do projeto.
-    for (const QString& tmpId : m_ofxTempMedia) {
-        for (int i = m_project->media.size() - 1; i >= 0; --i) {
-            if (m_project->media[i].id == tmpId) {
-                QFile::remove(m_project->media[i].filePath);
-                m_project->media.removeAt(i);
-                break;
-            }
-        }
-    }
-
-    m_ofxOriginalMedia.clear();
-    m_ofxOriginalIn.clear();
-    m_ofxTempMedia.clear();
+void ExportDialog::deleteTempFiles() {
+    // Remove os arquivos temporários de pré-renderiação (LAINKA/OFX). No
+    // sucesso, na falha, no cancelamento e no fecho da janela — nunca
+    // deixamos lixo no temp nem criamos media fantasma no projeto vivo.
+    for (const QString& path : m_tempFiles)
+        QFile::remove(path);
+    m_tempFiles.clear();
 }

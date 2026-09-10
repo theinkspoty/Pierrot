@@ -7,7 +7,6 @@
 
 #include <QDialog>
 #include <QString>
-#include <QHash>
 #include "models/Project.h"
 #include "export/ProjectExporter.h"
 
@@ -41,8 +40,7 @@ private slots:
 private:
     ExportSettings currentSettings() const;
     void log(const QString& line);
-    void restoreLainkaMedia();
-    void restoreOfxMedia();
+    void deleteTempFiles();
     Project* m_project = nullptr;
     Mode m_mode = Render;
     QLineEdit* m_outEdit = nullptr;
@@ -58,15 +56,9 @@ private:
     QProcess* m_process = nullptr;
     double m_total = 0.0;
     QString m_logFile;
-    // Mapeamento para restaurar mediaId após exportação LAINKA.
-    QHash<QString, QString> m_lainkaOriginalMedia; // clipId → mediaId original
-    QHash<QString, double> m_lainkaOriginalIn;     // clipId → in original
-    QHash<QString, bool> m_lainkaOriginalEnabled;  // clipId → lainkaEnabled original
-    QStringList m_lainkaTempMedia;                 // mediaIds temporários criados
+    // Arquivos temporários de pré-renderiação (LAINKA/OFX) criados durante o
+    // export. Sempre deletados no fim (sucesso, falha, cancelamento ou fecho).
+    QStringList m_tempFiles;
     // Gerenciador de plugins OFX (opcional, para pré-renderização).
     OfxPluginManager* m_ofxManager = nullptr;
-    // Mapeamento para restaurar mediaId após exportação OFX.
-    QHash<QString, QString> m_ofxOriginalMedia; // clipId → mediaId original
-    QHash<QString, double> m_ofxOriginalIn;     // clipId → in original
-    QStringList m_ofxTempMedia;                 // mediaIds temporários criados
 };

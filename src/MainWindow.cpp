@@ -285,8 +285,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // Intercepta setas ←/→ globalmente via eventFilter no qApp.
     qApp->installEventFilter(this);
 
-    m_undoStack.append(snapshotState());
-    m_undoLabels.append(tr("Início"));
+    m_undoStack.clear();
+    m_undoStack.push_back(snapshotState());
+    m_undoLabels.push_back(tr("Início"));
+    m_undoBytes = m_undoStack.front().size();
     m_undoIndex = 0;
     updateUndoActions();
 
@@ -1849,17 +1851,30 @@ QIcon MainWindow::iconRuler() const {
 }
 
 void MainWindow::pushUndo() {
-    if (m_undoIndex < m_undoStack.size() - 1) {
-        m_undoStack.resize(m_undoIndex + 1);
-        m_undoLabels.resize(m_undoIndex + 1);
+    // Descarta o "redo" se o usuário desfez e fez uma nova edição.
+    if (m_undoIndex < (int)m_undoStack.size() - 1) {
+        while ((int)m_undoStack.size() > m_undoIndex + 1) {
+            m_undoBytes -= m_undoStack.back().size();
+            m_undoStack.pop_back();
+            m_undoLabels.pop_back();
+        }
     }
-    m_undoStack.append(snapshotState());
-    m_undoLabels.append(m_pendingUndoLabel.isEmpty() ? tr("Edição") : m_pendingUndoLabel);
+    const QByteArray snap = snapshotState();
+    // Edição "sem mudança" (ex.: clique sem arraste) não empilha nada.
+    if (m_undoStack.empty() || m_undoStack.back() != snap) {
+        m_undoStack.push_back(snap);
+        m_undoLabels.push_back(m_pendingUndoLabel.isEmpty() ? tr("Edição")
+                                                            : m_pendingUndoLabel);
+        m_undoBytes += snap.size();
+        m_undoIndex = (int)m_undoStack.size() - 1;
+    }
     m_pendingUndoLabel.clear();
-    m_undoIndex = m_undoStack.size() - 1;
-    while (m_undoStack.size() > 60) {
-        m_undoStack.removeAt(0);
-        m_undoLabels.removeAt(0);
+    // Eviction: por contagem e por memória (sempre na frente — O(1) com deque).
+    while ((int)m_undoStack.size() > kUndoMaxEntries
+           || (m_undoBytes > kUndoMaxBytes && (int)m_undoStack.size() > 1)) {
+        m_undoBytes -= m_undoStack.front().size();
+        m_undoStack.pop_front();
+        m_undoLabels.pop_front();
         --m_undoIndex;
     }
     setModified();
@@ -1898,7 +1913,7 @@ void MainWindow::undo() {
 }
 
 void MainWindow::redo() {
-    if (m_undoIndex >= m_undoStack.size() - 1) return;
+    if (m_undoIndex >= (int)m_undoStack.size() - 1) return;
     const QString sel = m_timeline->lastSelectedId();
     QPointer<QWidget> fw = focusWidget();
     ++m_undoIndex;
@@ -1936,7 +1951,7 @@ bool MainWindow::mixerHasAutomation() const {
 
 void MainWindow::updateUndoActions() {
     m_undoAction->setEnabled(m_undoIndex > 0);
-    m_redoAction->setEnabled(m_undoIndex < m_undoStack.size() - 1);
+    m_redoAction->setEnabled(m_undoIndex < (int)m_undoStack.size() - 1);
 }
 
 // Painel de histórico (estilo Vegas): cada entrada = estado da timeline ANTES
@@ -1946,7 +1961,7 @@ void MainWindow::updateHistoryList() {
     if (!m_histList || m_undoLabels.size() != m_undoStack.size()) return;
     m_histList->blockSignals(true);
     m_histList->clear();
-    for (int i = 0; i < m_undoLabels.size(); ++i) {
+    for (int i = 0; i < (int)m_undoLabels.size(); ++i) {
         auto* item = new QListWidgetItem(QString::number(i + 1) + QLatin1String(". ") + m_undoLabels[i]);
         item->setData(Qt::UserRole, i);
         if (i == m_undoIndex)
@@ -1959,7 +1974,7 @@ void MainWindow::updateHistoryList() {
 }
 
 void MainWindow::jumpToUndo(int index) {
-    if (index < 0 || index >= m_undoStack.size() || index == m_undoIndex) return;
+    if (index < 0 || index >= (int)m_undoStack.size() || index == m_undoIndex) return;
     const QString sel = m_timeline->lastSelectedId();
     QPointer<QWidget> fw = focusWidget();
     m_undoIndex = index;
@@ -1985,9 +2000,10 @@ void MainWindow::newProject() {
     m_pancrop->setProject(&m_project);
     m_pancropDock->hide();
     m_undoStack.clear();
-    m_undoStack.append(snapshotState());
+    m_undoStack.push_back(snapshotState());
     m_undoLabels.clear();
-    m_undoLabels.append(tr("Início"));
+    m_undoLabels.push_back(tr("Início"));
+    m_undoBytes = m_undoStack.front().size();
     m_undoIndex = 0;
     updateHistoryList();
     m_currentFile.clear();
@@ -2038,9 +2054,10 @@ void MainWindow::openProjectFile(const QString& path) {
     if (m_project.audioTracks.isEmpty()) m_project.addTrack(true);
 
     m_undoStack.clear();
-    m_undoStack.append(snapshotState());
+    m_undoStack.push_back(snapshotState());
     m_undoLabels.clear();
-    m_undoLabels.append(tr("Início"));
+    m_undoLabels.push_back(tr("Início"));
+    m_undoBytes = m_undoStack.front().size();
     m_undoIndex = 0;
     updateHistoryList();
     m_currentFile = path;
@@ -2194,9 +2211,10 @@ void MainWindow::importEdl() {
     if (m_project.videoTracks.isEmpty()) m_project.addTrack(false);
     if (m_project.audioTracks.isEmpty()) m_project.addTrack(true);
     m_undoStack.clear();
-    m_undoStack.append(snapshotState());
+    m_undoStack.push_back(snapshotState());
     m_undoLabels.clear();
-    m_undoLabels.append(tr("Início"));
+    m_undoLabels.push_back(tr("Início"));
+    m_undoBytes = m_undoStack.front().size();
     m_undoIndex = 0;
     updateHistoryList();
     m_currentFile.clear();

@@ -12,9 +12,7 @@
 #include <vector>
 #include <QDebug>
 #include <QThread>
-#include <QThreadPool>
 #include <QMutexLocker>
-#include <QtConcurrent/QtConcurrent>
 
 // OfxPropSet — implementation
 // ──────────────────────────────────────────────────────────────────────────
@@ -638,7 +636,15 @@ OfxStatus OfxHostImpl::ieClipGetRegionOfDef(OfxImageClipHandle h, OfxTime, OfxRe
 }
 
 int OfxHostImpl::ieAbort(OfxImageEffectHandle) {
-    return 0; // nunca aborta
+    return s_abort.load(std::memory_order_relaxed) ? 1 : 0;
+}
+
+void OfxHostImpl::setAbort(bool on) {
+    s_abort.store(on, std::memory_order_relaxed);
+}
+
+bool OfxHostImpl::abortRequested() {
+    return s_abort.load(std::memory_order_relaxed);
 }
 
 OfxStatus OfxHostImpl::ieImageMemAlloc(OfxImageEffectHandle, size_t n, OfxImageMemoryHandle* mem) {
@@ -733,26 +739,21 @@ const OfxMultiThreadSuiteV1 OfxHostImpl::s_multiThreadSuite = {
 };
 
 OfxStatus OfxHostImpl::mtMultiThread(OfxThreadFunctionV1 func, unsigned int n, void* arg) {
-    if (n <= 1) {
-        for (unsigned int i = 0; i < n; ++i)
+    // Contido: executa sequencialmente na thread de chamada e respeita o
+    // abort. Evita o QtConcurrent::map bloqueante (não cancelável) rodando
+    // código de plugin no global thread pool do Qt, o que podia deixar
+    // codepaths de plugin executando em threads não rastreáveis.
+    for (unsigned int i = 0; i < n; ++i) {
+        if (s_abort.load(std::memory_order_relaxed))
+            return kOfxStatFailed;
+        try {
             func(i, n, arg);
-        return kOfxStatOK;
+        } catch (...) {
+            qWarning() << "[OFX] Thread function lançou exceção no"
+                       << "mtMultiThread; abortando.";
+            return kOfxStatFailed;
+        }
     }
-    // Para n pequeno (2-4), executa sequencialmente — o overhead de dispatch
-    // para o thread pool supera o ganho de paralelismo.
-    if (n <= 4) {
-        for (unsigned int i = 0; i < n; ++i)
-            func(i, n, arg);
-        return kOfxStatOK;
-    }
-    // Executa em paralelo usando QtConcurrent::map.
-    std::vector<unsigned int> indices(n);
-    for (unsigned int i = 0; i < n; ++i) indices[i] = i;
-
-    QtConcurrent::map(indices, [&](unsigned int& i) {
-        func(i, n, arg);
-    }).waitForFinished();
-
     return kOfxStatOK;
 }
 
@@ -799,6 +800,20 @@ OfxStatus OfxHostImpl::mtMutexTryLock(OfxMutexHandle m) {
 
 // ── Plugin lifecycle ─────────────────────────────────────────────────────
 
+namespace {
+OfxStatus callEntry(OfxEffectInstance& inst, const char* action,
+                    void* handle, OfxPropertySetHandle inArgs,
+                    OfxPropertySetHandle outArgs) {
+    try {
+        return inst.entry(action, handle, inArgs, outArgs);
+    } catch (...) {
+        qWarning() << "[OFX] Plugin" << inst.pluginId
+                   << "lançou exceção C++ em" << action;
+        return kOfxStatFailed;
+    }
+}
+}
+
 void OfxHostImpl::initPlugin(OfxEffectInstance& inst, void* libHandle,
                           OfxPluginEntryPoint* entry, const QString& pluginId) {
     inst.pluginLib = libHandle;
@@ -828,13 +843,13 @@ bool OfxHostImpl::describe(OfxEffectInstance& inst) {
     OfxImageEffectHandle effectHandle = reinterpret_cast<OfxImageEffectHandle>(&inst);
 
     // kOfxActionLoad
-    OfxStatus s = inst.entry(kOfxActionLoad, effectHandle, propsHandle, nullptr);
+    OfxStatus s = callEntry(inst, kOfxActionLoad, effectHandle, propsHandle, nullptr);
     if (s != kOfxStatOK && s != kOfxStatReplyDefault) {
         qWarning() << "[OFX] Plugin" << inst.pluginId << "kOfxActionLoad failed:" << s;
     }
 
     // kOfxActionDescribe
-    s = inst.entry(kOfxActionDescribe, effectHandle, propsHandle, nullptr);
+    s = callEntry(inst, kOfxActionDescribe, effectHandle, propsHandle, nullptr);
     if (s != kOfxStatOK && s != kOfxStatReplyDefault) {
         qWarning() << "[OFX] Plugin" << inst.pluginId << "kOfxActionDescribe failed:" << s;
         return false;
@@ -848,11 +863,13 @@ bool OfxHostImpl::describe(OfxEffectInstance& inst) {
     contextProps->setString(kOfxImageEffectPropContext, 0, kOfxImageEffectContextFilter);
     OfxPropertySetHandle ctxHandle = reinterpret_cast<OfxPropertySetHandle>(contextProps);
 
-    s = inst.entry(kOfxImageEffectActionDescribeInContext, effectHandle, ctxHandle, nullptr);
+    s = callEntry(inst, kOfxImageEffectActionDescribeInContext,
+                  effectHandle, ctxHandle, nullptr);
     if (s != kOfxStatOK && s != kOfxStatReplyDefault) {
         // Tenta context geral
         contextProps->setString(kOfxImageEffectPropContext, 0, kOfxImageEffectContextGeneral);
-        s = inst.entry(kOfxImageEffectActionDescribeInContext, effectHandle, ctxHandle, nullptr);
+        s = callEntry(inst, kOfxImageEffectActionDescribeInContext,
+                      effectHandle, ctxHandle, nullptr);
     }
 
     delete contextProps;
@@ -904,7 +921,8 @@ bool OfxHostImpl::createInstance(OfxEffectInstance& inst) {
     // Chama kOfxActionCreateInstance
     OfxPropertySetHandle propsHandle = reinterpret_cast<OfxPropertySetHandle>(&inst.props);
     OfxImageEffectHandle effectHandle = reinterpret_cast<OfxImageEffectHandle>(&inst);
-    OfxStatus s = inst.entry(kOfxActionCreateInstance, effectHandle, propsHandle, nullptr);
+    OfxStatus s = callEntry(inst, kOfxActionCreateInstance,
+                            effectHandle, propsHandle, nullptr);
 
     return s == kOfxStatOK || s == kOfxStatReplyDefault;
 }
@@ -979,7 +997,8 @@ bool OfxHostImpl::render(OfxEffectInstance& inst, const QImage& input, QImage& o
     OfxPropertySetHandle outHandle = nullptr;
 
     OfxImageEffectHandle effectHandle = reinterpret_cast<OfxImageEffectHandle>(&inst);
-    OfxStatus s = inst.entry(kOfxImageEffectActionRender, effectHandle, inHandle, outHandle);
+    OfxStatus s = callEntry(inst, kOfxImageEffectActionRender,
+                            effectHandle, inHandle, outHandle);
 
     qInfo() << "[OFX] Render resultado para" << inst.pluginId
             << "- status:" << s
@@ -1004,7 +1023,7 @@ void OfxHostImpl::destroyInstance(OfxEffectInstance& inst) {
     if (inst.entry) {
         OfxImageEffectHandle effectHandle = reinterpret_cast<OfxImageEffectHandle>(&inst);
         OfxPropertySetHandle propsHandle = reinterpret_cast<OfxPropertySetHandle>(&inst.props);
-        inst.entry(kOfxActionDestroyInstance, effectHandle, propsHandle, nullptr);
+        callEntry(inst, kOfxActionDestroyInstance, effectHandle, propsHandle, nullptr);
     }
     inst.privateData = nullptr;
     inst.params.clear();

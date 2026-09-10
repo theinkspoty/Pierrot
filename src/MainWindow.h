@@ -16,6 +16,7 @@
 #include <QPointer>
 class QVBoxLayout;
 #include <functional>
+#include <deque>
 #include "models/Project.h"
 
 class MediaPoolWidget;
@@ -128,11 +129,16 @@ private:
     bool m_layoutRestored = false;
 
     Project m_project;
-    // Snapshots de undo em JSON comprimido: guardar 60 cópias em memória do
-    // Project inteiro faria a RAM explodir em projetos com muitos cortes.
-    QVector<QByteArray> m_undoStack;
+    // Snapshots de undo em JSON comprimido. std::deque dá eviction O(1) (a
+    // pilha antiga fazia removeAt(0) num QVector, copiando as 59 entradas a
+    // cada eviction). Empilhar 60 cópias em memória de um projeto grande faria
+    // a RAM explodir, então além do limite de contagem há um teto de bytes.
+    static constexpr int kUndoMaxEntries = 60;
+    static constexpr qint64 kUndoMaxBytes = 256LL * 1024 * 1024; // 256 MB
+    std::deque<QByteArray> m_undoStack;
     int m_undoIndex = 0;
-    QStringList m_undoLabels;      // paralelo a m_undoStack (descrição do passo)
+    std::deque<QString> m_undoLabels;    // paralelo a m_undoStack (descrição do passo)
+    qint64 m_undoBytes = 0;              // soma dos tamanhos comprimidos (eviction por memória)
     QString m_pendingUndoLabel;    // rótulo do PRÓXIMO pushUndo (definido pela ação)
     QListWidget* m_histList = nullptr;   // painel de histórico undo/redo
     QDockWidget* m_histDock = nullptr;

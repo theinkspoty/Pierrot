@@ -24,6 +24,7 @@
 #include <QImage>
 #include <QMutex>
 #include <functional>
+#include <atomic>
 
 // ── Property Set wrapper ─────────────────────────────────────────────────
 
@@ -134,11 +135,18 @@ public:
     // Destrói uma instância
     void destroyInstance(OfxEffectInstance& inst);
 
+    // Sinaliza abort ao plugin (ieAbort passa a retornar 1).
+    // Usado pelo export/UI para abortar um render travado.
+    static void setAbort(bool on);
+    static bool abortRequested();
+
     // Acessa a struct OfxHost C para passar ao plugin
     ::OfxHost* cHost() { return &m_cHost; }
 
 private:
     ::OfxHost m_cHost;
+
+    inline static std::atomic_bool s_abort{ false };
 
     // Suite implementations
     static const OfxPropertySuiteV1 s_propertySuite;
