@@ -28,7 +28,9 @@ constexpr int kZoomW = 64;
 constexpr int kFolderH = 22;
 constexpr int kResizeHandleH = 5;
 constexpr int kVideoRowH = 56;
-constexpr int kAudioRowH = 44;
+constexpr int kAudioRowH = 56; // padrão: alto o bastante p/ a barra de volume
+constexpr int kHeaderBtnH = 18;
+constexpr int kHeaderNameH = 18;
 constexpr int kMinRowH = 24;
 constexpr int kMaxRowH = 400;
 constexpr double kMinPps = 2.0;
@@ -115,6 +117,8 @@ int TimelineWidget::trackH(int idx, bool audio) const {
     if (!m_project) return audio ? kAudioRowH : kVideoRowH;
     const QVector<Track>& list = audio ? m_project->audioTracks : m_project->videoTracks;
     if (idx < 0 || idx >= (int)list.size()) return audio ? kAudioRowH : kVideoRowH;
+    // Faixa recolhida (seta do cabeçalho, estilo Premiere): altura mínima.
+    if (list[idx].collapsed) return kMinRowH;
     const int h = list[idx].height;
     if (h >= kMinRowH) return std::min(h, kMaxRowH);
     return audio ? kAudioRowH : kVideoRowH;
@@ -1342,6 +1346,28 @@ void TimelineWidget::drawKeyframeDiamonds(QPainter& p, const QRect& r,
     }
 }
 
+// Geometria alinhada entre desenho e hit-test.
+QRect TimelineWidget::headerBarRect(int y, int rowH) const {
+    const int H = kHeaderW;
+    const int barH = 4;
+    const int btnY = y + rowH - kResizeHandleH - kHeaderBtnH;
+    const int contentBottom = btnY - 4;
+    const int contentTop = y + kHeaderNameH;
+    const int contentH = contentBottom - contentTop;
+    if (contentH < 8) return QRect();
+    const int textH = contentH / 2;
+    int barY = contentTop + textH + (contentH - textH - barH) / 2;
+    return QRect(6, barY, H - 12, barH);
+}
+
+QRect TimelineWidget::headerToggleRect(int y) const {
+    return QRect(kHeaderW - 20, y + 2, 16, 16);
+}
+
+QRect TimelineWidget::headerCollapseRect(int y) const {
+    return QRect(4, y + 2, 14, 16);
+}
+
 void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& tr, int index, bool selected) {
     const int H = kHeaderW;
     const QColor tcol = trackColorAt(tr, index);
@@ -1370,49 +1396,107 @@ void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& 
         p.fillRect(0, y, 3, rowH, tcol);
     }
 
+    QFont basef = p.font();
+    const QColor iconCol = tr.locked ? QColor(178, 132, 132) : tcol.lighter(135);
+    const bool hidden = !tr.visible;
+
+    // ── Cabeçalho compacto (faixa recolhida): só nome + toggle de saída + seta.
+    if (tr.collapsed) {
+        QFont nf = basef;
+        nf.setBold(true);
+        nf.setPointSizeF(8.0);
+        p.setFont(nf);
+        p.setPen(hidden ? QColor(120, 116, 112) : themeColors().trackLabelText);
+        p.drawText(QRect(22, y + 1, H - 22 - 20, rowH - 2),
+                   int(Qt::AlignLeft | Qt::AlignVCenter) | Qt::TextSingleLine,
+                   tr.name);
+        p.setFont(basef);
+
+        // Seta de expandir (recolhida → "›").
+        const QRect cr2 = headerCollapseRect(y);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        QPainterPath ar2;
+        ar2.moveTo(cr2.x() + 2, cr2.y() + 2);
+        ar2.lineTo(cr2.x() + 9, cr2.y() + cr2.height() / 2);
+        ar2.lineTo(cr2.x() + 2, cr2.y() + cr2.height() - 2);
+        ar2.closeSubpath();
+        p.setPen(Qt::NoPen);
+        p.setBrush(themeColors().trackLabelText);
+        p.drawPath(ar2);
+        p.setRenderHint(QPainter::Antialiasing, false);
+
+        // Toggle de saída (olho/falante).
+        const QRect tr2 = headerToggleRect(y);
+        drawOutputToggleIcon(p, tr2, tr, iconCol, hidden);
+        return;
+    }
+
     // ── Layout proporcional ─────────────────────────────────────────────
     const int resizeH = kResizeHandleH;  // 5px
-    const int btnH = 18;
+    const int btnH = kHeaderBtnH;        // 18
     const int btnGap = 3;
     const int btnY = y + rowH - resizeH - btnH;  // botões na base (acima do resize)
     const int contentBottom = btnY - 4;           // fim da área de conteúdo (acima dos botões)
-    const int contentTop = y + 18;                // abaixo do ícone/nome (18px para ícone+nome)
+    const int contentTop = y + kHeaderNameH;      // abaixo do ícone/nome (18px para ícone+nome)
     const int contentH = contentBottom - contentTop;
 
-    // ── Nome da track ───────────────────────────────────────────────────
-    QFont basef = p.font();
+    // ── Seta de recolher ────────────────────────────────────────────────
+    const QRect cr = headerCollapseRect(y);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    {
+        QPainterPath ar;
+        ar.moveTo(cr.x() + 3, cr.y() + 3);
+        ar.lineTo(cr.x() + cr.width() - 3, cr.y() + 3);
+        ar.lineTo(cr.x() + cr.width() / 2, cr.y() + cr.height() - 3);
+        ar.closeSubpath();
+        p.setPen(Qt::NoPen);
+        p.setBrush(themeColors().trackLabelText);
+        p.drawPath(ar);
+    }
+    p.setRenderHint(QPainter::Antialiasing, false);
+
+    // ── Ícone (audio/vídeo) na cor da faixa, à direita da seta ──────────
+    {
+        const QColor c = iconCol;
+        p.setRenderHint(QPainter::Antialiasing, true);
+        const int ix = cr.right() + 5;
+        if (tr.audio) {
+            QPainterPath sp;
+            sp.moveTo(ix, y + 8);
+            sp.lineTo(ix + 4.5, y + 5);
+            sp.lineTo(ix + 4.5, y + 11);
+            sp.closeSubpath();
+            p.setPen(Qt::NoPen);
+            p.setBrush(c);
+            p.drawPath(sp);
+            p.fillRect(QRectF(ix + 4.5, y + 6.5, 4.5, 3), c);
+            p.setPen(QPen(c, 1));
+            p.drawArc(QRectF(ix + 7, y + 5, 4.5, 6), 0, 180 * 16);
+        } else {
+            p.setPen(Qt::NoPen);
+            p.setBrush(c);
+            p.drawRoundedRect(QRectF(ix, y + 4.5, 10.5, 7), 1.6, 1.6);
+            p.setBrush(QColor(22, 24, 28));
+            p.drawEllipse(QPointF(ix + 5.2, y + 8), 2.3, 2.3);
+        }
+        p.setRenderHint(QPainter::Antialiasing, false);
+    }
+
+    // ── Nome da track (à direita da seta+ícone, ocupando o resto) ────────
     QFont f = basef;
     f.setBold(true);
     f.setPointSizeF(8.5);
     p.setFont(f);
-    p.setPen(themeColors().trackLabelText);
-    p.drawText(QRect(12, y + 2, H - 20, 16), Qt::AlignLeft | Qt::AlignVCenter, tr.name);
+    p.setPen(hidden ? QColor(120, 116, 112) : themeColors().trackLabelText);
+    p.drawText(QRect(cr.right() + 18, y + 2, H - cr.right() - 18 - 20, 16),
+               int(Qt::AlignLeft | Qt::AlignVCenter) | Qt::TextSingleLine,
+               tr.name);
 
-    // ── Ícone (audio/vídeo) na cor da faixa ────────────────────────────
-    p.setRenderHint(QPainter::Antialiasing, true);
-    if (tr.audio) {
-        const QColor c = tr.locked ? QColor(178, 132, 132) : tcol.lighter(135);
-        QPainterPath sp;
-        sp.moveTo(4.5, y + 8);
-        sp.lineTo(9.0, y + 5);
-        sp.lineTo(9.0, y + 11);
-        sp.closeSubpath();
-        p.setPen(Qt::NoPen);
-        p.setBrush(c);
-        p.drawPath(sp);
-        p.fillRect(QRectF(9, y + 6.5, 4.5, 3), c);
-        p.setPen(QPen(c, 1));
-        p.drawArc(QRectF(11.5, y + 5, 4.5, 6), 0, 180 * 16);
-    } else {
-        const QColor c = tr.locked ? QColor(178, 132, 132) : tcol.lighter(135);
-        p.setPen(Qt::NoPen);
-        p.setBrush(c);
-        p.drawRoundedRect(QRectF(3, y + 4.5, 10.5, 7), 1.6, 1.6);
-        p.setBrush(QColor(22, 24, 28));
-        p.drawEllipse(QPointF(8.2, y + 8), 2.3, 2.3);
+    // ── Toggle de saída (olho/falante, à direita) ───────────────────────
+    {
+        const QRect trt = headerToggleRect(y);
+        drawOutputToggleIcon(p, trt, tr, iconCol, hidden);
     }
-    p.setRenderHint(QPainter::Antialiasing, false);
-    p.setFont(basef);
 
     // ── Percentual + barra (centralizado na área de conteúdo) ───────────
     if (contentH > 0) {
@@ -1421,41 +1505,39 @@ void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& 
         vf.setBold(true);
         p.setFont(vf);
 
-        if (tr.audio) {
-            // Áudio: percentual de volume centralizado na área disponível.
-            const QString pct = QString("%1%").arg((int)llround(tr.volume * 100.0));
-            p.setPen(tcol.lighter(150));
-            p.drawText(QRect(6, contentTop, H - 12, contentH),
-                       Qt::AlignRight | Qt::AlignVCenter, pct);
-        } else {
-            // Vídeo: percentual + barra de opacidade.
-            const QString pct = QString("%1%").arg((int)llround(tr.opacity * 100.0));
-            p.setPen(tcol.lighter(150));
-            // Texto na metade de cima da área de conteúdo.
-            const int textH = contentH / 2;
-            p.drawText(QRect(6, contentTop, H - 12, textH),
-                       Qt::AlignRight | Qt::AlignVCenter, pct);
-            // Barra na metade de baixo (se couber).
-            if (contentH >= 8) {
-                const int barH = 4;
-                const int barY = contentTop + textH + (contentH - textH - barH) / 2;
-                const int barX0 = 6;
-                const int barW = H - 12;
+        const double val = tr.audio ? std::clamp(tr.volume, 0.0, 2.0) / 2.0
+                                    : std::clamp(tr.opacity, 0.0, 1.0);
+        QString pct;
+        if (tr.audio)
+            pct = QString("%1%").arg((int)llround(tr.volume * 100.0));
+        else
+            pct = QString("%1%").arg((int)llround(val * 100.0));
+        p.setPen(hidden ? QColor(120, 116, 112) : tcol.lighter(150));
+        // Texto na metade de cima da área de conteúdo.
+        const int textH = contentH / 2;
+        p.drawText(QRect(6, contentTop, H - 12, textH),
+                   Qt::AlignRight | Qt::AlignVCenter, pct);
+        // Barra na metade de baixo (se couber).
+        if (contentH >= 8) {
+            const QRect bar = headerBarRect(y, rowH);
+            if (!bar.isEmpty()) {
                 p.setPen(Qt::NoPen);
                 p.setBrush(themeColors().trackBorder);
-                p.drawRoundedRect(QRectF(barX0, barY, barW, barH), 2, 2);
-                const int fillW = qMax(2, (int)std::lround(barW * std::clamp(tr.opacity, 0.0, 1.0)));
-                p.setBrush(themeColors().clipBorder);
-                p.drawRoundedRect(QRectF(barX0, barY, fillW, barH), 2, 2);
+                p.drawRoundedRect(QRectF(bar), 2, 2);
+                const int fillW = qMax(2, (int)std::lround(bar.width() * val));
+                p.setBrush(hidden ? QColor(90, 86, 82) : themeColors().clipBorder);
+                p.drawRoundedRect(QRectF(bar.x(), bar.y(), fillW, bar.height()), 2, 2);
             }
         }
         p.setFont(basef);
     }
 
     // ── Botões M / S / L ────────────────────────────────────────────────
+    // Faixas muito baixas (sem área de conteúdo) ficam só com nome + toggle.
+    if (contentH > 0) {
     const bool audible = !tr.muted && !(anySolo && !tr.solo);
     const QColor dim(128, 128, 138);
-    const int size = 18;
+    const int size = btnH;
     const int bx0 = 6;
     auto drawBtn = [&](int idx, const QString& label, bool active, const QColor& on) {
         const int bx = bx0 + idx * (size + btnGap);
@@ -1471,8 +1553,8 @@ void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& 
         p.drawText(r, Qt::AlignCenter, label);
         p.setFont(basef);
     };
-    drawBtn(0, QStringLiteral("M"), tr.muted || !audible, QColor(84, 118, 178));
-    drawBtn(1, QStringLiteral("S"), tr.solo, QColor(72, 150, 176));
+    drawBtn(0, QStringLiteral("M"), (tr.muted || !audible) && !hidden, QColor(84, 118, 178));
+    drawBtn(1, QStringLiteral("S"), tr.solo && !hidden, QColor(72, 150, 176));
     drawBtn(2, QStringLiteral("L"), tr.locked, QColor(96, 108, 176));
     if (tr.audio) {
         // Chip FX (estilo Vegas): abre o menu de efeitos de áudio da faixa.
@@ -1492,6 +1574,7 @@ void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& 
         p.drawText(r, Qt::AlignCenter, QStringLiteral("FX"));
         p.setFont(basef);
     }
+    } // fim do guard de botões (contentH > 0)
 
     // ── Alça de redimensionamento ────────────────────────────────────────
     const int gy0 = y + rowH - resizeH;
@@ -1500,6 +1583,55 @@ void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& 
     const int gx0 = (H - 26) / 2;
     for (int i = 0; i < 4; ++i)
         p.drawLine(gx0 + i * 8, gy0 + 2, gx0 + i * 8, gy0 + 3);
+}
+
+void TimelineWidget::drawOutputToggleIcon(QPainter& p, const QRect& r, const Track& tr,
+                                          const QColor& active, bool hidden) {
+    const QColor c = hidden ? QColor(100, 96, 92) : active;
+    const QColor bg = tr.audio ? QColor(48, 56, 72) : QColor(44, 50, 62);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(Qt::NoPen);
+    p.setBrush(bg);
+    p.drawRoundedRect(QRectF(r), 3, 3);
+    p.setPen(QPen(hidden ? QColor(100, 96, 92) : active, 1.2));
+    p.setBrush(Qt::NoBrush);
+    if (tr.audio) {
+        // Alto-falante: caixa + cone + ondas.
+        QRectF body(r.x() + 2.0, r.y() + 6.0, 4.5, 4.0);
+        p.setPen(Qt::NoPen);
+        p.setBrush(c);
+        p.drawRect(body);
+        QPainterPath cone;
+        cone.moveTo(body.right(), body.top() + 0.5);
+        cone.lineTo(body.right() + 3.5, body.top() - 2.5);
+        cone.lineTo(body.right() + 3.5, body.bottom() + 2.5);
+        cone.closeSubpath();
+        p.drawPath(cone);
+        p.setPen(QPen(c, 1));
+        p.setBrush(Qt::NoBrush);
+        p.drawArc(QRectF(body.right() + 3.0, r.y() + 3.0, 7, 10), -52 * 16, 104 * 16);
+        p.drawArc(QRectF(body.right() + 6.0, r.y() + 0.5, 8, 15), -60 * 16, 120 * 16);
+    } else {
+        // Olho: elipse + pupila.
+        p.setPen(Qt::NoPen);
+        p.setBrush(c);
+        const double cx = r.x() + r.width() / 2.0;
+        const double cy = r.y() + r.height() / 2.0;
+        QPainterPath eye;
+        eye.moveTo(cx - 5.5, cy);
+        eye.quadTo(cx - 5.5, cy - 5, cx + 5.5, cy);
+        eye.quadTo(cx + 5.5, cy + 5, cx - 5.5, cy);
+        eye.closeSubpath();
+        p.drawPath(eye);
+        p.setBrush(QColor(16, 18, 22));
+        p.drawEllipse(QPointF(cx, cy), 1.7, 1.7);
+    }
+    if (hidden) {
+        // Barra diagonal indicando saída desligada.
+        p.setPen(QPen(QColor(214, 100, 90), 1.4));
+        p.drawLine(r.x() + 2, r.y() + r.height() - 2, r.x() + r.width() - 2, r.y() + 2);
+    }
+    p.setRenderHint(QPainter::Antialiasing, false);
 }
 
 void TimelineWidget::drawFolderStrip(QPainter& p, const TrackGroup& g) {

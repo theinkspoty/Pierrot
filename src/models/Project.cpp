@@ -539,6 +539,8 @@ static QJsonObject trackToJson(const Track& t) {
     o["muted"] = t.muted;
     o["solo"] = t.solo;
     o["locked"] = t.locked;
+    o["visible"] = t.visible;
+    o["collapsed"] = t.collapsed;
     o["height"] = t.height;
     o["groupId"] = t.groupId;
     QJsonArray clips;
@@ -594,6 +596,8 @@ static Track trackFromJson(const QJsonObject& o, bool audio) {
     t.muted = o["muted"].toBool();
     t.solo = o["solo"].toBool();
     t.locked = o["locked"].toBool();
+    t.visible = o["visible"].toBool(true);
+    t.collapsed = o["collapsed"].toBool(false);
     t.height = o["height"].toInt(0);
     t.groupId = o["groupId"].toString();
     const QJsonArray clips = o["clips"].toArray();

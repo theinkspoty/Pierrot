@@ -739,6 +739,7 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     QVector<QString> velocityPatterns;
     for (int tr = (int)project.videoTracks.size() - 1; tr >= 0; --tr) {
         const Track& track = project.videoTracks[tr];
+        if (!track.visible) continue;   // faixa oculta (olho) não é exportada
         if (!mesaTrackIds.contains(track.id)) {
             const double trOp = std::clamp(track.opacity, 0.0, 1.0);
             for (const Clip& c : track.clips) {
@@ -851,7 +852,7 @@ QStringList ProjectExporter::buildCommand(const Project& project,
 
     QVector<AudioClipRef> aclips;
     for (const Track& t : project.audioTracks) {
-        if (t.muted || (anySolo && !t.solo)) continue;
+        if (!t.visible || t.muted || (anySolo && !t.solo)) continue;
         for (const Clip& c : t.clips) {
             const MediaItem* m = project.findMedia(c.mediaId);
             if (m && m->hasAudio) aclips.push_back({&c, t.volume, t.pan, &t});

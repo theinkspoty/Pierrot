@@ -36,6 +36,8 @@ constexpr int kZoomW = 64;
 constexpr int kMinDragH = 40;
 constexpr int kMaxRowH = 400;
 constexpr int kResizeHandleH = 5;
+constexpr int kHeaderBtnH = 18;
+constexpr int kHeaderNameH = 18;
 constexpr double kMinDur = 0.04;
 
 enum Tool {
@@ -164,20 +166,38 @@ int TimelineWidget::volRowAt(const QPoint& pos, int& row) const {
     return 0;
 }
 
-// 0=M, 1=S, 2=L, -1=nenhum.
+// 0=M, 1=S, 2=L, 3=FX (áudio), 4=toggle de saída (olho/falante), 5=recolher,
+// -1=nenhum.
 int TimelineWidget::headerBtnAt(const QPoint& pos, int& row, bool& audio) const {
     if (pos.x() >= kHeaderW || pos.y() < kRulerH || !m_project) return -1;
     if (!rowFromY(pos.y(), row, audio)) return -1;
     const int rowH = trackH(row, audio);
     const int y = audio ? rowY(-1, row) : rowY(row, -1);
-    const int btnY = y + rowH - 22;
-    if (pos.y() < btnY || pos.y() >= btnY + 18) return -1;
+    // Faixa recolhida: só os controles do topo (seta, nome, toggle de saída).
+    Track* trk = audio ? &m_project->audioTracks[row] : &m_project->videoTracks[row];
+    if (trk->collapsed) {
+        if (headerCollapseRect(y).contains(pos)) return 5;
+        if (headerToggleRect(y).contains(pos)) return 4;
+        return -1;
+    }
+    // Primeiro os controles do topo (seta + toggle de saída).
+    if (pos.y() < y + kHeaderNameH) {
+        if (headerCollapseRect(y).contains(pos)) return 5;
+        if (headerToggleRect(y).contains(pos)) return 4;
+        return -1;
+    }
+    // Botões M/S/L/FX da base (só quando há área de conteúdo, como no desenho).
+    const int btnY = y + rowH - kResizeHandleH - kHeaderBtnH;
+    const int contentTop = y + kHeaderNameH;
+    const int contentBottom = btnY - 4;
+    if (contentBottom - contentTop <= 0) return -1;
+    if (pos.y() < btnY || pos.y() >= btnY + kHeaderBtnH) return -1;
     const int dx = pos.x() - 6;
-    const int size = 18, gap = 3;
+    const int gap = 3;
     const int nBtns = audio ? 4 : 3;
     for (int i = 0; i < nBtns; ++i) {
-        const int bx = i * (size + gap);
-        if (dx >= bx && dx < bx + size) return i;
+        const int bx = i * (kHeaderBtnH + gap);
+        if (dx >= bx && dx < bx + kHeaderBtnH) return i;
     }
     return -1;
 }
@@ -343,19 +363,22 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
             }
     }
 
-    // Barra de opacidade da faixa de vídeo no cabeçalho: arrastar ajusta opacidade.
+    // Barra do cabeçalho: vídeo = opacidade, áudio = volume. Usa a mesma
+    // geometria do desenho (headerBarRect) para arrasto sempre alinhado.
     if (x < kHeaderW) {
         int orow;
         bool oaudio;
-        if (rowFromY(y, orow, oaudio) && !oaudio && orow >= 0) {
-            const int oy = rowY(orow, -1);
-            const int barY = oy + 34;
-            const int barH = 4;
-            if (y >= barY && y < barY + barH && x >= 6 && x < kHeaderW - 6) {
+        if (rowFromY(y, orow, oaudio) && orow >= 0) {
+            const int oy = oaudio ? rowY(-1, orow) : rowY(orow, -1);
+            const int rowH = trackH(orow, oaudio);
+            const QRect bar = headerBarRect(oy, rowH);
+            if (!bar.isEmpty() && bar.contains(x, y)) {
                 emit editStart();
                 m_dragMode = TrackOp;
                 m_volRow = orow;
-                m_volOrig = m_project->videoTracks[orow].opacity;
+                m_opIsVolume = oaudio;
+                m_volOrig = oaudio ? m_project->audioTracks[orow].volume
+                                   : m_project->videoTracks[orow].opacity;
                 m_dragStart = e->pos();
                 setCursor(Qt::SizeHorCursor);
                 update();
@@ -380,7 +403,12 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
             emit editStart();
             if (b == 0) tr->muted = !tr->muted;
             else if (b == 1) tr->solo = !tr->solo;
-            else { tr->locked = !tr->locked; }
+            else if (b == 2) tr->locked = !tr->locked;
+            else if (b == 4) { tr->visible = !tr->visible; }       // olho/falante
+            else if (b == 5) {                                    // seta de recolher
+                tr->collapsed = !tr->collapsed;
+                updateScrollRanges();
+            }
             // Clicar no botão também seleciona a faixa (qualquer lugar do
             // cabeçalho seleciona), respeitando Shift/Ctrl.
             if (e->modifiers() & Qt::ShiftModifier)
@@ -908,17 +936,32 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
             return;
         }
         if (m_dragMode == TrackOp) {
-            if (m_volRow < 0 || m_volRow >= (int)m_project->videoTracks.size()) return;
-            Track& t = m_project->videoTracks[m_volRow];
+            // Barra do cabeçalho: vídeo = opacidade, áudio = volume (0 a 2).
+            const bool aude = m_opIsVolume;
+            if (m_volRow < 0 || m_volRow >= (int)(aude ? m_project->audioTracks.size()
+                                                       : m_project->videoTracks.size()))
+                return;
+            Track& t = aude ? m_project->audioTracks[m_volRow]
+                            : m_project->videoTracks[m_volRow];
             // Arrasto horizontal: esquerda = 0%, direita = 100%.
             const int barX0 = 6;
             const int barW = kHeaderW - 12;
             const double frac = std::clamp(
                 (double)(e->pos().x() - barX0) / barW, 0.0, 1.0);
-            if (std::fabs(t.opacity - frac) > 1e-4) {
-                t.opacity = frac;
-                update();
-                emit modified();
+            if (aude) {
+                const double v = std::clamp(frac * 2.0, 0.0, 2.0);
+                if (std::fabs(t.volume - v) > 1e-4) {
+                    t.volume = v;
+                    refreshView();
+                    update();
+                    emit modified();
+                }
+            } else {
+                if (std::fabs(t.opacity - frac) > 1e-4) {
+                    t.opacity = frac;
+                    update();
+                    emit modified();
+                }
             }
             return;
         }
@@ -1288,6 +1331,7 @@ void TimelineWidget::mouseReleaseEvent(QMouseEvent* e) {
     m_dragUndoPushed = false;
     m_dragOrig.clear();
     m_volRow = -1;
+    m_opIsVolume = false;
     m_volClip.clear();
     m_volPending = false;
     m_envPending = false;
@@ -1337,6 +1381,11 @@ void TimelineWidget::mouseDoubleClickEvent(QMouseEvent* e) {
     if (e->pos().x() < kHeaderW && e->pos().y() >= kRulerH
         && rowFromY(e->pos().y(), row, audio)) {
         const int y = audio ? rowY(-1, row) : rowY(row, -1);
+        // Não renomeia ao clicar nos controles do cabeçalho (seta, olho/falante,
+        // botões M/S/L/FX).
+        int btnRow;
+        bool btnAudio;
+        if (headerBtnAt(e->pos(), btnRow, btnAudio) >= 0) return;
         if (e->pos().y() >= y + 1 && e->pos().y() <= y + 20) {
             Track* trk = audio ? &m_project->audioTracks[row]
                                : &m_project->videoTracks[row];

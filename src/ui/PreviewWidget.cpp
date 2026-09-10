@@ -1176,9 +1176,26 @@ static const PreviewQOpt kPreviewQualities[] = {
 
 PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     m_playBtn = new QPushButton(tr("Reproduzir"), this);
+    // Contador de tempo estilo Premiere (timecode do Program Monitor): fonte
+    // mono, fundo escuro em pílula e cor clara destacada.
     m_timeLabel = new QLabel(tr("00:00:00:00"), this);
     m_timeLabel->setAlignment(Qt::AlignCenter);
-    m_timeLabel->setMinimumWidth(120);
+    QFont tcFont = m_timeLabel->font();
+    tcFont.setFamily(QStringLiteral("Consolas, Menlo, DejaVu Sans Mono, monospace"));
+    tcFont.setPointSize(12);
+    tcFont.setBold(true);
+    m_timeLabel->setFont(tcFont);
+    m_timeLabel->setStyleSheet(
+        QStringLiteral(
+            "QLabel {"
+            "  color: #e8f1e0;"
+            "  background-color: #24262b;"
+            "  border: 1px solid #3a3d45;"
+            "  border-radius: 6px;"
+            "  padding: 2px 14px;"
+            "  letter-spacing: 1px;"
+            "}"));
+    m_timeLabel->setMinimumWidth(150);
 
     m_topBar = new QWidget(this);
     auto* bar = new QHBoxLayout(m_topBar);
@@ -1435,12 +1452,14 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
     // Texto independente ativo no playhead (desenhado mesmo sem quadro de vídeo).
     bool anyText = false;
     if (m_project) {
-        for (const Track& tr : m_project->videoTracks)
+        for (const Track& tr : m_project->videoTracks) {
+            if (!tr.visible) continue;   // faixa oculta (olho) não mostra texto
             for (const Clip& c : tr.clips)
                 if (c.isText && m_playhead >= c.pos && m_playhead < c.pos + c.dur) {
                     anyText = true;
                     break;
                 }
+        }
     }
 
     // Render unificado em "espaço de projeto": o canvas É o quadro do projeto
@@ -1501,6 +1520,7 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
         const Clip* topClip = clip;
         for (int tr = (int)m_project->videoTracks.size() - 1; tr >= 0; --tr) {
             const Track& t = m_project->videoTracks[tr];
+            if (!t.visible) continue;   // faixa oculta (olho) não participa da composição
             const bool isMesaTrack = m_project->findMesaForTrack(t.id) != nullptr;
             const Clip* c = nullptr;
             for (const Clip& cl : t.clips) {
@@ -1650,6 +1670,7 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
         // Texto (independente e anexado) por cima das camadas.
         if (m_project) {
             for (int tr = (int)m_project->videoTracks.size() - 1; tr >= 0; --tr) {
+                if (!m_project->videoTracks[tr].visible) continue;   // faixa oculta (olho)
                 const Clip* tclip = nullptr;
                 for (const Clip& c : m_project->videoTracks[tr].clips)
                     if (c.isText && m_playhead >= c.pos && m_playhead < c.pos + c.dur)
@@ -1715,8 +1736,10 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
     // faixa de baixo para a de cima (a faixa 0 é o topo e fica por cima).
     if (m_project) {
         for (int tr = (int)m_project->videoTracks.size() - 1; tr >= 0; --tr) {
+            const Track& tv = m_project->videoTracks[tr];
+            if (!tv.visible) continue;   // faixa oculta (olho)
             const Clip* tclip = nullptr;
-            for (const Clip& c : m_project->videoTracks[tr].clips)
+            for (const Clip& c : tv.clips)
                 if (c.isText && m_playhead >= c.pos && m_playhead < c.pos + c.dur)
                     if (!tclip || c.pos > tclip->pos) tclip = &c;
             if (tclip) drawClipText(p, canvas, tclip, k);
@@ -2069,6 +2092,7 @@ const Clip* PreviewWidget::clipAt(double t) const {
     if (!m_project) return nullptr;
     for (int tr = 0; tr < (int)m_project->videoTracks.size(); ++tr) {
         const Track& track = m_project->videoTracks[tr];
+        if (!track.visible) continue;   // faixa oculta (olho)
         // Track de Mesa gera quadro mesmo sem mídia própria (a composição é a
         // fonte de vídeo).
         const bool mesaTrack = m_project->findMesaForTrack(track.id) != nullptr;
@@ -2148,6 +2172,18 @@ QVector<AudioMixer::SourceInfo> buildMixSources(const Project* p, double t) {
     auto collect = [&](const QVector<Track>& tracks, bool isAudio) {
         for (int ti = 0; ti < tracks.size(); ++ti) {
             const Track& tr = tracks[ti];
+            if (!tr.visible) {
+                // Faixa oculta (olho/falante desligado): remove contribuições
+                // vinculadas de outra faixa (grupo vídeo+áudio) e segue.
+                if (isAudio) continue;
+                for (const Clip& c : tr.clips) {
+                    if (!(t >= c.pos && t < c.pos + c.dur)) continue;
+                    const QString base = c.groupId.isEmpty() ? c.id : c.groupId;
+                    const QString key = QStringLiteral("%1|%2").arg(base).arg(c.audioStreamIndex);
+                    reps.remove(key);
+                }
+                continue;
+            }
             for (const Clip& c : tr.clips) {
                 if (!(t >= c.pos && t < c.pos + c.dur)) continue;
                 if (tr.muted || (anySolo && !tr.solo)) {
@@ -2263,7 +2299,7 @@ QVector<AudioMixer::SourceInfo> buildWarmSources(
     auto warmCollect = [&](const QVector<Track>& tracks, bool isAudio) {
         for (int ti = 0; ti < (int)tracks.size(); ++ti) {
             const Track& tr = tracks[ti];
-            if (tr.muted || (anySolo && !tr.solo)) continue;
+            if (!tr.visible || tr.muted || (anySolo && !tr.solo)) continue;
             for (const Clip& c : tr.clips) {
                 // Já em reprodução agora, ou começa depois da janela: nada a
                 // aquecer.
@@ -2704,10 +2740,12 @@ void PreviewWidget::requestLowerLayers(int decW) {
     // crescimento sem limite conforme o usuário navega pelo projeto).
     {
         QList<QString> active;
-        for (const Track& tr : m_project->videoTracks)
+        for (const Track& tr : m_project->videoTracks) {
+            if (!tr.visible) continue;
             for (const Clip& cl : tr.clips)
                 if (!cl.isText && m_playhead >= cl.pos && m_playhead < cl.pos + cl.dur)
                     active.append(cl.id);
+        }
         QMutexLocker l(&m_frameMutex);
         for (auto it = m_layerCache.begin(); it != m_layerCache.end();) {
             if (!active.contains(it.key())) it = m_layerCache.erase(it);
@@ -2715,6 +2753,7 @@ void PreviewWidget::requestLowerLayers(int decW) {
         }
     }
     for (const Track& tr : m_project->videoTracks) {
+        if (!tr.visible) continue;   // faixa oculta (olho)
         const Clip* c = nullptr;
         for (const Clip& cl : tr.clips) {
             if (m_playhead >= cl.pos && m_playhead < cl.pos + cl.dur && !cl.isText) {
@@ -2745,6 +2784,7 @@ void PreviewWidget::requestLowerLayers(int decW) {
     // e armazena no layerCache, para que paintEvent possa compô-las por baixo
     // da composição Mesa do topo (transparência, blend entre faixas).
     for (const Track& tr : m_project->videoTracks) {
+        if (!tr.visible) continue;   // faixa oculta (olho)
         const MesaComposition* mc = m_project->findMesaForTrack(tr.id);
         if (!mc) continue;
         const Clip* c = nullptr;

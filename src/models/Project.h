@@ -575,6 +575,13 @@ struct Track {
     bool muted = false;
     bool solo = false;
     bool locked = false;
+    // Toggle de saída (estilo Premiere): olho nas faixas de vídeo, alto-falante
+    // nas de áudio. Se desligado, a faixa não entra na composição (vídeo) nem
+    // no mix (áudio).
+    bool visible = true;
+    // Recolhida (seta do cabeçalho estilo Premiere): a faixa ocupa só a altura
+    // mínima e o cabeçalho vira uma tira compacta com nome.
+    bool collapsed = false;
     QString groupId; // pasta (TrackGroup) a que a faixa pertence; vazio = nenhuma
     int height = 0; // altura da faixa em pixels na timeline; 0 = padrão
     QVector<Clip> clips;

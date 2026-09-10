@@ -257,7 +257,15 @@ private:
     void trackFxMenu(Track* tr, const QPoint& at);
     void showTextEditorDialog(Clip* c);
     void drawTrackHeader(QPainter& p, int y, int rowH, const Track& tr, int index, bool selected);
+    void drawOutputToggleIcon(QPainter& p, const QRect& r, const Track& tr,
+                              const QColor& active, bool hidden);
     int headerBtnAt(const QPoint& pos, int& row, bool& audio) const;
+    // Geometria dos controles do cabeçalho (desenho e hit-test usam a mesma):
+    // barra de volume/opacidade, toggle de saída (olho/falante) e seta de
+    // recolher. Mantém o arrasto e o desenho sempre alinhados.
+    QRect headerBarRect(int y, int rowH) const;
+    QRect headerToggleRect(int y) const;
+    QRect headerCollapseRect(int y) const;
     bool trackLocked(const Clip* c) const;
     int volLineY(int row, bool audio, const Track& tr) const;
     int volRowAt(const QPoint& pos, int& row) const;
@@ -395,6 +403,9 @@ private:
     QString m_dragHoverName;
     int m_volRow = -1;
     double m_volOrig = 1.0;
+    // Arrasto da barra de volume/opacidade no cabeçalho: TrackOp com alvo de
+    // volume (faixa de áudio) ou opacidade (faixa de vídeo).
+    bool m_opIsVolume = false;
     QString m_volClip;      // clipe cujo volume está sendo ajustado
     double m_volClipOrig = 1.0;
     int m_volRowOrig = -1;   // faixa de origem ao iniciar ClipVol

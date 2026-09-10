@@ -379,6 +379,7 @@ const Clip* PlaybackEngine::clipAt(double t) const {
     if (!m_project) return nullptr;
     for (int tr = 0; tr < (int)m_project->videoTracks.size(); ++tr) {
         const Track& track = m_project->videoTracks[tr];
+        if (!track.visible) continue;   // faixa oculta (olho) não é decodificada
         // Track de Mesa gera quadro mesmo sem mídia própria (a composição é a
         // fonte de vídeo).
         const bool mesaTrack = m_project->findMesaForTrack(track.id) != nullptr;

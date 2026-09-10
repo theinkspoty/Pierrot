@@ -82,7 +82,7 @@ constexpr int kZoomW = 64;
 constexpr int kPresetMinV = 34, kPresetMinA = 28;
 constexpr int kPresetMaxV = 100, kPresetMaxA = 78;
 constexpr int kVideoRowH = 56;
-constexpr int kAudioRowH = 44;
+constexpr int kAudioRowH = 56; // padrão: alto o bastante p/ a barra de volume
 constexpr int kMinRowH = 24;
 constexpr int kMinDragH = 40; // piso ao arrastar a borda (não deixa a faixa minúscula)
 constexpr int kMaxRowH = 400;
