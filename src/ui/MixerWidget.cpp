@@ -5,7 +5,7 @@
 
 #include "MixerWidget.h"
 #include "PreviewWidget.h"
-#include "models/Project.h"
+#include "colombina/models/Project.h"
 
 #include <QPainter>
 #include <QPainterPath>

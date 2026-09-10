@@ -4,10 +4,10 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "ProjectExporter.h"
-#include "util.h"
-#include "generators.h"
-#include "render/MesaRenderer.h"
-#include "ffmpeg/FFmpegDecoder.h"
+#include "colombina/util.h"
+#include "colombina/generators.h"
+#include "colombina/render/MesaRenderer.h"
+#include "colombina/ffmpeg/FFmpegDecoder.h"
 
 #include <QColor>
 #include <QFile>

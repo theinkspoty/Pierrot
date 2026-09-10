@@ -5,7 +5,7 @@
 
 #include "SettingsDialog.h"
 #include "Theme.h"
-#include "ffmpeg/ProxyManager.h"
+#include "colombina/ffmpeg/ProxyManager.h"
 
 #include <QCheckBox>
 #include <QGroupBox>

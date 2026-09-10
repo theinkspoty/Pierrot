@@ -4,8 +4,8 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "MediaCache.h"
-#include "util.h"
-#include "ffmpeg/ProxyManager.h"
+#include "colombina/util.h"
+#include "colombina/ffmpeg/ProxyManager.h"
 
 #include <QThread>
 #include <QMetaType>

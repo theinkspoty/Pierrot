@@ -14,9 +14,9 @@
 #include <QPair>
 #include <QImage>
 #include <QTransform>
-#include "models/Project.h"
-#include "ffmpeg/FFmpegDecoder.h"
-#include "render/MesaRenderer.h"
+#include "colombina/models/Project.h"
+#include "colombina/ffmpeg/FFmpegDecoder.h"
+#include "colombina/render/MesaRenderer.h"
 #include "ui/PlaybackEngine.h"
 
 class QTimer;

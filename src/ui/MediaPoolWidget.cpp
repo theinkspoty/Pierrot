@@ -4,12 +4,12 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "MediaPoolWidget.h"
-#include "ffmpeg/FFmpegDecoder.h"
-#include "ffmpeg/MediaCache.h"
-#include "ffmpeg/ProxyManager.h"
+#include "colombina/ffmpeg/FFmpegDecoder.h"
+#include "colombina/ffmpeg/MediaCache.h"
+#include "colombina/ffmpeg/ProxyManager.h"
 #include "ui/TimelineWidget.h"
 #include "ui/SettingsDialog.h"
-#include "generators.h"
+#include "colombina/generators.h"
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>

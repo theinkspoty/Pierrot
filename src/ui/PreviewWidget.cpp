@@ -7,13 +7,13 @@
 
 #include "ui/SettingsDialog.h"
 #include "ui/TlLog.h"
-#include "ffmpeg/ProxyManager.h"
-#include "ffmpeg/AudioConformCache.h"
-#include "ofx/OfxRenderer.h"
-#include "ofx/OfxPluginManager.h"
-#include "export/LainkaFx.h"
+#include "colombina/ffmpeg/ProxyManager.h"
+#include "colombina/ffmpeg/AudioConformCache.h"
+#include "colombina/ofx/OfxRenderer.h"
+#include "colombina/ofx/OfxPluginManager.h"
+#include "colombina/export/LainkaFx.h"
 #include "ui/Theme.h"
-#include "generators.h"
+#include "colombina/generators.h"
 
 #include <QPainter>
 #include <QTimer>
@@ -799,8 +799,11 @@ public:
         // Scratch de leitura por fonte: PCM S16 do conform. `winBuf` (8x) cobre
         // a interpolação de speed até ~8x (além disso os índices saturaram).
         const int nFrames = capacity / bytesPerSample;
-        QVector<int16_t> srcBuf(capacity / 2);
-        QVector<int16_t> winBuf((qMax(16, nFrames * 8 + 4)) * 2);
+        if (m_srcBuf.size() < capacity / 2) m_srcBuf.resize(capacity / 2);
+        const int winCap = (qMax(16, nFrames * 8 + 4)) * 2;
+        if (m_winBuf.size() < winCap) m_winBuf.resize(winCap);
+        QVector<int16_t>& srcBuf = m_srcBuf;
+        QVector<int16_t>& winBuf = m_winBuf;
         AudioConformCache& conform = AudioConformCache::instance();
 
         // Acumuladores de RMS por faixa.
@@ -811,16 +814,21 @@ public:
         // da SUA faixa de áudio; depois o FX da faixa processa o barramento e
         // por fim ele é somado no master. Fontes de faixas de vídeo entram nos
         // barramentos normalmente (sem FX de faixa), preservando a soma.
+        //
+        // NOTA: `buses` é LOCAL ao chunk (não reutilizado). A topologia
+        // bus↔busOrder precisa ser idêntica entre eles (criados juntos no
+        // busOf); persistir em membro desalinha os índices entre chunks e o
+        // mix lia lixo (chiado).
+        QVector<QVector<int16_t>> buses;
         QList<QPair<bool,int>> busOrder;
         QHash<QPair<bool,int>, int> busIdx;
-        QVector<QVector<int16_t>> buses;
         auto busOf = [&](bool a, int ti) -> int {
             const QPair<bool,int> k{a, ti};
             auto it = busIdx.constFind(k);
             if (it != busIdx.cend()) return it.value();
             const int idx = (int)buses.size();
-            busIdx.insert(k, idx);
             buses.append(QVector<int16_t>(capacity / 2));
+            busIdx.insert(k, idx);
             busOrder.append(k);
             return idx;
         };
@@ -1123,6 +1131,14 @@ private:
     qint64 m_outFrame = 0;    // frame de saída absoluto da próxima leitura
     mutable QMutex m_levelMutex;
     TrackLevels m_levels;
+
+    // Scratch de leitura reutilizado entre chunks do thread de áudio em tempo
+    // real: só realoca quando a capacidade cresce (estável após o QAudioSink
+    // configurar o formato), evitando malloc/allocator por chamada (~10-20ms).
+    // (Os barramentos por faixa NÃO são reutilizados — a topologia bus↔busOrder
+    // é recriada por chunk para garantir índices alinhados.)
+    QVector<int16_t> m_srcBuf;              // PCM de uma fonte (capacity/2)
+    QVector<int16_t> m_winBuf;              // interpolação speed≠1
 };
 
 

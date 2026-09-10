@@ -5,7 +5,7 @@
 
 #include "PancropWidget.h"
 #include "ui/Theme.h"
-#include "ffmpeg/ProxyManager.h"
+#include "colombina/ffmpeg/ProxyManager.h"
 
 #include <QPainter>
 #include <QPainterPath>

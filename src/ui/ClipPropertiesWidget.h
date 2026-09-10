@@ -8,7 +8,7 @@
 #include <QWidget>
 #include <QVector>
 #include <functional>
-#include "models/Project.h"
+#include "colombina/models/Project.h"
 
 class QLabel;
 class QScrollArea;

@@ -8,7 +8,7 @@
 #include <QDialog>
 #include <QProcess>
 #include <QVector>
-#include "export/ProjectExporter.h"
+#include "colombina/export/ProjectExporter.h"
 
 class QListWidget;
 class QProgressBar;

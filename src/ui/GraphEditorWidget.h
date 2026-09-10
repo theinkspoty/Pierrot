@@ -12,7 +12,7 @@
 #include <QVector>
 #include <QHash>
 #include <QFrame>
-#include "models/Project.h"
+#include "colombina/models/Project.h"
 
 class QLabel;
 class QToolButton;

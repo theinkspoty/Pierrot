@@ -4,7 +4,7 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "TimelineWidget.h"
-#include "models/Project.h"
+#include "colombina/models/Project.h"
 
 bool TimelineWidget::isSelected(const QString& id) const {
     return m_selected.contains(id);

@@ -10,7 +10,7 @@
 #include <QImage>
 #include <QHash>
 #include <QPoint>
-#include "models/Project.h"
+#include "colombina/models/Project.h"
 
 class QPushButton;
 class QProgressBar;

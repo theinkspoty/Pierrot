@@ -5,8 +5,8 @@
 
 #include "LainkaRenderer.h"
 #include "LainkaFx.h"
-#include "models/Project.h"
-#include "ffmpeg/FFmpegDecoder.h"
+#include "colombina/models/Project.h"
+#include "colombina/ffmpeg/FFmpegDecoder.h"
 
 #include <QProcess>
 #include <QTemporaryDir>

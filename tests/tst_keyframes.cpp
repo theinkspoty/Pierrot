@@ -8,7 +8,7 @@
 
 #include <QtTest>
 
-#include "models/Project.h"
+#include "colombina/models/Project.h"
 
 class TestKeyframes : public QObject {
     Q_OBJECT

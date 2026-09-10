@@ -10,7 +10,7 @@
 
 #include <QtTest>
 
-#include "models/Project.h"
+#include "colombina/models/Project.h"
 
 static Project makeProject() {
     Project p;

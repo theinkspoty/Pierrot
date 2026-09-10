@@ -8,7 +8,7 @@
 #include <QDialog>
 #include <functional>
 #include <QVector>
-#include "models/Project.h"
+#include "colombina/models/Project.h"
 
 class QListWidget;
 class QComboBox;

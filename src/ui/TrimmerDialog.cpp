@@ -5,8 +5,8 @@
 
 #include "ui/TrimmerDialog.h"
 
-#include "ffmpeg/FFmpegDecoder.h"
-#include "ffmpeg/ProxyManager.h"
+#include "colombina/ffmpeg/FFmpegDecoder.h"
+#include "colombina/ffmpeg/ProxyManager.h"
 
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>

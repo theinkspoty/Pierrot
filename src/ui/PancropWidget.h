@@ -9,8 +9,8 @@
 #include <QImage>
 #include <QPoint>
 #include <QHash>
-#include "models/Project.h"
-#include "ffmpeg/FFmpegDecoder.h"
+#include "colombina/models/Project.h"
+#include "colombina/ffmpeg/FFmpegDecoder.h"
 
 class QSlider;
 class QLabel;

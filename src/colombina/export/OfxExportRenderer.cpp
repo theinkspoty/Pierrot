@@ -4,11 +4,11 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "OfxExportRenderer.h"
-#include "ofx/OfxRenderer.h"
-#include "ofx/OfxPluginManager.h"
-#include "ofx/OfxHost.h"
-#include "models/Project.h"
-#include "ffmpeg/FFmpegDecoder.h"
+#include "colombina/ofx/OfxRenderer.h"
+#include "colombina/ofx/OfxPluginManager.h"
+#include "colombina/ofx/OfxHost.h"
+#include "colombina/models/Project.h"
+#include "colombina/ffmpeg/FFmpegDecoder.h"
 
 #include <QDir>
 #include <QStandardPaths>

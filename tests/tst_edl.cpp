@@ -7,7 +7,7 @@
 
 #include <QtTest>
 
-#include "export/NleInterchange.h"
+#include "colombina/export/NleInterchange.h"
 
 class TestEdl : public QObject {
     Q_OBJECT

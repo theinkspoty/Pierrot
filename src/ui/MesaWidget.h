@@ -14,8 +14,8 @@
 #include <QRectF>
 #include <QElapsedTimer>
 #include <QLoggingCategory>
-#include "models/Project.h"
-#include "render/MesaRenderer.h"
+#include "colombina/models/Project.h"
+#include "colombina/render/MesaRenderer.h"
 
 // Categoria de log da Mesa: habilita/desabilita com
 //   Q_LOGGING_RULES="mesa.widget=true|false"

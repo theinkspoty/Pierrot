@@ -13,7 +13,7 @@
 #include <QRect>
 #include <QPoint>
 #include <QPixmap>
-#include "models/Project.h"
+#include "colombina/models/Project.h"
 
 class QScrollBar;
 class QPainter;

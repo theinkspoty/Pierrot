@@ -5,7 +5,7 @@
 
 #include "PlaybackEngine.h"
 
-#include "models/Project.h"
+#include "colombina/models/Project.h"
 #include "ui/TlLog.h"
 
 #include <QTimer>

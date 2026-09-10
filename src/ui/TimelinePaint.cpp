@@ -4,9 +4,9 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "TimelineWidget.h"
-#include "models/Project.h"
+#include "colombina/models/Project.h"
 #include "ui/SettingsDialog.h"
-#include "ffmpeg/MediaCache.h"
+#include "colombina/ffmpeg/MediaCache.h"
 #include "ui/TlLog.h"
 #include "ui/Theme.h"
 

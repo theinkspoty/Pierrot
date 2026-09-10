@@ -5,16 +5,17 @@
 
 #include "ExportDialog.h"
 #include "SettingsDialog.h"
-#include "export/LainkaRenderer.h"
-#include "export/OfxExportRenderer.h"
-#include "ofx/OfxPluginManager.h"
-#include "ofx/OfxHost.h"
+#include "colombina/export/LainkaRenderer.h"
+#include "colombina/export/OfxExportRenderer.h"
+#include "colombina/ofx/OfxPluginManager.h"
+#include "colombina/ofx/OfxHost.h"
 
 #include <QLineEdit>
 #include <QComboBox>
 #include <QSpinBox>
 #include <QProgressBar>
 #include <QPlainTextEdit>
+#include <QDir>
 #include <QPushButton>
 #include <QLabel>
 #include <QFileDialog>
@@ -462,4 +463,13 @@ void ExportDialog::deleteTempFiles() {
     for (const QString& path : m_tempFiles)
         QFile::remove(path);
     m_tempFiles.clear();
+
+    // Limpa PNGs temporários de exportações anteriores (texto, geradores,
+    // Mesa, velocity) que teriam sido reescritos ou ficariam órfãos.
+    const QDir tmp(QDir::tempPath());
+    for (const QFileInfo& fi : tmp.entryInfoList(
+             {QStringLiteral("pierrot-text-*.png"), QStringLiteral("pierrot-gen-*.png"),
+              QStringLiteral("pierrot-mesa-*.png"), QStringLiteral("pierrot-vel-*.png")},
+             QDir::Files))
+        QFile::remove(fi.absoluteFilePath());
 }

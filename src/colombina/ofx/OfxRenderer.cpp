@@ -6,7 +6,7 @@
 #include "OfxRenderer.h"
 #include "OfxHost.h"
 #include "OfxPluginManager.h"
-#include "models/Project.h"
+#include "colombina/models/Project.h"
 
 #include <QDebug>
 

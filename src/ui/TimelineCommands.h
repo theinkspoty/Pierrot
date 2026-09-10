@@ -7,7 +7,7 @@
 
 #include <QString>
 #include <QStringList>
-#include "models/Project.h"
+#include "colombina/models/Project.h"
 
 class TimelineWidget;
 

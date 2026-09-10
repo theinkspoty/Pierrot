@@ -6,7 +6,7 @@
 #pragma once
 
 #include <QDialog>
-#include "models/Project.h"
+#include "colombina/models/Project.h"
 
 class QSlider;
 class QLabel;

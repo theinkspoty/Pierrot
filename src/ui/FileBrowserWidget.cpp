@@ -29,7 +29,7 @@
 #include <QPainterPath>
 #include <QPixmap>
 #include <functional>
-#include "ffmpeg/MediaCache.h"
+#include "colombina/ffmpeg/MediaCache.h"
 
 // Mesma lógica de FileBrowserWidget::isMediaFile, local ao provider.
 static bool isMediaFileExt(const QString& path) {

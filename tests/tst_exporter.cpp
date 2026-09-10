@@ -10,7 +10,7 @@
 
 #include <QtTest>
 
-#include "export/ProjectExporter.h"
+#include "colombina/export/ProjectExporter.h"
 
 class TestExporter : public QObject {
     Q_OBJECT

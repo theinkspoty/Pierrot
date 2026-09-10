@@ -4,7 +4,7 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "EffectsWidget.h"
-#include "models/Project.h"
+#include "colombina/models/Project.h"
 #include "ui/Theme.h"
 
 #include <QVBoxLayout>

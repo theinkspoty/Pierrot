@@ -20,13 +20,13 @@
 #include "ui/MesaWidget.h"
 #include "ui/ExportDialog.h"
 #include "ui/RenderQueueDialog.h"
-#include "export/NleInterchange.h"
+#include "colombina/export/NleInterchange.h"
 #include "ui/ScopeWidget.h"
 #include "ui/PreviewMonitor.h"
 #include "ui/ProjectSettingsDialog.h"
 #include "ui/SettingsDialog.h"
 #include "ui/Theme.h"
-#include "ofx/OfxPluginManager.h"
+#include "colombina/ofx/OfxPluginManager.h"
 
 #include <QSettings>
 // Devolve o atalho salvo pelo usuário (Configurações → Atalhos) ou o padrão.
@@ -46,7 +46,7 @@ QString recolorSvg(const QByteArray& raw, const QColor& color) {
 }
 } // namespace
 #include "ui/WelcomeWindow.h"
-#include "ffmpeg/MediaCache.h"
+#include "colombina/ffmpeg/MediaCache.h"
 
 #include <QApplication>
 #include <QPointer>
@@ -63,6 +63,7 @@ QString recolorSvg(const QByteArray& raw, const QColor& color) {
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFile>
+#include <QSaveFile>
 #include <QRegularExpression>
 #include <QSvgRenderer>
 #include <QJsonDocument>
@@ -2106,7 +2107,7 @@ bool MainWindow::saveProjectAs() {
 }
 
 bool MainWindow::writeProjectFile(const QString& path) {
-    QFile file(path);
+    QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly)) {
         QMessageBox::warning(this, tr("Salvar projeto"),
                              tr("Não foi possível gravar o arquivo:\n%1").arg(path));
@@ -2114,6 +2115,11 @@ bool MainWindow::writeProjectFile(const QString& path) {
     }
     const QJsonDocument doc(m_project.toJson());
     file.write(doc.toJson(QJsonDocument::Indented));
+    if (!file.commit()) {
+        QMessageBox::warning(this, tr("Salvar projeto"),
+                             tr("Erro ao finalizar gravação:\n%1").arg(path));
+        return false;
+    }
     m_modified = false;
     updateTitle();
     return true;

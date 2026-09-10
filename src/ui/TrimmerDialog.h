@@ -8,7 +8,7 @@
 #include <QDialog>
 #include <QImage>
 
-#include "models/Project.h"
+#include "colombina/models/Project.h"
 
 class QLabel;
 class QSlider;

@@ -4,9 +4,9 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "MesaRenderer.h"
-#include "ffmpeg/FFmpegDecoder.h"
-#include "ffmpeg/ProxyManager.h"
-#include "generators.h"
+#include "colombina/ffmpeg/FFmpegDecoder.h"
+#include "colombina/ffmpeg/ProxyManager.h"
+#include "colombina/generators.h"
 
 #include <QPainter>
 #include <QPainterPath>

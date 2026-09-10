@@ -12,7 +12,7 @@
 #include <QSet>
 #include <QElapsedTimer>
 
-#include "models/Project.h"
+#include "colombina/models/Project.h"
 
 class QSlider;
 class QLabel;

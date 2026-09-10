@@ -34,7 +34,7 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
-#include "ffmpeg/MediaCache.h"
+#include "colombina/ffmpeg/MediaCache.h"
 #include <QStyle>
 #include <QPainter>
 #include <QPainterPath>

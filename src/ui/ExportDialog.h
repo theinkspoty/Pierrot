@@ -7,8 +7,8 @@
 
 #include <QDialog>
 #include <QString>
-#include "models/Project.h"
-#include "export/ProjectExporter.h"
+#include "colombina/models/Project.h"
+#include "colombina/export/ProjectExporter.h"
 
 class QLineEdit;
 class QComboBox;

@@ -5,11 +5,11 @@
 
 #include "TimelineWidget.h"
 #include "TimelineCommands.h"
-#include "util.h"
+#include "colombina/util.h"
 #include "clipattrs.h"
 
-#include "ffmpeg/MediaCache.h"
-#include "ffmpeg/FFmpegDecoder.h"
+#include "colombina/ffmpeg/MediaCache.h"
+#include "colombina/ffmpeg/FFmpegDecoder.h"
 #include "ui/TransformDialog.h"
 #include "ui/AudioEffectsDialog.h"
 #include "ui/TrackAudioFxDialog.h"

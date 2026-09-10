@@ -14,7 +14,7 @@
 #include <QJsonObject>
 #include <QMap>
 #include <QObject>
-#include "models/Project.h"
+#include "colombina/models/Project.h"
 
 // Forward declaration do tipo de entry point OFX
 #include <ofxCore.h>

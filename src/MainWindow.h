@@ -17,7 +17,7 @@
 class QVBoxLayout;
 #include <functional>
 #include <deque>
-#include "models/Project.h"
+#include "colombina/models/Project.h"
 
 class MediaPoolWidget;
 class TimelineWidget;

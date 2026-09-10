@@ -31,23 +31,49 @@ endif()
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
 find_package(FFmpeg REQUIRED)
 
-set(SOURCES
+# ── Colombina: o kernel, a camada blindada (quase não muda) ─────────────
+# models/, ffmpeg/, render/, export/, ofx/. Não pode incluir src/ui — a
+# barreira é estrutural: nada aqui pode depender da casca (widgets).
+set(COLOMBINA_SOURCES
+    src/colombina/models/Project.cpp
+    src/colombina/ffmpeg/FFmpegDecoder.cpp
+    src/colombina/ffmpeg/AudioConformCache.cpp
+    src/colombina/ffmpeg/MediaCache.cpp
+    src/colombina/ffmpeg/ProxyManager.cpp
+    src/colombina/export/ProjectExporter.cpp
+    src/colombina/export/LainkaRenderer.cpp
+    src/colombina/export/OfxExportRenderer.cpp
+    src/colombina/export/NleInterchange.cpp
+    src/colombina/ofx/OfxPluginManager.cpp
+    src/colombina/ofx/OfxHost.cpp
+    src/colombina/ofx/OfxRenderer.cpp
+    src/colombina/render/MesaRenderer.cpp
+)
+
+set(COLOMBINA_HEADERS
+    src/colombina/models/Project.h
+    src/colombina/ffmpeg/FFmpegDecoder.h
+    src/colombina/ffmpeg/MediaCache.h
+    src/colombina/ffmpeg/ProxyManager.h
+    src/colombina/export/ProjectExporter.h
+    src/colombina/export/LainkaFx.h
+    src/colombina/export/LainkaRenderer.h
+    src/colombina/export/OfxExportRenderer.h
+    src/colombina/export/NleInterchange.h
+    src/colombina/ofx/OfxPluginManager.h
+    src/colombina/ofx/OfxHost.h
+    src/colombina/ofx/OfxRenderer.h
+    src/colombina/render/MesaRenderer.h
+    src/colombina/generators.h
+    src/colombina/util.h
+)
+
+# ── Casca: a UI (muda o tempo todo) ────────────────────────────────────
+set(PIERROT_APP_SOURCES
     src/main.cpp
     src/CrashReporter.cpp
     src/Bench.cpp
     src/MainWindow.cpp
-    src/models/Project.cpp
-    src/ffmpeg/FFmpegDecoder.cpp
-    src/ffmpeg/AudioConformCache.cpp
-    src/ffmpeg/MediaCache.cpp
-    src/ffmpeg/ProxyManager.cpp
-    src/export/ProjectExporter.cpp
-    src/export/LainkaRenderer.cpp
-    src/export/OfxExportRenderer.cpp
-    src/export/NleInterchange.cpp
-    src/ofx/OfxPluginManager.cpp
-    src/ofx/OfxHost.cpp
-    src/ofx/OfxRenderer.cpp
     src/ui/MediaPoolWidget.cpp
     src/ui/TimelineWidget.cpp
     src/ui/TimelineCommands.cpp
@@ -85,32 +111,18 @@ set(SOURCES
     src/ui/MesaInputHandler.cpp
     src/ui/MesaOverlayRenderer.cpp
     src/ui/MesaCanvasOps.cpp
-    src/render/MesaRenderer.cpp
     resources.qrc
 )
 
-set(HEADERS
+set(PIERROT_APP_HEADERS
     src/MainWindow.h
     src/CrashReporter.h
     src/Bench.h
-    src/version.h
-    src/generators.h
     src/clipattrs.h
+    src/version.h
     src/ui/TrimmerDialog.h
     src/ui/RenderQueueDialog.h
     src/ui/ScopeWidget.h
-    src/models/Project.h
-    src/ffmpeg/FFmpegDecoder.h
-    src/ffmpeg/MediaCache.h
-    src/ffmpeg/ProxyManager.h
-    src/export/ProjectExporter.h
-    src/export/LainkaFx.h
-    src/export/LainkaRenderer.h
-    src/export/OfxExportRenderer.h
-    src/export/NleInterchange.h
-    src/ofx/OfxPluginManager.h
-    src/ofx/OfxHost.h
-    src/ofx/OfxRenderer.h
     src/ui/MediaPoolWidget.h
     src/ui/TimelineWidget.h
     src/ui/TimelineCommands.h
@@ -137,18 +149,17 @@ set(HEADERS
     src/ui/MixerWidget.h
     src/ui/TitleBar.h
     src/ui/MesaWidget.h
-    src/render/MesaRenderer.h
 )
 
-add_executable(pierrot ${SOURCES} ${HEADERS})
+# ── Alvos ───────────────────────────────────────────────────────────────
+add_library(colombina STATIC ${COLOMBINA_SOURCES} ${COLOMBINA_HEADERS})
 
-target_include_directories(pierrot PRIVATE src src/ofx/sdk)
+target_include_directories(colombina PUBLIC src src/colombina/ofx/sdk)
 
-target_link_libraries(pierrot PRIVATE
-    ${PIERROT_QT_LIB}
+target_link_libraries(colombina PUBLIC
     ${PIERROT_QT_CONCURRENT}
-    ${PIERROT_QT_MULTIMEDIA}
-    ${PIERROT_QT_SVG}
+    ${PIERROT_QT_CORE}
+    ${PIERROT_QT_GUI}
     FFmpeg::avformat
     FFmpeg::avcodec
     FFmpeg::avutil
@@ -156,13 +167,24 @@ target_link_libraries(pierrot PRIVATE
 )
 
 # dlopen/dlsym para carregar plugins OFX em runtime
-target_link_libraries(pierrot PRIVATE ${CMAKE_DL_LIBS})
+target_link_libraries(colombina PUBLIC ${CMAKE_DL_LIBS})
 
 if(TARGET FFmpeg::swresample)
-    target_link_libraries(pierrot PRIVATE FFmpeg::swresample)
+    target_link_libraries(colombina PUBLIC FFmpeg::swresample)
 else()
     message(FATAL_ERROR "FFmpeg libswresample não encontrada — necessária para decodificar o áudio do preview.")
 endif()
+
+add_executable(pierrot ${PIERROT_APP_SOURCES} ${PIERROT_APP_HEADERS})
+
+target_include_directories(pierrot PRIVATE src src/colombina/ofx/sdk)
+
+target_link_libraries(pierrot PRIVATE
+    colombina
+    ${PIERROT_QT_LIB}
+    ${PIERROT_QT_MULTIMEDIA}
+    ${PIERROT_QT_SVG}
+)
 
 # ── Testes (Fase 0) ─────────────────────────────────────────────────────
 # Suíte de testes via Qt Test (sem dependência nova). Cobre a lógica pura do
@@ -176,9 +198,9 @@ enable_testing()
 # executável próprio para não colidir o símbolo main.
 add_executable(tst_keyframes
     tests/tst_keyframes.cpp
-    src/models/Project.cpp
+    src/colombina/models/Project.cpp
 )
-target_include_directories(tst_keyframes PRIVATE src src/ofx/sdk)
+target_include_directories(tst_keyframes PRIVATE src src/colombina/ofx/sdk)
 target_link_libraries(tst_keyframes PRIVATE
     ${PIERROT_QT_TEST}
     ${PIERROT_QT_CORE}
@@ -188,9 +210,9 @@ add_test(NAME tst_keyframes COMMAND tst_keyframes)
 
 add_executable(tst_serialization
     tests/tst_serialization.cpp
-    src/models/Project.cpp
+    src/colombina/models/Project.cpp
 )
-target_include_directories(tst_serialization PRIVATE src src/ofx/sdk)
+target_include_directories(tst_serialization PRIVATE src src/colombina/ofx/sdk)
 target_link_libraries(tst_serialization PRIVATE
     ${PIERROT_QT_TEST}
     ${PIERROT_QT_CORE}
@@ -200,10 +222,10 @@ add_test(NAME tst_serialization COMMAND tst_serialization)
 
 add_executable(tst_edl
     tests/tst_edl.cpp
-    src/export/NleInterchange.cpp
-    src/models/Project.cpp
+    src/colombina/export/NleInterchange.cpp
+    src/colombina/models/Project.cpp
 )
-target_include_directories(tst_edl PRIVATE src src/ofx/sdk)
+target_include_directories(tst_edl PRIVATE src src/colombina/ofx/sdk)
 target_link_libraries(tst_edl PRIVATE
     ${PIERROT_QT_TEST}
     ${PIERROT_QT_CORE}
@@ -216,13 +238,13 @@ add_test(NAME tst_edl COMMAND tst_edl)
 # ProjectExporter) + libs FFmpeg, sem UI e sem o ffmpeg CLI rodando de verdade.
 add_executable(tst_exporter
     tests/tst_exporter.cpp
-    src/models/Project.cpp
-    src/ffmpeg/FFmpegDecoder.cpp
-    src/render/MesaRenderer.cpp
-    src/export/ProjectExporter.cpp
-    src/ffmpeg/ProxyManager.cpp
+    src/colombina/models/Project.cpp
+    src/colombina/ffmpeg/FFmpegDecoder.cpp
+    src/colombina/render/MesaRenderer.cpp
+    src/colombina/export/ProjectExporter.cpp
+    src/colombina/ffmpeg/ProxyManager.cpp
 )
-target_include_directories(tst_exporter PRIVATE src src/ofx/sdk)
+target_include_directories(tst_exporter PRIVATE src src/colombina/ofx/sdk)
 target_link_libraries(tst_exporter PRIVATE
     ${PIERROT_QT_TEST}
     ${PIERROT_QT_CORE}

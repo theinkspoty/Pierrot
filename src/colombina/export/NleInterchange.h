@@ -9,7 +9,7 @@
 #include <QStringList>
 #include <QVector>
 
-#include "models/Project.h"
+#include "colombina/models/Project.h"
 
 // ── Intercâmbio com outros NLEs (EDL / FCPXML) ─────────────────────────
 // Ferramentas de import/export independentes de UI e de FFmpeg — puramente

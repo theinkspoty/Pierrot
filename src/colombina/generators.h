@@ -12,7 +12,7 @@
 #include <QLinearGradient>
 #include <QPainter>
 
-#include "models/Project.h"
+#include "colombina/models/Project.h"
 
 // Gera um quadro ARGB32 para mídia virtual (geradores estilo Vegas):
 //   ""          → cor sólida (solidColor)

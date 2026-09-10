@@ -16,8 +16,8 @@
 #include <algorithm>
 #include <cmath>
 
-#include "models/Project.h"
-#include "ffmpeg/FFmpegDecoder.h"
+#include "colombina/models/Project.h"
+#include "colombina/ffmpeg/FFmpegDecoder.h"
 
 namespace {
 

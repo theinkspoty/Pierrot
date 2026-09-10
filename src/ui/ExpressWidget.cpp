@@ -5,7 +5,7 @@
 
 #include "ExpressWidget.h"
 #include "EffectsWidget.h"
-#include "models/Project.h"
+#include "colombina/models/Project.h"
 #include "ui/Theme.h"
 
 #include <ofxParam.h>

@@ -7,7 +7,7 @@
 
 #include <QStringList>
 #include <functional>
-#include "models/Project.h"
+#include "colombina/models/Project.h"
 
 struct ExportSettings {
     QString outputPath;

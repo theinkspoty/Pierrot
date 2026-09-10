@@ -9,7 +9,7 @@
 #include <QHash>
 #include <QList>
 #include <QMutex>
-#include "models/Project.h"
+#include "colombina/models/Project.h"
 
 class QPainter;
 class FFmpegDecoder;

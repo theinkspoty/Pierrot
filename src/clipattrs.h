@@ -10,7 +10,7 @@
 #include <QJsonValue>
 #include <QVariant>
 
-#include "models/Project.h"
+#include "colombina/models/Project.h"
 
 // Serialização somente dos atributos "coláveis" de um clipe — base do sistema
 // de presets (estilo Vegas: Salvar/Aplicar preset) e útil para futuras

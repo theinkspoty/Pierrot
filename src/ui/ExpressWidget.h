@@ -18,7 +18,7 @@ class Project;
 struct Clip;
 struct OfxPluginInfo;
 
-#include "ofx/OfxPluginManager.h"
+#include "colombina/ofx/OfxPluginManager.h"
 
 // Janela docável "Express" — editor de parâmetros de efeitos do clipe.
 // Cada efeito aplicado ao clipe vira uma aba nesta janela.

@@ -4,11 +4,11 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "TimelineWidget.h"
-#include "models/Project.h"
-#include "ffmpeg/FFmpegDecoder.h"
+#include "colombina/models/Project.h"
+#include "colombina/ffmpeg/FFmpegDecoder.h"
 #include "ui/SettingsDialog.h"
 #include "ui/TrimmerDialog.h"
-#include "util.h"
+#include "colombina/util.h"
 
 #include <QMouseEvent>
 #include <QDragEnterEvent>
