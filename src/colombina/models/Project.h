@@ -40,31 +40,6 @@ struct OfxPluginInstance {
     QString pluginId;           // referência a OfxPluginInfo::id
     bool enabled = true;
     QVector<OfxParam> params;
-
-    double paramDouble(const QString& key, double fallback = 0.0) const {
-        for (const OfxParam& p : params)
-            if (p.key == key && p.value.canConvert<double>())
-                return p.value.toDouble();
-        return fallback;
-    }
-    bool paramBool(const QString& key, bool fallback = false) const {
-        for (const OfxParam& p : params)
-            if (p.key == key && p.value.canConvert<bool>())
-                return p.value.toBool();
-        return fallback;
-    }
-    QString paramString(const QString& key, const QString& fallback = {}) const {
-        for (const OfxParam& p : params)
-            if (p.key == key && p.value.metaType().id() == QMetaType::QString)
-                return p.value.toString();
-        return fallback;
-    }
-    QColor paramColor(const QString& key, const QColor& fallback = Qt::black) const {
-        for (const OfxParam& p : params)
-            if (p.key == key && p.value.metaType().id() == QMetaType::QColor)
-                return p.value.value<QColor>();
-        return fallback;
-    }
 };
 
 struct MediaItem {
@@ -620,17 +595,6 @@ struct Track {
     QVector<Keyframe> kfMesaOpacity;
     QVector<Keyframe> kfMesaAnchorX;
     QVector<Keyframe> kfMesaAnchorY;
-
-    // True se a track tem propriedades de canvas ativas (diferentes do padrão).
-    bool hasMesaTransform() const {
-        return mesaX != 0.0 || mesaY != 0.0
-            || mesaScaleX != 1.0 || mesaScaleY != 1.0
-            || mesaRotation != 0.0
-            || mesaAnchorX != 0.0 || mesaAnchorY != 0.0
-            || !kfMesaX.isEmpty() || !kfMesaY.isEmpty()
-            || !kfMesaScaleX.isEmpty() || !kfMesaScaleY.isEmpty()
-            || !kfMesaRotation.isEmpty();
-    }
 };
 
 inline QString newId() {

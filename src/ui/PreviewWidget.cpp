@@ -14,6 +14,9 @@
 #include "colombina/export/LainkaFx.h"
 #include "ui/Theme.h"
 #include "colombina/generators.h"
+#ifdef PIERROT_ENABLE_RUST
+#include "AudioFxBridge.h"
+#endif
 
 #include <QPainter>
 #include <QTimer>
@@ -334,7 +337,7 @@ private:
 //   aeval (inverter fase)          -> multiplica por -1
 //   afftdn (denoise)               -> aproximação: noise gate suave
 //   loudnorm (normalizar -14 LUFS) -> aproximação: AGC lento + soft clip
-class AudioFx {
+class AudioFxFallback {
 public:
     struct Biquad {
         double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
@@ -522,6 +525,16 @@ private:
     double reverbSizeAmt = 0.5;
     SimpleReverb rv; // DSP do Reverb EX (evita conflito com o parâmetro bool)
 };
+
+// O DSP dos efeitos vive no kernel Rust (lib pierrot_audiofx) quando o build
+// é feito com -DPIERROT_ENABLE_RUST=ON; senão uso o fallback C++ acima. A
+// interface (configure/resetState/process) é idêntica, então o resto do
+// PreviewWidget não muda de cara.
+#ifdef PIERROT_ENABLE_RUST
+using AudioFx = AudioFxBridge;
+#else
+using AudioFx = AudioFxFallback;
+#endif
 
 class AudioMixer : public QIODevice {
 public:
@@ -2210,6 +2223,13 @@ QVector<AudioMixer::SourceInfo> buildMixSources(const Project* p, double t) {
                     const QString base = c.groupId.isEmpty() ? c.id : c.groupId;
                     const QString key = QStringLiteral("%1|%2").arg(base).arg(c.audioStreamIndex);
                     reps.remove(key);
+                    if (audioDbg())
+                        qDebug().noquote() << QStringLiteral("[audio] MUTE skip t=%1 faixa='%2' isAudio=%3 base=%4 (restaram keys=%5)")
+                              .arg(t, 0, 'f', 3)
+                              .arg(tr.name)
+                              .arg(isAudio)
+                              .arg(base)
+                              .arg(reps.keys().join(QLatin1Char(',')));
                     continue;
                 }
                 const MediaItem* m = p->findMedia(c.mediaId);
@@ -2249,6 +2269,15 @@ QVector<AudioMixer::SourceInfo> buildMixSources(const Project* p, double t) {
         const Clip* c = it.value().clip;
         const MediaItem* m = p->findMedia(c->mediaId);
         if (!m || !m->hasAudio) continue;
+        if (audioDbg())
+            qDebug().noquote() << QStringLiteral("[audio] ativo t=%1 faixa='%2' isAudio=%3 base=%4 vol=%5")
+                  .arg(t, 0, 'f', 3)
+                  .arg((it.value().isAudio
+                            ? p->audioTracks[it.value().trackIdx].name
+                            : p->videoTracks[it.value().trackIdx].name))
+                  .arg(it.value().isAudio)
+                  .arg(!c->groupId.isEmpty() ? c->groupId : c->id)
+                  .arg(it.value().vol, 0, 'f', 3);
         AudioMixer::SourceInfo si;
         si.key = c->id;
         si.path = m->filePath;
@@ -2361,6 +2390,13 @@ QVector<AudioMixer::SourceInfo> buildWarmSources(
                     si.trackFxReverbMix = tac.reverbMix;
                     si.trackFxReverbSize = tac.reverbSize;
                 }
+                if (audioDbg())
+                    qDebug().noquote() << QStringLiteral("[audio] warm t=%1 faixa='%2' isAudio=%3 clip=%4 pos=%5")
+                          .arg(t, 0, 'f', 3)
+                          .arg(tracks[ti].name)
+                          .arg(isAudio)
+                          .arg(c.id)
+                          .arg(c.pos, 0, 'f', 3);
                 out.append(si);
             }
         }
@@ -3681,10 +3717,6 @@ void PreviewWidget::setMaskOverlay(const QString& clipId, const QVector<Mask>& m
     m_maskDragIndex = -1;
     m_maskDragHandle = -1;
     update();
-}
-
-bool PreviewWidget::allowsMaskDrag(const QPoint& pos) const {
-    return !m_maskOverlayClipId.isEmpty() && m_videoRect.contains(pos);
 }
 
 void PreviewWidget::drawMaskOverlay(QPainter& p, const QRect& canvas, double k) {

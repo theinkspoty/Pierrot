@@ -47,7 +47,6 @@ signals:
 private:
     void buildUi();
     void syncFormFromModel();
-    void syncModelFromForm();
     void refreshList();
     Mask& currentMask();
     void emitWork();

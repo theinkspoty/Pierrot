@@ -283,8 +283,6 @@ private:
     void toggleAnimation(GraphProp p);
     void toggleKeyAtPlayhead(GraphProp p);
     void jumpKeyframe(GraphProp p, int dir);
-    bool isMesaProp(GraphProp p) const;
-    bool isCamProp(GraphProp p) const;
 
     Project* m_project = nullptr;
     QString m_clipId;

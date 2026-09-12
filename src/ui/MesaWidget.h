@@ -49,7 +49,6 @@ public:
             update();
         }
     }
-    double playheadPosition() const { return m_playheadTime; }
     QString mesaId() const { return m_mesaId; }
     void refresh();
     // Seleciona a primeira Mesa disponível no projeto (usado ao abrir/undo).
@@ -132,7 +131,7 @@ private:
     void toggleSelect(int idx);      // Shift/Ctrl+clique: soma/alterna
     bool hasSelection(int idx) const { return m_selectedIdxs.contains(idx); }
     int selectionCount() const { return m_selectedIdxs.size(); }
-    int primarySelectedIdx() const { return m_selectedIdx; }
+    
 
     // ── Operações de camada (menu de contexto no canvas) ──
     void showCanvasContextMenu(const QPoint& globalPos, int hitIdx);
@@ -159,7 +158,6 @@ private:
         const int pw = panelWidth();
         return QRect(pw, 0, qMax(1, width() - pw), qMax(1, height()));
     }
-    int artWidth() const { return artRect().width(); }
     QPointF artCenter() const {
         const QRect r = artRect();
         return QPointF(r.x() + r.width() / 2.0, r.y() + r.height() / 2.0);

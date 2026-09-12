@@ -151,6 +151,50 @@ set(PIERROT_APP_HEADERS
     src/ui/MesaWidget.h
 )
 
+# ── DSP em Rust (opcional): portada de AudioFx (EQ/gate/AGC/reverb) ─────
+# Off por padrão; ligue com `-DPIERROT_ENABLE_RUST=ON` após instalar o Rust.
+# A lib pierrot_audiofx é staticlib via cargo; o header expõe a fronteira C.
+option(PIERROT_ENABLE_RUST "Usar o DSP de áudio portado para Rust" OFF)
+
+if(PIERROT_ENABLE_RUST)
+    find_program(CARGO_EXECUTABLE cargo)
+    if(NOT CARGO_EXECUTABLE)
+        message(FATAL_ERROR "PIERROT_ENABLE_RUST=ON mas cargo não foi encontrado. Instale o Rust (https://rustup.rs).")
+    endif()
+    if(NOT CMAKE_BUILD_TYPE MATCHES "Release|RelWithDebInfo")
+        message(WARNING "DSP Rust sem -O3 pode engasgar no áudio; use Release ou RelWithDebInfo.")
+    endif()
+
+    set(PIERROT_RUST_TARGET pierrot_audiofx)
+    set(PIERROT_RUST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/rust/pierrot_audiofx")
+    set(PIERROT_RUST_BUILD "${CMAKE_CURRENT_BINARY_DIR}/rust/${PIERROT_RUST_TARGET}")
+    set(PIERROT_RUST_RELEASE "${PIERROT_RUST_BUILD}/target/release")
+    set(PIERROT_RUST_LIB "${PIERROT_RUST_RELEASE}/lib${PIERROT_RUST_TARGET}.a")
+
+    # make muda para WORKING_DIRECTORY ANTES de rodar os comandos, então o
+    # diretório precisa existir já na configuração (não dentro do comando).
+    file(MAKE_DIRECTORY ${PIERROT_RUST_BUILD})
+
+    add_custom_command(
+        OUTPUT ${PIERROT_RUST_LIB}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${PIERROT_RUST_BUILD}
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${PIERROT_RUST_DIR} ${PIERROT_RUST_BUILD}
+        COMMAND ${CARGO_EXECUTABLE} build --release --offline
+                WORKING_DIRECTORY ${PIERROT_RUST_BUILD}
+        DEPENDS ${PIERROT_RUST_DIR}/Cargo.toml
+                ${PIERROT_RUST_DIR}/src/lib.rs
+    )
+    add_custom_target(pierrot_audiofx ALL DEPENDS ${PIERROT_RUST_LIB})
+
+    add_library(pierrot_rust STATIC IMPORTED GLOBAL)
+    set_target_properties(pierrot_rust PROPERTIES
+        IMPORTED_LOCATION ${PIERROT_RUST_LIB}
+        INTERFACE_INCLUDE_DIRECTORIES "${PIERROT_RUST_DIR}/include"
+    )
+    add_dependencies(pierrot_rust pierrot_audiofx)
+    list(APPEND PIERROT_APP_HEADERS src/ui/AudioFxBridge.h)
+endif()
+
 # ── Alvos ───────────────────────────────────────────────────────────────
 add_library(colombina STATIC ${COLOMBINA_SOURCES} ${COLOMBINA_HEADERS})
 
@@ -185,6 +229,11 @@ target_link_libraries(pierrot PRIVATE
     ${PIERROT_QT_MULTIMEDIA}
     ${PIERROT_QT_SVG}
 )
+
+if(PIERROT_ENABLE_RUST)
+    target_link_libraries(pierrot PRIVATE pierrot_rust)
+    target_compile_definitions(pierrot PRIVATE PIERROT_ENABLE_RUST=1)
+endif()
 
 # ── Testes (Fase 0) ─────────────────────────────────────────────────────
 # Suíte de testes via Qt Test (sem dependência nova). Cobre a lógica pura do

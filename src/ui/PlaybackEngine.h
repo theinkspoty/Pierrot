@@ -35,10 +35,6 @@ public:
     void setTimer(QTimer* timer) { m_timer = timer; }
     void setPlayButton(QPushButton* btn) { m_playBtn = btn; }
 
-    double playhead() const { return m_playhead; }
-    bool isPlaying() const { return m_playing; }
-    double playRate() const { return m_playRate; }
-    bool loopEnabled() const { return m_loopEnabled; }
     // Contador de frames perdidos (skip automático). Reseta ao ler.
     qint64 consumeDroppedFrames();
 

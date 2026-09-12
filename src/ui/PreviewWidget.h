@@ -44,8 +44,6 @@ public:
     void setProject(Project* p);
     void setOfxManager(OfxPluginManager* m) { m_ofxManager = m; }
     void refreshView();
-    AudioMixer* audioMixer() const { return m_audioFeed; }
-    // playhead()/isPlaying()/playRate()/loopEnabled() vêm de PlaybackEngine
 
     // Retorna uma cópia REDUZIDA (160×90) do quadro composto atual, para os
     // analisadores (waveform/vectorscope/histograma). Vazio se sem quadro.
@@ -68,8 +66,6 @@ public:
     // monitor, com alças arrastáveis (mover, redimensionar, rotacionar).
     // `masks` vazio ou `clipId` vazio desliga o overlay.
     void setMaskOverlay(const QString& clipId, const QVector<Mask>& masks);
-    // Devemos tratar clique/arrasto do mouse aqui (senão repassa ao QWidget).
-    bool allowsMaskDrag(const QPoint& pos) const;
 public slots:
     // Transporte: repassa ao PlaybackEngine. Necessário para os connect() de
     // QAction/QPushButton continuarem funcionando via slots do widget.

@@ -127,10 +127,6 @@ private:
     void evictIfOverBudget();
     void mergeWanted(Chunk* c, double a, double b);
 
-    // Número de chunks com trabalho pendente (para encurtar sessões quando
-    // várias fontes disputam o worker). Chamar sob m_regMtx.
-    int countPendingChunks() const;
-
     QHash<QString, Chunk*> m_byKey;
     mutable QMutex m_regMtx;
 

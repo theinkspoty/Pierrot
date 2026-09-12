@@ -306,17 +306,6 @@ void AudioConformCache::doFill(Chunk* c, double startSec, double horizonSec,
     }
 }
 
-// Quantos chunks têm janela pendente (trabalho a fazer)? Chamar sob m_regMtx.
-int AudioConformCache::countPendingChunks() const {
-    int n = 0;
-    for (Chunk* c : m_byKey) {
-        QMutexLocker lc(&c->mtx);
-        for (const auto& w : c->wanted)
-            if (uncoveredStart(*c, w.first, w.second) >= 0) { ++n; break; }
-    }
-    return n;
-}
-
 void AudioConformCache::workerLoop() {
     // Decoder PERSISTENTE do worker: continua vivo entre sessões do MESMO
     // chunk (decode contínuo sem re-open/re-seek). Só troca de arquivo quando

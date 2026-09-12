@@ -52,8 +52,6 @@ public:
     void setEnabled(bool on) { m_enabled = on; }
     bool enabled() const { return m_enabled; }
 
-    int pendingJobCount() const { return m_pending.count(); }
-
 signals:
     void proxyReady(const QString& srcPath);
     void proxyFailed(const QString& srcPath);
