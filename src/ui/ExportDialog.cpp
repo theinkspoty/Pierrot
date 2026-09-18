@@ -74,6 +74,7 @@ ExportDialog::ExportDialog(Project* project, QWidget* parent, Mode mode)
     m_formatCombo->addItem("MP4 (H.264 + AAC)", (int)ExportSettings::MP4);
     m_formatCombo->addItem("MKV (H.264 + AAC)", (int)ExportSettings::MKV);
     m_formatCombo->addItem("WebM (VP9 + Opus)", (int)ExportSettings::WEBM);
+    m_formatCombo->addItem("GIF (animação)", (int)ExportSettings::GIF);
 
     m_crfSpin = new QSpinBox(this);
     m_crfSpin->setRange(0, 51);
@@ -93,6 +94,18 @@ ExportDialog::ExportDialog(Project* project, QWidget* parent, Mode mode)
     m_abitrateSpin->setSingleStep(32);
     m_abitrateSpin->setSuffix(tr(" kbps"));
     m_abitrateSpin->setToolTip(tr("Bitrate do áudio em kbps.\nTípicos: 128k (WebM), 192k (MP4/MKV)."));
+
+    // GIF não tem áudio nem CRF/bitrate: desativa os campos irrelevantes.
+    const auto fmtChanged = [this]() {
+        const bool gif = ((ExportSettings::Format)m_formatCombo->currentData().toInt())
+                         == ExportSettings::GIF;
+        m_crfSpin->setEnabled(!gif);
+        m_vbitrateSpin->setEnabled(!gif);
+        m_abitrateSpin->setEnabled(!gif);
+    };
+    connect(m_formatCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, fmtChanged);
+    m_formatCombo->setCurrentIndex(0);
 
     auto* outRow = new QHBoxLayout;
     outRow->setContentsMargins(0, 0, 0, 0);
@@ -188,6 +201,7 @@ void ExportDialog::browseOutput() {
     const ExportSettings::Format fmt = (ExportSettings::Format)m_formatCombo->currentData().toInt();
     if (fmt == ExportSettings::MKV) { filter = tr("MKV (*.mkv)"); ext = "mkv"; }
     if (fmt == ExportSettings::WEBM) { filter = tr("WebM (*.webm)"); ext = "webm"; }
+    if (fmt == ExportSettings::GIF) { filter = tr("GIF (*.gif)"); ext = "gif"; }
 
     // Abre na pasta padrão de render se o usuário ativou essa opção.
     QString startDir = QDir::homePath();

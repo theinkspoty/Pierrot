@@ -1677,43 +1677,58 @@ QStringList ProjectExporter::buildCommand(const Project& project,
         }
     }
 
+    // GIF: imagem animada — sem áudio e sem codec/bitrate. A última cadeia do
+    // graph gera a paleta (amostrada de todos os quadros) e indexa a saída com
+    // dither bayer, o único jeito de obter GIF decente num único ffmpeg. O
+    // [vout] da composição já chega opaco (fundo preto composto por baixo).
+    const bool isGif = (s.format == ExportSettings::GIF);
+    if (isGif) {
+        fc << QStringLiteral(
+            "[vout]split=2[gbase1][gbase2];"
+            "[gbase1]palettegen=stats_mode=diff[gpal];"
+            "[gbase2][gpal]paletteuse=dither=bayer:bayer_scale=5[gvout]");
+    }
     args << "-filter_complex" << fc.join(QLatin1Char(';'));
 
-    args << "-map" << QStringLiteral("[vout]");
-    if (!aout.isEmpty()) args << "-map" << aout;
+    args << "-map" << (isGif ? QStringLiteral("[gvout]") : QStringLiteral("[vout]"));
+    if (!isGif && !aout.isEmpty()) args << "-map" << aout;
     else args << "-an";
 
-    // Codificação por hardware (opt-in nas configurações): usa h264_nvenc ou
-    // h264_vaapi para MP4/MKV quando o ffmpeg do sistema tiver o encoder; se
-    // não houver, cai no libx264/VP9 normal (comportamento anterior).
-    const QString hwCodec = (s.format != ExportSettings::WEBM
-                             && QSettings().value("exportHwEncode", false).toBool())
-                                ? detectHwEncoder() : QString();
-    args << "-c:v" << (hwCodec.isEmpty() ? codecFor(s.format, true) : hwCodec);
-    if (s.videoBitrateKbps > 0) {
-        // Bitrate fixo
-        args << "-b:v" << QStringLiteral("%1k").arg(s.videoBitrateKbps);
-    } else {
-        // CRF (qualidade variável)
-        const int crf = std::clamp(s.crf, 0, 51);
-        if (s.format == ExportSettings::WEBM) {
-            args << "-crf" << QString::number(crf) << "-b:v" << "0" << "-cpu-used" << "4";
-        } else if (hwCodec == QStringLiteral("h264_nvenc")) {
-            // NVENC: -cq == qualidade VBR (0–51, mesmo espírito do CRF).
-            args << "-preset" << "p4" << "-cq" << QString::number(crf);
-        } else if (hwCodec == QStringLiteral("h264_vaapi")) {
-            // VAAPI: -qp em modo CQP (qualidade constante).
-            args << "-qp" << QString::number(crf);
+    if (!isGif) {
+        // Codificação por hardware (opt-in nas configurações): usa h264_nvenc ou
+        // h264_vaapi para MP4/MKV quando o ffmpeg do sistema tiver o encoder; se
+        // não houver, cai no libx264/VP9 normal (comportamento anterior).
+        const QString hwCodec = (s.format != ExportSettings::WEBM
+                                 && QSettings().value("exportHwEncode", false).toBool())
+                                    ? detectHwEncoder() : QString();
+        args << "-c:v" << (hwCodec.isEmpty() ? codecFor(s.format, true) : hwCodec);
+        if (s.videoBitrateKbps > 0) {
+            // Bitrate fixo
+            args << "-b:v" << QStringLiteral("%1k").arg(s.videoBitrateKbps);
         } else {
-            args << "-preset" << "medium" << "-crf" << QString::number(crf);
+            // CRF (qualidade variável)
+            const int crf = std::clamp(s.crf, 0, 51);
+            if (s.format == ExportSettings::WEBM) {
+                args << "-crf" << QString::number(crf) << "-b:v" << "0" << "-cpu-used" << "4";
+            } else if (hwCodec == QStringLiteral("h264_nvenc")) {
+                // NVENC: -cq == qualidade VBR (0–51, mesmo espírito do CRF).
+                args << "-preset" << "p4" << "-cq" << QString::number(crf);
+            } else if (hwCodec == QStringLiteral("h264_vaapi")) {
+                // VAAPI: -qp em modo CQP (qualidade constante).
+                args << "-qp" << QString::number(crf);
+            } else {
+                args << "-preset" << "medium" << "-crf" << QString::number(crf);
+            }
         }
-    }
-    args << "-pix_fmt" << "yuv420p";
+        args << "-pix_fmt" << "yuv420p";
 
-    if (!aout.isEmpty()) {
-        args << "-c:a" << codecFor(s.format, false);
-        const int abr = std::clamp(s.audioBitrateKbps, 32, 640);
-        args << "-b:a" << QStringLiteral("%1k").arg(abr);
+        if (!aout.isEmpty()) {
+            args << "-c:a" << codecFor(s.format, false);
+            const int abr = std::clamp(s.audioBitrateKbps, 32, 640);
+            args << "-b:a" << QStringLiteral("%1k").arg(abr);
+        }
+    } else {
+        args << "-f" << "gif";
     }
 
     args << "-max_muxing_queue_size" << "1024";
