@@ -18,11 +18,7 @@ MesaRenderer::~MesaRenderer() { clearCache(); }
 
 void MesaRenderer::clearCache() {
     QMutexLocker l(&m_mutex);
-    for (auto it = m_decoders.begin(); it != m_decoders.end(); ++it) {
-        it.value()->releaseBuffers();
-        it.value()->close();
-        delete it.value();
-    }
+    // shared_ptr ensures decoders are only deleted when no longer in use.
     m_decoders.clear();
     m_compositeLru.clear();
 }
@@ -65,7 +61,7 @@ QImage MesaRenderer::decodeFrame(const QString& filePath, double time, int maxW)
     // é o vpath, para não misturar original e proxy do mesmo clipe.
     const QString vpath = ProxyManager::instance().resolveVideo(filePath);
 
-    FFmpegDecoder* dec = nullptr;
+    std::shared_ptr<FFmpegDecoder> dec;
     {
         // Seção CURTA com o lock global: só o mapa de decoders e o cache de
         // quadro único são compartilhados entre threads. O decode pesado fica
@@ -75,9 +71,11 @@ QImage MesaRenderer::decodeFrame(const QString& filePath, double time, int maxW)
             && m_frameCache.key.maxW == maxW && !m_frameCache.frame.isNull()) {
             return m_frameCache.frame;
         }
-        dec = m_decoders.value(vpath);
-        if (!dec) {
-            dec = new FFmpegDecoder();
+        auto it = m_decoders.find(vpath);
+        if (it != m_decoders.end()) {
+            dec = it.value();
+        } else {
+            dec = std::make_shared<FFmpegDecoder>();
             m_decoders.insert(vpath, dec);
         }
     }

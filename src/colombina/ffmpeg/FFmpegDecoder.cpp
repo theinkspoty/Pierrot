@@ -20,6 +20,7 @@ extern "C" {
 #include <cfloat>
 #include <cstring>
 #include <algorithm>
+#include <atomic>
 #include <QDebug>
 #include <QFileInfo>
 #include <QSet>
@@ -81,8 +82,8 @@ static int resolveAudioStream(const AVFormatContext* fmt, int k) {
 // auto-cura: se o driver entregar quadros vazios repetidamente (formato
 // incomum/10-bit, transferência falha, etc.), o Pierrot desativa a GPU sozinho
 // para a sessão — o vídeo continua, em software.
-static bool s_hwBroken = false;
-static int s_hwFailSeq = 0;
+static std::atomic<bool> s_hwBroken{false};
+static std::atomic<int> s_hwFailSeq{0};
 
 static bool hwDisabled() {
     if (qEnvironmentVariableIsSet("PIERROT_GPU")
@@ -180,11 +181,16 @@ static double sampleAt(const AVFrame* frame, const AVCodecContext* cc, int chann
     const int planar = av_sample_fmt_is_planar(sf);
     int channels = frame->ch_layout.nb_channels;
     if (channels <= 0) channels = cc->ch_layout.nb_channels;
+    if (index < 0 || index >= frame->nb_samples || channel < 0 || channel >= channels)
+        return 0.0;
     const int bytes = av_get_bytes_per_sample(sf);
+    if (bytes <= 0) return 0.0;
     const uint8_t* p;
     if (planar) {
+        if (!frame->data[channel]) return 0.0;
         p = frame->data[channel] + (size_t)index * bytes;
     } else {
+        if (!frame->data[0]) return 0.0;
         p = frame->data[0] + ((size_t)index * channels + channel) * bytes;
     }
     switch (sf) {
@@ -373,7 +379,11 @@ FFmpegAudioPeaks FFmpegDecoder::audioPeaks(const QString& filePath, int bucketsP
         avformat_close_input(&fmt);
         return result;
     }
-    avcodec_parameters_to_context(cc, fmt->streams[idx]->codecpar);
+    if (avcodec_parameters_to_context(cc, fmt->streams[idx]->codecpar) < 0) {
+        avcodec_free_context(&cc);
+        avformat_close_input(&fmt);
+        return result;
+    }
     if (avcodec_open2(cc, codec, nullptr) < 0) {
         avcodec_free_context(&cc);
         avformat_close_input(&fmt);
@@ -472,8 +482,12 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
         if (codec) {
             AVCodecContext* cc = avcodec_alloc_context3(codec);
             if (cc) {
-                avcodec_parameters_to_context(cc, fmt->streams[idx]->codecpar);
-                cc->thread_type = FF_THREAD_FRAME;
+                if (avcodec_parameters_to_context(cc, fmt->streams[idx]->codecpar) < 0) {
+                    avcodec_free_context(&cc);
+                    cc = nullptr;
+                }
+                if (cc) {
+                    cc->thread_type = FF_THREAD_FRAME;
                 AVBufferRef* hwDev = hwDisabled() ? nullptr : vaapiDevice();
                 if (hwDev) {
                     cc->hw_device_ctx = av_buffer_ref(hwDev);
@@ -517,13 +531,17 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
                     avcodec_free_context(&cc);
                     cc = avcodec_alloc_context3(codec);
                     if (cc) {
-                        avcodec_parameters_to_context(cc, fmt->streams[idx]->codecpar);
+                        if (avcodec_parameters_to_context(cc, fmt->streams[idx]->codecpar) < 0) {
+                            avcodec_free_context(&cc);
+                            cc = nullptr;
+                        } else {
                         cc->thread_count = qMin(4, QThread::idealThreadCount());
                         cc->thread_type = FF_THREAD_FRAME;
                         openErr = avcodec_open2(cc, codec, nullptr);
                         if (openErr != 0) {
                             avcodec_free_context(&cc);
                             cc = nullptr;
+                        }
                         }
                     }
                 } else if (openErr != 0) {
@@ -550,6 +568,7 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
                     m_isImage = (isImagePath(filePath) && singleFrame)
                                 || (fmt->duration <= 0);
                 }
+                } // if (cc) after avcodec_parameters_to_context
             }
         }
     }
@@ -568,9 +587,11 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
         if (acodec) {
             AVCodecContext* acc = avcodec_alloc_context3(acodec);
             if (acc) {
-                avcodec_parameters_to_context(acc, fmt->streams[aidx]->codecpar);
-                acc->thread_count = 0;
-                if (avcodec_open2(acc, acodec, nullptr) == 0) {
+                if (avcodec_parameters_to_context(acc, fmt->streams[aidx]->codecpar) < 0) {
+                    avcodec_free_context(&acc);
+                } else {
+                    acc->thread_count = 0;
+                    if (avcodec_open2(acc, acodec, nullptr) == 0) {
                     SwrContext* swr = swr_alloc();
                     if (swr) {
                         AVChannelLayout outLayout;
@@ -594,6 +615,7 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
                 } else {
                     avcodec_free_context(&acc);
                 }
+                } // else avcodec_parameters_to_context succeeded
             }
         }
     }
@@ -852,7 +874,10 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
                            || targetSec > m_lastPtsSec + 2.0);
 
     if (needSeek) {
-        av_seek_frame(fmt, m_stream, target, AVSEEK_FLAG_BACKWARD);
+        const int seekErr = av_seek_frame(fmt, m_stream, target, AVSEEK_FLAG_BACKWARD);
+        if (seekErr < 0) {
+            qWarning() << "av_seek_frame failed for video:" << seekErr;
+        }
         avcodec_flush_buffers(cc);
         m_lastPtsSec = -1.0;
         if (m_lastFrame)
@@ -1108,7 +1133,10 @@ void FFmpegDecoder::seekAudio(double seconds) {
     const int64_t target = av_rescale_q(
         (int64_t)(seconds * 1000000.0),
         AVRational{1, 1000000}, ast->time_base);
-    av_seek_frame(afmt, m_audioStream, target, AVSEEK_FLAG_BACKWARD);
+    const int seekErr = av_seek_frame(afmt, m_audioStream, target, AVSEEK_FLAG_BACKWARD);
+    if (seekErr < 0) {
+        qWarning() << "av_seek_frame failed for audio:" << seekErr;
+    }
     avcodec_flush_buffers(acc);
     if (m_swr) swr_init(static_cast<SwrContext*>(m_swr));
     // Fallback para streams sem PTS confiável; o descarte principal é por PTS

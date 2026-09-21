@@ -1465,10 +1465,19 @@ void TimelineWidget::dragMoveEvent(QDragMoveEvent* e) {
         } else if (md->hasUrls()) {
             for (const QUrl& u : md->urls()) {
                 if (!u.isLocalFile()) continue;
-                const FFmpegMediaInfo info = FFmpegDecoder::probe(u.toLocalFile());
+                const QString path = u.toLocalFile();
+                // Cache probe results to avoid expensive re-probe on every mouse move.
+                FFmpegMediaInfo info;
+                auto it = m_dragProbeCache.find(path);
+                if (it != m_dragProbeCache.end()) {
+                    info = it.value();
+                } else {
+                    info = FFmpegDecoder::probe(path);
+                    m_dragProbeCache.insert(path, info);
+                }
                 if (info.hasVideo || info.hasAudio) {
                     m_dragHoverDur = info.duration > 0 ? info.duration : 1.0;
-                    m_dragHoverName = QFileInfo(u.toLocalFile()).completeBaseName();
+                    m_dragHoverName = QFileInfo(path).completeBaseName();
                     break;
                 }
             }
@@ -1484,6 +1493,7 @@ void TimelineWidget::dragLeaveEvent(QDragLeaveEvent*) {
     m_dragHoverRow = -1;
     m_dragHoverDur = 0.0;
     m_dragHoverName.clear();
+    m_dragProbeCache.clear();
     update();
 }
 
@@ -1585,7 +1595,14 @@ void TimelineWidget::dropEvent(QDropEvent* e) {
         for (const QUrl& u : md->urls()) {
             if (!u.isLocalFile()) continue;
             const QString path = u.toLocalFile();
-            const FFmpegMediaInfo info = FFmpegDecoder::probe(path);
+            // Use cached probe result if available (from dragMoveEvent).
+            FFmpegMediaInfo info;
+            auto it = m_dragProbeCache.find(path);
+            if (it != m_dragProbeCache.end()) {
+                info = it.value();
+            } else {
+                info = FFmpegDecoder::probe(path);
+            }
             if (!info.hasVideo && !info.hasAudio) continue;
             MediaItem m;
             m.id = newId();
@@ -1611,6 +1628,7 @@ void TimelineWidget::dropEvent(QDropEvent* e) {
     }
     if (mediaIds.isEmpty()) return;
 
+    m_dragProbeCache.clear();
     finishDrop(mediaIds, e->position().toPoint());
 }
 

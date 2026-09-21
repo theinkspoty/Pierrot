@@ -1410,13 +1410,18 @@ void PreviewWidget::refreshView() {
 }
 
 QImage PreviewWidget::scopesFrame() const {
-    const QImage src = m_compositedCache.isNull() ? m_frame : m_compositedCache;
+    QImage src;
+    {
+        QMutexLocker l(&m_frameMutex);
+        src = m_compositedCache.isNull() ? m_frame : m_compositedCache;
+    }
     if (src.isNull() || src.width() < 2 || src.height() < 2) return QImage();
     return src.scaled(160, 90, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
                .convertToFormat(QImage::Format_ARGB32);
 }
 
 QImage PreviewWidget::compositeFrame() const {
+    QMutexLocker l(&m_frameMutex);
     return m_compositedCache.isNull() ? m_frame : m_compositedCache;
 }
 
@@ -1564,8 +1569,11 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
 
             // Quadro deste clipe: vídeo normal
             QImage clipFrame;
-            if (topClip && c->id == topClip->id && !m_frame.isNull()) {
-                clipFrame = m_frame;
+            if (topClip && c->id == topClip->id) {
+                QMutexLocker l(&m_frameMutex);
+                if (!m_frame.isNull()) {
+                    clipFrame = m_frame;
+                }
             } else if (isMesaTrack) {
                 // Track Mesa em layers inferiores: frame já renderizado pelo
                 // MesaRenderer e armazenado no layerCache por requestLowerLayers.

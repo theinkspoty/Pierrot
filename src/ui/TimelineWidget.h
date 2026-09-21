@@ -15,6 +15,8 @@
 #include <QPixmap>
 #include "colombina/models/Project.h"
 
+struct FFmpegMediaInfo;
+
 class QScrollBar;
 class QPainter;
 class QMouseEvent;
@@ -424,6 +426,9 @@ private:
     QHash<ClipVisKey, QPixmap> m_clipPix;
     qint64 m_clipBytes = 0;
     quint64 m_clipEpoch = 0;
+
+    // Cache de probe durante drag-and-drop (evita re-probe a cada mouse move).
+    QHash<QString, FFmpegMediaInfo> m_dragProbeCache;
 
     // Índice para buscas O(1) por ID de clipe.
     QHash<QString, Clip*> m_clipIndex;

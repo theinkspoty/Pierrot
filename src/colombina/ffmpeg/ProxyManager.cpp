@@ -138,7 +138,9 @@ void ProxyManager::probeAndQueue(const QString& srcPath) {
     QMutexLocker l(&m_mutex);
     if (!m_enabled || srcPath.isEmpty() || m_small.contains(srcPath) || m_failed.contains(srcPath))
         return;
-    if (hasProxy(srcPath)) return;
+    // Inline hasProxy() check to avoid deadlock (hasProxy locks m_mutex too).
+    const QString proxy = proxyPathFor(srcPath);
+    if (m_map.value(srcPath) == proxy && QFile::exists(proxy)) return;
     if (m_map.contains(srcPath)) return; // já gera/gerou (removido? re-probe)
     if (m_pending.contains(srcPath) || m_activeSrc == srcPath) return;
 
@@ -171,8 +173,8 @@ void ProxyManager::onProxyReady(const QString& srcPath, const QString& proxyPath
     {
         QMutexLocker l(&m_mutex);
         m_map.insert(srcPath, proxyPath);
-        saveState();
     }
+    saveState(); // I/O outside mutex to avoid blocking resolveVideo()
     m_running = false;
     m_activeSrc.clear();
     emit proxyReady(srcPath);
@@ -184,8 +186,8 @@ void ProxyManager::onProxyFailed(const QString& srcPath) {
     {
         QMutexLocker l(&m_mutex);
         m_failed.insert(srcPath);
-        saveState();
     }
+    saveState(); // I/O outside mutex to avoid blocking resolveVideo()
     m_running = false;
     m_activeSrc.clear();
     emit proxyFailed(srcPath);

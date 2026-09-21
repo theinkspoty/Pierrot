@@ -9,6 +9,7 @@
 #include <QHash>
 #include <QList>
 #include <QMutex>
+#include <memory>
 #include "colombina/models/Project.h"
 
 class QPainter;
@@ -137,7 +138,7 @@ private:
 
     QImage decodeFrame(const QString& filePath, double time, int maxW);
 
-    QHash<QString, FFmpegDecoder*> m_decoders;
+    QHash<QString, std::shared_ptr<FFmpegDecoder>> m_decoders;
 
     // Cache de frames decodificados (evita re-decode no mesmo timestamp)
     struct FrameKey { QString path; double time; int maxW; };
