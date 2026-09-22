@@ -121,7 +121,11 @@ private:
     void updateTitle();
     void updateUndoActions();
     void addRecentProject(const QString& path);
-    bool writeProjectFile(const QString& path);
+    // Save assíncrono: serializa na UI thread (snapshot consistente — o modelo
+    // só é mutado nela), grava em disco + faz backup rotativo num worker
+    // QtConcurrent. A UI não congela em projetos grandes. autoSave=true só muda
+    // a mensagem de status (manual vs. "salvo automaticamente").
+    void writeProjectFile(const QString& path, bool autoSave = false);
 
     // Evita que restoreSettings() dispare saveSettings() via setChecked() do
     // cadeado antes da janela ser montada, sobrescrevendo o layout salvo.
@@ -144,6 +148,22 @@ private:
     QDockWidget* m_histDock = nullptr;
     QString m_currentFile;
     bool m_modified = false;
+
+    // Estado do save assíncrono (QtConcurrent): a escrita em disco e o backup
+    // rotativo rodam fora da UI. Se outro save chegar enquanto um está em voo,
+    // o pedido é enfileirado (m_savePending) e re-disparado ao terminar; se o
+    // usuário editar durante a gravação, o projeto permanece marcado como sujo
+    // (m_modified continua true) via comparação de revision() capturada.
+    bool m_saveBusy = false;
+    bool m_savePending = false;
+    bool m_saveAuto = false;     // tipo (manual/autosave) do save em voo
+    bool m_queuedAuto = false;   // tipo do save enfileirado (o último pedido)
+    QString m_queuedPath;        // caminho do save enfileirado (se houver)
+    // Geração do projeto: incrementada a cada troca de projeto (novo/aberto/
+    // importado). O callback do save assíncrono só toca m_currentFile/título/
+    // dirty-state se a geração ainda for a mesma — um save disparado por
+    // confirmDiscardChanges() nunca pode "vazar" para o projeto recém-aberto.
+    quint64 m_projGen = 0;
 
     MediaPoolWidget* m_pool = nullptr;
     TimelineWidget* m_timeline = nullptr;

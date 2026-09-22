@@ -308,6 +308,33 @@ target_link_libraries(tst_exporter PRIVATE
 )
 add_test(NAME tst_exporter COMMAND tst_exporter)
 
+# tst_export_pipeline: CAMINHO FELIZ — roda o ffmpeg CLI de verdade com o comando
+# do ProjectExporter e extrai um quadro do arquivo resultante, comparando com o
+# generatorFrame() (mesma fonte de verdade do preview). Pulado se não houver
+# ffmpeg no PATH. Mantém a paridade preview ↔ exportação verificável no CI.
+add_executable(tst_export_pipeline
+    tests/tst_export_pipeline.cpp
+    src/colombina/models/Project.cpp
+    src/colombina/ffmpeg/FFmpegDecoder.cpp
+    src/colombina/render/MesaRenderer.cpp
+    src/colombina/export/ProjectExporter.cpp
+    src/colombina/ffmpeg/ProxyManager.cpp
+)
+target_include_directories(tst_export_pipeline PRIVATE src src/colombina/ofx/sdk)
+target_link_libraries(tst_export_pipeline PRIVATE
+    ${PIERROT_QT_TEST}
+    ${PIERROT_QT_CORE}
+    ${PIERROT_QT_GUI}
+    ${PIERROT_QT_CONCURRENT}
+    FFmpeg::avformat
+    FFmpeg::avcodec
+    FFmpeg::avutil
+    FFmpeg::swscale
+    FFmpeg::swresample
+    ${CMAKE_DL_LIBS}
+)
+add_test(NAME tst_export_pipeline COMMAND tst_export_pipeline)
+
 install(TARGETS pierrot RUNTIME DESTINATION bin)
 install(FILES packaging/pierrot.desktop DESTINATION share/applications)
 install(FILES packaging/pierrot.svg DESTINATION share/icons/hicolor/scalable/apps)

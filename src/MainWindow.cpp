@@ -64,6 +64,9 @@ QString recolorSvg(const QByteArray& raw, const QColor& color) {
 #include <QFileInfo>
 #include <QFile>
 #include <QSaveFile>
+#include <algorithm>
+#include <QDir>
+#include <QDateTime>
 #include <QRegularExpression>
 #include <QSvgRenderer>
 #include <QJsonDocument>
@@ -87,11 +90,52 @@ QString recolorSvg(const QByteArray& raw, const QColor& color) {
 #include <QCursor>
 #include <QScreen>
 #include <QDataStream>
+#include <QtConcurrent/QtConcurrent>
+#include <QFutureWatcher>
+#include <QThreadPool>
 
 namespace {
 // Versão do arranjo de painéis (docks/toolbar). Aumente para descartar
 // estados salvos antigos que estejam com o layout deslocado.
 constexpr int kLayoutVersion = 3;
+
+// Número máximo de cópias do backup rotativo (~/Pierrot/backups/).
+constexpr int kBackupCopies = 10;
+
+// Resultado da gravação em disco feita no worker do save assíncrono.
+struct SaveWriteResult {
+    bool ok = false;
+    QString detail; // mensagem de erro se !ok
+};
+
+// Backup rotativo: ~/Pierrot/backups/<nome>_AAAA-MM-DD_HH-MM-SS.Blanc, mantendo
+// no máximo kBackupCopies cópias do mesmo projeto. Chamado a cada save bem-
+// sucedido (manual ou autosave), dentro do worker. Melhor esforço: falha
+// silenciosa — nunca bloqueia nem interfere com o save.
+void rotatingBackup(const QString& sourcePath) {
+    const QFileInfo src(sourcePath);
+    QDir dir(QDir::homePath());
+    if (!dir.mkpath(QStringLiteral("Pierrot/backups"))) return;
+    dir.cd(QStringLiteral("Pierrot/backups"));
+
+    const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd_HH-mm-ss"));
+    const QString dest = dir.filePath(src.completeBaseName() + QLatin1Char('_') + stamp
+                                      + QLatin1String(".Blanc"));
+    if (QFile::copy(sourcePath, dest)) {
+        const QString base = src.completeBaseName() + QLatin1Char('_');
+        QStringList candidates;
+        const QStringList entries = dir.entryList(QStringList() << base + QLatin1String("*.Blanc"),
+                                                  QDir::Files, QDir::NoSort);
+        for (const QString& e : entries) candidates << dir.filePath(e);
+        std::sort(candidates.begin(), candidates.end(),
+                  [](const QString& a, const QString& b) {
+                      return QFileInfo(a).lastModified() > QFileInfo(b).lastModified();
+                  });
+        while (candidates.size() > static_cast<std::size_t>(kBackupCopies)) {
+            QFile::remove(candidates.takeLast());
+        }
+    }
+}
 
 // QWidget::saveGeometry grava o array em big-endian na estrutura:
 //   int version (== 1) | quint32 screen | QRect geometry | QRect frameGeometry
@@ -655,6 +699,10 @@ void MainWindow::restoreSettings() {
 void MainWindow::closeEvent(QCloseEvent* event) {
     // Se houver alterações não salvas, pergunta antes de sair.
     if (!confirmDiscardChanges()) { event->ignore(); return; }
+    // Espera uma gravação em voo terminar (normalmente alguns ms) para não
+    // descartar o último save antes de o processo sair.
+    if (m_saveBusy && QThreadPool::globalInstance())
+        QThreadPool::globalInstance()->waitForDone();
     saveSettings();
     QMainWindow::closeEvent(event);
     QApplication::quit();
@@ -1996,6 +2044,7 @@ void MainWindow::newProject() {
     if (!confirmDiscardChanges()) return;
     MediaCache::instance().clear();
     m_project = Project();
+    ++m_projGen; // troca de projeto: invalida callbacks de save em voo
     for (int i = 0; i < 3; ++i) m_project.addTrack(false);
     for (int i = 0; i < 3; ++i) m_project.addTrack(true);
     m_pancrop->setProject(&m_project);
@@ -2051,6 +2100,7 @@ void MainWindow::openProjectFile(const QString& path) {
         return;
     }
     m_project.fromJson(doc.object());
+    ++m_projGen; // troca de projeto: invalida callbacks de save em voo
     if (m_project.videoTracks.isEmpty()) m_project.addTrack(false);
     if (m_project.audioTracks.isEmpty()) m_project.addTrack(true);
 
@@ -2082,8 +2132,7 @@ void MainWindow::createProject(int width, int height, int fps, const QString& na
 
 bool MainWindow::saveProject() {
     if (m_currentFile.isEmpty()) return saveProjectAs();
-    if (!writeProjectFile(m_currentFile)) return false;
-    statusBar()->showMessage(tr("Projeto salvo: %1").arg(m_currentFile));
+    writeProjectFile(m_currentFile);
     return true;
 }
 
@@ -2098,31 +2147,90 @@ bool MainWindow::saveProjectAs() {
     if (!path.endsWith(".Blanc", Qt::CaseInsensitive)
         && !path.endsWith(".ovp", Qt::CaseInsensitive))
         path += ".Blanc";
-    if (!writeProjectFile(path)) return false;
-    m_currentFile = path;
-    updateTitle();
-    addRecentProject(path);
-    statusBar()->showMessage(tr("Projeto salvo: %1").arg(path));
+    writeProjectFile(path);
     return true;
 }
 
-bool MainWindow::writeProjectFile(const QString& path) {
-    QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly)) {
-        QMessageBox::warning(this, tr("Salvar projeto"),
-                             tr("Não foi possível gravar o arquivo:\n%1").arg(path));
-        return false;
+// Save assíncrono: serializa na UI thread (o modelo só é mutado nela — garante
+// um snapshot consistente sem data race com a edição), e grava em disco +
+// backup rotativo num worker QtConcurrent. A UI não congela em projetos
+// grandes. Erros voltam ao usuário via QMessageBox quando o worker termina.
+// Detalhes de reentrância (documentados em MainWindow.h):
+//   * save durante save em voo → enfileirado e re-disparado ao terminar;
+//   * edição durante a gravação → m_modified permanece true (comparação de
+//     revision()) para o título não mentir;
+//   * no fechamento do app, closeEvent() espera o worker terminar.
+void MainWindow::writeProjectFile(const QString& path, bool autoSave) {
+    if (m_saveBusy) {
+        m_savePending = true;
+        m_queuedPath = path;
+        m_queuedAuto = autoSave;
+        statusBar()->showMessage(tr("Salvamento em andamento — aguarde."));
+        return;
     }
-    const QJsonDocument doc(m_project.toJson());
-    file.write(doc.toJson(QJsonDocument::Indented));
-    if (!file.commit()) {
-        QMessageBox::warning(this, tr("Salvar projeto"),
-                             tr("Erro ao finalizar gravação:\n%1").arg(path));
-        return false;
-    }
-    m_modified = false;
-    updateTitle();
-    return true;
+
+    const QByteArray data =
+        QJsonDocument(m_project.toJson()).toJson(QJsonDocument::Indented);
+    const quint64 rev = m_project.revision;
+    const quint64 gen = m_projGen;
+    m_saveAuto = autoSave;
+    m_saveBusy = true;
+    statusBar()->showMessage(tr("Salvando..."));
+
+    auto* watcher = new QFutureWatcher<SaveWriteResult>(this);
+    connect(watcher, &QFutureWatcher<SaveWriteResult>::finished, this,
+            [this, watcher, path, rev, gen]() {
+        watcher->deleteLater();
+        m_saveBusy = false;
+        const bool queued = m_savePending;
+        const QString queuedPath = m_queuedPath;
+        const bool queuedAuto = m_queuedAuto;
+        m_savePending = false;
+        // O projeto pode ter sido trocado enquanto o save estava em voo
+        // (confirmDiscardChanges → novo/abrir). Nesse caso o arquivo gravado
+        // é do projeto antigo: não mexer no m_currentFile/título/dirty-state.
+        const bool sameProj = (m_projGen == gen);
+
+        const SaveWriteResult res = watcher->result();
+        if (!res.ok) {
+            if (sameProj) {
+                m_modified = true;
+                updateTitle();
+            }
+            QMessageBox::warning(this, tr("Salvar projeto"),
+                                 tr("Não foi possível gravar o arquivo:\n%1\n\n%2")
+                                     .arg(path, res.detail));
+        } else if (sameProj) {
+            m_currentFile = path;
+            addRecentProject(path);
+            // Se o usuário editou durante a gravação, o arquivo gravado não
+            // reflete o estado atual → mantém o projeto marcado como sujo.
+            if (m_project.revision == rev)
+                m_modified = false;
+            updateTitle();
+            statusBar()->showMessage(
+                m_saveAuto
+                    ? tr("Projeto salvo automaticamente (%1).")
+                          .arg(QTime::currentTime().toString(QStringLiteral("HH:mm")))
+                    : tr("Projeto salvo: %1").arg(path));
+        } else {
+            statusBar()->showMessage(tr("Projeto fechado salvo: %1").arg(path));
+        }
+
+        if (queued && sameProj)
+            writeProjectFile(queuedPath, queuedAuto);
+    });
+
+    watcher->setFuture(QtConcurrent::run([path, data]() -> SaveWriteResult {
+        QSaveFile file(path);
+        if (!file.open(QIODevice::WriteOnly))
+            return { false, file.errorString() };
+        file.write(data);
+        if (!file.commit())
+            return { false, file.errorString() };
+        rotatingBackup(path);
+        return { true, QString() };
+    }));
 }
 
 void MainWindow::autoSave() {
@@ -2131,10 +2239,7 @@ void MainWindow::autoSave() {
             tr("Salvamento automático: salve o projeto uma vez (Ctrl+S) para ativar."));
         return;
     }
-    if (writeProjectFile(m_currentFile))
-        statusBar()->showMessage(
-            tr("Projeto salvo automaticamente (%1).")
-                .arg(QTime::currentTime().toString("HH:mm")));
+    writeProjectFile(m_currentFile, true);
 }
 
 void MainWindow::addRecentProject(const QString& path) {
@@ -2214,6 +2319,7 @@ void MainWindow::importEdl() {
 
     // Substitui o projeto atual pelo importado (novo contexto de edição).
     m_project = res.project;
+    ++m_projGen; // troca de projeto: invalida callbacks de save em voo
     if (m_project.videoTracks.isEmpty()) m_project.addTrack(false);
     if (m_project.audioTracks.isEmpty()) m_project.addTrack(true);
     m_undoStack.clear();

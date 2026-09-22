@@ -227,7 +227,7 @@ private:
         double t = 0.0;
         int maxW = 0;
     };
-    QMutex m_frameMutex;
+    mutable QMutex m_frameMutex;
     QVector<FrameReq> m_reqQueue;                       // fila de decodificações
     QHash<QString, LayerFrame> m_layerCache;            // clipId -> quadro inferior
     PrefetchFrame m_prefetch;
