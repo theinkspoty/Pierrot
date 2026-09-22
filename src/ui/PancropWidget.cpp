@@ -250,15 +250,18 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
         sb->setRange(min, max);
         sb->setDecimals(decimals);
         sb->setSuffix(suffix);
-        sb->setFixedWidth(70);
+        sb->setFixedWidth(74);
         sb->setButtonSymbols(QAbstractSpinBox::NoButtons);
         sb->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         sb->setStyleSheet(QStringLiteral(
-            "QDoubleSpinBox{color:%1; font-weight:bold; background:%2;"
-            "border:1px solid %3; border-radius:3px; padding:1px 4px;}")
+            "QDoubleSpinBox{color:%1; background:transparent; border:1px solid"
+            " transparent; border-radius:2px; padding:1px 4px;}"
+            "QDoubleSpinBox:hover{background:%2; border:1px solid %3;}"
+            "QDoubleSpinBox:focus{background:%2; border:1px solid %4;}")
             .arg(themeColors().spinText.name(),
                  themeColors().inputBg.name(),
-                 themeColors().inputBorder.name()));
+                 themeColors().inputBorder.name(),
+                 themeColors().inputFocus.name()));
         return sb;
     };
     auto makeDiamond = [this](int prop) {
@@ -270,7 +273,7 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
             "QPushButton{color:%1; border:none; background:transparent; font-size:14px;}"
             "QPushButton:hover{color:%2;}")
             .arg(themeColors().iconMuted.name(),
-                 themeColors().text.name()));
+                 themeColors().accent.name()));
         connect(b, &QPushButton::clicked, this, [this, prop]() { toggleKeyframe(prop); });
         m_kfDiamonds[prop] = b;
         return b;
@@ -285,7 +288,7 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
             "QToolButton{color:%1; border:none; background:transparent; font-size:13px;}"
             "QToolButton:hover{color:%2;}")
             .arg(themeColors().iconMuted.name(),
-                 themeColors().accentGold.name()));
+                 themeColors().accent.name()));
         m_resetBtns[prop] = b;
         return b;
     };
@@ -322,8 +325,8 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     auto addValRow = [&](QGridLayout* g, int r, const QString& label,
                          QSlider* s, QDoubleSpinBox* sb, int prop) {
         auto* lab = new QLabel(label, this);
-        lab->setFixedWidth(65);
-        lab->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        lab->setFixedWidth(86);
+        lab->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
         g->addWidget(lab, r, 0);
         g->addWidget(s, r, 1);
         g->addWidget(sb, r, 2);
@@ -348,8 +351,8 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
         sec.header->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         sec.body = new QWidget(sec.container);
         sec.grid = new QGridLayout(sec.body);
-        sec.grid->setSpacing(3);
-        sec.grid->setContentsMargins(10, 4, 6, 6);
+        sec.grid->setSpacing(4);
+        sec.grid->setContentsMargins(14, 4, 14, 8);
         sec.grid->setColumnStretch(1, 1);
         v->addWidget(sec.header);
         v->addWidget(sec.body);
@@ -505,16 +508,6 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
         if (c) emitChange();
     });
 
-    auto* hint = new QLabel(tr("Dica: arraste dentro da caixa branca para mover "
-                               "(pan), arraste as bordas/alças para recortar, use "
-                               "a roda do mouse para dar zoom e Alt+roda para "
-                               "rotacionar. Clique direito no viewfinder para "
-                               "flip e grid. Setas ajustam valor."),
-                            this);
-    hint->setWordWrap(true);
-    hint->setStyleSheet(QStringLiteral("color:%1; font-size:11px;")
-                            .arg(themeColors().placeholderText.name()));
-
     auto* kfBar = new QHBoxLayout;
     kfBar->setSpacing(4);
     auto* prevKf = new QPushButton(tr("◀"), this);
@@ -549,7 +542,6 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     ctlLay->addWidget(moveSec.container);
     ctlLay->addWidget(rotSec.container);
     ctlLay->addWidget(resetBtn);
-    ctlLay->addWidget(hint);
     ctlLay->addStretch(1);
 
     // QScrollArea: permite scroll quando os controles não cabem na dock.
@@ -577,32 +569,42 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     connect(snapShiftRight, &QShortcut::activated, this, [this]() { nudgeFocusedSpinBox(10); });
 
     const auto& tc = themeColors();
+    // Painel no estilo Premiere "Effect Controls": fundo neutro plano, seções
+    // discretas com triângulo de recolher e divisor sutil, slider fino com
+    // preenchimento de destaque e valores sem caixa (ela só aparece no hover).
     setStyleSheet(QStringLiteral(
         "QWidget{background:%1;}"
         "QToolButton#sectionHeader{background:transparent; border:none;"
-        " color:%2; font-weight:bold; font-size:12px; padding:5px 6px;"
-        " text-align:left;}"
-        "QToolButton#sectionHeader:hover{background:%3; color:%4;}"
-        "QToolButton#sectionHeader:checked{color:%5;}"
-        "QPushButton{border:1px solid %6; border-radius:3px; background:%7;"
-        " color:%2; padding:2px 8px;}"
-        "QPushButton:hover{background:%3; border-color:%8;}"
-        "QPushButton:checked{background:%9; border-color:%10; color:%11;}"
-        "QToolButton{border:1px solid %6; border-radius:3px; background:%7;"
-        " color:%2; padding:2px 8px;}"
-        "QToolButton:hover{background:%3; border-color:%8;}"
-        "QToolButton:checked{background:%9; border-color:%10; color:%11;}"
-        "QSlider::groove:horizontal{height:4px; background:%8; border-radius:2px;}"
-        "QSlider::sub-page:horizontal{background:%10; border-radius:2px;}"
-        "QSlider::handle:horizontal{width:12px; margin:-4px 0; border-radius:6px;"
-        " background:%5; border:1px solid %10;}"
-        "QSlider::handle:horizontal:hover{background:%11;}"
-        "QLabel{color:%2;}")
-        .arg(tc.pancropBg.name(), tc.text.name(), tc.btnHover.name(),
-             QColor(Qt::white).name(), tc.accent.name(), tc.canvasBorder.name(),
-             tc.button.name(), tc.trackBorder.name(), tc.btnActive.name())
-        .arg(tc.btnPrimary.name())
-        .arg(tc.spinText.name()));
+        " border-bottom:1px solid %2; color:%3; font-weight:bold;"
+        " font-size:11px; padding:5px 6px; text-align:left;}"
+        "QToolButton#sectionHeader:hover{color:%4; border-bottom:1px solid %5;}"
+        "QToolButton#sectionHeader:checked{color:%4;}"
+        "QPushButton{border:none; background:transparent; color:%6;"
+        " padding:2px 8px; font-size:11px;}"
+        "QPushButton:hover{background:%7; color:%4;}"
+        "QPushButton:pressed{background:%8;}"
+        "QPushButton:checked{color:%5;}"
+        "QToolButton{border:none; background:transparent; color:%6;"
+        " padding:2px 8px; font-size:11px;}"
+        "QToolButton:hover{background:%7; color:%4;}"
+        "QToolButton:pressed{background:%8;}"
+        "QToolButton:checked{color:%5;}"
+        "QSlider::groove:horizontal{height:2px; background:%2;}"
+        "QSlider::sub-page:horizontal{background:%5;}"
+        "QSlider::handle:horizontal{width:9px; height:9px; margin:-4px 0;"
+        " border-radius:5px; background:%9; border:1px solid %5;}"
+        "QSlider::handle:horizontal:hover{background:%10;}"
+        "QLabel{color:%6; font-size:11px;}")
+        .arg(tc.pancropBg.name(),       // %1 fundo do painel
+             tc.trackBorder.name(),     // %2 divisor / groove
+             tc.text.name(),            // %3 título da seção
+             QColor(Qt::white).name(),  // %4 hover / ativo
+             tc.accent.name(),          // %5 destaque / preenchimento
+             tc.iconNormal.name(),      // %6 labels / botões
+             tc.btnHover.name(),        // %7 hover de botão
+             tc.trackLabelBg.name(),    // %8 pressed
+             QColor(Qt::white).name())  // %9 alça do slider
+        .arg(tc.spinText.name()));      // %10 alça hover
 
     refreshDiamonds();
     m_strip->update();
@@ -1040,22 +1042,7 @@ QPointF PancropWidget::rotatedViewPos(const QRect& viewRect, const QPoint& sp) c
     const int w0 = m_frame.width();
     const int h0 = m_frame.height();
     if (w0 <= 0 || h0 <= 0) return QPointF(sp);
-    const int M = 12;
-    const QRectF screen = QRectF(viewRect).adjusted(M, M, -M, -M);
-    const double fr = (double)h0 / w0;
-    const double sr = screen.height() / screen.width();
-    QRectF disp;
-    if (fr < sr) {
-        disp.setWidth(screen.width());
-        disp.setHeight(screen.width() * fr);
-        disp.moveLeft(screen.left());
-        disp.moveTop(screen.top() + (screen.height() - disp.height()) / 2.0);
-    } else {
-        disp.setHeight(screen.height());
-        disp.setWidth(screen.height() / fr);
-        disp.moveTop(screen.top());
-        disp.moveLeft(screen.left() + (screen.width() - disp.width()) / 2.0);
-    }
+    const QRectF disp = computeDisp(viewRect);
     const double a = m_rotation->value() * M_PI / 180.0;
     const double c = std::cos(a);
     const double s = std::sin(a);
@@ -1072,22 +1059,7 @@ void PancropWidget::screenToSource(const QRect& viewRect, const QPoint& sp,
     const int w0 = m_frame.width();
     const int h0 = m_frame.height();
     if (w0 <= 0 || h0 <= 0) return;
-    const int M = 12;
-    const QRectF screen = QRectF(viewRect).adjusted(M, M, -M, -M);
-    const double fr = (double)h0 / w0;
-    const double sr = screen.height() / screen.width();
-    QRectF disp;
-    if (fr < sr) {
-        disp.setWidth(screen.width());
-        disp.setHeight(screen.width() * fr);
-        disp.moveLeft(screen.left());
-        disp.moveTop(screen.top() + (screen.height() - disp.height()) / 2.0);
-    } else {
-        disp.setHeight(screen.height());
-        disp.setWidth(screen.height() / fr);
-        disp.moveTop(screen.top());
-        disp.moveLeft(screen.left() + (screen.width() - disp.width()) / 2.0);
-    }
+    const QRectF disp = computeDisp(viewRect);
     // Desfaz a rotação antes de mapear para o espaço do source, senão o
     // recorte/pan "descolam" do mouse quando a imagem está girada.
     const QPointF rp = rotatedViewPos(viewRect, sp);
@@ -1137,25 +1109,15 @@ void PancropWidget::applyPan(double sx, double sy) {
     m_view->update();
 }
 
-void PancropWidget::paintViewfinder(QWidget* view) {
-    QPainter p(view);
-    // Fundo estilo Premiere Pro (cinza escuro uniforme).
-    p.fillRect(view->rect(), QColor(30, 30, 30));
-    // Borda sutil do monitor.
-    p.setPen(QPen(QColor(51, 51, 51), 1));
-    p.drawRect(view->rect().adjusted(0, 0, -1, -1));
-    if (m_frame.isNull()) {
-        p.setPen(QColor(140, 140, 150));
-        p.drawText(view->rect(), Qt::AlignCenter,
-                   tr("Selecione um clipe de vídeo para editar o pancrop."));
-        return;
-    }
+// Área (em px do widget) onde o frame do source é desenhado no viewfinder
+// (modelo "contain", centralizado). Compartilhada pelo painter e pelos
+// hit-tests, para a geometria dos gizmos nunca descolar do desenho.
+QRectF PancropWidget::computeDisp(const QRect& viewRect) const {
     const int w0 = m_frame.width();
     const int h0 = m_frame.height();
-    if (w0 <= 0 || h0 <= 0) return;
-
+    if (w0 <= 0 || h0 <= 0) return QRectF();
     const int M = 12;
-    const QRectF screen = QRectF(view->rect()).adjusted(M, M, -M, -M);
+    const QRectF screen = QRectF(viewRect).adjusted(M, M, -M, -M);
     const double fr = (double)h0 / w0;
     const double sr = screen.height() / screen.width();
     QRectF disp;
@@ -1170,6 +1132,69 @@ void PancropWidget::paintViewfinder(QWidget* view) {
         disp.moveTop(screen.top());
         disp.moveLeft(screen.left() + (screen.width() - disp.width()) / 2.0);
     }
+    return disp;
+}
+
+// Aplica zoom (escala) mantendo o centro da janela de saída NO MESMO ponto da
+// imagem — mesmo comportamento do zoom com a roda, que redefine o pan para a
+// janela não "andar" enquanto o usuário dá zoom (usado por roda e gizmo).
+void PancropWidget::applyZoomTo(double sNew, const QPointF& centerSrc) {
+    if (m_frame.isNull()) return;
+    const int w0 = m_frame.width();
+    const int h0 = m_frame.height();
+    const double W = m_project ? m_project->width : 1920.0;
+    const double H = m_project ? m_project->height : 1080.0;
+    const double L = std::clamp(m_cropL->value() / 100.0, 0.0, 1.0);
+    const double R = std::clamp(m_cropR->value() / 100.0, 0.0, 1.0 - L);
+    const double T = std::clamp(m_cropT->value() / 100.0, 0.0, 1.0);
+    const double B = std::clamp(m_cropB->value() / 100.0, 0.0, 1.0 - T);
+    const double kx = L * w0;
+    const double ky = T * h0;
+    const double kw = std::max(1.0, w0 * (1.0 - L - R));
+    const double kh = std::max(1.0, h0 * (1.0 - T - B));
+    const double k = std::min(W / kw, H / kh);
+    const double ks = std::max(k * sNew, 1e-6);
+    const double ntx = (kx + kw / 2.0 - centerSrc.x()) * ks;
+    const double nty = (ky + kh / 2.0 - centerSrc.y()) * ks;
+    QSignalBlocker b5(m_scale), b6(m_panX), b7(m_panY);
+    m_scale->setValue((int)std::lround(sNew * 100.0));
+    m_panX->setValue((int)std::lround(std::clamp(ntx / W * 100.0, -100.0, 100.0)));
+    m_panY->setValue((int)std::lround(std::clamp(nty / H * 100.0, -100.0, 100.0)));
+    commitSlider(P_Scale, sNew);
+    commitSlider(P_PanX, ntx);
+    commitSlider(P_PanY, nty);
+    updateValueLabels();
+    m_view->update();
+}
+
+void PancropWidget::paintViewfinder(QWidget* view) {
+    QPainter p(view);
+    // Fundo quadriculado sutil (estilo DaVinci/After Effects) atrás do frame.
+    const QColor tileA(42, 44, 50);
+    const QColor tileB(33, 35, 41);
+    const int ts = 13;
+    p.fillRect(view->rect(), tileB);
+    p.setPen(Qt::NoPen);
+    p.setBrush(tileA);
+    for (int y = 0; y < view->height(); y += ts) {
+        const int off = ((y / ts) & 1) * ts;
+        for (int x = off; x < view->width(); x += 2 * ts)
+            p.drawRect(x, y, ts, ts);
+    }
+    // Borda sutil do monitor.
+    p.setPen(QPen(QColor(51, 51, 51), 1));
+    p.drawRect(view->rect().adjusted(0, 0, -1, -1));
+    if (m_frame.isNull()) {
+        p.setPen(QColor(140, 140, 150));
+        p.drawText(view->rect(), Qt::AlignCenter,
+                   tr("Selecione um clipe de vídeo para editar o pancrop."));
+        return;
+    }
+    const int w0 = m_frame.width();
+    const int h0 = m_frame.height();
+    if (w0 <= 0 || h0 <= 0) return;
+
+    const QRectF disp = computeDisp(view->rect());
 
     const double W = m_project ? m_project->width : 1920.0;
     const double H = m_project ? m_project->height : 1080.0;
@@ -1193,52 +1218,33 @@ void PancropWidget::paintViewfinder(QWidget* view) {
     p.translate(-disp.center());
     p.drawImage(QRectF(disp.left(), disp.top(), disp.width(), disp.height()), m_frame);
 
-    // Escurece fora da JANELA DE SAÍDA — máscara escura (estilo Premiere).
-    QPainterPath shp;
-    shp.addRect(disp);
-    QPainterPath hole;
-    hole.addRect(QRectF(toDisp(outS.left(), outS.top()),
-                        toDisp(outS.right(), outS.bottom())));
-    p.fillPath(shp.subtracted(hole), QColor(0, 0, 0, 180));
-
-    // Contorno do crop (azul-ciano tracejado).
-    p.setPen(QPen(QColor(0, 163, 224), 1, Qt::DashLine));
-    p.setBrush(Qt::NoBrush);
+    // Janela de saída (borda azul-ciano de destaque) e caixas/gizmos.
     const QRectF cropDisp(toDisp(cropS.left(), cropS.top()),
                           toDisp(cropS.right(), cropS.bottom()));
-    p.drawRect(cropDisp);
-
-    // Alças de redimensionamento do crop (azuis, arredondadas).
-    const bool hasHover = (m_hoverMode != DragNone && m_dragMode == DragNone);
-    const double hd = hasHover ? 9.0 : 7.0;
-    const QColor handleFill = hasHover ? QColor(0, 163, 224) : QColor(0, 163, 224, 200);
-    const QColor handleBorder(18, 20, 24);
-    p.setPen(QPen(handleBorder, 1));
-    p.setBrush(handleFill);
-    const QPointF tl(cropDisp.left(), cropDisp.top());
-    const QPointF tr(cropDisp.right(), cropDisp.top());
-    const QPointF bl(cropDisp.left(), cropDisp.bottom());
-    const QPointF br(cropDisp.right(), cropDisp.bottom());
-    const QPointF mt(cropDisp.center().x(), cropDisp.top());
-    const QPointF mb(cropDisp.center().x(), cropDisp.bottom());
-    const QPointF ml(cropDisp.left(), cropDisp.center().y());
-    const QPointF mr(cropDisp.right(), cropDisp.center().y());
-    const QPointF handles[8] = { tl, tr, bl, br, mt, mb, ml, mr };
-    for (const QPointF& h : handles)
-        p.drawRoundedRect(QRectF(h.x() - hd / 2.0, h.y() - hd / 2.0, hd, hd), 2.0, 2.0);
-
-    // Janela de saída (borda azul-ciano fina, sem fill).
     const QRectF outDisp(toDisp(outS.left(), outS.top()),
                          toDisp(outS.right(), outS.bottom()));
-    p.setPen(QPen(QColor(0, 163, 224), 1.5));
-    p.setBrush(Qt::NoBrush);
-    p.drawRect(outDisp);
 
-    p.restore();
+    // Máscara escura em camadas (estilo Premiere): o que está fora do recorte
+    // e o que o zoom esconde fora da janela de saída recebem véus crescentes.
+    QPainterPath outsideCrop;
+    outsideCrop.addRect(disp);
+    QPainterPath cropHole;
+    cropHole.addRect(cropDisp.adjusted(-3, -3, 3, 3));
+    p.fillPath(outsideCrop.subtracted(cropHole), QColor(0, 0, 0, 110));
+    if (cropDisp != outDisp) {
+        QPainterPath outsideOut;
+        outsideOut.addRect(cropDisp);
+        QPainterPath outHole;
+        outHole.addRect(outDisp);
+        p.fillPath(outsideOut.subtracted(outHole), QColor(0, 0, 0, 130));
+    }
 
-    // Grade de terços (linhas sólidas azul-ciano translúcidas).
+    // Grade de terços + cruz central (dentro da rotação, acompanham o clipe).
     if (m_showGrid) {
-        p.setPen(QPen(QColor(0, 163, 224, 60), 1));
+        p.setPen(QPen(QColor(255, 255, 255, 45), 1));
+        const QPointF c = outDisp.center();
+        p.drawLine(QPointF(outDisp.left(), c.y()), QPointF(outDisp.right(), c.y()));
+        p.drawLine(QPointF(c.x(), outDisp.top()), QPointF(c.x(), outDisp.bottom()));
         for (int i = 1; i <= 2; ++i) {
             const double fx = i / 3.0;
             const double fy = i / 3.0;
@@ -1249,29 +1255,86 @@ void PancropWidget::paintViewfinder(QWidget* view) {
         }
     }
 
-    // Safe margins — cinza discreto (mais sutil que o Premiere).
+    // Safe margins — cinza discreto.
     p.setBrush(Qt::NoBrush);
-    p.setPen(QPen(QColor(255, 255, 255, 35), 1));
+    p.setPen(QPen(QColor(255, 255, 255, 32), 1));
     p.drawRect(outDisp.adjusted(outDisp.width() * 0.05, outDisp.height() * 0.05,
                                 -outDisp.width() * 0.05, -outDisp.height() * 0.05));
-    p.setPen(QColor(255, 255, 255, 22));
+    p.setPen(QColor(255, 255, 255, 20));
     p.drawRect(outDisp.adjusted(outDisp.width() * 0.10, outDisp.height() * 0.10,
-                                -outDisp.width() * 0.10, outDisp.height() * 0.10));
+                                -outDisp.width() * 0.10, -outDisp.height() * 0.10));
 
-    // Gizmo de ponto de ancoragem (círculo azul-ciano vazio).
+    // Caixa de RECORTE (borda branca tracejada sutil).
+    p.setPen(QPen(QColor(255, 255, 255, 150), 1, Qt::DashLine));
+    p.setBrush(Qt::NoBrush);
+    p.drawRect(cropDisp);
+
+    // Caixa de ZOOM/saída (borda azul-ciano em destaque).
+    p.setPen(QPen(QColor(0, 163, 224), 2));
+    p.setBrush(Qt::NoBrush);
+    p.drawRect(outDisp);
+
+    const bool hasHover = (m_hoverMode != DragNone && m_dragMode == DragNone);
+    auto drawHandle = [&](const QPointF& h, double sz, int fr, int fg, int fb,
+                          int fa) {
+        p.setBrush(hasHover ? QColor(fr, fg, fb, 255)
+                            : QColor(fr, fg, fb, fa));
+        p.drawRoundedRect(QRectF(h.x() - sz / 2.0, h.y() - sz / 2.0, sz, sz), 2.0, 2.0);
+    };
+
+    // Alças de recorte (quadrados brancos com borda escura) no perímetro do crop.
+    const double hd = hasHover ? 10.0 : 8.0;
+    p.setPen(QPen(QColor(12, 14, 18), 1));
+    const QPointF tl(cropDisp.left(), cropDisp.top());
+    const QPointF tr(cropDisp.right(), cropDisp.top());
+    const QPointF bl(cropDisp.left(), cropDisp.bottom());
+    const QPointF br(cropDisp.right(), cropDisp.bottom());
+    const QPointF mt(cropDisp.center().x(), cropDisp.top());
+    const QPointF mb(cropDisp.center().x(), cropDisp.bottom());
+    const QPointF ml(cropDisp.left(), cropDisp.center().y());
+    const QPointF mr(cropDisp.right(), cropDisp.center().y());
+    const QPointF handles[8] = { tl, tr, bl, br, mt, mb, ml, mr };
+    for (const QPointF& h : handles)
+        drawHandle(h, hd, 220, 225, 235, 210);
+
+    // Alças de ZOOM (douradas): nos cantos da janela de saída, deslocadas para
+    // fora da diagonal para não conflitarem com as de recorte.
+    const double zd = hasHover ? 12.0 : 9.0;
+    p.setPen(QPen(QColor(10, 12, 16), 1));
+    const QPointF outCorners[4] = { outDisp.topLeft(), outDisp.topRight(),
+                                    outDisp.bottomLeft(), outDisp.bottomRight() };
+    for (const QPointF& cp : outCorners) {
+        const QPointF d = cp - outDisp.center();
+        const double len = std::hypot(d.x(), d.y());
+        const QPointF pos = len > 1e-6 ? cp + d / len * 9.0 : cp;
+        drawHandle(pos, zd, 255, 186, 60, 235);
+    }
+
+    // Alça de ROTAÇÃO (estilo Premiere): círculo dourado acima do topo da
+    // janela de saída, ligado por uma linha-guia.
+    const QPointF rotHdl(outDisp.center().x(), outDisp.top() - 26.0);
+    p.setPen(QPen(QColor(255, 186, 60, 220), 1));
+    p.setBrush(Qt::NoBrush);
+    p.drawLine(outDisp.center().x(), outDisp.top(), rotHdl.x(), rotHdl.y());
+    p.setPen(QPen(QColor(10, 12, 16), 1));
+    p.setBrush(hasHover ? QColor(255, 216, 120) : QColor(255, 186, 60, 235));
+    p.drawEllipse(rotHdl, 5.5, 5.5);
+
+    // Gizmo de ponto de ancoragem (anel branco com cruz).
     const double axPct = m_anchorX->value() / 100.0;
     const double ayPct = m_anchorY->value() / 100.0;
     const double anchorSrcX = w0 * 0.5 + axPct * w0 * 0.5;
     const double anchorSrcY = h0 * 0.5 + ayPct * h0 * 0.5;
     const QPointF anchorDisp = toDisp(anchorSrcX, anchorSrcY);
-    p.setPen(QPen(QColor(0, 163, 224, 180), 1.5));
+    p.setPen(QPen(QColor(255, 255, 255, 200), 1.5));
     p.setBrush(Qt::NoBrush);
     p.drawEllipse(anchorDisp, 7.0, 7.0);
-    // Linha de cruz no centro da âncora.
     p.drawLine(QPointF(anchorDisp.x() - 4.0, anchorDisp.y()),
                QPointF(anchorDisp.x() + 4.0, anchorDisp.y()));
     p.drawLine(QPointF(anchorDisp.x(), anchorDisp.y() - 4.0),
                QPointF(anchorDisp.x(), anchorDisp.y() + 4.0));
+
+    p.restore();
 }
 
 void PancropWidget::viewportPress(QWidget* view, QMouseEvent* e) {
@@ -1291,22 +1354,7 @@ void PancropWidget::viewportPress(QWidget* view, QMouseEvent* e) {
     QRectF cropS, outS;
     computeView(s, tx, ty, w0, h0, &cropS, &outS);
 
-    const int M = 12;
-    const QRectF screen = QRectF(view->rect()).adjusted(M, M, -M, -M);
-    const double fr = (double)h0 / w0;
-    const double sr = screen.height() / screen.width();
-    QRectF disp;
-    if (fr < sr) {
-        disp.setWidth(screen.width());
-        disp.setHeight(screen.width() * fr);
-        disp.moveLeft(screen.left());
-        disp.moveTop(screen.top() + (screen.height() - disp.height()) / 2.0);
-    } else {
-        disp.setHeight(screen.height());
-        disp.setWidth(screen.height() / fr);
-        disp.moveTop(screen.top());
-        disp.moveLeft(screen.left() + (screen.width() - disp.width()) / 2.0);
-    }
+    const QRectF disp = computeDisp(view->rect());
     auto toDisp = [&](double cx, double cy) {
         return QPointF(disp.left() + cx / w0 * disp.width(),
                        disp.top() + cy / h0 * disp.height());
@@ -1328,6 +1376,61 @@ void PancropWidget::viewportPress(QWidget* view, QMouseEvent* e) {
 
     m_dragMode = DragNone;
     m_lastDrag = e->pos();
+
+    // Hit-test nas alças de ZOOM (cantos da janela de saída, deslocados para
+    // fora) e na alça de ROTAÇÃO (círculo acima do topo): ficam mais para fora
+    // que recorte/pan, então têm precedência.
+    const QPointF oTL = toDisp(outS.left(), outS.top());
+    const QPointF oTR = toDisp(outS.right(), outS.top());
+    const QPointF oBL = toDisp(outS.left(), outS.bottom());
+    const QPointF oBR = toDisp(outS.right(), outS.bottom());
+    const QPointF oC((oTL.x() + oBR.x()) / 2.0, (oTL.y() + oBR.y()) / 2.0);
+    const QPointF rotHdl(oC.x(), oTL.y() - 26.0);
+    QPointF zHandles[4];
+    const QPointF zooms[4] = { oTL, oTR, oBL, oBR };
+    for (int i = 0; i < 4; ++i) {
+        const QPointF d = zooms[i] - oC;
+        const double len = std::hypot(d.x(), d.y());
+        zHandles[i] = len > 1e-6 ? zooms[i] + d / len * 9.0 : zooms[i];
+    }
+
+    if (std::hypot(pos.x() - rotHdl.x(), pos.y() - rotHdl.y()) <= 12.0) {
+        const QPointF C = disp.center();
+        m_grabOffset = QPointF(std::atan2(pos.y() - C.y(), pos.x() - C.x()),
+                               (double)m_rotation->value());
+        m_dragMode = DragRotate;
+        view->setCursor(Qt::CrossCursor);
+        if (!m_undoPushed) { emit editStart(); m_undoPushed = true; }
+        emit propertyEdited(P_Rotation);
+        e->accept();
+        return;
+    }
+
+    int zoomIdx = -1;
+    for (int i = 0; i < 4; ++i) {
+        if (std::hypot(pos.x() - zHandles[i].x(), pos.y() - zHandles[i].y()) <= 10.0) {
+            zoomIdx = i;
+            break;
+        }
+    }
+    if (zoomIdx >= 0) {
+        const double sOld = std::clamp(m_scale->value() / 100.0, kMinScale, kMaxScale);
+        m_grabOffset = QPointF(std::hypot(zHandles[zoomIdx].x() - oC.x(),
+                                          zHandles[zoomIdx].y() - oC.y()),
+                               sOld);
+        m_zoomPivot = outS.center();
+        m_zoomCenterDisp = oC;
+        switch (zoomIdx) {
+            case 0: m_dragMode = DragZoomTL; view->setCursor(Qt::SizeFDiagCursor); break;
+            case 1: m_dragMode = DragZoomTR; view->setCursor(Qt::SizeBDiagCursor); break;
+            case 2: m_dragMode = DragZoomBL; view->setCursor(Qt::SizeBDiagCursor); break;
+            default: m_dragMode = DragZoomBR; view->setCursor(Qt::SizeFDiagCursor); break;
+        }
+        if (!m_undoPushed) { emit editStart(); m_undoPushed = true; }
+        emit propertyEdited(P_Scale);
+        e->accept();
+        return;
+    }
 
     // Hit-test no gizmo de ancoragem (círculo branco).
     const double axPct = m_anchorX->value() / 100.0;
@@ -1405,22 +1508,7 @@ void PancropWidget::viewportMove(QWidget* view, QMouseEvent* e) {
         const double ty = m_panY->value() / 100.0 * H;
         QRectF cropS, outS;
         computeView(s, tx, ty, w0, h0, &cropS, &outS);
-        const int M = 12;
-        const QRectF screen = QRectF(view->rect()).adjusted(M, M, -M, -M);
-        const double fr = (double)h0 / w0;
-        const double sr = screen.height() / screen.width();
-        QRectF disp;
-        if (fr < sr) {
-            disp.setWidth(screen.width());
-            disp.setHeight(screen.width() * fr);
-            disp.moveLeft(screen.left());
-            disp.moveTop(screen.top() + (screen.height() - disp.height()) / 2.0);
-        } else {
-            disp.setHeight(screen.height());
-            disp.setWidth(screen.height() / fr);
-            disp.moveTop(screen.top());
-            disp.moveLeft(screen.left() + (screen.width() - disp.width()) / 2.0);
-        }
+        const QRectF disp = computeDisp(view->rect());
         auto toDisp = [&](double cx, double cy) {
             return QPointF(disp.left() + cx / w0 * disp.width(),
                            disp.top() + cy / h0 * disp.height());
@@ -1439,7 +1527,27 @@ void PancropWidget::viewportMove(QWidget* view, QMouseEvent* e) {
             return std::hypot(a.x() - b.x(), a.y() - b.y()) <= tol;
         };
         DragMode newHover = DragNone;
-        if (near(pos, tl)) newHover = DragCropTL;
+        // Alças de zoom (cantos da janela de saída) e rotação (círculo acima):
+        // precedência sobre recorte/pan por ficarem mais para fora.
+        const QPointF oTL = toDisp(outS.left(), outS.top());
+        const QPointF oTR = toDisp(outS.right(), outS.top());
+        const QPointF oBL = toDisp(outS.left(), outS.bottom());
+        const QPointF oBR = toDisp(outS.right(), outS.bottom());
+        const QPointF oC((oTL.x() + oBR.x()) / 2.0, (oTL.y() + oBR.y()) / 2.0);
+        const QPointF rotHdl(oC.x(), oTL.y() - 26.0);
+        bool hitZoom = false;
+        const QPointF zooms[4] = { oTL, oTR, oBL, oBR };
+        for (int i = 0; i < 4 && !hitZoom; ++i) {
+            const QPointF d = zooms[i] - oC;
+            const double len = std::hypot(d.x(), d.y());
+            const QPointF hp = len > 1e-6 ? zooms[i] + d / len * 9.0 : zooms[i];
+            hitZoom = std::hypot(pos.x() - hp.x(), pos.y() - hp.y()) <= 10.0;
+        }
+        if (std::hypot(pos.x() - rotHdl.x(), pos.y() - rotHdl.y()) <= 12.0) {
+            newHover = DragRotate;
+        } else if (hitZoom) {
+            newHover = DragZoomBR;
+        } else if (near(pos, tl)) newHover = DragCropTL;
         else if (near(pos, tr)) newHover = DragCropTR;
         else if (near(pos, bl)) newHover = DragCropBL;
         else if (near(pos, br)) newHover = DragCropBR;
@@ -1462,6 +1570,9 @@ void PancropWidget::viewportMove(QWidget* view, QMouseEvent* e) {
         }
         // Cursor contextual.
         switch (newHover) {
+            case DragRotate: view->setCursor(Qt::CrossCursor); break;
+            case DragZoomTL: case DragZoomBR: view->setCursor(Qt::SizeFDiagCursor); break;
+            case DragZoomTR: case DragZoomBL: view->setCursor(Qt::SizeBDiagCursor); break;
             case DragCropTL: case DragCropBR: view->setCursor(Qt::SizeFDiagCursor); break;
             case DragCropTR: case DragCropBL: view->setCursor(Qt::SizeBDiagCursor); break;
             case DragCropL:  case DragCropR:  view->setCursor(Qt::SizeHorCursor); break;
@@ -1490,6 +1601,35 @@ void PancropWidget::viewportMove(QWidget* view, QMouseEvent* e) {
         case DragPan:
             applyPan(sx + m_grabOffset.x(), sy + m_grabOffset.y());
             break;
+        case DragRotate: {
+            // Gira a imagem mantendo o clique: a rotação nova é a atual mais o
+            // quanto o ponteiro "andou" em ângulo em torno do centro do frame.
+            const QPointF C = computeDisp(view->rect()).center();
+            const QPointF p = rotatedViewPos(view->rect(), e->pos());
+            const double theta = std::atan2(p.y() - C.y(), p.x() - C.x());
+            const double nv = std::clamp(
+                m_grabOffset.y() + (theta - m_grabOffset.x()) * 180.0 / M_PI,
+                (double)-kRotMax, (double)kRotMax);
+            QSignalBlocker sb8(m_rotation);
+            m_rotation->setValue((int)std::lround(nv));
+            updateValueLabels();
+            commitSlider(P_Rotation, nv);
+            m_view->update();
+            break;
+        }
+        case DragZoomTL: case DragZoomTR:
+        case DragZoomBL: case DragZoomBR: {
+            // Zoom "distancia-se" do centro da janela de saída: arrastar o
+            // canto dourado para fora aumenta, para dentro diminui.
+            const QPointF p = rotatedViewPos(view->rect(), e->pos());
+            const double d = std::hypot(p.x() - m_zoomCenterDisp.x(),
+                                        p.y() - m_zoomCenterDisp.y());
+            const double ratio = std::clamp(d / m_grabOffset.x(), 0.1, 10.0);
+            const double sNew = std::clamp(m_grabOffset.y() / ratio,
+                                           kMinScale, kMaxScale);
+            applyZoomTo(sNew, m_zoomPivot);
+            break;
+        }
         case DragAnchor: {
             // Move o ponto de ancoragem relativo ao centro do source.
             const double newAx = std::clamp((sx / w0 - 0.5) / 0.5, -1.0, 1.0);
@@ -1557,28 +1697,7 @@ void PancropWidget::viewportWheel(QWidget* view, QWheelEvent* e) {
     computeView(sOld, tx, ty, w0, h0, &cropS, &outS);
     const QPointF center = outS.center();
 
-    const double L = std::clamp(m_cropL->value() / 100.0, 0.0, 1.0);
-    const double R = std::clamp(m_cropR->value() / 100.0, 0.0, 1.0 - L);
-    const double T = std::clamp(m_cropT->value() / 100.0, 0.0, 1.0);
-    const double B = std::clamp(m_cropB->value() / 100.0, 0.0, 1.0 - T);
-    const double kx = L * w0;
-    const double ky = T * h0;
-    const double kw = std::max(1.0, w0 * (1.0 - L - R));
-    const double kh = std::max(1.0, h0 * (1.0 - T - B));
-    const double k = std::min(W / kw, H / kh);
-    const double ks = k * sNew;
-    const double ntx = (kx + kw / 2.0 - center.x()) * ks;
-    const double nty = (ky + kh / 2.0 - center.y()) * ks;
-
-    QSignalBlocker b5(m_scale), b6(m_panX), b7(m_panY);
-    m_scale->setValue((int)std::lround(sNew * 100.0));
-    m_panX->setValue((int)std::lround(std::clamp(ntx / W * 100.0, -100.0, 100.0)));
-    m_panY->setValue((int)std::lround(std::clamp(nty / H * 100.0, -100.0, 100.0)));
-    commitSlider(P_Scale, sNew);
-    commitSlider(P_PanX, ntx);
-    commitSlider(P_PanY, nty);
-    updateValueLabels();
-    m_view->update();
+    applyZoomTo(sNew, center);
 }
 
 void PancropWidget::viewportContextMenu(QWidget* view, QContextMenuEvent* e) {

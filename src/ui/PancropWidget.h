@@ -94,6 +94,11 @@ private:
 
     void computeView(double s, double tx, double ty, int w0, int h0,
                      QRectF* cropS, QRectF* outS) const;
+    // Área (em px do widget) onde o frame é desenhado, modelo "contain".
+    QRectF computeDisp(const QRect& viewRect) const;
+    // Aplica zoom mantendo o centro da janela de saída fixo no source
+    // (usa o mesmo modelo de pan do zoom com a roda do mouse).
+    void applyZoomTo(double sNew, const QPointF& centerSrc);
     void screenToSource(const QRect& viewRect, const QPoint& sp,
                         double* sx, double* sy) const;
     // Rotaciona um ponto da tela de volta para o espaço não-rotacionado do
@@ -101,7 +106,8 @@ private:
     QPointF rotatedViewPos(const QRect& viewRect, const QPoint& sp) const;
     void applyPan(double sx, double sy);
 
-    enum DragMode { DragNone, DragPan, DragAnchor,
+    enum DragMode { DragNone, DragPan, DragAnchor, DragRotate,
+                    DragZoomTL, DragZoomTR, DragZoomBL, DragZoomBR,
                     DragCropL, DragCropR, DragCropT, DragCropB,
                     DragCropTL, DragCropTR, DragCropBL, DragCropBR };
 
@@ -148,6 +154,10 @@ private:
     DragMode m_dragMode = DragNone;
     DragMode m_hoverMode = DragNone;  // Handle sob o mouse (para highlight)
     QPointF m_grabOffset{0.0, 0.0};
+    // Centro da janela (px do source) e da caixa (px do viewfinder) fixados no
+    // início do arraste de zoom, para o gizmo acompanhar o mouse.
+    QPointF m_zoomPivot{0.0, 0.0};
+    QPointF m_zoomCenterDisp{0.0, 0.0};
     QPoint m_lastDrag;
     // Arraste de keyframes na faixa de tempo.
     bool m_stripDragging = false;

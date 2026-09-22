@@ -247,6 +247,23 @@ Cada item abaixo indica quem destrava o quê, pra não virar lista sem critério
 - [ ] **Métrica de abertura** — template de teste que mede tempo de
   abrir/salvar um projeto 4K sintético (a meta define o "estável").
 
+## 4.5. Backlog kernel — anotado para atualização futura (2026-09-22)
+
+Sem prioridade imediata; registrar para a próxima passada no núcleo
+(`src/colombina`). Ordem sugerida pela análise do KERNEL.md:
+
+- [ ] **Versionamento de schema `.Blanc`** — `format_version`; abrir versão
+  futura avisa em vez de desserializar errado. (já listado em "2. Robustez")
+- [ ] **Indexação O(1) por id** — `findMedia`/`findMesa`/`findMesaForTrack`
+  (Project.h) são varreduras lineares chamadas por quadro no MesaRenderer;
+  passar para `QHash<id, idx>`. Banal hoje, custo dominante em projeto grande.
+- [ ] **Load `.Blanc` assíncrono e defensivo** — `fromJson` ainda roda na UI
+  thread (o save já é async); juntar com fuzz do parser.
+- [ ] **GPU na composição** — `MesaRenderer` 100% CPU `QPainter`; maior gap
+  vs. Vegas (OpenCL/CUDA). Maior investimento, melhor recompensa em 4K multi.
+- [ ] **Smart render** — `stream copy` em trechos intactos do export.
+- [ ] **Sanitizers + `-Wall -Wextra` no CI** e **cobertura do kernel >50%**.
+
 ## 5. Feature gaps do Kdenlive (complemento já priorizado na seção acima)
 
 Manter a ordem alta → média → cara. **Nada disso entra antes do bloco 1–4.**
