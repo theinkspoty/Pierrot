@@ -14,6 +14,7 @@
 #include <QDialogButtonBox>
 #include <QGroupBox>
 #include <QLabel>
+#include <QCheckBox>
 #include <QPushButton>
 
 namespace {
@@ -34,7 +35,7 @@ static const ProjectPreset kPresets[] = {
 constexpr int kPresetCount = (int)(sizeof(kPresets) / sizeof(kPresets[0]));
 
 ProjectSettingsDialog::ProjectSettingsDialog(int width, int height, int fps,
-                                             QWidget* parent)
+                                             bool useProxies, QWidget* parent)
     : QDialog(parent) {
     setWindowTitle(tr("Configurações do projeto"));
     setMinimumWidth(480);
@@ -160,6 +161,17 @@ ProjectSettingsDialog::ProjectSettingsDialog(int width, int height, int fps,
     auto* videoBox = new QGroupBox(tr("Vídeo"), this);
     videoBox->setLayout(vidForm);
 
+    m_proxies = new QCheckBox(tr("Usar proxies (editar com transcode leve, qualidade cheia no export)"), this);
+    m_proxies->setChecked(useProxies);
+    m_proxies->setStyleSheet(QStringLiteral("color:%1;").arg(themeColors().text.name()));
+    m_proxies->setToolTip(tr("Fontes 2K+ são transcondificadas para o preview e \n"
+                             "thumbs (rápido). Desligue para decodificar o original \n"
+                             "no preview. A exportação sempre usa o original."));
+
+    auto* perfBox = new QGroupBox(tr("Desempenho"), this);
+    auto* perfLay = new QVBoxLayout(perfBox);
+    perfLay->addWidget(m_proxies);
+
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
@@ -182,6 +194,7 @@ ProjectSettingsDialog::ProjectSettingsDialog(int width, int height, int fps,
     lay->setContentsMargins(16, 12, 16, 12);
     lay->setSpacing(10);
     lay->addWidget(videoBox);
+    lay->addWidget(perfBox);
     lay->addWidget(buttons);
 }
 
@@ -195,3 +208,4 @@ void ProjectSettingsDialog::updateAspect() {
 int ProjectSettingsDialog::width() const { return m_w->value(); }
 int ProjectSettingsDialog::height() const { return m_h->value(); }
 int ProjectSettingsDialog::fps() const { return m_fps->currentData().toInt(); }
+bool ProjectSettingsDialog::usesProxies() const { return m_proxies->isChecked(); }

@@ -636,6 +636,7 @@ QJsonObject Project::toJson() const {
     o["fps"] = fps;
     o["audioRate"] = audioRate;
     o["masterVolume"] = masterVolume;
+    o["useProxies"] = useProxies;
 
     QJsonArray mediaArr;
     for (const MediaItem& m : media) mediaArr.append(mediaToJson(m));
@@ -692,6 +693,7 @@ void Project::fromJson(const QJsonObject& o) {
     fps = o["fps"].toInt(30);
     audioRate = o["audioRate"].toDouble(48000.0);
     masterVolume = o["masterVolume"].toDouble(1.0);
+    useProxies = o["useProxies"].toBool(true);
 
     media.clear();
     videoTracks.clear();

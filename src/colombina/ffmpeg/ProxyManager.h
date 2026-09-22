@@ -52,6 +52,14 @@ public:
     void setEnabled(bool on) { m_enabled = on; }
     bool enabled() const { return m_enabled; }
 
+    // Preferência do PROJETO aberto: quando FALSE, o preview decodifica o
+    // original (qualidade cheia) e nada é gerado sob demanda. Precisa ser
+    // re-sincronizada a cada projeto carregado/criado/trocado (MainWindow).
+    // Ao voltar para TRUE, re-enfileira a geração das fontes conhecidas que
+    // ainda não têm proxy (os proxies antigos continuam em cache).
+    void setProjectUsesProxies(bool on);
+    bool projectUsesProxies() const;
+
 signals:
     void proxyReady(const QString& srcPath);
     void proxyFailed(const QString& srcPath);
@@ -80,6 +88,10 @@ private:
     QString m_activeSrc;    // srcs atualmente em processamento
     bool m_running = false;
     bool m_enabled = true;
+    // Fontes com vídeo já conhecidas (candidatas ou não). Usadas para
+    // re-enfileirar a geração quando a preferência do projeto liga de novo.
+    QSet<QString> m_videoSrcs;
+    bool m_projectUsesProxies = true;
 
     // Estado persistido: src → proxy.
     QHash<QString, QString> m_map;

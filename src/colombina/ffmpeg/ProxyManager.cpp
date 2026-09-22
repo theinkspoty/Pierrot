@@ -119,7 +119,7 @@ QString ProxyManager::proxyPathFor(const QString& srcPath) const {
 
 QString ProxyManager::resolveVideo(const QString& srcPath) const {
     QMutexLocker l(&m_mutex);
-    if (!m_enabled || srcPath.isEmpty()) return srcPath;
+    if (!m_enabled || !m_projectUsesProxies || srcPath.isEmpty()) return srcPath;
     if (m_small.contains(srcPath)) return srcPath;
     const QString proxy = proxyPathFor(srcPath);
     if (m_map.value(srcPath) == proxy && QFile::exists(proxy))
@@ -152,11 +152,44 @@ void ProxyManager::probeAndQueue(const QString& srcPath) {
         return;
     }
 
+    // Candidata a proxy: sempre registrada, mesmo com a preferência do projeto
+    // desligada (assim, ao reativar, dá para enfileirar sem re-probar do zero).
+    m_videoSrcs.insert(srcPath);
+    // Preferência do projeto OFF: preview usa o original e nada é gerado agora.
+    if (!m_projectUsesProxies) return;
+
     m_pending.insert(srcPath);
     const bool busy = !m_pending.isEmpty() || m_running;
     l.unlock();
     emit busyChanged(busy);
     pump();
+}
+
+// Preferência do projeto: quando liga de novo, re-enfileira a geração das
+// candidatas conhecidas que ainda não têm proxy. NÃO mexe em proxies já
+// gerados (cache reutilizável) nem nos descartados (m_failed: não re-tentar).
+void ProxyManager::setProjectUsesProxies(bool on) {
+    {
+        QMutexLocker l(&m_mutex);
+        m_projectUsesProxies = on;
+    }
+    if (!on) return;
+    QStringList toQueue;
+    {
+        QMutexLocker l(&m_mutex);
+        for (auto it = m_videoSrcs.cbegin(); it != m_videoSrcs.cend(); ++it) {
+            const QString proxy = proxyPathFor(*it);
+            const bool has = m_map.value(*it) == proxy && QFile::exists(proxy);
+            if (!has) toQueue.append(*it);
+        }
+    }
+    for (const QString& s : toQueue)
+        probeAndQueue(s);
+}
+
+bool ProxyManager::projectUsesProxies() const {
+    QMutexLocker l(&m_mutex);
+    return m_projectUsesProxies;
 }
 
 void ProxyManager::pump() {

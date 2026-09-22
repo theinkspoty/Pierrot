@@ -225,8 +225,14 @@ Cada item abaixo indica quem destrava o quê, pra não virar lista sem critério
   voo é enfileirado; edição durante a gravação mantém o projeto "sujo"
   (comparação de `revision()`); `closeEvent()` espera o worker terminar.
   (feito em 2026-09-22)
-- [ ] **Proxy workflow** — `ProxyManager` já existe; falta gerar sob demanda,
-  toggle proxy/original e preferência do projeto.
+- [x] **Proxy workflow** — geração **sob demanda** no import (2K+ → H.264 leve
+  em worker, vídeo-apenas; thumb/preview decodificam o proxy; exportação sempre
+  usa o **original**) e **preferência do projeto** `useProxies` (serializada,
+  via Configurações do projeto): OFF decodifica o original no preview e não gera;
+  ao reativar, re-enfileira as fontes conhecidas sem proxy. (feito em 2026-09-22)
+- [ ] **Toggle proxy/original por faixa** — `Track::proxyPreview` (forceOriginal
+  no `MesaRenderer::decodeFrame`, cache invalidado por `revision`) + toggle no
+  cabeçalho da faixa. Adiado (escolha do escopo).
 - [ ] **Decode multi-thread por faixa** — quebrar o mutex global do
   `MesaRenderer` em pool por faixa, priorizando a região do playhead.
 - [ ] **Thumbnail cache em disco** — não regenerar thumbs a cada abertura de

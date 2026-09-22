@@ -47,6 +47,7 @@ QString recolorSvg(const QByteArray& raw, const QColor& color) {
 } // namespace
 #include "ui/WelcomeWindow.h"
 #include "colombina/ffmpeg/MediaCache.h"
+#include "colombina/ffmpeg/ProxyManager.h"
 
 #include <QApplication>
 #include <QPointer>
@@ -2058,6 +2059,7 @@ void MainWindow::newProject() {
     updateHistoryList();
     m_currentFile.clear();
     m_modified = false;
+    ProxyManager::instance().setProjectUsesProxies(m_project.useProxies);
     applyUndoState();
     updateTitle();
     statusBar()->showMessage(tr("Novo projeto criado."));
@@ -2113,6 +2115,7 @@ void MainWindow::openProjectFile(const QString& path) {
     updateHistoryList();
     m_currentFile = path;
     m_modified = false;
+    ProxyManager::instance().setProjectUsesProxies(m_project.useProxies);
     applyUndoState();
     updateTitle();
     addRecentProject(path);
@@ -2269,15 +2272,27 @@ void MainWindow::openSettings() {
 }
 
 void MainWindow::projectSettings() {
-    ProjectSettingsDialog dlg(m_project.width, m_project.height, m_project.fps, this);
+    ProjectSettingsDialog dlg(m_project.width, m_project.height, m_project.fps,
+                              m_project.useProxies, this);
     if (dlg.exec() != QDialog::Accepted) return;
-    if (dlg.width() == m_project.width && dlg.height() == m_project.height
-        && dlg.fps() == m_project.fps)
+
+    const bool resChanged = dlg.width() != m_project.width
+                            || dlg.height() != m_project.height
+                            || dlg.fps() != m_project.fps;
+    const bool proxyChanged = dlg.usesProxies() != m_project.useProxies;
+    if (!resChanged && !proxyChanged)
         return;
+
+    m_pendingUndoLabel = tr("Configurações do projeto");
     pushUndo();
     m_project.width = dlg.width();
     m_project.height = dlg.height();
     m_project.fps = dlg.fps();
+    m_project.useProxies = dlg.usesProxies();
+    if (proxyChanged)
+        ProxyManager::instance().setProjectUsesProxies(m_project.useProxies);
+    // pushUndo() já chamou setModified() → touch() → caches de composição
+    // invalidados, então o preview passa a decodificar a fonte certa.
     m_timeline->setProject(&m_project);
     m_pool->refreshFromProject();
     m_pancrop->setProject(&m_project);
@@ -2331,6 +2346,7 @@ void MainWindow::importEdl() {
     updateHistoryList();
     m_currentFile.clear();
     m_modified = true;
+    ProxyManager::instance().setProjectUsesProxies(m_project.useProxies);
     applyUndoState();
     updateTitle();
 

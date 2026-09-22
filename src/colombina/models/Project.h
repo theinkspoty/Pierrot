@@ -609,6 +609,10 @@ public:
     int fps = 30;
     double audioRate = 48000.0;
     double masterVolume = 1.0;
+    // Preferência do projeto: usar proxies (transcode leve de 2K+) no preview
+    // e thumbs. TRUE = editar com proxy (rápido); FALSE = qualidade original
+    // cheia no preview. A exportação SEMPRE usa o original, independente disto.
+    bool useProxies = true;
 
     // Revisão do projeto: incrementada a cada edição (MainWindow::setModified)
     // e a cada carregamento (fromJson). Caches de composição (MesaRenderer)

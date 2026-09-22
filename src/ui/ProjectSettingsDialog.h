@@ -10,15 +10,17 @@
 class QSpinBox;
 class QComboBox;
 class QLabel;
+class QCheckBox;
 
 class ProjectSettingsDialog : public QDialog {
     Q_OBJECT
 public:
-    explicit ProjectSettingsDialog(int width, int height, int fps,
+    explicit ProjectSettingsDialog(int width, int height, int fps, bool useProxies,
                                    QWidget* parent = nullptr);
     int width() const;
     int height() const;
     int fps() const;
+    bool usesProxies() const;
 private:
     void updateAspect();
     QSpinBox* m_w = nullptr;
@@ -26,5 +28,6 @@ private:
     QComboBox* m_fps = nullptr;
     QComboBox* m_preset = nullptr;
     QLabel* m_aspect = nullptr;
+    QCheckBox* m_proxies = nullptr;
     bool m_applyingPreset = false;
 };
