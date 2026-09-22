@@ -138,6 +138,21 @@ private:
 
     QImage decodeFrame(const QString& filePath, double time, int maxW);
 
+    // Decodifica em PARALELO os frames das faixas visíveis com mídia real no
+    // instante `relTime`, aquecendo o cache de quadros de cada decoder. O
+    // caminho de composição (paintStack/prepareLayer) permanece idêntico e
+    // sequencial — o paint pass seguinte só encontra o quadro já decodificado
+    // (cache do próprio FFmpegDecoder), sem re-decodificar. O conteúdo das
+    // faixas é FIXO em `relTime` (o motion blur só rasteja o transform), então
+    // UMA passada de warm cobre composição, thumb e sub-passadas de câmera.
+    void warmTracks(const MesaComposition& mesa, const Project& project,
+                    double relTime);
+    struct WarmJob {
+        QString filePath;
+        double srcT = 0.0;
+        int maxW = 0;
+    };
+
     QHash<QString, std::shared_ptr<FFmpegDecoder>> m_decoders;
 
     // Cache de frames decodificados (evita re-decode no mesmo timestamp)

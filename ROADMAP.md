@@ -233,8 +233,12 @@ Cada item abaixo indica quem destrava o quê, pra não virar lista sem critério
 - [ ] **Toggle proxy/original por faixa** — `Track::proxyPreview` (forceOriginal
   no `MesaRenderer::decodeFrame`, cache invalidado por `revision`) + toggle no
   cabeçalho da faixa. Adiado (escolha do escopo).
-- [ ] **Decode multi-thread por faixa** — quebrar o mutex global do
-  `MesaRenderer` em pool por faixa, priorizando a região do playhead.
+- [x] **Decode multi-thread por faixa** — `MesaRenderer::warmTracks()`: antes
+  de compor um quadro, decodifica em PARALELO (QtConcurrent) as faixas visíveis
+  com mídia real no instante do playhead, aquecendo o cache de quadro de cada
+  decoder; o paint sequencial (preparação de layers + motion blur, conteúdo
+  FIXO em relTime) reaproveita os frames já decodificados. Menos queda de FPS
+  com várias camadas HD/4K. (feito em 2026-09-22)
 - [ ] **Thumbnail cache em disco** — não regenerar thumbs a cada abertura de
   projeto (cache em `~/.cache/pierrot/`).
 - [ ] **Métrica de abertura** — template de teste que mede tempo de

@@ -11,6 +11,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QtMath>
+#include <QtConcurrent/QtConcurrent>
 
 MesaRenderer::MesaRenderer() {}
 
@@ -105,6 +106,11 @@ QImage MesaRenderer::render(const MesaComposition& mesa, const Project& project,
     const CompositeKey key{ mesa.id, qRound64(time * fps), outW, outH, project.revision };
     const QImage cached = compositeFromCache(key);
     if (!cached.isNull()) return cached;
+
+    // Pré-decodifica as faixas com mídia real em paralelo (pool global). O paint
+    // a seguir decodifica o MESMO (path, tempo, maxW) → cache de quadro do
+    // decoder já quente. Menos queda de FPS com várias camadas HD/4K visíveis.
+    warmTracks(mesa, project, time);
 
     QImage result;
     const double frameDur = 1.0 / fps;
@@ -323,6 +329,55 @@ void MesaRenderer::drawTrackImage(QPainter& acc, const LayerPrep& prep) {
     acc.setCompositionMode(static_cast<QPainter::CompositionMode>(prep.blend));
     acc.drawImage(QRectF(0, 0, prep.frame.width(), prep.frame.height()), prep.frame);
     acc.restore();
+}
+
+void MesaRenderer::warmTracks(const MesaComposition& mesa, const Project& project,
+                              double relTime) {
+    // Mesma resolução de clip ativo do prepareLayer(): 1º clip ativo em relTime
+    // manda; texto e sólido são gerados na pintura (sem arquivo pra decode).
+    QList<WarmJob> jobs;
+    for (const QString& tid : mesa.trackIds) {
+        const Track* track = nullptr;
+        for (const Track& tr : project.videoTracks) {
+            if (tr.id == tid) { track = &tr; break; }
+        }
+        if (!track) {
+            for (const Track& tr : project.audioTracks) {
+                if (tr.id == tid) { track = &tr; break; }
+            }
+        }
+        // Faixa oculta (olho desligado) também é pulada no paintStack.
+        if (!track || track->mesaHidden) continue;
+
+        for (const Clip& c : track->clips) {
+            const double cRel = relTime - c.pos;
+            if (cRel < 0 || cRel >= c.dur) continue;
+
+            if (!c.isText && !c.mediaId.isEmpty()) {
+                const MediaItem* mi = project.findMedia(c.mediaId);
+                if (mi && !mi->isSolid && !mi->filePath.isEmpty()) {
+                    jobs.append({ mi->filePath, clipSrcTime(c, cRel),
+                                  mesa.canvasW });
+                }
+            }
+            break;
+        }
+    }
+
+    if (jobs.isEmpty()) return;
+    if (jobs.size() == 1) {
+        // Um único decode: rodar direto é mais barato que o overhead do pool.
+        decodeFrame(jobs[0].filePath, jobs[0].srcT, jobs[0].maxW);
+        return;
+    }
+
+    // Em paralelo: cada FFmpegDecoder serializa o PRÓPRIO acesso (m_mutex do
+    // decoder), então arquivos distintos decodam simultaneamente. O QImage de
+    // retorno é descartado — o objetivo é aquecer o cache de quadro do decoder;
+    // o paint pass seguinte (mesma chave path/tempo/maxW) encontra pronto.
+    QtConcurrent::mapped(jobs, [this](const WarmJob& j) {
+        return decodeFrame(j.filePath, j.srcT, j.maxW);
+    }).results();
 }
 
 // Mapeia o blendMode textual do Track para o QPainter::CompositionMode.
