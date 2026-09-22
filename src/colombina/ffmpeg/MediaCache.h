@@ -58,6 +58,8 @@ public:
 
     // Descarta todas as entradas e invalida os pedidos em andamento
     // (chamado ao trocar de projeto para não reter mídia do anterior).
+    // O cache de thumbs em DISCO (~/.cache/pierrot/thumbs/) é intencionalmente
+    // mantido: reabrir um projeto reaproveita os PNGs já gerados.
     void clear();
 signals:
     void waveformReady(const QString& filePath, int streamIndex);

@@ -12,6 +12,10 @@
 #include <QMetaObject>
 #include <QDebug>
 #include <QFileInfo>
+#include <QDir>
+#include <QFile>
+#include <QStandardPaths>
+#include <QCryptographicHash>
 #include <cmath>
 #include <algorithm>
 
@@ -22,6 +26,10 @@ constexpr int kMaxPeakCache = 64;
 constexpr int kMaxThumbCache = 512;
 constexpr int kMaxThumbPending = 192;
 constexpr int kMaxPeakPending = 32;
+// Cache DISCO de thumbs (~/.cache/pierrot/thumbs/): PNGs de ~160px (~5-20 KB).
+// Poderiam ficar órfãos quando a fonte é alterada (o hash do nome muda), então
+// a poda mantém no máximo kMaxDiskThumbs arquivos mais recentes.
+constexpr int kMaxDiskThumbs = 4096;
 
 QImage loadImageThumb(const QString& path, int maxWidth) {
     QImage img(path);
@@ -35,6 +43,53 @@ QImage loadImageThumb(const QString& path, int maxWidth) {
 double thumbKey(double seconds) {
     return std::round(seconds * 10.0) / 10.0;
 }
+
+QString thumbDiskDir() {
+    return QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
+           + QStringLiteral("/thumbs");
+}
+
+// Caminho determinístico por (fonte + bucket). O mtime+size da FONTE entram no
+// hash: se a mídia for re-gerada/alterada, o nome muda e o thumb antigo é
+// naturalmente ignorado (mesmo disco → mesmo thumb, sem sidecar).
+QString thumbDiskPath(const QString& filePath, double bucket, qint64 srcMtime,
+                      qint64 srcSize) {
+    const int b = (int)std::lround(bucket * 10.0);
+    const QByteArray h = QCryptographicHash::hash(
+        (filePath + QLatin1Char('|') + QString::number(srcMtime) + QLatin1Char('|')
+         + QString::number(srcSize) + QLatin1Char('|') + QString::number(b)).toUtf8(),
+        QCryptographicHash::Md5).toHex();
+    return thumbDiskDir() + QLatin1Char('/') + QString::fromLatin1(h)
+           + QLatin1String(".png");
+}
+
+// Poda simples por contagem: quando passa o teto, apaga os PNGs mais antigos
+// (a pilha de thumbs nunca cresce sem limite entre projetos).
+void pruneThumbDisk() {
+    QDir dir(thumbDiskDir());
+    if (!dir.exists()) return;
+    const QFileInfoList list = dir.entryInfoList(QStringList() << QStringLiteral("*.png"),
+                                                 QDir::Files, QDir::NoSort);
+    if (list.size() <= kMaxDiskThumbs) return;
+    QStringList paths;
+    for (const QFileInfo& fi : list) paths.append(fi.absoluteFilePath());
+    std::sort(paths.begin(), paths.end(),
+              [](const QString& a, const QString& b) {
+                  return QFileInfo(a).lastModified() > QFileInfo(b).lastModified();
+              });
+    while (paths.size() > kMaxDiskThumbs) {
+        QFile::remove(paths.takeLast());
+    }
+}
+
+// I/O de disco no worker (fora da UI thread). Modo PNG: pequeno e lossless —
+// o conteúdo exibido nunca depende de um codec específico para carregar.
+bool saveThumbToDisk(const QImage& img, const QString& path) {
+    QDir().mkpath(thumbDiskDir());
+    if (!img.save(path, "PNG")) return false;
+    pruneThumbDisk();
+    return true;
+}
 }
 
 CacheWorker::CacheWorker(QObject* parent) : QObject(parent) {}
@@ -47,35 +102,50 @@ void CacheWorker::generatePeaks(const QString& filePath, int streamIndex,
 }
 
 void CacheWorker::generateThumb(const QString& filePath, double seconds) {
-    QImage img;
-    // Imagem estática: usa QImage direto (FFmpeg não consegue seek em frame único).
-    if (isImageFile(filePath)) {
-        img = loadImageThumb(filePath, kThumbMaxWidth);
-    } else {
-        // Decodifica a partir do proxy (vídeo leve) quando houver — olhar do
-        // thumb igual ao do preview, sem carregar o arquivo grande.
-        const QString vpath = ProxyManager::instance().resolveVideo(filePath);
-        if (!m_decoder.isOpen() || m_decoder.source() != vpath) {
-            m_decoder.open(vpath);
-        }
-        if (m_decoder.isOpen()) {
-            img = m_decoder.frameAt(seconds, kThumbMaxWidth);
-            m_decoder.releaseBuffers();
-        }
-    }
-    emit thumbReady(filePath, seconds, img);
+    // Um único pedido: o mesmo pipeline do lote (disco → decode → salva).
+    generateThumbs(filePath, QList<double>() << thumbKey(seconds));
 }
 
 // Vários instantes do mesmo arquivo: ordena para decodificar em sequência e
 // reaproveitar o decoder aberto (sem re-abrir o arquivo a cada pedido).
+// Reusa thumbs do disco (~/.cache/pierrot/thumbs/) quando o arquivo não mudou;
+// o que não existe é decodificado e salvo — reabrir um projeto não precisa
+// re-decodificar os mesmos instantes.
 void CacheWorker::generateThumbs(const QString& filePath, const QList<double>& seconds) {
-    // Imagem estática: todas as thumbnails são a mesma imagem carregada via QImage.
-    if (isImageFile(filePath)) {
-        const QImage img = loadImageThumb(filePath, kThumbMaxWidth);
+    if (seconds.isEmpty()) return;
+    QFileInfo src(filePath);
+    const qint64 srcMtime = src.lastModified().toMSecsSinceEpoch();
+    const qint64 srcSize = src.size();
+    const bool isImage = isImageFile(filePath);
+
+    // Imagem estática: todas as thumbnails são a mesma imagem carregada via
+    // QImage, e um único PNG no disco cobre todos os buckets.
+    if (isImage) {
+        const double bucket = 0.0;
+        const QString path = thumbDiskPath(filePath, bucket, srcMtime, srcSize);
+        QImage img;
+        if (QFile::exists(path)) {
+            img.load(path);
+            if (img.isNull()) QFile::remove(path);
+        }
+        if (img.isNull()) {
+            img = loadImageThumb(filePath, kThumbMaxWidth);
+            if (!img.isNull() && saveThumbToDisk(img, path)) {
+                for (double s : seconds)
+                    emit thumbReady(filePath, thumbKey(s), img);
+                return;
+            }
+        }
+        if (!img.isNull()) {
+            for (double s : seconds)
+                emit thumbReady(filePath, thumbKey(s), img);
+            return;
+        }
         for (double s : seconds)
-            emit thumbReady(filePath, s, img);
+            emit thumbReady(filePath, thumbKey(s), QImage());
         return;
     }
+
     const QString vpath = ProxyManager::instance().resolveVideo(filePath);
     if (!m_decoder.isOpen() || m_decoder.source() != vpath) {
         m_decoder.open(vpath);
@@ -83,10 +153,18 @@ void CacheWorker::generateThumbs(const QString& filePath, const QList<double>& s
     QList<double> sorted = seconds;
     std::sort(sorted.begin(), sorted.end());
     for (double s : sorted) {
+        const double k = thumbKey(s);
+        const QString path = thumbDiskPath(filePath, k, srcMtime, srcSize);
         QImage img;
-        if (m_decoder.isOpen())
+        if (QFile::exists(path)) {
+            img.load(path);
+            if (img.isNull()) QFile::remove(path);
+        }
+        if (img.isNull() && m_decoder.isOpen()) {
             img = m_decoder.frameAt(s, kThumbMaxWidth);
-        emit thumbReady(filePath, s, img);
+            if (!img.isNull()) saveThumbToDisk(img, path);
+        }
+        emit thumbReady(filePath, k, img);
     }
     m_decoder.releaseBuffers();
 }

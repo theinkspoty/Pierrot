@@ -239,8 +239,11 @@ Cada item abaixo indica quem destrava o quê, pra não virar lista sem critério
   decoder; o paint sequencial (preparação de layers + motion blur, conteúdo
   FIXO em relTime) reaproveita os frames já decodificados. Menos queda de FPS
   com várias camadas HD/4K. (feito em 2026-09-22)
-- [ ] **Thumbnail cache em disco** — não regenerar thumbs a cada abertura de
-  projeto (cache em `~/.cache/pierrot/`).
+- [x] **Thumbnail cache em disco** — `CacheWorker`: primeiro checa
+  `~/.cache/pierrot/thumbs/`, decodifica só o que falta e salva PNG. O hash do
+  nome inclui mtime+size da fonte: mídia alterada invalida sozinha (sem
+  sidecar); poda mantém no máximo ~4096 thumbs. Reabrir um projeto não
+  regenera do zero os mesmos instantes. (feito em 2026-09-22)
 - [ ] **Métrica de abertura** — template de teste que mede tempo de
   abrir/salvar um projeto 4K sintético (a meta define o "estável").
 
