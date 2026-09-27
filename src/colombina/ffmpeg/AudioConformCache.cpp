@@ -6,6 +6,7 @@
 #include "AudioConformCache.h"
 
 #include "colombina/ffmpeg/FFmpegDecoder.h"
+#include "colombina/ffmpeg/AudioConformIntervals.h"
 
 #include <QDebug>
 
@@ -88,34 +89,16 @@ void AudioConformCache::request(const Ref& cache, double startSec, double lenSec
 // coberto. Chamar com c->mtx tomado.
 static qint64 uncoveredStart(const AudioConformCache::Chunk& c, double wStart,
                              double wEnd) {
-    qint64 a = secToFrame(wStart);
-    const qint64 b = secToFrame(wEnd);
-    for (const auto& f : c.filled) {
-        if (f.first <= a && a < f.second) { a = f.second; break; }
-    }
-    return a < b ? a : -1;
+    using namespace AudioConformIntervals;
+    return firstUncoveredFrame(c.filled, secToFrame(wStart), secToFrame(wEnd));
 }
 
 // Insere [a,b) nas janelas pedidas, coalescendo com janelas sobrepostas ou
 // contíguas (≤ um quadro de folga). Chamar com c->mtx tomado.
 void AudioConformCache::mergeWanted(Chunk* c, double a, double b) {
+    using namespace AudioConformIntervals;
     c->wanted.append({a, b});
-    if (c->wanted.size() < 2) return;
-    std::sort(c->wanted.begin(), c->wanted.end(),
-              [](const QPair<double, double>& x, const QPair<double, double>& y) {
-                  if (x.first != y.first) return x.first < y.first;
-                  return x.second < y.second;
-              });
-    QVector<QPair<double, double>> merged;
-    const double eps = 1.0 / kSampleRate; // 1 quadro
-    for (const auto& w : c->wanted) {
-        if (merged.isEmpty() || w.first > merged.last().second + eps) {
-            merged.append(w);
-        } else {
-            merged.last().second = qMax(merged.last().second, w.second);
-        }
-    }
-    c->wanted = std::move(merged);
+    c->wanted = coalesceWindows(std::move(c->wanted), 1.0 / kSampleRate);
 }
 
 // Próximo trabalho deste chunk: o menor frame ainda não decodificado dentre
@@ -167,19 +150,8 @@ void AudioConformCache::fillRegion(Chunk* c, qint64 startFrame,
     std::memcpy(c->pcm.data() + startFrame * kChannels, data,
                 (size_t)frames * kChannels * sizeof(int16_t));
     c->filled.append({startFrame, startFrame + frames});
-    std::sort(c->filled.begin(), c->filled.end(),
-              [](const QPair<qint64, qint64>& x, const QPair<qint64, qint64>& y) {
-                  return x.first < y.first;
-              });
-    QVector<QPair<qint64, qint64>> merged;
-    for (const auto& f : c->filled) {
-        if (merged.isEmpty() || f.first > merged.last().second) {
-            merged.append(f);
-        } else {
-            merged.last().second = qMax(merged.last().second, f.second);
-        }
-    }
-    c->filled = std::move(merged);
+    c->filled =
+        AudioConformIntervals::mergeIntervals(std::move(c->filled));
     l.unlock();
     evictIfOverBudget();
 }

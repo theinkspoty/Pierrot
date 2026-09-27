@@ -308,6 +308,45 @@ target_link_libraries(tst_exporter PRIVATE
 )
 add_test(NAME tst_exporter COMMAND tst_exporter)
 
+# tst_audio_conform: contrato do AudioConformCache consumido pelo MixerWidget —
+# leitura posicional de um PCM com lacunas (regiões ainda não descodificadas
+# saem em silêncio e truncam a leitura) e refcounting manual do buffer. Os
+# ficheiros de áudio não existem de propósito: o worker só descodifica quando
+# há janelas pedidas, e o teste nunca pede nenhuma. Linka a pilha de FFmpeg
+# porque o .cpp chama o decoder, mas não chega a abrí-lo.
+add_executable(tst_audio_conform
+    tests/tst_audio_conform.cpp
+    src/colombina/ffmpeg/AudioConformCache.cpp
+    src/colombina/ffmpeg/FFmpegDecoder.cpp
+)
+target_include_directories(tst_audio_conform PRIVATE src src/colombina/ofx/sdk)
+target_link_libraries(tst_audio_conform PRIVATE
+    ${PIERROT_QT_TEST}
+    ${PIERROT_QT_CORE}
+    ${PIERROT_QT_GUI}
+    ${PIERROT_QT_CONCURRENT}
+    FFmpeg::avformat
+    FFmpeg::avcodec
+    FFmpeg::avutil
+    FFmpeg::swscale
+    FFmpeg::swresample
+    ${CMAKE_DL_LIBS}
+)
+add_test(NAME tst_audio_conform COMMAND tst_audio_conform)
+
+# tst_audio_conform_intervals: a álgebra pura de intervalos/janelas que o
+# AudioConformCache usa. Header-only, por isso não linka FFmpeg nem precisa
+# de pthread — compila e corre num instante, ao contrário do tst_audio_conform.
+add_executable(tst_audio_conform_intervals
+    tests/tst_audio_conform_intervals.cpp
+)
+target_include_directories(tst_audio_conform_intervals PRIVATE src src/colombina/ofx/sdk)
+target_link_libraries(tst_audio_conform_intervals PRIVATE
+    ${PIERROT_QT_TEST}
+    ${PIERROT_QT_CORE}
+)
+add_test(NAME tst_audio_conform_intervals COMMAND tst_audio_conform_intervals)
+
 # tst_export_pipeline: CAMINHO FELIZ — roda o ffmpeg CLI de verdade com o comando
 # do ProjectExporter e extrai um quadro do arquivo resultante, comparando com o
 # generatorFrame() (mesma fonte de verdade do preview). Pulado se não houver
