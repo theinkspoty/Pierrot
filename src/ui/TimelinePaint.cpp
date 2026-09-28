@@ -675,10 +675,10 @@ void TimelineWidget::renderScene(QPainter& p) {
     }
     p.restore();
 
-    // Linha/envelope de volume da faixa: SEMPRE visível nas faixas de áudio,
-    // como no Premiere (que não tem tecla para ligar/desligar). O volume do
-    // clipe individual continua atrás da tecla V.
-    {
+    // Linha/envelope de volume da faixa: oculta por padrão; Shift+V liga/
+    // desliga (como no Premiere, onde o envelope fica escondido até o usuário
+    // pedir).
+    if (m_showVolLines) {
         p.save();
         p.setClipRect(QRect(H, kRulerH, width() - H, height() - kRulerH));
         for (int i = 0; i < (int)m_project->audioTracks.size(); ++i) {

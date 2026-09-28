@@ -529,17 +529,19 @@ da faixa de áudio ainda tinha marcas do Vegas. Ajustado para o Premiere CC:
   semitransparente; o sufixo `v N%` saiu do rótulo (o Premiere não mostra) e o
   badge `FX` foi mantido. Onda em tom **claro** (`waveVal 0.78`, alpha ~0.86–1.0)
   sobre o corpo sólido.
-- **Linha de volume da faixa sempre visível** (o Premiere não tem tecla para
-  isso): desenhada sempre, junto do envelope com keyframes. O envelope perdeu o
+- **Linha de volume da faixa oculta por padrão**: o envelope de volume da
+  faixa (e do clipe) só aparece com **Shift+V**, como no Premiere — o usuário
+  vê o vídeo limpo até pedir os envelopes. O envelope perdeu o
   **preenchimento dourado** (Vegas) — agora é só curva + diamantes, linha
   branca (dourada só enquanto arrasta).
-- **Envelope sempre presente**: `drawTrackVolEnvelope` saiu de trás de `V`.
+- **Envelope por Shift+V**: `drawTrackVolEnvelope` e a linha de volume da
+  faixa ficam atrás de `m_showVolLines` (Shift+V). O atalho anterior `V` foi
+  liberado.
 - **Interação acompanha**: clicar **na linha** da faixa arma o ajuste de volume
-  sem a tecla `V` (idem o cursor `SizeVer` e o tooltip dB, que agora testam a
-  proximidade da linha). O "segurar na faixa inteira = volume" (toda a altura,
-  estilo Vegas) **continua atrás de `V`** para não sequestrar o clique/marquee
-  normal. A tecla `V` agora controla **só** a linha de volume individual do
-  clipe.
+  só quando a linha está visível (Shift+V). O "segurar na faixa inteira =
+  volume" (toda a altura, estilo Vegas) **continua atrás de Shift+V** para não
+  sequestrar o clique/marquee normal. Cursor `SizeVer` e tooltip dB só
+  aparecem sobre a linha visível.
 - **Vídeo no mesmo padrão** (para combinar com o áudio):
   - fundo da pista **chapado** (saiu o zebrado) e **mesma cor de seleção**
     (`#2A303E`) em vídeo, áudio e gravação — a separação entre faixas vem só
@@ -574,6 +576,69 @@ mas é a camada mais rasa. **Restante: código.**
 > é **UI, não feature** — não mexe no kernel nem em paridade preview↔export,
 > então não colide com a regra de ouro. Mas se o núcleo de foco estiver
 > atrasado, isto espera: é o item com menor risco de causar perda de trabalho.
+
+## Tarefas pendentes (2026-09-28)
+
+### Bugfixes (urgent)
+
+- [ ] **Bug dock**: janela docável se destaca mas volta à posição ao soltar o
+  mouse. Provável causa: `QDockWidget` com `setAllowedAreas` + restauração
+  incorreta do state no `QMainWindow::restoreState`.
+- [ ] **Ctrl+Z undo excessivo**: desfazer às vezes volta mais de 1 ação. Pode
+  ser `push()` duplo no mesmo evento ou undo-agrupamento (macro) quebrado.
+- [ ] **Selecionador de área sobre o cabeçalho**: o marquee/area-selecionador
+  sobrepõe o header das tracks quando a timeline está scrollada para cima.
+- [ ] **Save de janelas dockáveis**: o estado (posição/visibilidade) não é
+  restaurado corretamente entre sessões.
+
+### Timeline (alta prioridade)
+
+- [ ] **Keyframes de áudio ocultos por padrão**: a linha de volume/envelope
+  começa escondida; `Shift+V` liga/desliga (substitui o `V` que agora controla
+  só o clipe).
+- [ ] **M = marcador/comment na timeline**: tecla `M` adiciona um marcador
+  (flag) na posição do playhead, como no Premiere.
+- [ ] **Clip resize/move responsivo e "duro"**: o arrasto e resize de clipes
+  está impreciso com delay visível. Causa provável: redesenho a cada
+  `mouseMoveEvent` sem `QApplication::processEvents` ou sem invalidação
+  incremental; pode ser o cache `m_clipPix` recriando o pixmap inteiro a
+  cada frame.
+- [ ] **Mover keyframes horizontal no editor de curvas**: tornar o arraste
+  mais fluido e preciso.
+
+### UI/Layout (média prioridade)
+
+- [ ] **Preview responsivo**: o Program Monitor e o PanCrop devem se ajustar
+  ao tamanho da janela sem sobrepor outros elementos.
+- [ ] **Barra de ferramentas com scroll**: quando o espaço é pequeno, a toolbar
+  deve mostrar scroll em vez de truncar os botões.
+- [ ] **Tamanho mínimo do Media Pool**: reduzir o mínimo horizontal para caber
+  em telas menores.
+- [ ] **Detector de rolagem automática**: diminuir a zona de sensibilidade no
+  lado direito da timeline para não atrapalhar o usuário.
+- [ ] **Sistema de volume**: melhorar a experiência geral do volume das faixas.
+
+### Features (média prioridade)
+
+- [ ] **Exportação de GIF transparente**: suportar canal alpha na exportação
+  de GIF (paleta + transparente).
+- [ ] **PNG transparente otimizado**: otimizar o render de PNGs com alpha em
+  tracks com muitas camadas e animações de PanCrop (cache, lazy decode).
+
+### Roadmap v0.8
+
+- [ ] **Auto Track**: criação automática de faixas ao arrastar clipes para
+  áreas vazias (como o Premiere).
+- [ ] **Clip composto / Mesa**: agrupamento de clipes em um sub-timeline
+  renderizável (nested sequence / precomp).
+
+### v0.8.1 (áudio/efeitos)
+
+- [ ] **Reverb melhorado**: modelo mais fiel (IR ou paramétrico).
+- [ ] **EQ com gráfico editável**: equalizador paramétrico com curva
+  arrastável no painel de efeitos.
+- [ ] **Motion blur profissional**: implementação fiel ao Premiere (shutter
+  angle, samples, compilação por camada).
 
 ## Critério geral (como saber que estamos no caminho)
 

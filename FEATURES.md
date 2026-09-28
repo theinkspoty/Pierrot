@@ -20,7 +20,7 @@
 - **Faixas de áudio independentes**: arquivos com vários streams (OBS/câmera) geram um clipe por faixa.
 - **Reordenar faixas** por arraste do cabeçalho.
 - **Pastas (grupos)**: arraste faixas para criar/grupos, presets de tamanho (minimizada/normal/grande).
-- **Marcadores** na régua (Ctrl+clique para alternar; menu do botão direito).
+- **Marcadores** na régua (`M` para adicionar/remover na agulha; menu do botão direito).
 - **Botões de zoom** (`−`/`+`) na régua.
 - **Grade de fundo** e **régua de tempo** toggáveis na barra de ferramentas.
 - **Região de loop** (arraste na régua; Q ativa/desativa; Delete com ripple ou sem).
@@ -137,7 +137,7 @@
 | `Ctrl+roda` | Zoom da timeline |
 | `Ctrl+clique` | Alternar marcador / multi-seleção |
 | `Q` | Ativar/desativar loop |
-| `V` | Mostrar/ocultar a linha de volume do clipe (a da faixa é sempre visível) |
+| `Shift+V` | Mostrar/ocultar linha de volume/envelope da faixa de áudio |
 
 ## Undo/Redo
 

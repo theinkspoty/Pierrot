@@ -1347,9 +1347,14 @@ void TimelineWidget::keyPressEvent(QKeyEvent* e) {
     case Qt::Key_V:
         if (ctrl && shift) { pasteAttributes(); e->accept(); break; }
         if (ctrl) { pasteClips(); e->accept(); break; }
-        m_showVolLines = !m_showVolLines; // V: linha de volume individual do clipe
-        invalidateScene();
-        e->accept();
+        if (shift) {
+            // Shift+V: linha de volume/envelope da faixa de áudio.
+            m_showVolLines = !m_showVolLines;
+            invalidateScene();
+            e->accept();
+            break;
+        }
+        QWidget::keyPressEvent(e);
         break;
     case Qt::Key_D:
         if (ctrl) { duplicateSelected(); e->accept(); break; }
@@ -1394,6 +1399,11 @@ void TimelineWidget::keyPressEvent(QKeyEvent* e) {
     case Qt::Key_W:
         // Esticar Velocidade: mudar velocidade para preencher espaço
         setTool(ToolRateStretch);
+        e->accept();
+        break;
+    case Qt::Key_M:
+        // Marcador (Premiere): adiciona/remove marcador na agulha.
+        toggleMarker(m_playhead);
         e->accept();
         break;
     case Qt::Key_Home:

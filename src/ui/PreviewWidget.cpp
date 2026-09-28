@@ -1456,12 +1456,14 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
         "QToolButton:checked,QPushButton:checked{background:%4;}")
         .arg(themeColors().base.name(), themeColors().trackBorder.name(),
              hoverBg.name(QColor::HexArgb), checkBg.name(QColor::HexArgb)));
-    bar->addWidget(m_timeLabel);
-    bar->addSpacing(8);
+    // Transporte do Program Monitor: à esquerda, como no Premiere.
     bar->addWidget(m_stepBackBtn);
     bar->addWidget(m_playBtn);
     bar->addWidget(m_stepFwdBtn);
     bar->addWidget(m_loopBtn);
+    bar->addSpacing(12);
+    // Timecode: entre o transporte e o cluster da direita.
+    bar->addWidget(m_timeLabel);
     bar->addStretch(1);
 
     // Margens de segurança do Premiere (Action 90% + Title 80%, Ctrl+G

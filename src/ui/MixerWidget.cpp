@@ -26,41 +26,50 @@
 #include <cmath>
 
 // ══════════════════════════════════════════════════════════════════════
-// Cores do tema Vegas escuro
+// Cores do tema Premiere CC (dark)
 // ══════════════════════════════════════════════════════════════════════
 
 namespace MixerTheme {
-    static const QColor bgDark{26, 26, 26};       // fundo geral
-    static const QColor stripBg{34, 34, 34};      // fundo do strip
-    static const QColor grooveBg{50, 50, 50};     // canal do fader
-    static const QColor thumbColor{140, 140, 140}; // alça do fader
-    static const QColor textMain{200, 200, 200};   // texto principal
-    static const QColor textDim{120, 120, 120};    // texto secundário
+    static const QColor bgDark{26, 26, 26};       // fundo do painel
+    static const QColor stripBg{38, 38, 38};      // fundo do strip
+    static const QColor grooveBg{60, 60, 60};     // canal do fader
+    static const QColor thumbColor{160, 160, 160}; // alça do fader
+    static const QColor textMain{210, 210, 210};   // texto principal
+    static const QColor textDim{130, 130, 130};    // texto secundário
     static const QColor vuBg{18, 18, 18};          // fundo do VU
     static const QColor vuGreen{50, 180, 70};
-    static const QColor vuYellow{210, 190, 40};
-    static const QColor vuRed{210, 50, 50};
+    static const QColor vuYellow{220, 195, 40};
+    static const QColor vuRed{220, 50, 50};
     static const QColor vuPeak{240, 240, 240};
-    static const QColor knobBody{70, 70, 70};
+    static const QColor knobBody{55, 55, 55};
     static const QColor knobIndicator{210, 210, 210};
     static const QColor muteActive{200, 50, 50};
     static const QColor soloActive{50, 100, 200};
-    static const QColor separator{60, 60, 60};
+    static const QColor separator{50, 50, 50};
+    static const QColor faderTrack{20, 20, 20};    // faixa do fader (gradiente)
 }
 
 static QString stripSheet() {
     return QStringLiteral(
-        "MixerStrip { background-color: %1; border-radius: 3px; }"
-        "QSlider::groove:vertical { background: %2; width: 6px; border-radius: 2px; }"
-        "QSlider::handle:vertical { background: %3; height: 14px; width: 18px;"
-        "   margin: -4px -6px; border-radius: 3px; }"
-        "QSlider::handle:vertical:hover { background: #aaaaaa; }"
-        "QSlider::sub-page:vertical { background: #4a7ab5; border-radius: 2px; }"
+        "MixerStrip { background-color: %1; border-radius: 2px; }"
+        "QSlider::groove:vertical { background: qlineargradient("
+        "  x1:0,y1:0,x2:1,y2:0,"
+        "  stop:0 %2, stop:0.4 %2, stop:0.5 %5, stop:0.6 %2, stop:1.0 %2);"
+        "  width: 8px; border-radius: 2px; }"
+        "QSlider::handle:vertical { background: %3; height: 16px; width: 22px;"
+        "  margin: -5px -7px; border-radius: 3px;"
+        "  border: 1px solid #555; }"
+        "QSlider::handle:vertical:hover { background: #bbbbbb; }"
+        "QSlider::sub-page:vertical { background: qlineargradient("
+        "  x1:0,y1:1,x2:0,y2:0,"
+        "  stop:0 #2a5090, stop:1 #4a7ab5);"
+        "  border-radius: 2px; }"
         "QPushButton { background: %2; color: %4; border: 1px solid #444;"
-        "   border-radius: 2px; font-size: 9px; font-weight: bold; }"
+        "  border-radius: 2px; font-size: 9px; font-weight: bold; }"
         "QPushButton:checked { border: 1px solid #666; }"
     ).arg(MixerTheme::stripBg.name(), MixerTheme::grooveBg.name(),
-          MixerTheme::thumbColor.name(), MixerTheme::textMain.name());
+          MixerTheme::thumbColor.name(), MixerTheme::textMain.name(),
+          MixerTheme::faderTrack.name());
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -92,9 +101,9 @@ void VuMeter::setLevel(float rms) {
     if (clamped >= m_peak) {
         m_peak = clamped;
         m_peakTimer.restart();
-    } else if (m_peakTimer.elapsed() > 400) {
-        // Decay do pico: cai ~6 dB/s (0.02/frame a 30fps).
-        m_peak = std::max(0.0f, m_peak - 0.02f);
+    } else if (m_peakTimer.elapsed() > 1500) {
+        // Decay do pico: cai ~3 dB/s (0.01/frame a 30fps), como o Premiere.
+        m_peak = std::max(0.0f, m_peak - 0.01f);
     }
     update();
 }
@@ -234,7 +243,8 @@ MixerStrip::MixerStrip(const QString& name, int trackIndex, bool isAudio,
       m_isMaster(isMaster)
 {
     setStyleSheet(stripSheet());
-    setFixedWidth(isMaster ? 72 : 58);
+    // Faixas de áudio Premiere: strip ~64px; master um pouco mais largo.
+    setFixedWidth(isMaster ? 80 : 64);
 
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(3, 3, 3, 3);
@@ -266,20 +276,20 @@ MixerStrip::MixerStrip(const QString& name, int trackIndex, bool isAudio,
         });
     }
 
-    // VU meter + fader lado a lado.
+    // VU meter à esquerda, fader à direita (como no Premiere).
     auto* meterFaderRow = new QHBoxLayout;
     meterFaderRow->setSpacing(2);
     meterFaderRow->setContentsMargins(0, 0, 0, 0);
 
     m_meter = new VuMeter;
-    m_meter->setFixedWidth(10);
+    m_meter->setFixedWidth(12);
     meterFaderRow->addWidget(m_meter, 0);
 
     m_fader = new QSlider(Qt::Vertical);
     m_fader->setRange(0, 200);   // 0..200 = 0%..200%
     m_fader->setValue(100);
     m_fader->setTickPosition(QSlider::NoTicks);
-    m_fader->setFixedWidth(24);
+    m_fader->setFixedWidth(28);
     meterFaderRow->addWidget(m_fader, 1);
 
     lay->addLayout(meterFaderRow, 1);
@@ -299,7 +309,7 @@ MixerStrip::MixerStrip(const QString& name, int trackIndex, bool isAudio,
         m_muteBtn = new QPushButton(QStringLiteral("M"));
         m_soloBtn = new QPushButton(QStringLiteral("S"));
         m_autoBtn = new QPushButton(QStringLiteral("R"));
-        const QSize btnSize(22, 16);
+        const QSize btnSize(24, 18);
         m_muteBtn->setFixedSize(btnSize);
         m_soloBtn->setFixedSize(btnSize);
         m_autoBtn->setFixedSize(btnSize);

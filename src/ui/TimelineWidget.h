@@ -359,8 +359,8 @@ private:
     bool m_snap = true;
     bool m_showGrid = true;
     bool m_showRuler = true;
-    bool m_showVolLines = false;   // V: linha de volume individual do clipe
-                                   // (a da faixa é sempre visível)
+    bool m_showVolLines = false;   // Shift+V: linha de volume/envelope da faixa
+                                   // e do clipe de áudio
     double m_loopIn = -1.0;
     double m_loopOut = -1.0;
     bool m_loopEnabled = false; // região desenhada mas loop só com "Q"

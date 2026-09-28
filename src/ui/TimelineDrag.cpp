@@ -348,7 +348,7 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
                 const Track& tr = m_project->audioTracks[vrow];
                 const bool onLine = std::abs(y - trackVolLineYAt(vrow,
                     kfValue(tr.kfVolume, tr.volume, xToTime(x)))) <= 6;
-                if (onLine && (m_tool == ToolSelect || m_tool == ToolMove
+                if (m_showVolLines && onLine && (m_tool == ToolSelect || m_tool == ToolMove
                                || m_tool == ToolEnvelope)) {
                     m_envPending = true;
                     m_volRow = vrow;
@@ -773,13 +773,14 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
     // Tooltip dB: sobre a linha de volume/envelope de uma faixa de áudio,
     // mostra o valor em dB sob o cursor. Throttle: só recalcula se o mouse
     // mudou de faixa ou moveu >= 4px. Como a linha da faixa é sempre
-    // visível, o tooltip acompanha; fora dela só com a tecla V.
-    if (m_dragMode == None && !(e->buttons() & Qt::LeftButton)) {
+    // Tooltip dB: só aparece quando a linha está visível (Shift+V) e o
+    // cursor está sobre ela.
+    if (m_dragMode == None && !(e->buttons() & Qt::LeftButton) && m_showVolLines) {
         const QPoint& at = e->pos();
         int vrow;
         bool overVol = at.x() >= kHeaderW && at.y() >= kRulerH
             && volRowAt(at, vrow) >= 0;
-        if (overVol && !m_showVolLines) {
+        if (overVol) {
             int r2;
             bool a2;
             const bool overClip = rowFromY(at.y(), r2, a2)
@@ -1092,16 +1093,12 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
         bool overClip = false;
         if (rowFromY(e->pos().y(), r2, a2) && clipAt(r2, a2, xToTime(e->pos().x())) != nullptr)
             overClip = true;
-        if (!overClip) {
-            // A linha da faixa é sempre visível, então o cursor de ajuste
-            // aparece sobre ela; fora da linha, só com a tecla V.
-            bool onLine = true;
-            if (!m_showVolLines) {
-                const Track& ctr = m_project->audioTracks[vrow];
-                onLine = std::abs(e->pos().y() - trackVolLineYAt(vrow,
+        if (!overClip && m_showVolLines) {
+            // Shift+V ativo: o cursor de ajuste aparece sobre a linha.
+            const Track& ctr = m_project->audioTracks[vrow];
+            const bool onLine = std::abs(e->pos().y() - trackVolLineYAt(vrow,
                                   kfValue(ctr.kfVolume, ctr.volume,
                                           xToTime(e->pos().x())))) <= 6;
-            }
             if (onLine) {
                 setCursor(Qt::SizeVerCursor);
                 return;
