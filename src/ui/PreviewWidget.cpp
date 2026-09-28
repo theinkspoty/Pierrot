@@ -613,6 +613,9 @@ public:
             // Re-âncora o tempo de saída no novo playhead.
             m_outFrame =
                 (qint64)std::llround(anchorSec * AudioConformCache::kSampleRate);
+            // Limpa o tail persistente: a posição de costura anterior não é
+            // mais válida (o playhead pulou).
+            m_tailXX.clear();
         }
 
         // Reconstrói as cadeias FX por faixa a cada atualização: evita
@@ -859,7 +862,10 @@ public:
         QVector<SeenWin> seenWin;
         // Última amostra bruta (pós-FX) dos trechos que terminam no meio do
         // chunk, por faixa e índice: alimenta o declick por detecção.
-        QHash<QPair<bool,int>, QHash<int, int32_t>> tailXX;
+        // Seed do tail persistente (across chunks) para que o de-click funcione
+        // no boundary entre chunks — sem isso, o crossfade não dispara e o
+        // corte estoura/popa.
+        QHash<QPair<bool,int>, QHash<int, int32_t>> tailXX = m_tailXX;
         const auto windowKey = [](const Source* s0) {
             return s0->path + QLatin1Char('|') + QString::number(s0->stream);
         };
@@ -1056,6 +1062,10 @@ public:
         // O relógio de saída avança uma "chunk" por leitura — sempre.
         m_outFrame += nFrames;
 
+        // Persiste o tail entre chunks: o próximo readData herda as amostras
+        // de costura para que o de-click funcione no boundary.
+        m_tailXX = tailXX;
+
         // Aplica o FX de cada faixa de áudio e soma os barramentos no master.
         {
             int16_t* o = reinterpret_cast<int16_t*>(data);
@@ -1152,6 +1162,10 @@ private:
     // é recriada por chunk para garantir índices alinhados.)
     QVector<int16_t> m_srcBuf;              // PCM de uma fonte (capacity/2)
     QVector<int16_t> m_winBuf;              // interpolação speed≠1
+    // Tail persistente entre chunks: última amostra pós-FX de cada faixa no
+    // fim do chunk anterior. Alimenta o de-click na costura entre chunks —
+    // sem isso, o crossfade não dispara no boundary e o corte estoura/popa.
+    QHash<QPair<bool,int>, QHash<int, int32_t>> m_tailXX;
 };
 
 
@@ -2372,7 +2386,7 @@ QVector<AudioMixer::SourceInfo> buildWarmSources(
                 si.clipDur = c.dur;
                 si.mediaStart = c.in;
                 si.vol = c.volume;
-                si.pan = 0.0;
+                si.pan = kfValue(tr.kfPan, tr.pan, t);
                 si.trackIndex = ti;
                 si.isAudioTrack = isAudio;
                 si.eqLow = c.eqLow;
