@@ -103,6 +103,7 @@ private:
     void importEdl();
     void newProject();
     void openProject();
+    void reloadProject();
     void showWelcomeWindow();
     bool saveProject();
     bool saveProjectAs();

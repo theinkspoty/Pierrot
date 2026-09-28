@@ -1107,6 +1107,11 @@ void MainWindow::createActions() {
     openAction->setToolTip(tr("Abrir projeto… (Ctrl+O)"));
     connect(openAction, &QAction::triggered, this, &MainWindow::openProject);
 
+    QAction* reloadAction = new QAction(tr("Recarregar"), this);
+    reloadAction->setShortcut(appKey("reload", QKeySequence(Qt::Key_F5)));
+    reloadAction->setToolTip(tr("Recarregar o projeto do disco (F5)"));
+    connect(reloadAction, &QAction::triggered, this, &MainWindow::reloadProject);
+
     m_saveAction = new QAction(tr("Salvar"), this);
     m_saveAction->setShortcut(appKey("save", QKeySequence::Save));
     m_saveAction->setIcon(stdIcon(QStyle::SP_DialogSaveButton));
@@ -1128,6 +1133,7 @@ void MainWindow::createActions() {
     QMenu* fileMenu = menuBar()->addMenu(tr("&Arquivo"));
     fileMenu->addAction(newAction);
     fileMenu->addAction(openAction);
+    fileMenu->addAction(reloadAction);
     fileMenu->addAction(homeAction);
     fileMenu->addAction(m_saveAction);
     fileMenu->addAction(m_saveAsAction);
@@ -2071,6 +2077,15 @@ void MainWindow::openProject() {
         tr("Pierrot (*.Blanc *.ovp);;Todos os arquivos (*)"));
     if (path.isEmpty()) return;
     openProjectFile(path);
+}
+
+// Recarrega o projeto atual do disco (F5). Útil durante o desenvolvimento:
+// edita o .Blanc por fora (ou o app grava algo) e atualiza sem reabrir.
+// Se não houver arquivo salvo, cai no diálogo de Abrir.
+void MainWindow::reloadProject() {
+    if (m_currentFile.isEmpty()) { openProject(); return; }
+    if (!confirmDiscardChanges()) return;
+    openProjectFile(m_currentFile);
 }
 
 // Reabre a janela inicial sem fechar o editor. Se o usuário escolher abrir um
