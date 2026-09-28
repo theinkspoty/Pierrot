@@ -117,8 +117,14 @@ void PlaybackEngine::togglePlay() {
     m_playing = true;
     setFrameInterval();
     if (m_timer) m_timer->start();
+    // Mostra o primeiro frame imediatamente, sem esperar o áudio acordar —
+    // senão o vídeo fica preto por até 2 s na primeira reprodução.
+    onSeek(m_playhead);
     if (m_playBtn) m_playBtn->setText(QStringLiteral("Pausar"));
-    onStartAudio(m_playhead);
+    // Adia o startAudio em 100ms para o frame aparecer antes do áudio
+    // bloquear a UI thread (waitReadyBeforeSink ~300ms).
+    m_delayedAudioT = m_playhead;
+    m_delayedAudioPending = true;
     onStateChanged(true);
 }
 
@@ -193,6 +199,7 @@ void PlaybackEngine::stopPlaybackInternal() {
     m_playRate = 1.0;
     m_awaitingAudio = false;
     m_awaitAudioDeadlineMs = -1;
+    m_delayedAudioPending = false;
     if (m_timer) m_timer->stop();
     if (m_playBtn) m_playBtn->setText(QStringLiteral("Reproduzir"));
     m_currentFrameIndex = -1;
@@ -207,6 +214,14 @@ void PlaybackEngine::tick() {
     if (!m_project) { stopPlaybackInternal(); return; }
     const double fps = projFps(m_project);
     const double dur = m_project->duration();
+
+    // Audio adiado:100ms após o play, dispara o startAudio.
+    if (m_delayedAudioPending && m_playing) {
+        if (m_clock.elapsed() >= 100) {
+            m_delayedAudioPending = false;
+            onStartAudio(m_delayedAudioT);
+        }
+    }
 
     // Tempo esperado pelo relógio de parede…
     const double elapsed = m_clock.elapsed() / 1000.0;
@@ -227,24 +242,28 @@ void PlaybackEngine::tick() {
     const double raw = (m_playRate == 1.0) ? audioClockSec() : -1.0;
 
     // Espera de dispositivo: no início do play o sink pode demorar a começar
-    // a consumir (device "suspend", PulseAudio a acordar). Durante isso, segura
-    // o vídeo no frame inicial e, quando o áudio avança de VERDADE, descarta o
-    // tempo morto — senão a agulha percorre a timeline "no escuro" e o áudio,
-    // ao entrar, puxa a agulha de volta (o "pula uma boa parte das faixas").
+    // a consumir (device "suspend", PulseAudio a acordar). Durante isso, o
+    // vídeo continua decodificando e mostrando frames (sem correção de áudio)
+    // para não deixar a tela preta.
     if (m_awaitingAudio) {
         const bool live = raw > 0.0
             && (m_audioLastRaw < 0.0 || raw > m_audioLastRaw + 1e-6);
         if (!live) {
             if (m_awaitAudioDeadlineMs >= 0
                 && m_clock.elapsed() < m_awaitAudioDeadlineMs) {
-                return; // dispositivo ainda acordando: mantém o frame
+                // Áudio ainda acordando: segue com relógio de parede, sem
+                // correção de áudio — o vídeo decodifica normalmente.
+                t = m_playStart + elapsed * m_playRate;
+            } else {
+                m_awaitAudioDeadlineMs = -1; // timeout: segue no relógio de parede
             }
-            m_awaitAudioDeadlineMs = -1; // timeout: segue no relógio de parede
         }
-        m_awaitingAudio = false;
-        m_clock.restart();
-        m_audioClockOn = false; // re-ancora no áudio real no bloco abaixo
-        t = m_playStart;
+        if (live || m_awaitAudioDeadlineMs < 0) {
+            m_awaitingAudio = false;
+            m_clock.restart();
+            m_audioClockOn = false;
+            t = m_playStart;
+        }
     }
 
     if (raw >= 0.0) {

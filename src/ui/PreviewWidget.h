@@ -206,6 +206,7 @@ protected:
     AudioMixer* m_audioFeed = nullptr;
     QAudioSink* m_audioSink = nullptr;
     QAudioOutput* m_audioOut = nullptr;
+    bool m_audioConformWarmed = false; // true após a primeira reprodução (pula wait no 1º play)
 
     // Decodificação de vídeo em thread própria (não trava a UI na reprodução).
     QThread* m_frameThread = nullptr;

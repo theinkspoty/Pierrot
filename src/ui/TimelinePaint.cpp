@@ -673,6 +673,42 @@ void TimelineWidget::renderScene(QPainter& p) {
             drawTransitionIndicator(p, r, type);
         }
     }
+
+    // Risquinho branco nos cortes: borda entre clipes adjacentes (mesma
+    // faixa, sem sobreposição) — indica onde o clipe foi dividido. Vídeo,
+    // áudio e gravação. Ordena por posição para encontrar cortes mesmo
+    // quando a lista original não está em ordem cronológica.
+    auto drawCutLines = [&](const QVector<Track>& tracks, bool audio) {
+        for (int i = 0; i < (int)tracks.size(); ++i) {
+            const bool vis = audio ? trackVisible(i, true) : trackVisible(i, false);
+            if (!vis) continue;
+            const QVector<Clip>& clips = tracks[i].clips;
+            if (clips.size() < 2) continue;
+            const int y = audio ? rowY(-1, i) : rowY(i, -1);
+            const int rowH = audio ? trackH(i, true) : trackH(i, false);
+            // Ordena por posição para encontrar cortes.
+            QVector<const Clip*> sorted;
+            sorted.reserve(clips.size());
+            for (const Clip& c : clips) sorted.append(&c);
+            std::sort(sorted.begin(), sorted.end(),
+                      [](const Clip* a, const Clip* b) { return a->pos < b->pos; });
+            for (int k = 1; k < (int)sorted.size(); ++k) {
+                const Clip* prev = sorted[k - 1];
+                const Clip* cur = sorted[k];
+                const double prevEnd = prev->pos + prev->dur;
+                if (std::fabs(cur->pos - prevEnd) > 1e-6) continue;
+                const int cx = (int)(H + (cur->pos - m_viewStart) * m_pps);
+                if (cx < H || cx > width()) continue;
+                // Fundo escuro + linha branca = corte visível.
+                p.fillRect(cx - 1, y + 2, 3, rowH - 4, QColor(0, 0, 0, 140));
+                p.setPen(QPen(QColor(255, 255, 255), 1));
+                p.drawLine(cx, y + 2, cx, y + rowH - 2);
+            }
+        }
+    };
+    drawCutLines(m_project->videoTracks, false);
+    drawCutLines(m_project->audioTracks, true);
+
     p.restore();
 
     // Linha/envelope de volume da faixa: oculta por padrão; Shift+V liga/

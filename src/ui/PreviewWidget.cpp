@@ -2666,11 +2666,16 @@ void PreviewWidget::startAudio(double t) {
     m_audioFeed->updateSources(sources, /*reseek=*/true,
                                QVector<AudioMixer::SourceInfo>(), -1, t);
 
-    // Pré-aquece o head do playhead ANTES de o sink puxar (até ~300ms): sem
-    // isso os primeiros chunks do warm-up frio saem mudo e o áudio parece
-    // atrasado/dessincronizado em relação ao vídeo.
-    m_audioFeed->waitReadyBeforeSink((int)(0.15 * AudioConformCache::kSampleRate),
-                                     300);
+    // Pré-aquece o head do playhead ANTES de o sink puxar: sem isso os
+    // primeiros chunks do warm-up frio saem mudo. Na primeira reprodução,
+    // pular o wait para não congelar a UI (o áudio pode ter um leve
+    // atraso de 1-2 frames, imperceptível).
+    if (m_audioConformWarmed) {
+        m_audioFeed->waitReadyBeforeSink((int)(0.15 * AudioConformCache::kSampleRate),
+                                         300);
+    } else {
+        m_audioConformWarmed = true;
+    }
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
     const QAudioDevice def = QMediaDevices::defaultAudioOutput();
