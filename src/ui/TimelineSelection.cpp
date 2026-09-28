@@ -39,7 +39,7 @@ void TimelineWidget::setSecondarySelection(const QStringList& ids) {
 }
 
 bool TimelineWidget::isTrackSelected(int row, bool audio) const {
-    return m_selTracks.contains(TrackSel{row, audio});
+    return m_selTracks.contains(TrackSel{row, audio, false});
 }
 
 void TimelineWidget::setTrackSel(int row, bool audio) {
@@ -49,8 +49,26 @@ void TimelineWidget::setTrackSel(int row, bool audio) {
         emit selectionChanged(QString());
     }
     m_selTracks.clear();
-    m_selTracks.append(TrackSel{row, audio});
-    m_selAnchor = TrackSel{row, audio};
+    m_selTracks.append(TrackSel{row, audio, false});
+    m_selAnchor = TrackSel{row, audio, false};
+    m_hasAnchor = true;
+}
+
+// Seleção na seção de gravação: mesma mecânica da de áudio, com `rec` ligado
+// pra não colidir com uma faixa de áudio de mesmo índice.
+bool TimelineWidget::isRecTrackSelected(int row) const {
+    return m_selTracks.contains(TrackSel{row, true, true});
+}
+
+void TimelineWidget::setRecTrackSel(int row) {
+    if (!m_selected.isEmpty()) {
+        m_selected.clear();
+        m_secondarySelected.clear();
+        emit selectionChanged(QString());
+    }
+    m_selTracks.clear();
+    m_selTracks.append(TrackSel{row, true, true});
+    m_selAnchor = TrackSel{row, true, true};
     m_hasAnchor = true;
 }
 

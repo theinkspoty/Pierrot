@@ -261,6 +261,18 @@ void TimelineWidget::addTrack(bool audio) {
     emit modified();
 }
 
+// Cria uma faixa na seção de gravação (vermelha) e a seleciona.
+void TimelineWidget::addRecordingTrack() {
+    if (!m_project) return;
+    emit editStart();
+    m_project->addRecordingTrack();
+    setRecTrackSel((int)m_project->recordingTracks.size() - 1);
+    invalidateScene();
+    updateScrollRanges();
+    refreshView();
+    emit modified();
+}
+
 // Adiciona uma mídia do pool no playhead (fallback para o arrastar/soltar):
 // vídeo na primeira faixa de vídeo desbloqueada, com áudio vinculado quando a
 // mídia tiver ambas as trilhas.
@@ -617,6 +629,8 @@ void TimelineWidget::updateScrollRanges() {
         rowsH += trackVisible(i, false) ? trackH(i, false) : 0;
     for (int i = 0; i < (int)m_project->audioTracks.size(); ++i)
         rowsH += trackVisible(i, true) ? trackH(i, true) : 0;
+    for (int i = 0; i < (int)m_project->recordingTracks.size(); ++i)
+        rowsH += recTrackVisible(i) ? recTrackH(i) : 0;
     int foldersH = folderStripsAboveVideo(-1) * kFolderH;
     foldersH += folderStripsAboveAudio((int)m_project->audioTracks.size() - 1) * kFolderH;
     const int totalH = kRulerH + rowsH + foldersH + 20;
@@ -1706,6 +1720,7 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
     } else {
         QAction* addV = menu.addAction(tr("Adicionar faixa de vídeo"));
         QAction* addA = menu.addAction(tr("Adicionar faixa de áudio"));
+        QAction* addR = menu.addAction(tr("Adicionar faixa de gravação"));
         QAction* newText = menu.addAction(tr("Novo texto…"));
         QAction* newMesa = menu.addAction(tr("Nova Mesa…"));
         QAction* paste = nullptr;
@@ -1777,6 +1792,7 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         act = menu.exec(e->globalPos());
         if (act == addV) addTrack(false);
         else if (act == addA) addTrack(true);
+        else if (act == addR) addRecordingTrack();
         else if (act == newText) {
             const double tt = std::max(0.0, snapTime(xToTime(e->pos().x())));
             addTextClipAt(vrow, tt);

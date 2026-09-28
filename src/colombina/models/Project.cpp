@@ -650,6 +650,11 @@ QJsonObject Project::toJson() const {
     for (const Track& t : audioTracks) at.append(trackToJson(t));
     o["audioTracks"] = at;
 
+    // Faixas de gravação (seção vermelha). Ausente em .Blanc antigos => vazio.
+    QJsonArray rt;
+    for (const Track& t : recordingTracks) rt.append(trackToJson(t));
+    o["recordingTracks"] = rt;
+
     QJsonArray mks;
     for (const Marker& m : markers) mks.append(markerToJson(m));
     o["markers"] = mks;
@@ -698,6 +703,7 @@ void Project::fromJson(const QJsonObject& o) {
     media.clear();
     videoTracks.clear();
     audioTracks.clear();
+    recordingTracks.clear();
     trackGroups.clear();
     textResources.clear();
     mesas.clear();
@@ -710,6 +716,15 @@ void Project::fromJson(const QJsonObject& o) {
 
     const QJsonArray ata = o["audioTracks"].toArray();
     for (const QJsonValue& v : ata) audioTracks.append(trackFromJson(v.toObject(), true));
+
+    const QJsonArray rta = o["recordingTracks"].toArray();
+    for (const QJsonValue& v : rta) {
+        Track t = trackFromJson(v.toObject(), true);
+        // A seção é vermelha por definição: garante o tom em .Blanc gravados
+        // antes da faixa existir no modelo (ou sem `color`).
+        if (!t.color.isValid()) t.color = recordingTrackColor();
+        recordingTracks.append(t);
+    }
 
     markers.clear();
     const QJsonArray mka = o["markers"].toArray();

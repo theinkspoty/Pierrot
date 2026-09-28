@@ -601,6 +601,11 @@ inline QString newId() {
     return QUuid::createUuid().toString(QUuid::WithoutBraces);
 }
 
+// Vermelho da seção/faixa de gravação. Definido aqui (e não na timeline) pra
+// que o `Track::color` criado no modelo e a pintura da timeline usem o mesmo
+// valor.
+inline QColor recordingTrackColor() { return QColor(198, 62, 58); }
+
 class Project {
 public:
     QString name;
@@ -624,6 +629,11 @@ public:
     QVector<MediaItem> media;
     QVector<Track> videoTracks;
     QVector<Track> audioTracks;
+    // Faixas de gravação: seção própria, pintada de vermelho, abaixo das de
+    // áudio. É onde o material capturado cai. Arrastar a faixa pra cima, pra
+    // dentro da seção de áudio, promove-a: ela vira uma faixa de áudio comum
+    // e sai daqui (ver TimelineWidget::promoteRecordingTrack).
+    QVector<Track> recordingTracks;
     QVector<Marker> markers;
     QVector<TrackGroup> trackGroups;
     // Recursos de texto compartilhados (cópias unificadas de texto).
@@ -716,6 +726,39 @@ public:
                 m.trackIds.removeAll(tid);
     }
 
+    // Cria uma faixa de gravação (seção vermelha). É a última faixa criada,
+    // então a numeração usa o total, não o índice.
+    void addRecordingTrack() {
+        Track t;
+        t.id = newId();
+        t.audio = true;
+        t.name = QString("Gravação %1").arg(recordingTracks.size() + 1);
+        t.color = recordingTrackColor();
+        recordingTracks.append(t);
+    }
+
+    void removeRecordingTrack(int index) {
+        if (index < 0 || index >= recordingTracks.size()) return;
+        const QString tid = recordingTracks[index].id;
+        recordingTracks.remove(index);
+        if (!tid.isEmpty())
+            for (MesaComposition& m : mesas)
+                m.trackIds.removeAll(tid);
+    }
+
+    // Promove a faixa de gravação `index` para a seção de áudio, na posição
+    // `audioIndex` (ou no fim, se < 0). É o que acontece quando o usuário
+    // arrasta a faixa vermelha pra cima: ela deixa de ser de gravação e vira
+    // uma faixa de áudio comum, mantendo id, nome, clipes e envelopes.
+    void promoteRecordingTrack(int index, int audioIndex = -1) {
+        if (index < 0 || index >= recordingTracks.size()) return;
+        const Track t = recordingTracks[index];
+        recordingTracks.removeAt(index);
+        if (audioIndex < 0 || audioIndex > audioTracks.size())
+            audioIndex = audioTracks.size();
+        audioTracks.insert(audioIndex, t);
+    }
+
     const MediaItem* findMedia(const QString& id) const {
         for (const auto& m : media)
             if (m.id == id) return &m;
@@ -728,6 +771,9 @@ public:
             for (const auto& c : t.clips)
                 d = std::max(d, c.pos + c.dur);
         for (const auto& t : audioTracks)
+            for (const auto& c : t.clips)
+                d = std::max(d, c.pos + c.dur);
+        for (const auto& t : recordingTracks)
             for (const auto& c : t.clips)
                 d = std::max(d, c.pos + c.dur);
         return d;

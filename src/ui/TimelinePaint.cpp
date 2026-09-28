@@ -42,6 +42,13 @@ enum Tool {
     ToolRipple = 5, ToolRolling = 6, ToolSlip = 7, ToolSlide = 8, ToolRateStretch = 9
 };
 
+// Vermelho da seção de gravação (divisória e destaque de seleção). O
+// `Track::color` das faixas de gravação já vem vermelho do modelo.
+QColor recColor() { return recordingTrackColor(); }
+
+// Qual das três seções da timeline um row/faixa pertence.
+enum class Zone { Video, Audio, Rec };
+
 QString fmtRuler(double t) {
     const int total = (int)std::floor(t);
     return QString("%1:%2")
@@ -163,6 +170,51 @@ bool TimelineWidget::rowFromY(int y, int& row, bool& audio) const {
         rem -= (above - below) * kFolderH;
         const int h = trackH(i, true);
         if (rem < h) { row = i; audio = true; return true; }
+        rem -= h;
+    }
+    return false;
+}
+
+// ── Seção de gravação (vermelha) ──────────────────────────────────────
+// Fica abaixo das faixas de áudio. A altura padrão acompanha a de áudio: a
+// faixa vai receber os clipes gravados, que têm barra de volume como os
+// outros clipes de áudio.
+
+int TimelineWidget::recTrackH(int idx) const {
+    if (!m_project) return kAudioRowH;
+    if (idx < 0 || idx >= (int)m_project->recordingTracks.size()) return kAudioRowH;
+    if (m_project->recordingTracks[idx].collapsed) return kMinRowH;
+    const int h = m_project->recordingTracks[idx].height;
+    if (h >= kMinRowH) return std::min(h, kMaxRowH);
+    return kAudioRowH;
+}
+
+bool TimelineWidget::recTrackVisible(int idx) const {
+    if (!m_project) return true;
+    if (idx < 0 || idx >= (int)m_project->recordingTracks.size()) return true;
+    const QString& gid = m_project->recordingTracks[idx].groupId;
+    if (gid.isEmpty()) return true;
+    const TrackGroup* g = m_project->findGroup(gid);
+    return g ? !g->collapsed : true;
+}
+
+int TimelineWidget::recRowY(int idx) const {
+    // rowY(-1, 0) = fundo da seção de vídeo, já contando a barra de pasta
+    // que possa abrir a seção de áudio. Gravação é sempre a última seção.
+    int y = rowY(-1, 0) + 2; // +2: barra divisória da seção
+    for (int i = 0; i < idx; ++i)
+        if (recTrackVisible(i)) y += recTrackH(i);
+    return y;
+}
+
+bool TimelineWidget::recRowFromY(int y, int& row) const {
+    if (!m_project) return false;
+    int rem = y - recRowY(0);
+    if (rem < 0) return false; // acima da seção: é vídeo/áudio
+    for (int i = 0; i < (int)m_project->recordingTracks.size(); ++i) {
+        if (!recTrackVisible(i)) continue;
+        const int h = recTrackH(i);
+        if (rem < h) { row = i; return true; }
         rem -= h;
     }
     return false;
@@ -532,6 +584,36 @@ void TimelineWidget::renderScene(QPainter& p) {
         drawTrackHeader(p, y, rowH, m_project->audioTracks[i], i, sel);
     }
 
+    // ── Seção de gravação ────────────────────────────────────────────
+    // Faixa vermelha: é onde o material capturado cai. O fundo é o mesmo
+    // escuro das outras seções (a cor vem do header e da barra de volume,
+    // como nas faixas normais) — o que marca a seção como "gravação" é o
+    // header vermelho e a divisória.
+    if (!m_project->recordingTracks.isEmpty()) {
+        int top = recRowY(0);
+        int lastBottom = 0;
+        for (int i = 0; i < (int)m_project->recordingTracks.size(); ++i) {
+            if (!recTrackVisible(i)) continue;
+            const int y = recRowY(i);
+            const int rowH = recTrackH(i);
+            lastBottom = qMax(lastBottom, y + rowH);
+            const bool sel = isRecTrackSelected(i);
+            p.fillRect(0, y, width(), rowH, sel ? QColor(46, 40, 44)
+                                                : ((i % 2) ? themeColors().trackBg
+                                                           : themeColors().trackBgAlt));
+            if (sel) {
+                p.fillRect(0, y, 4, rowH, recColor());
+                p.setPen(QPen(recColor(), 1));
+                p.drawRect(0, y, width() - 1, rowH - 1);
+            }
+            p.setPen(themeColors().trackBorder);
+            p.drawLine(0, y + rowH, width(), y + rowH);
+            drawTrackHeader(p, y, rowH, m_project->recordingTracks[i], i, sel);
+        }
+        // Divisória no topo da seção, separando-a das faixas de áudio.
+        p.fillRect(0, top - 2, width(), 2, recColor().darker(160));
+    }
+
     for (const TrackGroup& g : m_project->trackGroups)
         drawFolderStrip(p, g);
 
@@ -539,10 +621,13 @@ void TimelineWidget::renderScene(QPainter& p) {
 
     p.save();
     p.setClipRect(QRect(H, R, width() - H, height() - R));
-    auto drawClips = [&](const QVector<Track>& tracks, bool audio) {
+    auto drawClips = [&](const QVector<Track>& tracks, Zone z) {
+        const bool audio = (z != Zone::Video);
         QVector<QPair<int, const Clip*>> order;
         for (int i = 0; i < (int)tracks.size(); ++i) {
-            if (!trackVisible(i, audio)) continue;
+            const bool vis = (z == Zone::Rec) ? recTrackVisible(i)
+                                             : trackVisible(i, z == Zone::Audio);
+            if (!vis) continue;
             for (const Clip& c : tracks[i].clips)
                 order.append(QPair<int, const Clip*>(i, &c));
         }
@@ -555,8 +640,10 @@ void TimelineWidget::renderScene(QPainter& p) {
             const int i = it.first;
             const Clip& c = *it.second;
             const Track& tr = tracks[i];
-            const int y = audio ? rowY(-1, i) : rowY(i, -1);
-            const int rowH = audio ? trackH(i, true) : trackH(i, false);
+            const int y = (z == Zone::Rec) ? recRowY(i)
+                        : (z == Zone::Audio ? rowY(-1, i) : rowY(i, -1));
+            const int rowH = (z == Zone::Rec) ? recTrackH(i)
+                                              : trackH(i, z == Zone::Audio);
             const int cx = (int)(H + (c.pos - m_viewStart) * m_pps);
             const int cw = std::max(2, (int)(c.dur * m_pps));
             QRect r(cx + 1, y + 4, cw - 2, rowH - 8);
@@ -565,8 +652,9 @@ void TimelineWidget::renderScene(QPainter& p) {
             drawClip(p, r, c, tr, i, audio);
         }
     };
-    drawClips(m_project->videoTracks, false);
-    drawClips(m_project->audioTracks, true);
+    drawClips(m_project->videoTracks, Zone::Video);
+    drawClips(m_project->audioTracks, Zone::Audio);
+    drawClips(m_project->recordingTracks, Zone::Rec);
 
     for (int i = 0; i < (int)m_project->videoTracks.size(); ++i) {
         if (!trackVisible(i, false)) continue;

@@ -87,6 +87,7 @@ public:
     void showTrackPresetMenu();
 
     void addTrack(bool audio);
+    void addRecordingTrack();
     void updateScrollRanges();
     void invalidateScene();
     void nudgeSelected(int dir);
@@ -190,7 +191,11 @@ private:
     struct TrackSel {
         int row = 0;
         bool audio = false;
-        bool operator==(const TrackSel& o) const { return row == o.row && audio == o.audio; }
+        // TRUE = a faixa está na seção de gravação (vermelha), não na de áudio.
+        bool rec = false;
+        bool operator==(const TrackSel& o) const {
+            return row == o.row && audio == o.audio && rec == o.rec;
+        }
     };
 
     double timeToX(double t) const;
@@ -199,6 +204,15 @@ private:
     void applyTrackPreset(int preset);
     int rowY(int videoIdx, int audioIdx) const;
     bool rowFromY(int y, int& row, bool& audio) const;
+    // ── Seção de gravação (vermelha, abaixo das de áudio) ───────────────
+    // Endereçada à parte do par (row, audio): gravação tem seção própria e o
+    // pipeline normal de clipes não a alcança.
+    int recTrackH(int idx) const;
+    int recRowY(int idx) const;
+    bool recRowFromY(int y, int& row) const;
+    bool recTrackVisible(int idx) const;
+    bool isRecTrackSelected(int row) const;
+    void setRecTrackSel(int row);
     int resizeHandleAt(const QPoint& pos, int& row, bool& audio) const;
     Clip* clipAt(int row, bool audio, double t) const;
     Track* trackOf(Clip* c);
@@ -391,6 +405,9 @@ private:
     // Arrasto de faixa (reordenar ou soltar em pasta).
     int m_dragTrackRow = -1;
     bool m_dragTrackAudio = false;
+    // Arrasto iniciado numa faixa da seção de gravação. Soltar na seção de
+    // áudio promove a faixa (vira áudio comum) em vez de só reordenar.
+    bool m_dragTrackRec = false;
     bool m_trackDragActive = false;
     int m_dropRow = -1;
     bool m_dropAudio = false;

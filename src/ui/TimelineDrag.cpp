@@ -215,6 +215,7 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
     m_volPending = false;
     m_envPending = false;
     m_ctrlPending = false;
+    m_dragTrackRec = false;
     m_ctrlClipId.clear();
     m_ctrlCanMove = false;
 
@@ -445,6 +446,7 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
             m_dragGroupId = gid;
             m_dragTrackRow = -1;
             m_trackDragActive = false;
+            m_dragTrackRec = false;
             m_dropRow = -1;
             m_dropAudio = false;
             m_dropGroup.clear();
@@ -464,6 +466,23 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
             // Prepara o arrasto de faixa (mover acima/abaixo ou soltar em pasta).
             m_dragTrackRow = srow;
             m_dragTrackAudio = saudio;
+            m_dragTrackRec = false;
+            m_trackDragActive = false;
+            m_dropRow = -1;
+            m_dropAudio = false;
+            m_dropGroup.clear();
+            m_dragStart = e->pos();
+            return;
+        }
+        // Cabeçalho da seção de gravação: arrastar pra cima promove a faixa
+        // pra uma faixa de áudio comum (ver finishTrackDrag).
+        int rrow;
+        if (recRowFromY(y, rrow)) {
+            setRecTrackSel(rrow);
+            refreshView();
+            m_dragTrackRow = rrow;
+            m_dragTrackAudio = true;
+            m_dragTrackRec = true;
             m_trackDragActive = false;
             m_dropRow = -1;
             m_dropAudio = false;
@@ -1829,6 +1848,28 @@ void TimelineWidget::finishTrackDrag() {
     if (m_dragTrackRow < 0) return;
     const int from = m_dragTrackRow;
     const bool audio = m_dragTrackAudio;
+
+    // Faixa de gravação solta na seção de áudio: promove. Ela vira uma faixa
+    // de áudio comum, mantendo id, nome, clipes e envelopes, e some da seção
+    // vermelha. Solta em outro lugar (ou em pasta) não promove.
+    if (m_dragTrackRec) {
+        if (m_dropRow >= 0 && m_dropAudio) {
+            emit editStart();
+            m_project->promoteRecordingTrack(from, m_dropRow);
+            clearTrackSelection();
+            updateScrollRanges();
+            invalidateScene();
+            refreshView();
+            emit modified();
+        } else {
+            clearTrackSelection();
+            refreshView();
+        }
+        m_dragTrackRow = -1;
+        m_dragTrackRec = false;
+        return;
+    }
+
     if (!m_dropGroup.isEmpty()) {
         // Soltou sobre uma pasta: entra no grupo.
         if (m_project->findGroup(m_dropGroup)) {

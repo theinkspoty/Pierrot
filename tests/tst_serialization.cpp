@@ -203,6 +203,9 @@ private slots:
     void roundTripIsLossless();
     void roundTripPreservesKeyFields();
     void legacyProjectWithoutMesaPosAbsShiftsCamera();
+    void recordingTracksRoundTrip();
+    void legacyProjectWithoutRecordingTracksLoads();
+    void promoteRecordingTrackMovesItToAudio();
 };
 
 void TestSerialization::roundTripIsLossless() {
@@ -283,6 +286,94 @@ void TestSerialization::legacyProjectWithoutMesaPosAbsShiftsCamera() {
     QCOMPARE(p.mesas.size(), 1);
     QVERIFY(qAbs(p.mesas[0].camX - 320.0) < 1e-9);
     QVERIFY(qAbs(p.mesas[0].camY - 180.0) < 1e-9);
+}
+
+void TestSerialization::recordingTracksRoundTrip() {
+    Project p;
+    p.addTrack(true);
+    p.addTrack(true);
+    p.addRecordingTrack();
+    p.addRecordingTrack();
+    QCOMPARE(p.recordingTracks.size(), 2);
+
+    // A faixa de gravação nasce vermelha e com `audio` ligado (o pipeline de
+    // áudio — volume, EQ, export — a trata como faixa de áudio).
+    QVERIFY(p.recordingTracks[0].audio);
+    QCOMPARE(p.recordingTracks[0].color, recordingTrackColor());
+    QCOMPARE(p.recordingTracks[0].name, QStringLiteral("Gravação 1"));
+    QCOMPARE(p.recordingTracks[1].name, QStringLiteral("Gravação 2"));
+
+    // Um clipe gravado, com envelope de volume: tem de sobreviver ao round-trip.
+    Clip c;
+    c.id = QStringLiteral("rec1");
+    c.pos = 2.5;
+    c.dur = 4.0;
+    c.volume = 0.6;
+    c.kfVolume.append(Keyframe{0.0, 0.3});
+    c.kfVolume.append(Keyframe{4.0, 1.2});
+    p.recordingTracks[0].clips.append(c);
+    p.recordingTracks[0].kfVolume.append(Keyframe{0.0, 0.9});
+
+    Project q;
+    q.fromJson(p.toJson());
+    QCOMPARE(q.recordingTracks.size(), 2);
+    QCOMPARE(q.recordingTracks[0].id, p.recordingTracks[0].id);
+    QCOMPARE(q.recordingTracks[0].name, QStringLiteral("Gravação 1"));
+    QCOMPARE(q.recordingTracks[0].color, recordingTrackColor());
+    QCOMPARE(q.recordingTracks[0].clips.size(), 1);
+    QCOMPARE(q.recordingTracks[0].clips[0].id, QStringLiteral("rec1"));
+    QVERIFY(std::fabs(q.recordingTracks[0].clips[0].volume - 0.6) < 1e-9);
+    QCOMPARE(q.recordingTracks[0].clips[0].kfVolume.size(), 2);
+    QCOMPARE(q.recordingTracks[0].kfVolume.size(), 1);
+    QCOMPARE(q.recordingTracks[1].clips.size(), 0);
+
+    // As faixas de áudio e de gravação são listas independentes: uma não vaza
+    // pra outra no round-trip.
+    QCOMPARE(q.audioTracks.size(), 2);
+    QCOMPARE(q.videoTracks.size(), 0);
+}
+
+void TestSerialization::legacyProjectWithoutRecordingTracksLoads() {
+    // .Blanc gravado antes da seção existir: sem a chave => lista vazia, sem erro.
+    QJsonObject o;
+    o["name"] = QStringLiteral("legado");
+    o["width"] = 640;
+    o["height"] = 360;
+    o["fps"] = 30;
+    Project p;
+    p.fromJson(o);
+    QCOMPARE(p.recordingTracks.size(), 0);
+    QVERIFY(p.toJson()["recordingTracks"].isArray());
+    QCOMPARE(p.toJson()["recordingTracks"].toArray().size(), 0);
+}
+
+void TestSerialization::promoteRecordingTrackMovesItToAudio() {
+    Project p;
+    p.addTrack(true);
+    p.addTrack(true);
+    p.addRecordingTrack();
+    p.addRecordingTrack();
+
+    Clip c;
+    c.id = QStringLiteral("k9");
+    c.pos = 1.0;
+    c.dur = 3.0;
+    p.recordingTracks[1].clips.append(c);
+    const QString promotedId = p.recordingTracks[1].id;
+
+    // Solta no meio das faixas de áudio (índice 1).
+    p.promoteRecordingTrack(1, 1);
+
+    QCOMPARE(p.recordingTracks.size(), 1);
+    QCOMPARE(p.audioTracks.size(), 3);
+    QCOMPARE(p.audioTracks[1].id, promotedId);
+    // Clipes e identidade sobrevivem à promoção.
+    QCOMPARE(p.audioTracks[1].clips.size(), 1);
+    QCOMPARE(p.audioTracks[1].clips[0].id, QStringLiteral("k9"));
+    // Índice fora de faixa não promove nada.
+    p.promoteRecordingTrack(99, 0);
+    QCOMPARE(p.recordingTracks.size(), 1);
+    QCOMPARE(p.audioTracks.size(), 3);
 }
 
 QTEST_APPLESS_MAIN(TestSerialization)
