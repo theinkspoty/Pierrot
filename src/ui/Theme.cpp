@@ -10,113 +10,115 @@
 static ThemeColors s_current;
 
 static ThemeColors makeDarkPalette() {
-    // Estilo Premiere Pro (escuro): superfícies quase pretas e neutras
-    // (#1E1E1F painéis / #0F0F11 timeline), accent ciano #00A3E0 e playhead
-    // ciano claro. Mais escuro e neutro que a paleta anterior.
+    // Fidelidade Adobe Premiere Pro (tema escuro padrão), medida de
+    // screenshots do app: chrome 100% neutro (#232323 painéis, #121212 área
+    // de trilhos), texto #E1E1E1, e UM único acento — o azul Adobe #2680EB —
+    // reservado para seleção, foco, playhead e valores numéricos. A cor vive
+    // no conteúdo (clipes, waveforms, labels), nunca no chrome.
     ThemeColors c;
-    c.window            = QColor(30, 30, 32);
-    c.windowText        = QColor(208, 208, 212);
-    c.base              = QColor(17, 17, 19);
-    c.alternateBase     = QColor(22, 22, 24);
-    c.text              = QColor(202, 202, 206);
-    c.button            = QColor(54, 55, 58);
-    c.buttonText        = QColor(230, 230, 233);
+    c.window            = QColor(0x23, 0x23, 0x23);
+    c.windowText        = QColor(0xE1, 0xE1, 0xE1);
+    c.base              = QColor(0x1B, 0x1B, 0x1B);
+    c.alternateBase     = QColor(0x20, 0x20, 0x20);
+    c.text              = QColor(0xE1, 0xE1, 0xE1);
+    c.button            = QColor(0x38, 0x38, 0x38);
+    c.buttonText        = QColor(0xE1, 0xE1, 0xE1);
     c.brightText        = Qt::red;
-    c.link              = QColor(0, 163, 224);
-    c.highlight         = QColor(0, 140, 195);
+    c.link              = QColor(0x26, 0x80, 0xEB);
+    c.highlight         = QColor(0x26, 0x80, 0xEB);
     c.highlightedText   = Qt::white;
-    c.toolTipBase       = QColor(36, 37, 40);
-    c.toolTipText       = QColor(232, 232, 232);
-    c.placeholderText   = QColor(116, 116, 122);
-    c.disabledText      = QColor(86, 86, 92);
-    c.disabledWindowText= QColor(86, 86, 92);
+    c.toolTipBase       = QColor(0x2A, 0x2A, 0x2A);
+    c.toolTipText       = QColor(0xE1, 0xE1, 0xE1);
+    c.placeholderText   = QColor(0x7A, 0x7A, 0x7A);
+    c.disabledText      = QColor(0x5C, 0x5C, 0x5C);
+    c.disabledWindowText= QColor(0x5C, 0x5C, 0x5C);
 
-    c.monitorBg         = QColor(14, 14, 16);
-    c.canvasBg          = QColor(7, 7, 8);
-    c.canvasBorder      = QColor(54, 54, 60);
-    c.monitorLabel      = QColor(148, 148, 156);
+    c.monitorBg         = QColor(0x16, 0x16, 0x16);
+    c.canvasBg          = QColor(0x00, 0x00, 0x00);
+    c.canvasBorder      = QColor(0x0F, 0x0F, 0x0F);
+    c.monitorLabel      = QColor(0x9A, 0x9A, 0x9A);
 
-    c.timelineBg        = QColor(15, 15, 17);
-    c.timelineGrid      = QColor(44, 44, 48);
-    c.rulerBg           = QColor(19, 19, 21);
-    c.rulerText         = QColor(146, 148, 154);
-    c.rulerTick         = QColor(44, 44, 50);
-    c.rulerTickMajor    = QColor(74, 74, 80);
-    c.trackBg           = QColor(32, 32, 34);
-    c.trackBgAlt        = QColor(27, 27, 29);
-    c.trackBorder       = QColor(45, 45, 49);
-    c.trackLabelBg      = QColor(24, 24, 26);
-    c.trackLabelText    = QColor(148, 148, 156);
-    c.clipBg            = QColor(50, 76, 108);
-    c.clipBorder        = QColor(62, 92, 128);
-    c.clipBorderSelect  = QColor(0, 163, 224);
-    c.clipBorderSecondary = QColor(0, 163, 224, 120);
-    c.clipText          = QColor(228, 228, 233);
-    c.clipThumbBorder   = QColor(29, 29, 34);
-    c.playhead          = QColor(150, 214, 252);
-    c.playheadHandle    = QColor(190, 232, 255);
-    c.selectionRect     = QColor(0, 150, 220, 60);
-    c.selectionFill     = QColor(0, 150, 220, 28);
+    c.timelineBg        = QColor(0x12, 0x12, 0x12);
+    c.timelineGrid      = QColor(0x23, 0x23, 0x23);
+    c.rulerBg           = QColor(0x1A, 0x1A, 0x1A);
+    c.rulerText         = QColor(0x9A, 0x9A, 0x9A);
+    c.rulerTick         = QColor(0x3A, 0x3A, 0x3A);
+    c.rulerTickMajor    = QColor(0x55, 0x55, 0x55);
+    c.trackBg           = QColor(0x16, 0x16, 0x16);
+    c.trackBgAlt        = QColor(0x13, 0x13, 0x13);
+    c.trackBorder       = QColor(0x0A, 0x0A, 0x0A);
+    c.trackLabelBg      = QColor(0x1E, 0x1E, 0x1E);
+    c.trackLabelText    = QColor(0xD5, 0xD5, 0xD5);
+    c.clipBg            = QColor(0x4A, 0x68, 0x99);   // azul-aço do clipe de vídeo
+    c.clipBorder        = QColor(0x2E, 0x45, 0x68);
+    c.clipBorderSelect  = QColor(0xF5, 0xF5, 0xF5);   // seleção = borda branca
+    c.clipBorderSecondary = QColor(0xF5, 0xF5, 0xF5, 120);
+    c.clipText          = QColor(0xEA, 0xEA, 0xEA);
+    c.clipThumbBorder   = QColor(0x14, 0x14, 0x14);
+    c.playhead          = QColor(0x26, 0x80, 0xEB);   // CTI azul Adobe
+    c.playheadHandle    = QColor(0x26, 0x80, 0xEB);
+    c.selectionRect     = QColor(0x26, 0x80, 0xEB, 60);
+    c.selectionFill     = QColor(0x26, 0x80, 0xEB, 28);
 
-    c.transportBg       = QColor(23, 23, 25);
-    c.transportBorder   = QColor(38, 40, 44);
+    c.transportBg       = QColor(0x1E, 0x1E, 0x1E);
+    c.transportBorder   = QColor(0x0F, 0x0F, 0x0F);
 
-    c.dockTitleBg       = QColor(38, 38, 40);
-    c.dockTitleBgHover  = QColor(43, 44, 47);
-    c.dockTitleText     = QColor(158, 160, 166);
-    c.dockBorder        = QColor(14, 15, 17);
-    c.dockCloseHover    = QColor(120, 34, 34);
+    c.dockTitleBg       = QColor(0x1E, 0x1E, 0x1E);
+    c.dockTitleBgHover  = QColor(0x26, 0x26, 0x26);
+    c.dockTitleText     = QColor(0xC8, 0xC8, 0xC8);
+    c.dockBorder        = QColor(0x0C, 0x0C, 0x0C);
+    c.dockCloseHover    = QColor(0xE8, 0x11, 0x23);   // vermelho estilo Adobe/SO
 
-    c.inputBg           = QColor(26, 27, 29);
-    c.inputBorder       = QColor(60, 61, 66);
-    c.inputFocus        = QColor(0, 163, 224);
-    c.spinText          = QColor(150, 215, 255);
+    c.inputBg           = QColor(0x1B, 0x1B, 0x1B);
+    c.inputBorder       = QColor(0x3A, 0x3A, 0x3A);
+    c.inputFocus        = QColor(0x26, 0x80, 0xEB);
+    c.spinText          = QColor(0x4D, 0xA3, 0xFF);   // valores numéricos azuis
 
-    c.btnPrimary        = QColor(0, 112, 176);
-    c.btnPrimaryText    = QColor(245, 247, 250);
-    c.btnHover          = QColor(54, 57, 64);
-    c.btnActive         = QColor(0, 155, 225);
+    c.btnPrimary        = QColor(0x26, 0x80, 0xEB);
+    c.btnPrimaryText    = QColor(0xFF, 0xFF, 0xFF);
+    c.btnHover          = QColor(0x3E, 0x3E, 0x3E);
+    c.btnActive         = QColor(0x26, 0x80, 0xEB);
 
-    c.accent            = QColor(0, 163, 224);
-    c.accentGold        = QColor(255, 179, 64);
-    c.iconNormal        = QColor(158, 160, 168);
-    c.iconMuted         = QColor(100, 104, 112);
+    c.accent            = QColor(0x26, 0x80, 0xEB);
+    c.accentGold        = QColor(0xFF, 0xB3, 0x40);
+    c.iconNormal        = QColor(0xB8, 0xB8, 0xB8);
+    c.iconMuted         = QColor(0x6E, 0x6E, 0x6E);
 
-    c.tabBg             = QColor(36, 37, 40);
-    c.tabSelected       = QColor(22, 23, 25);
-    c.tabBorder         = QColor(0, 163, 224);
+    c.tabBg             = QColor(0x1A, 0x1A, 0x1A);
+    c.tabSelected       = QColor(0x26, 0x26, 0x26);
+    c.tabBorder         = QColor(0x26, 0x80, 0xEB);
 
-    c.scrollbarBg       = QColor(17, 17, 20);
-    c.scrollbarHandle   = QColor(72, 74, 80);
-    c.scrollbarHover    = QColor(96, 98, 104);
+    c.scrollbarBg       = QColor(0x12, 0x12, 0x12);
+    c.scrollbarHandle   = QColor(0x4A, 0x4A, 0x4A);
+    c.scrollbarHover    = QColor(0x60, 0x60, 0x60);
 
-    c.welcomeBgTop      = QColor(26, 28, 34);
-    c.welcomeBgBottom   = QColor(12, 13, 16);
-    c.welcomeBtnGradStart = QColor(0, 112, 176);
-    c.welcomeBtnGradEnd   = QColor(0, 160, 228);
+    c.welcomeBgTop      = QColor(0x1E, 0x1E, 0x20);
+    c.welcomeBgBottom   = QColor(0x12, 0x12, 0x14);
+    c.welcomeBtnGradStart = QColor(0x14, 0x73, 0xE6);
+    c.welcomeBtnGradEnd   = QColor(0x26, 0x8C, 0xF5);
 
-    c.expressBg         = QColor(36, 37, 40);
-    c.expressCardBg     = QColor(46, 48, 52);
-    c.expressDescText   = QColor(110, 114, 122);
-    c.effectsSearchBg   = QColor(23, 24, 26);
-    c.effectsTreeBg     = QColor(28, 29, 32);
-    c.effectsPreviewBg  = QColor(15, 16, 19);
+    c.expressBg         = QColor(0x23, 0x23, 0x23);
+    c.expressCardBg     = QColor(0x2A, 0x2A, 0x2A);
+    c.expressDescText   = QColor(0x9A, 0x9A, 0x9A);
+    c.effectsSearchBg   = QColor(0x1B, 0x1B, 0x1B);
+    c.effectsTreeBg     = QColor(0x1E, 0x1E, 0x1E);
+    c.effectsPreviewBg  = QColor(0x12, 0x12, 0x12);
 
-    c.graphBg           = QColor(14, 15, 18);
-    c.graphGrid         = QColor(40, 42, 48);
-    c.graphLine         = QColor(0, 163, 224);
-    c.graphKeyframe     = QColor(196, 200, 210);
-    c.graphLabel        = QColor(128, 128, 138);
-    c.graphRuler        = QColor(18, 18, 21);
-    c.graphAxis         = QColor(50, 51, 57);
-    c.graphRulerText    = QColor(150, 153, 160);
-    c.graphHandle       = QColor(0, 163, 224);
+    c.graphBg           = QColor(0x16, 0x16, 0x16);
+    c.graphGrid         = QColor(0x26, 0x26, 0x26);
+    c.graphLine         = QColor(0x26, 0x80, 0xEB);
+    c.graphKeyframe     = QColor(0xC4, 0xC8, 0xD2);
+    c.graphLabel        = QColor(0x9A, 0x9A, 0x9A);
+    c.graphRuler        = QColor(0x1A, 0x1A, 0x1A);
+    c.graphAxis         = QColor(0x3A, 0x3A, 0x3A);
+    c.graphRulerText    = QColor(0x96, 0x99, 0xA0);
+    c.graphHandle       = QColor(0x26, 0x80, 0xEB);
 
-    c.pancropBg         = QColor(15, 16, 19);
-    c.pancropRegion     = QColor(0, 163, 224, 60);
-    c.pancropHandle     = QColor(0, 163, 224);
+    c.pancropBg         = QColor(0x16, 0x16, 0x16);
+    c.pancropRegion     = QColor(0x26, 0x80, 0xEB, 60);
+    c.pancropHandle     = QColor(0x26, 0x80, 0xEB);
 
-    c.sectionDivider    = QColor(0, 163, 224);
+    c.sectionDivider    = QColor(0x0A, 0x0A, 0x0A);   // divisória quase invisível
 
     return c;
 }
@@ -331,6 +333,7 @@ QString flatControlStyleSheet(AppTheme theme) {
     const QString scBg     = c.scrollbarBg.name();
     const QString scH      = c.scrollbarHandle.name();
     const QString scHo     = c.scrollbarHover.name();
+    const QString tabSel   = c.tabSelected.name();
     const QString btnPrimaryTxt = c.btnPrimaryText.name();
     // Foco neutro (Premiere): sem borda ciano em hover/focus de inputs.
     const QString fneut = (theme == AppTheme::Light) ? QColor(180, 182, 188).name()
@@ -477,13 +480,13 @@ QString flatControlStyleSheet(AppTheme theme) {
         QTabWidget::pane { border: 1px solid %6; top: -1px; }
         QTabBar::tab {
             background: transparent; color: %2;
-            border: 1px solid transparent; border-bottom: 2px solid transparent;
+            border: 1px solid transparent;
             padding: 5px 12px;
         }
         QTabBar::tab:selected {
-            border-bottom: 2px solid %20; color: %8;
+            background: %29; color: #FFFFFF;
         }
-        QTabBar::tab:hover { background: %5; }
+        QTabBar::tab:hover:!selected { background: %5; }
 
         QHeaderView::section {
             background: %1; color: %22;
@@ -505,12 +508,12 @@ QString flatControlStyleSheet(AppTheme theme) {
 
         QScrollBar:vertical { background: %24; width: 10px; margin: 0; }
         QScrollBar::handle:vertical {
-            background: %25; min-height: 24px; border-radius: 4px; margin: 1px;
+            background: %25; min-height: 24px; border-radius: 2px; margin: 1px;
         }
         QScrollBar::handle:vertical:hover { background: %26; }
         QScrollBar:horizontal { background: %24; height: 10px; margin: 0; }
         QScrollBar::handle:horizontal {
-            background: %25; min-width: 24px; border-radius: 4px; margin: 1px;
+            background: %25; min-width: 24px; border-radius: 2px; margin: 1px;
         }
         QScrollBar::handle:horizontal:hover { background: %26; }
         QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
@@ -535,9 +538,9 @@ QString flatControlStyleSheet(AppTheme theme) {
         }
     )")
 .arg(win, txt, base, brd, hover, brd,
-         btn, btntxt, press, inputbrd,
-         hl, hltxt, disabled, press, primary,
-         input, tooltip, tiptext, btnPrimaryTxt, focus,
-         accent, titleTxt, alt, scBg, scH, scHo,
-         fneut, div);
+     btn, btntxt, press, inputbrd,
+     hl, hltxt, disabled, press, primary,
+     input, tooltip, tiptext, btnPrimaryTxt, focus,
+     accent, titleTxt, alt, scBg, scH, scHo,
+     fneut, div, tabSel);
 }

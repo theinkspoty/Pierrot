@@ -488,86 +488,86 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
                 }
                 if (cc) {
                     cc->thread_type = FF_THREAD_FRAME;
-                AVBufferRef* hwDev = hwDisabled() ? nullptr : vaapiDevice();
-                if (hwDev) {
-                    cc->hw_device_ctx = av_buffer_ref(hwDev);
-                    cc->get_format = &hwVaapiGetFormat;
-                    // Frame threading + VAAPI é instável; GPU trabalha em 1 thread.
-                    cc->thread_count = 1;
-                    // Negocia os FRAMES hw ANTES de abrir: pede NV12 explícito.
-                    // Sem isso, drivers entregam o sw_format "nativo" (às vezes
-                    // P010/10-bit etc.), que o sws não converte → quadro preto.
-                    // Se a GPU não aceitar NV12, av_hwframe_ctx_init falha e a
-                    // decodificação cai para software abaixo.
-                    AVBufferRef* hwFrames = av_hwframe_ctx_alloc(hwDev);
-                    if (hwFrames) {
-                        AVHWFramesContext* fctx =
-                            reinterpret_cast<AVHWFramesContext*>(hwFrames->data);
-                        fctx->format = AV_PIX_FMT_VAAPI;
-                        fctx->sw_format = AV_PIX_FMT_NV12;
-                        fctx->width = cc->width;
-                        fctx->height = cc->height;
-                        if (av_hwframe_ctx_init(hwFrames) < 0) {
-                            av_buffer_unref(&hwFrames);
-                            hwFrames = nullptr;
+                    AVBufferRef* hwDev = hwDisabled() ? nullptr : vaapiDevice();
+                    if (hwDev) {
+                        cc->hw_device_ctx = av_buffer_ref(hwDev);
+                        cc->get_format = &hwVaapiGetFormat;
+                        // Frame threading + VAAPI é instável; GPU trabalha em 1 thread.
+                        cc->thread_count = 1;
+                        // Negocia os FRAMES hw ANTES de abrir: pede NV12 explícito.
+                        // Sem isso, drivers entregam o sw_format "nativo" (às vezes
+                        // P010/10-bit etc.), que o sws não converte → quadro preto.
+                        // Se a GPU não aceitar NV12, av_hwframe_ctx_init falha e a
+                        // decodificação cai para software abaixo.
+                        AVBufferRef* hwFrames = av_hwframe_ctx_alloc(hwDev);
+                        if (hwFrames) {
+                            AVHWFramesContext* fctx =
+                                reinterpret_cast<AVHWFramesContext*>(hwFrames->data);
+                            fctx->format = AV_PIX_FMT_VAAPI;
+                            fctx->sw_format = AV_PIX_FMT_NV12;
+                            fctx->width = cc->width;
+                            fctx->height = cc->height;
+                            if (av_hwframe_ctx_init(hwFrames) < 0) {
+                                av_buffer_unref(&hwFrames);
+                                hwFrames = nullptr;
+                            }
                         }
-                    }
-                    if (hwFrames) {
-                        cc->hw_frames_ctx = av_buffer_ref(hwFrames);
-                        av_buffer_unref(&hwFrames); // cc agora segura a ref
-                    } else {
-                        // Sem NV12 na GPU: remove o hwaccel e abre em software.
-                        av_buffer_unref(&cc->hw_device_ctx);
-                        cc->hw_device_ctx = nullptr;
-                        cc->get_format = nullptr;
-                    }
-                } else {
-                    cc->thread_count = qMin(4, QThread::idealThreadCount());
-                }
-                int openErr = avcodec_open2(cc, codec, nullptr);
-                if (openErr != 0 && hwDev) {
-                    // Codec sem hwaccel (ex.: PNG, AV1 sem VAAPI): retenta em
-                    // software puro, exatamente como antes desta mudança.
-                    avcodec_free_context(&cc);
-                    cc = avcodec_alloc_context3(codec);
-                    if (cc) {
-                        if (avcodec_parameters_to_context(cc, fmt->streams[idx]->codecpar) < 0) {
-                            avcodec_free_context(&cc);
-                            cc = nullptr;
+                        if (hwFrames) {
+                            cc->hw_frames_ctx = av_buffer_ref(hwFrames);
+                            av_buffer_unref(&hwFrames); // cc agora segura a ref
                         } else {
+                            // Sem NV12 na GPU: remove o hwaccel e abre em software.
+                            av_buffer_unref(&cc->hw_device_ctx);
+                            cc->hw_device_ctx = nullptr;
+                            cc->get_format = nullptr;
+                        }
+                    } else {
                         cc->thread_count = qMin(4, QThread::idealThreadCount());
-                        cc->thread_type = FF_THREAD_FRAME;
-                        openErr = avcodec_open2(cc, codec, nullptr);
-                        if (openErr != 0) {
-                            avcodec_free_context(&cc);
-                            cc = nullptr;
-                        }
-                        }
                     }
-                } else if (openErr != 0) {
-                    avcodec_free_context(&cc);
-                    cc = nullptr;
-                }
-                if (cc) {
-                    m_codec = cc;
-                    m_stream = idx;
-                    m_hw = hwDev && cc->pix_fmt == AV_PIX_FMT_VAAPI;
-                    m_hwPixFmt = m_hw ? (int)AV_PIX_FMT_VAAPI : -1;
-                    const AVStream* st = fmt->streams[idx];
-                    if (st->avg_frame_rate.num > 0 && st->avg_frame_rate.den > 0) {
-                        const double r = av_q2d(st->avg_frame_rate);
-                        if (r > 0.0 && r < 240.0) m_fps = r;
+                    int openErr = avcodec_open2(cc, codec, nullptr);
+                    if (openErr != 0 && hwDev) {
+                        // Codec sem hwaccel (ex.: PNG, AV1 sem VAAPI): retenta em
+                        // software puro, exatamente como antes desta mudança.
+                        avcodec_free_context(&cc);
+                        cc = avcodec_alloc_context3(codec);
+                        if (cc) {
+                            if (avcodec_parameters_to_context(cc, fmt->streams[idx]->codecpar) < 0) {
+                                avcodec_free_context(&cc);
+                                cc = nullptr;
+                            } else {
+                                cc->thread_count = qMin(4, QThread::idealThreadCount());
+                                cc->thread_type = FF_THREAD_FRAME;
+                                openErr = avcodec_open2(cc, codec, nullptr);
+                                if (openErr != 0) {
+                                    avcodec_free_context(&cc);
+                                    cc = nullptr;
+                                }
+                            }
+                        }
+                    } else if (openErr != 0) {
+                        avcodec_free_context(&cc);
+                        cc = nullptr;
                     }
-                    // Imagem estática: extensão de imagem com UM único frame,
-                    // OU duração <= 0 (AV_NOPTS_VALUE ou 0). O check de frame
-                    // único evita que GIF/WebP animados (vários frames) caiam
-                    // aqui e congelem no primeiro quadro do preview.
-                    const bool singleFrame = (st->duration == AV_NOPTS_VALUE
-                                             || st->duration <= 1
-                                             || (st->nb_frames > 0 && st->nb_frames <= 1));
-                    m_isImage = (isImagePath(filePath) && singleFrame)
-                                || (fmt->duration <= 0);
-                }
+                    if (cc) {
+                        m_codec = cc;
+                        m_stream = idx;
+                        m_hw = hwDev && cc->pix_fmt == AV_PIX_FMT_VAAPI;
+                        m_hwPixFmt = m_hw ? (int)AV_PIX_FMT_VAAPI : -1;
+                        const AVStream* st = fmt->streams[idx];
+                        if (st->avg_frame_rate.num > 0 && st->avg_frame_rate.den > 0) {
+                            const double r = av_q2d(st->avg_frame_rate);
+                            if (r > 0.0 && r < 240.0) m_fps = r;
+                        }
+                        // Imagem estática: extensão de imagem com UM único frame,
+                        // OU duração <= 0 (AV_NOPTS_VALUE ou 0). O check de frame
+                        // único evita que GIF/WebP animados (vários frames) caiam
+                        // aqui e congelem no primeiro quadro do preview.
+                        const bool singleFrame = (st->duration == AV_NOPTS_VALUE
+                                                 || st->duration <= 1
+                                                 || (st->nb_frames > 0 && st->nb_frames <= 1));
+                        m_isImage = (isImagePath(filePath) && singleFrame)
+                                    || (fmt->duration <= 0);
+                    }
                 } // if (cc) after avcodec_parameters_to_context
             }
         }
@@ -592,29 +592,29 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
                 } else {
                     acc->thread_count = 0;
                     if (avcodec_open2(acc, acodec, nullptr) == 0) {
-                    SwrContext* swr = swr_alloc();
-                    if (swr) {
-                        AVChannelLayout outLayout;
-                        av_channel_layout_default(&outLayout, 2);
-                        const AVSampleFormat outFmt = AV_SAMPLE_FMT_S16;
-                        const int outRate = m_audioOutRate;
-                        if (swr_alloc_set_opts2(&swr,
-                                &outLayout, outFmt, outRate,
-                                &acc->ch_layout, acc->sample_fmt,
-                                acc->sample_rate, 0, nullptr) >= 0
-                            && swr_init(swr) >= 0) {
-                            m_aCtx = fmt;
-                            m_aCodec = acc;
-                            m_swr = swr;
-                            m_audioStream = aidx;
-                        } else {
-                            swr_free(&swr);
+                        SwrContext* swr = swr_alloc();
+                        if (swr) {
+                            AVChannelLayout outLayout;
+                            av_channel_layout_default(&outLayout, 2);
+                            const AVSampleFormat outFmt = AV_SAMPLE_FMT_S16;
+                            const int outRate = m_audioOutRate;
+                            if (swr_alloc_set_opts2(&swr,
+                                    &outLayout, outFmt, outRate,
+                                    &acc->ch_layout, acc->sample_fmt,
+                                    acc->sample_rate, 0, nullptr) >= 0
+                                && swr_init(swr) >= 0) {
+                                m_aCtx = fmt;
+                                m_aCodec = acc;
+                                m_swr = swr;
+                                m_audioStream = aidx;
+                            } else {
+                                swr_free(&swr);
+                            }
                         }
+                        if (!m_aCodec) avcodec_free_context(&acc);
+                    } else {
+                        avcodec_free_context(&acc);
                     }
-                    if (!m_aCodec) avcodec_free_context(&acc);
-                } else {
-                    avcodec_free_context(&acc);
-                }
                 } // else avcodec_parameters_to_context succeeded
             }
         }

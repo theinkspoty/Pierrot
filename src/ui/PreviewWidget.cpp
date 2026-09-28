@@ -19,6 +19,8 @@
 #endif
 
 #include <QPainter>
+#include <QPixmap>
+#include <QPolygon>
 #include <QTimer>
 #include <QThread>
 #include <QElapsedTimer>
@@ -1185,6 +1187,86 @@ QString fmtTimecode(double t, double fps) {
         .arg(ff, 2, 10, QLatin1Char('0'));
 }
 
+// Glifos monocromáticos do transporte do monitor (como o Premiere desenha os
+// botões planos do Program Monitor: setas, play/pausa, loop e margens).
+enum MonitorGlyph { MStepBack, MPlay, MPause, MStepFwd, MLoop, MSafe, MFullscreen };
+
+static QIcon makeMonitorIcon(MonitorGlyph g, const QColor& color) {
+    auto draw = [g](QPainter& p, const QColor& c) {
+        QPen pen(c, 1.7, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+        p.setPen(pen);
+        p.setBrush(Qt::NoBrush);
+        switch (g) {
+        case MStepBack:
+            p.setPen(Qt::NoPen);
+            p.setBrush(c);
+            { QPolygonF t; t << QPointF(4.5, 8.0) << QPointF(10.5, 3.5) << QPointF(10.5, 12.5);
+              p.drawPolygon(t); }
+            p.drawRect(QRectF(11.4, 4.0, 2.2, 8.0));
+            break;
+        case MPlay:
+            p.setPen(Qt::NoPen);
+            p.setBrush(c);
+            { QPolygonF t; t << QPointF(5.5, 3.8) << QPointF(13.0, 8.0) << QPointF(5.5, 12.2);
+              p.drawPolygon(t); }
+            break;
+        case MPause:
+            p.setPen(Qt::NoPen);
+            p.setBrush(c);
+            p.drawRect(QRectF(5.0, 3.8, 2.6, 8.4));
+            p.drawRect(QRectF(9.0, 3.8, 2.6, 8.4));
+            break;
+        case MStepFwd:
+            p.setPen(Qt::NoPen);
+            p.setBrush(c);
+            { QPolygonF t; t << QPointF(11.5, 8.0) << QPointF(5.5, 3.5) << QPointF(5.5, 12.5);
+              p.drawPolygon(t); }
+            p.drawRect(QRectF(2.4, 4.0, 2.2, 8.0));
+            break;
+        case MLoop:
+            // Seta circular (retorno/loop): arco + cabeça de seta na ponta.
+            p.drawArc(QRectF(3.0, 3.5, 10.0, 9.0), -40 * 16, -240 * 16);
+            p.setPen(Qt::NoPen);
+            p.setBrush(c);
+            { QPolygonF h; h << QPointF(12.4, 3.0) << QPointF(13.6, 7.2) << QPointF(15.6, 5.4);
+              p.drawPolygon(h); }
+            break;
+        case MSafe:
+            // Margens de segurança: retângulo com marcas centrais.
+            p.setPen(pen);
+            p.setBrush(Qt::NoBrush);
+            p.drawRect(QRectF(3.0, 3.0, 10.0, 10.0));
+            p.drawLine(QPointF(8.0, 3.0), QPointF(8.0, 3.9));
+            p.drawLine(QPointF(8.0, 12.1), QPointF(8.0, 13.0));
+            p.drawLine(QPointF(3.0, 8.0), QPointF(3.9, 8.0));
+            p.drawLine(QPointF(12.1, 8.0), QPointF(13.0, 8.0));
+            break;
+        case MFullscreen:
+            // Expandi: quatro cantos apontando para fora, como o botão de
+            // fullscreen do Premiere.
+            p.setPen(Qt::NoPen);
+            p.setBrush(c);
+            { QPolygonF c1; c1 << QPointF(3.0, 7.0) << QPointF(3.0, 3.0) << QPointF(7.0, 3.0); p.drawPolygon(c1); }
+            { QPolygonF c2; c2 << QPointF(13.0, 3.0) << QPointF(9.0, 3.0) << QPointF(13.0, 7.0); p.drawPolygon(c2); }
+            { QPolygonF c3; c3 << QPointF(3.0, 9.0) << QPointF(3.0, 13.0) << QPointF(7.0, 13.0); p.drawPolygon(c3); }
+            { QPolygonF c4; c4 << QPointF(13.0, 13.0) << QPointF(13.0, 9.0) << QPointF(9.0, 13.0); p.drawPolygon(c4); }
+            break;
+        }
+    };
+    QIcon icon;
+    for (int s : {1, 2}) {
+        QPixmap pm(16 * s, 16 * s);
+        pm.setDevicePixelRatio(s);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        draw(p, color);
+        p.end();
+        icon.addPixmap(pm);
+    }
+    return icon;
+}
+
 double projFps(const Project* p) {
     return (p && p->fps > 0.0) ? p->fps : 30.0;
 }
@@ -1217,36 +1299,128 @@ static const PreviewQOpt kPreviewQualities[] = {
     {3840, "4K",    "4K"},
 };
 
-PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
-    m_playBtn = new QPushButton(tr("Reproduzir"), this);
-    // Contador de tempo estilo Premiere (timecode do Program Monitor): fonte
-    // mono, fundo escuro em pílula e cor clara destacada.
-    m_timeLabel = new QLabel(tr("00:00:00:00"), this);
-    m_timeLabel->setAlignment(Qt::AlignCenter);
-    QFont tcFont = m_timeLabel->font();
-    tcFont.setFamily(QStringLiteral("Consolas, Menlo, DejaVu Sans Mono, monospace"));
-    tcFont.setPointSize(12);
-    tcFont.setBold(true);
-    m_timeLabel->setFont(tcFont);
+void PreviewWidget::refreshTimeLabelStyle() {
+    if (!m_timeLabel) return;
+    const auto& c = themeColors();
     m_timeLabel->setStyleSheet(
         QStringLiteral(
             "QLabel {"
-            "  color: #e8f1e0;"
-            "  background-color: #24262b;"
-            "  border: 1px solid #3a3d45;"
-            "  border-radius: 6px;"
-            "  padding: 2px 14px;"
+            "  color: %1;"
+            "  background-color: %2;"
+            "  border: 1px solid %3;"
+            "  border-radius: 2px;"
+            "  padding: 2px 12px;"
             "  letter-spacing: 1px;"
-            "}"));
+            "}").arg(c.accent.name(), c.monitorBg.name(), c.canvasBorder.name()));
+}
+
+PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
+    const QColor glyph = themeColors().monitorLabel;
+    QColor hoverBg = themeColors().canvasBorder;
+    hoverBg.setAlpha(70);
+    QColor checkBg = themeColors().accent;
+    checkBg.setAlpha(55);
+    m_playIcon = makeMonitorIcon(MPlay, glyph);
+    m_pauseIcon = makeMonitorIcon(MPause, glyph);
+
+    // Transporte do monitor, espelhado no Program Monitor do Premiere: botões
+    // planos no topo — quadro anterior, play/pausa, quadro seguinte e loop.
+    m_stepBackBtn = new QToolButton(this);
+    m_stepBackBtn->setIcon(makeMonitorIcon(MStepBack, glyph));
+    m_stepBackBtn->setIconSize(QSize(18, 18));
+    m_stepBackBtn->setFixedSize(30, 26);
+    m_stepBackBtn->setToolTip(tr("Quadro anterior"));
+    m_stepBackBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_stepBackBtn, &QToolButton::clicked, this, [this]() { stepFrame(-1); });
+
+    // O PlaybackEngine troca o rótulo do botão em cada transição; aqui ele
+    // fica só com o ícone (o texto é limpo no onStateChanged).
+    m_playBtn = new QPushButton(this);
+    m_playBtn->setIcon(m_playIcon);
+    m_playBtn->setIconSize(QSize(20, 20));
+    m_playBtn->setFixedSize(36, 26);
+    m_playBtn->setToolTip(tr("Reproduzir/pausar (Espaço)"));
+    m_playBtn->setCursor(Qt::PointingHandCursor);
+
+    m_stepFwdBtn = new QToolButton(this);
+    m_stepFwdBtn->setIcon(makeMonitorIcon(MStepFwd, glyph));
+    m_stepFwdBtn->setIconSize(QSize(18, 18));
+    m_stepFwdBtn->setFixedSize(30, 26);
+    m_stepFwdBtn->setToolTip(tr("Quadro seguinte"));
+    m_stepFwdBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_stepFwdBtn, &QToolButton::clicked, this, [this]() { stepFrame(1); });
+
+    m_loopBtn = new QToolButton(this);
+    m_loopBtn->setIcon(makeMonitorIcon(MLoop, glyph));
+    m_loopBtn->setIconSize(QSize(18, 18));
+    m_loopBtn->setFixedSize(30, 26);
+    m_loopBtn->setCheckable(true);
+    m_loopBtn->setToolTip(tr("Loop (repete o trecho in/out)"));
+    m_loopBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_loopBtn, &QToolButton::toggled, this, &PreviewWidget::setLoopEnabled);
+
+    // Contador de tempo estilo Premiere (timecode do Program Monitor): fonte
+    // mono, azul sobre fundo quase preto, cantos quadrados — a assinatura
+    // visual do monitor do Premiere. As cores vêm dos tokens para respeitar o
+    // tema claro/escuro, como o resto do preview. Fica flutuando sobre o canto
+    // inferior-esquerdo da área de vídeo (posicionado no resizeEvent).
+    m_timeLabel = new QLabel(tr("00:00:00:00"), this);
+    m_timeLabel->setAlignment(Qt::AlignCenter);
+    m_timeLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    QFont tcFont = m_timeLabel->font();
+    tcFont.setFamily(QStringLiteral("Consolas, Menlo, DejaVu Sans Mono, monospace"));
+    tcFont.setPointSize(11);
+    tcFont.setBold(true);
+    m_timeLabel->setFont(tcFont);
+    refreshTimeLabelStyle();
     m_timeLabel->setMinimumWidth(150);
 
-    m_topBar = new QWidget(this);
-    auto* bar = new QHBoxLayout(m_topBar);
-    bar->setContentsMargins(6, 6, 6, 0);
-    bar->setSpacing(6);
-    bar->addWidget(m_playBtn);
+    // Rótulo da sequência no topo, como o "Program: <nome>" do Premiere.
+    m_programLabel = new QLabel(tr("Program: "), this);
+    QFont pf = m_programLabel->font();
+    pf.setPointSize(9);
+    pf.setBold(true);
+    m_programLabel->setFont(pf);
+    m_programLabel->setStyleSheet(
+        QStringLiteral("QLabel{color:%1;}").arg(themeColors().monitorLabel.name()));
 
-    // Qualidade do preview (estilo Vegas/FCP): botão com menu ao lado do play.
+    // Fullscreen do monitor (o Premiere expande o Program para tela cheia;
+    // Esc sai).
+    m_fullscreenBtn = new QToolButton(this);
+    m_fullscreenBtn->setIcon(makeMonitorIcon(MFullscreen, glyph));
+    m_fullscreenBtn->setIconSize(QSize(18, 18));
+    m_fullscreenBtn->setFixedSize(30, 26);
+    m_fullscreenBtn->setToolTip(tr("Tela cheia (Esc para sair)"));
+    m_fullscreenBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_fullscreenBtn, &QToolButton::clicked, this, [this]() {
+        QWidget* w = window();
+        if (w->isFullScreen()) w->showNormal();
+        else w->showFullScreen();
+    });
+    auto* fsEsc = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+    connect(fsEsc, &QShortcut::activated, this, [this]() {
+        if (window()->isFullScreen()) window()->showNormal();
+    });
+
+    // ── Aba do topo: SÓ o rótulo "Program: <nome>", como no Premiere. O
+    // transporte do Program Monitor fica na barra de BAIXO (é onde o Premiere
+    // põe), não aqui em cima.
+    m_topBar = new QWidget(this);
+    m_topBar->setObjectName(QStringLiteral("pmTopBar"));
+    m_topBar->setFixedHeight(24);
+    auto* topLay = new QHBoxLayout(m_topBar);
+    topLay->setContentsMargins(8, 0, 8, 0);
+    topLay->setSpacing(0);
+    topLay->addWidget(m_programLabel);
+    topLay->addStretch(1);
+    // Seletor por object name: um "QWidget{...}" cascatearia para os filhos e
+    // contaminaria combo/rótulos com a borda da barra.
+    m_topBar->setStyleSheet(QStringLiteral(
+        "QWidget#pmTopBar{background:%1;border-bottom:1px solid %2;}")
+        .arg(themeColors().base.name(), themeColors().trackBorder.name()));
+
+    // Resolução do preview (como o menu de resolução do Program Monitor):
+    // botão com menu no cluster direito, entre as margens e o zoom.
     m_qualityBtn = new QToolButton(this);
     m_qualityBtn->setPopupMode(QToolButton::InstantPopup);
     m_qualityBtn->setToolTip(tr("Qualidade do preview (resolução de decodificação)"));
@@ -1265,36 +1439,49 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
             m_qualityBtn->setText(QString::fromUtf8(o.code));
             break;
         }
-    bar->addWidget(m_qualityBtn);
 
-    // Grade visual (estilo Vegas): botão ao lado da qualidade.
+    // ── Barra de rodapé: timecode à esquerda, transporte no centro-esquerda e
+    // o cluster (margens → qualidade → zoom → tela cheia) à direita — a mesma
+    // ordem da barra inferior do Program Monitor do Premiere.
+    m_bottomBar = new QWidget(this);
+    m_bottomBar->setObjectName(QStringLiteral("pmBottomBar"));
+    m_bottomBar->setFixedHeight(30);
+    auto* bar = new QHBoxLayout(m_bottomBar);
+    bar->setContentsMargins(6, 2, 6, 2);
+    bar->setSpacing(4);
+    m_bottomBar->setStyleSheet(QStringLiteral(
+        "QWidget#pmBottomBar{background:%1;border-top:1px solid %2;}"
+        "QToolButton,QPushButton{border:none;border-radius:4px;background:transparent;}"
+        "QToolButton:hover,QPushButton:hover{background:%3;}"
+        "QToolButton:checked,QPushButton:checked{background:%4;}")
+        .arg(themeColors().base.name(), themeColors().trackBorder.name(),
+             hoverBg.name(QColor::HexArgb), checkBg.name(QColor::HexArgb)));
+    bar->addWidget(m_timeLabel);
+    bar->addSpacing(8);
+    bar->addWidget(m_stepBackBtn);
+    bar->addWidget(m_playBtn);
+    bar->addWidget(m_stepFwdBtn);
+    bar->addWidget(m_loopBtn);
+    bar->addStretch(1);
+
+    // Margens de segurança do Premiere (Action 90% + Title 80%, Ctrl+G
+    // alterna). No Premiere não existe grade NxN no Program Monitor — o que
+    // aparece são os dois retângulos concêntricos de segurança.
     m_gridBtn = new QToolButton(this);
-    m_gridBtn->setToolTip(tr("Grade de referência (Ctrl+G). Clique direito: divisões"));
-    m_gridBtn->setText(QStringLiteral("=#="));
+    m_gridBtn->setIcon(makeMonitorIcon(MSafe, themeColors().monitorLabel));
+    m_gridBtn->setIconSize(QSize(18, 18));
+    m_gridBtn->setFixedSize(30, 26);
     m_gridBtn->setCheckable(true);
     m_gridBtn->setChecked(false);
+    m_gridBtn->setToolTip(tr("Margens de segurança (Ctrl+G)"));
+    m_gridBtn->setCursor(Qt::PointingHandCursor);
     connect(m_gridBtn, &QToolButton::clicked, this, [this](bool checked) {
         m_showGrid = checked;
         update();
     });
-    // Menu de divisões da grade (botão direito).
-    m_gridBtn->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(m_gridBtn, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
-        QMenu menu;
-        QAction* titleAct = menu.addAction(tr("Divisões da grade:"));
-        titleAct->setEnabled(false);
-        for (int d : {2, 3, 4, 5, 6, 8, 10, 12}) {
-            QAction* a = menu.addAction(tr("%1×%1").arg(d));
-            a->setCheckable(true);
-            a->setChecked(m_gridDivisions == d);
-            connect(a, &QAction::triggered, this, [this, d]() {
-                m_gridDivisions = d;
-                update();
-            });
-        }
-        menu.exec(m_gridBtn->mapToGlobal(pos));
-    });
     bar->addWidget(m_gridBtn);
+    // Cluster direito do rodapé: margens → qualidade → zoom → tela cheia.
+    bar->addWidget(m_qualityBtn);
 
     // Atalho Ctrl+G para alternar a grade.
     auto* gridShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_G), this);
@@ -1303,8 +1490,6 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
         m_gridBtn->setChecked(m_showGrid);
         update();
     });
-
-    bar->addWidget(m_timeLabel, 1);
 
     m_zoomCombo = new QComboBox(this);
     m_zoomCombo->addItem(tr("Ajustar"));
@@ -1318,12 +1503,15 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
         update();
     });
     bar->addWidget(m_zoomCombo);
+    bar->addSpacing(4);
+    bar->addWidget(m_fullscreenBtn);
 
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);
     lay->setSpacing(0);
     lay->addWidget(m_topBar);
     lay->addStretch(1);
+    lay->addWidget(m_bottomBar);
 
     // O PlaybackEngine controla o transporte; o timer é deste widget (tem
     // QObject/parent) e repassa o timeout para o motor via tick().
@@ -1389,6 +1577,10 @@ PreviewWidget::~PreviewWidget() {
 
 void PreviewWidget::setProject(Project* p) {
     PlaybackEngine::setProject(p); // seta m_project e para o transporte
+    if (m_programLabel) {
+        const QString nome = (p && !p->name.isEmpty()) ? p->name : tr("Sem projeto");
+        m_programLabel->setText(tr("Program: %1").arg(nome));
+    }
     m_playhead = 0.0;
     m_mesaRenderer.clearCompositeCache(); // composto do projeto anterior não vale
     m_frame = QImage();
@@ -1449,8 +1641,11 @@ PreviewWidget::AudioLevels PreviewWidget::audioLevels() const {
 }
 
 void PreviewWidget::resizeEvent(QResizeEvent*) {
-    const int top = m_topBar ? m_topBar->height() + 4 : 40;
-    m_videoRect = QRect(0, top, width(), std::max(0, height() - top));
+    // O vídeo ocupa o miolo entre a aba do topo e a barra de rodapé (onde o
+    // Premiere põe o transporte).
+    const int top = m_topBar ? m_topBar->height() : 24;
+    const int bottom = m_bottomBar ? m_bottomBar->height() : 0;
+    m_videoRect = QRect(0, top, width(), std::max(0, height() - top - bottom));
 }
 
 // ── LAINKA: usa funções compartilhadas de LainkaFx.h ────────────────
@@ -1480,22 +1675,9 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
     canvas.moveCenter(work.center());
     canvas = canvas.intersected(work); // centraliza e recorta quando zoom > 1
 
-    // Monitor: fundo preto com borda fina.
-    p.setPen(QPen(themeColors().canvasBorder, 1));
-    p.setBrush(QColor(0, 0, 0));
-    p.drawRect(canvas.adjusted(-1, -1, 0, 0));
+    // Monitor: o quadro assenta direto no fundo do painel, sem moldura — como
+    // no Premiere (a resolução fica no menu do rodapé, não sobre a imagem).
     p.fillRect(canvas, themeColors().canvasBg);
-
-    // Rótulo de resolução/fps, discreto, no canto do monitor.
-    QFont f = p.font();
-    f.setPointSizeF(7.5);
-    p.setFont(f);
-    p.setPen(themeColors().monitorLabel);
-    p.drawText(canvas.adjusted(6, 4, -6, -4), Qt::AlignLeft | Qt::AlignTop,
-                   QStringLiteral("%1 × %2 · %3 fps")
-                       .arg(m_project->width)
-                       .arg(m_project->height)
-                       .arg(m_project->fps));
 
     // Texto independente ativo no playhead (desenhado mesmo sem quadro de vídeo).
     bool anyText = false;
@@ -1999,19 +2181,30 @@ void PreviewWidget::drawClipText(QPainter& p, const QRect& canvas, const Clip* c
     p.restore();
 }
 
-// Tela vazia: monitor escuro com mensagem discreta (como no DaVinci/Vegas).
+// Tela vazia: o Premiere não escreve nada no miolo do Program Monitor quando
+// não há sequência — só o painel escuro. Mantemos uma dica discreta, mas sem
+// moldura nem caixa, só o texto centralizado em cinza apagado.
 void PreviewWidget::drawEmptyMonitor(QPainter& p, const QRect& canvas) {
     if (canvas.isEmpty()) return;
     QFont f = p.font();
     f.setPointSizeF(9.0);
     p.setFont(f);
-    p.setPen(QColor(120, 120, 132));
-    p.drawText(canvas.adjusted(8, 8, -8, -8), Qt::AlignCenter,
-               tr("Sem clipe de vídeo aqui"));
+    p.setPen(QColor(110, 110, 120));
+    p.drawText(canvas, Qt::AlignCenter, tr("Sem clipe de vídeo aqui"));
 }
 
 void PreviewWidget::seek(double t) {
     PlaybackEngine::seek(t);
+}
+
+// Quadro a quadro (Premiere: os botões ◀▶ do monitor). Pausa a reprodução
+// (senão o seek brigaria com o relógio do playback) e busca ±1 quadro.
+void PreviewWidget::stepFrame(int dir) {
+    if (!m_project || m_project->duration() <= 0) return;
+    if (m_playing) togglePlay();
+    const double fps = projFps(m_project);
+    const double t = m_playhead + (dir > 0 ? 1.0 : -1.0) / fps;
+    seek(std::clamp(t, 0.0, m_project->duration()));
 }
 
 void PreviewWidget::onSeek(double t) {
@@ -2093,6 +2286,12 @@ void PreviewWidget::onPlayheadMoved(double t) {
 }
 
 void PreviewWidget::onStateChanged(bool playing) {
+    // O PlaybackEngine troca o rótulo do botão a cada transição; como ele está
+    // em modo ícone (estilo Premiere), restauramos o ícone e limpamos o texto.
+    if (m_playBtn) {
+        m_playBtn->setIcon(playing ? m_pauseIcon : m_playIcon);
+        m_playBtn->setText(QString());
+    }
     if (m_timeLabel) m_timeLabel->setText(fmtTimecode(m_playhead, projFps(m_project)));
     emit stateChanged(playing);
 }
@@ -3595,34 +3794,39 @@ void PreviewWidget::applyCrop() {
 void PreviewWidget::drawGrid(QPainter& p, const QRect& canvas) {
     if (!m_showGrid || canvas.width() < 2 || canvas.height() < 2) return;
 
-    const int divs = qMax(2, m_gridDivisions);
     p.save();
     p.setClipRect(canvas);
+    p.setPen(QPen(QColor(255, 255, 255, 90), 1, Qt::SolidLine));
 
-    // Linhas da grade: cinza translúcido, 1px.
-    const QPen gridPen(QColor(200, 200, 200, 90), 1, Qt::SolidLine);
-    p.setPen(gridPen);
+    // Margens de segurança do Premiere: dois retângulos concêntricos —
+    // "Action Safe" a 90% e "Title Safe" a 80% do quadro, com os cantos
+    // marcados (é assim que o Premiere as desenha, não uma grade NxN).
+    const auto insetRect = [&](double frac) {
+        const double w = canvas.width() * frac;
+        const double h = canvas.height() * frac;
+        return QRectF(canvas.center().x() - w / 2.0, canvas.center().y() - h / 2.0,
+                      w, h);
+    };
+    const auto cornerTicks = [&](const QRectF& r, int len) {
+        const double x0 = r.left(), x1 = r.right(), y0 = r.top(), y1 = r.bottom();
+        p.drawLine(QPointF(x0, y0), QPointF(x0 + len, y0));
+        p.drawLine(QPointF(x0, y0), QPointF(x0, y0 + len));
+        p.drawLine(QPointF(x1, y0), QPointF(x1 - len, y0));
+        p.drawLine(QPointF(x1, y0), QPointF(x1, y0 + len));
+        p.drawLine(QPointF(x0, y1), QPointF(x0 + len, y1));
+        p.drawLine(QPointF(x0, y1), QPointF(x0, y1 - len));
+        p.drawLine(QPointF(x1, y1), QPointF(x1 - len, y1));
+        p.drawLine(QPointF(x1, y1), QPointF(x1, y1 - len));
+    };
 
-    // Verticais.
-    for (int i = 1; i < divs; ++i) {
-        const int x = canvas.left() + canvas.width() * i / divs;
-        p.drawLine(x, canvas.top(), x, canvas.bottom());
-    }
-    // Horizontais.
-    for (int i = 1; i < divs; ++i) {
-        const int y = canvas.top() + canvas.height() * i / divs;
-        p.drawLine(canvas.left(), y, canvas.right(), y);
-    }
-
-    // Cruz central (mais forte) se divs for par.
-    if (divs % 2 == 0) {
-        const QPen centerPen(QColor(255, 255, 255, 120), 1, Qt::SolidLine);
-        p.setPen(centerPen);
-        const int cx = canvas.left() + canvas.width() / 2;
-        const int cy = canvas.top() + canvas.height() / 2;
-        p.drawLine(cx, canvas.top(), cx, canvas.bottom());
-        p.drawLine(canvas.left(), cy, canvas.right(), cy);
-    }
+    const QRectF action = insetRect(0.90);
+    const QRectF title = insetRect(0.80);
+    p.setPen(QPen(QColor(255, 255, 255, 70), 1, Qt::SolidLine));
+    p.drawRect(action);
+    p.setPen(QPen(QColor(255, 255, 255, 110), 1, Qt::SolidLine));
+    p.drawRect(title);
+    cornerTicks(action, 10);
+    cornerTicks(title, 8);
 
     p.restore();
 }

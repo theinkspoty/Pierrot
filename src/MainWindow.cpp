@@ -28,6 +28,8 @@
 #include "ui/Theme.h"
 #include "colombina/ofx/OfxPluginManager.h"
 
+#include <QInputDialog>
+#include <QLineEdit>
 #include <QSettings>
 // Devolve o atalho salvo pelo usuário (Configurações → Atalhos) ou o padrão.
 static QKeySequence appKey(const char* id, const QKeySequence& fallback) {
@@ -57,6 +59,7 @@ QString recolorSvg(const QByteArray& raw, const QColor& color) {
 #include <QToolBar>
 #include <QStatusBar>
 #include <QVBoxLayout>
+#include <QHBoxLayout>
 #include <QAction>
 #include <QKeySequence>
 #include <QActionGroup>
@@ -88,7 +91,6 @@ QString recolorSvg(const QByteArray& raw, const QColor& color) {
 #include <QTime>
 #include <QProgressBar>
 #include <QGuiApplication>
-#include <QCursor>
 #include <QScreen>
 #include <QDataStream>
 #include <QtConcurrent/QtConcurrent>
@@ -98,7 +100,18 @@ QString recolorSvg(const QByteArray& raw, const QColor& color) {
 namespace {
 // Versão do arranjo de painéis (docks/toolbar). Aumente para descartar
 // estados salvos antigos que estejam com o layout deslocado.
-constexpr int kLayoutVersion = 3;
+// 4: o Histórico saiu da pilha do Mixer e os Analisadores foram para a pilha
+//    da Mesa. Sem este bump, um layout salvo com a pilha de 3 abas embaixo
+//    continuaria sendo restaurado e a correção não apareceria.
+// 5: o preview saiu de setCentralWidget e virou o dock "Program Monitor"
+//    (passo 1 da réplica estrutural do Premiere, ROADMAP 7.1). Precisa do bump
+//    porque os layouts antigos não conhecem o dock previewDock e o
+//    restoreState() reposicionaria o vídeo numa área que não existe mais.
+// 6: revertido — o preview voltou a ser widget central (a premissa do passo 1
+//    estava errada: QMainWindow aceita docks em volta do central), e o dock
+//    previewDock deixou de existir. Bump para descartar layouts da v5 que
+//    ainda referenciam o dock fantasma.
+constexpr int kLayoutVersion = 6;
 
 // Número máximo de cópias do backup rotativo (~/Pierrot/backups/).
 constexpr int kBackupCopies = 10;
@@ -192,7 +205,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     m_timeline->setProject(&m_project);
     m_preview = new PreviewWidget(this);
     m_preview->setProject(&m_project);
-    // O preview ocupa a área central e o monitor escala junto com a janela.
+    // O preview continua como widget central: QMainWindow aceita docks nos 4
+    // lados em volta do central (a premissa do ROADMAP 7.1 de que o widget
+    // central "não aceita dock em volta" estava errada). Com o vídeo no
+    // centro não há o bug de tamanho em que as áreas Left/Right — sem widget
+    // central para ancorar — dividem a janela inteira e esticam as docks.
     auto* centralHost = new QWidget;
     m_centralLay = new QVBoxLayout(centralHost);
     m_centralLay->setContentsMargins(4, 4, 4, 4);
@@ -205,17 +222,19 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     m_graph = new GraphEditorWidget(this);
     m_graph->setProject(&m_project);
-    m_graph->setMinimumHeight(170);
+    // Altura mínima é do dock (o usuário a controla), não do widget: fixar
+    // aqui impedia recolher o Editor de Curvas a uma tira fina.
 
     m_effects = new EffectsWidget(this);
     m_express = new ExpressWidget(this);
     m_fileBrowser = new FileBrowserWidget(this);
 
+    // O painel de Propriedades vira dock no passo 3 da réplica estrutural
+    // (ROADMAP 7.1): era uma janela à parte (setWindowFlag(Qt::Window)),
+    // agora fica ao lado do Program Monitor como no Premiere. O widget é
+    // criado aqui; o dock que o contém é montado em createDocks().
     m_props = new ClipPropertiesWidget(this);
-    m_props->setWindowFlag(Qt::Window);
     m_props->setWindowTitle(tr("Propriedades"));
-    m_props->resize(300, 640);
-    m_props->hide();
     m_props->setProject(&m_project);
 
     // Gerenciador de plugins OFX — escaneia diretórios conhecidos.
@@ -271,14 +290,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     createDocks();
     createActions();
 
-    // Barra de transporte abaixo do preview.
-    auto* transportBar = new QToolBar(tr("Transporte"), this);
-    transportBar->setMovable(false);
-    transportBar->setIconSize(QSize(18, 18));
-    transportBar->setStyleSheet(QStringLiteral(
-        "QToolBar{spacing:2px; background:%1; border-top:1px solid %2;}")
-        .arg(themeColors().transportBg.name(), themeColors().transportBorder.name()));
-
+    // Transporte do projeto foi movido para DENTRO do monitor (Program Monitor
+    // do Premiere): o próprio PreviewWidget tem quadro anterior/play/pausa/
+    // quadro seguinte/loop no topo. Aqui só restam os saltos Home/End, que
+    // continuam como atalhos da janela (sem barra, como no Premiere).
     QAction* goToStart = new QAction(iconSkipBack(), tr("Início"), this);
     goToStart->setToolTip(tr("Ir para o início (Home)"));
     goToStart->setShortcut(QKeySequence(Qt::Key_Home));
@@ -287,7 +302,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         m_preview->seek(0.0);
         m_timeline->update();
     });
-    transportBar->addAction(goToStart);
 
     QAction* stepBack = new QAction(iconStepBack(), tr("Voltar 1 frame"), this);
     stepBack->setToolTip(tr("Voltar 1 frame (←)"));
@@ -298,9 +312,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         m_preview->seek(m_timeline->playhead());
         m_timeline->update();
     });
-    transportBar->addAction(stepBack);
-
-    transportBar->addAction(m_playAction);
 
     QAction* stepFwd = new QAction(iconStepFwd(), tr("Avançar 1 frame"), this);
     stepFwd->setToolTip(tr("Avançar 1 frame (→)"));
@@ -312,7 +323,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         m_preview->seek(m_timeline->playhead());
         m_timeline->update();
     });
-    transportBar->addAction(stepFwd);
 
     QAction* goToEnd = new QAction(iconSkipFwd(), tr("Fim"), this);
     goToEnd->setToolTip(tr("Ir para o fim (End)"));
@@ -324,9 +334,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         m_preview->seek(dur);
         m_timeline->update();
     });
-    transportBar->addAction(goToEnd);
-
-    m_centralLay->addWidget(transportBar);
+    // Sem barra visual: Home/End e Espaço (play) continuam como atalhos da
+    // janela. O play em si vive no monitor (ícone ▶/❚❚ do PreviewWidget).
+    addAction(goToStart);
+    addAction(goToEnd);
+    addAction(m_playAction);
 
     // Intercepta setas ←/→ globalmente via eventFilter no qApp.
     qApp->installEventFilter(this);
@@ -592,12 +604,117 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_layoutSaveTimer, &QTimer::timeout, this, &MainWindow::saveSettings);
 }
 
+// Workspaces (roadmap 0.7). O workspace corrente vive nas chaves "layout" /
+// "layoutVersion" de sempre — é o que saveSettings()/restoreSettings() já
+// gravam. Assim o layout que o usuário já tem se torna o workspace "Edição"
+// sem migração, e cada workspace nomeado extra tem seu próprio blob.
+QStringList MainWindow::workspaceNames() const {
+    QSettings settings;
+    QStringList names = settings.value("workspaces/names").toStringList();
+    // O slot corrente sempre existe como workspace, mesmo sem chave própria.
+    if (m_currentWorkspace.isEmpty() || !names.contains(m_currentWorkspace))
+        names.prepend(m_currentWorkspace.isEmpty() ? QStringLiteral("Edição")
+                                                  : m_currentWorkspace);
+    return names;
+}
+
+void MainWindow::captureCurrentWorkspace() {
+    if (m_currentWorkspace.isEmpty()) return;
+    QSettings settings;
+    settings.setValue(QStringLiteral("workspaces/%1/state").arg(m_currentWorkspace),
+                      saveState());
+    settings.setValue(QStringLiteral("workspaces/%1/version").arg(m_currentWorkspace),
+                      kLayoutVersion);
+}
+
+void MainWindow::applyWorkspace(const QString& name) {
+    if (name == m_currentWorkspace) return;
+    // Grava o layout de onde se está saindo antes de trocar, senão as
+    // alterações feitas no workspace anterior se perdem.
+    captureCurrentWorkspace();
+
+    m_restoringSettings = true;   // evita que o restoreState dispare autosave
+    bool applied = false;
+    QSettings settings;
+    const QByteArray state = settings.value(QStringLiteral("workspaces/%1/state").arg(name)).toByteArray();
+    const int version = settings.value(QStringLiteral("workspaces/%1/version").arg(name), -1).toInt();
+    if (!state.isEmpty() && saneLayoutArray(state) && version == kLayoutVersion) {
+        restoreState(state);
+        applied = true;
+    }
+    if (!applied) {
+        // Workspace ainda sem estado gravado: volta ao arranjo padrão,
+        // capturado em createDocks(). Nada de recriar os docks aqui.
+        if (!m_defaultLayoutState.isEmpty() && saneLayoutArray(m_defaultLayoutState))
+            restoreState(m_defaultLayoutState);
+    }
+    m_currentWorkspace = name;
+    m_restoringSettings = false;
+
+    // O Mesa precisa reencontrar a track depois de qualquer troca de estado.
+    m_mesa->autoSelectMesa();
+    statusBar()->showMessage(tr("Workspace: %1").arg(name), 2500);
+    scheduleLayoutSave();
+}
+
+void MainWindow::saveWorkspaceAs(const QString& name) {
+    const QString clean = name.trimmed();
+    if (clean.isEmpty()) return;
+    captureCurrentWorkspace();
+    QSettings settings;
+    QStringList names = workspaceNames();
+    if (!names.contains(clean)) {
+        names.append(clean);
+        settings.setValue("workspaces/names", names);
+    }
+    m_currentWorkspace = clean;
+    settings.setValue(QStringLiteral("workspaces/%1/state").arg(clean), saveState());
+    settings.setValue(QStringLiteral("workspaces/%1/version").arg(clean), kLayoutVersion);
+    rebuildWorkspaceMenu();
+    statusBar()->showMessage(tr("Workspace salvo como \"%1\".").arg(clean), 2500);
+    scheduleLayoutSave();
+}
+
+void MainWindow::rebuildWorkspaceMenu() {
+    if (!m_workspaceMenu) return;
+    m_workspaceMenu->clear();
+
+    m_workspaceGroup = new QActionGroup(this);
+    m_workspaceGroup->setExclusive(true);
+    for (const QString& name : workspaceNames()) {
+        QAction* act = m_workspaceMenu->addAction(name);
+        act->setCheckable(true);
+        act->setChecked(name == m_currentWorkspace);
+        connect(act, &QAction::triggered, this, [this, name]() { applyWorkspace(name); });
+        m_workspaceGroup->addAction(act);
+    }
+
+    m_workspaceMenu->addSeparator();
+    QAction* saveAs = m_workspaceMenu->addAction(tr("Salvar workspace como..."));
+    connect(saveAs, &QAction::triggered, this, [this]() {
+        bool ok = false;
+        const QString name = QInputDialog::getText(this, tr("Salvar workspace"),
+                                                   tr("Nome do workspace:"),
+                                                   QLineEdit::Normal, m_currentWorkspace,
+                                                   &ok);
+        if (ok) saveWorkspaceAs(name);
+    });
+    QAction* saveNow = m_workspaceMenu->addAction(tr("Salvar workspace atual"));
+    connect(saveNow, &QAction::triggered, this, [this]() { captureCurrentWorkspace(); });
+}
+
 void MainWindow::saveSettings() {
     QSettings settings;
     settings.setValue("geometry", saveGeometry());
     settings.setValue("layout", saveState());
     settings.setValue("layoutVersion", kLayoutVersion);
     settings.setValue("layoutLocked", m_lockAction->isChecked());
+    // O workspace corrente também fica salvo no próprio slot nomeado, para
+    // que trocar de workspace e voltar devolva o arranjo exato.
+    if (!m_currentWorkspace.isEmpty())
+        settings.setValue(QStringLiteral("workspaces/%1/state").arg(m_currentWorkspace),
+                          saveState());
+    settings.setValue("currentWorkspace", m_currentWorkspace);
 }
 
 void MainWindow::scheduleLayoutSave() {
@@ -682,10 +799,19 @@ void MainWindow::restoreSettings() {
     // Só restaura o arranjo dos painéis se for da versão atual do layout e
     // estiver num formato válido; estados antigos podem ter a toolbar
     // deslocada por um dock no topo.
+    // O nome do workspace corrente. Vazio = instalação nova / nunca salvo; usa
+    // "Edição" para que o layout atual vire o workspace padrão.
+    m_currentWorkspace = settings.value("currentWorkspace").toString();
+    if (m_currentWorkspace.isEmpty()) m_currentWorkspace = tr("Edição");
+
     if (settings.value("layoutVersion").toInt() == kLayoutVersion) {
         const QByteArray state = settings.value("layout").toByteArray();
-        if (!state.isEmpty() && saneLayoutArray(state))
+        if (!state.isEmpty() && saneLayoutArray(state)) {
             restoreState(state);
+            // O arranjo salvo traz as larguras que o usuário escolheu; as
+            // padrão não devem sobrescrevê-lo.
+            m_hasRestoredLayout = true;
+        }
     }
     if (settings.contains("layoutLocked"))
         m_lockAction->setChecked(settings.value("layoutLocked").toBool());
@@ -731,22 +857,13 @@ bool MainWindow::confirmDiscardChanges() {
     return true;
 }
 
-// Janela normal (não-dockável) do painel de Propriedades: abre perto do
-// cursor ao ser pedida pelo menu de contexto e segue a seleção enquanto
-// aberta.
+// Mostra o painel de Propriedades, que agora é o dock "propsDock" (passo 3 da
+// réplica estrutural). Sem janela para posicionar: basta revelar e trazer para
+// frente, que ele acompanha a seleção enquanto estiver aberto.
 void MainWindow::showPropsWindow() {
-    const QPoint cur = QCursor::pos();
-    m_props->show();
-    if (QScreen* s = m_props->screen()) {
-        const QRect avail = s->availableGeometry();
-        int x = cur.x() - 16;
-        int y = cur.y() - 16;
-        x = qBound(avail.left(), x, avail.right() - m_props->width() + 1);
-        y = qBound(avail.top(), y, avail.bottom() - m_props->height() + 1);
-        m_props->move(x, y);
-    }
-    m_props->raise();
-    m_props->activateWindow();
+    if (!m_propsDock) return;
+    m_propsDock->show();
+    m_propsDock->raise();
 }
 
 void MainWindow::openMaskEditor(const QString& id) {
@@ -813,130 +930,118 @@ void MainWindow::showEvent(QShowEvent* event) {
         m_layoutRestored = true;
         restoreSettings();
     }
+    // Depois do restoreState(): um arranjo salvo tem prioridade sobre as
+    // larguras padrão, senão a primeira abertura sobrescreveria o layout.
+    applyInitialDockWidths();
     // Features de dock aplicadas antes do show() podem ser redefinidas quando
     // o Qt monta o layout dos painéis na primeira exibição. Reaplica o
     // travamento agora para o cadeado valer de verdade no início.
     setDockLocked(m_lockAction->isChecked());
 }
 
+// Boilerplate comum a todo painel dockável: objectName estável (é por ele que
+// saveState/restoreState casam o dock ao layout salvo — não renomear sem
+// bumpingar kLayoutVersion), áreas permitidas e features. Registra o dock em
+// m_allDocks.
+QDockWidget* MainWindow::makeDock(const QString& objectName, const QString& title,
+                                  QWidget* content, Qt::DockWidgetArea area) {
+    QDockWidget* dock = new QDockWidget(title, this);
+    dock->setObjectName(objectName);
+    if (content) dock->setWidget(content);
+    dock->setAllowedAreas(Qt::AllDockWidgetAreas);
+    dock->setFeatures(QDockWidget::DockWidgetMovable
+                      | QDockWidget::DockWidgetFloatable
+                      | QDockWidget::DockWidgetClosable);
+    // Sem isto o Qt recusa arrastar um painel para dentro de outro, o gesto
+    // que cria um dock flutuante com painel encaixado — no Premiere é a forma
+    // mais comum de montar um layout. AnimatedDocks dá a transição suave.
+    // (NestedDocks é o default do Qt; AllowTabbedDocks permite a pilha de abas
+    // usada pelo tabifyDockWidget() em createDocks().)
+    setDockOptions(QMainWindow::AllowNestedDocks
+                   | QMainWindow::AllowTabbedDocks
+                   | QMainWindow::AnimatedDocks);
+    addDockWidget(area, dock);
+    m_allDocks.append(dock);
+    return dock;
+}
+
+// Abas dos docks sempre no topo do grupo (item 6 do roadmap). Sem isto o Qt
+// escolhe a posição e, em grupos baixos, a barra de abas pode cair para baixo
+// do conteúdo — o oposto do Premiere.
+void MainWindow::setTabPositionsUp() {
+    for (Qt::DockWidgetArea area : {Qt::LeftDockWidgetArea, Qt::RightDockWidgetArea,
+                                    Qt::TopDockWidgetArea, Qt::BottomDockWidgetArea})
+        setTabPosition(area, QTabWidget::North);
+}
+
 void MainWindow::createDocks() {
-    m_poolDock = new QDockWidget(tr("Central de Mídias"), this);
-    m_poolDock->setObjectName(QStringLiteral("poolDock"));
-    m_poolDock->setWidget(m_pool);
-    m_poolDock->setAllowedAreas(Qt::AllDockWidgetAreas);
-    m_poolDock->setFeatures(QDockWidget::DockWidgetMovable
-                            | QDockWidget::DockWidgetFloatable
-                            | QDockWidget::DockWidgetClosable);
-    addDockWidget(Qt::LeftDockWidgetArea, m_poolDock);
+    m_poolDock = makeDock(QStringLiteral("poolDock"), tr("Central de Mídias"),
+                          m_pool, Qt::LeftDockWidgetArea);
 
-    m_timelineDock = new QDockWidget(tr("Timeline"), this);
-    m_timelineDock->setObjectName(QStringLiteral("timelineDock"));
-    m_timelineDock->setAllowedAreas(Qt::AllDockWidgetAreas);
-    m_timelineDock->setFeatures(QDockWidget::DockWidgetMovable
-                                | QDockWidget::DockWidgetFloatable
-                                | QDockWidget::DockWidgetClosable);
-    addDockWidget(Qt::BottomDockWidgetArea, m_timelineDock);
     // O widget do dock (ferramentas + timeline) é montado em createActions().
+    m_timelineDock = makeDock(QStringLiteral("timelineDock"), tr("Timeline"),
+                              nullptr, Qt::BottomDockWidgetArea);
 
-    m_pancropDock = new QDockWidget(tr("Pancrop"), this);
-    m_pancropDock->setObjectName(QStringLiteral("pancropDock"));
-    m_pancropDock->setWidget(m_pancrop);
-    m_pancropDock->setAllowedAreas(Qt::AllDockWidgetAreas);
-    m_pancropDock->setFeatures(QDockWidget::DockWidgetMovable
-                               | QDockWidget::DockWidgetFloatable
-                               | QDockWidget::DockWidgetClosable);
-    addDockWidget(Qt::RightDockWidgetArea, m_pancropDock);
+    m_pancropDock = makeDock(QStringLiteral("pancropDock"), tr("Pancrop"),
+                             m_pancrop, Qt::RightDockWidgetArea);
     m_pancropDock->hide();
 
-    m_graphDock = new QDockWidget(tr("Editor de Curvas"), this);
-    m_graphDock->setObjectName(QStringLiteral("graphDock"));
-    m_graphDock->setWidget(m_graph);
-    m_graphDock->setAllowedAreas(Qt::AllDockWidgetAreas);
-    m_graphDock->setFeatures(QDockWidget::DockWidgetMovable
-                             | QDockWidget::DockWidgetFloatable
-                             | QDockWidget::DockWidgetClosable);
-    addDockWidget(Qt::BottomDockWidgetArea, m_graphDock);
+    m_graphDock = makeDock(QStringLiteral("graphDock"), tr("Editor de Curvas"),
+                           m_graph, Qt::BottomDockWidgetArea);
     splitDockWidget(m_timelineDock, m_graphDock, Qt::Vertical);
-    m_graphDock->setMinimumHeight(170);
 
-    m_effectsDock = new QDockWidget(tr("Efeitos"), this);
-    m_effectsDock->setObjectName(QStringLiteral("effectsDock"));
-    m_effectsDock->setWidget(m_effects);
-    m_effectsDock->setAllowedAreas(Qt::AllDockWidgetAreas);
-    m_effectsDock->setFeatures(QDockWidget::DockWidgetMovable
-                               | QDockWidget::DockWidgetFloatable
-                               | QDockWidget::DockWidgetClosable);
-    addDockWidget(Qt::RightDockWidgetArea, m_effectsDock);
+    m_effectsDock = makeDock(QStringLiteral("effectsDock"), tr("Efeitos"),
+                             m_effects, Qt::RightDockWidgetArea);
     m_effectsDock->hide();
 
-    m_expressDock = new QDockWidget(tr("Express"), this);
-    m_expressDock->setObjectName(QStringLiteral("expressDock"));
-    m_expressDock->setWidget(m_express);
-    m_expressDock->setAllowedAreas(Qt::AllDockWidgetAreas);
-    m_expressDock->setFeatures(QDockWidget::DockWidgetMovable
-                               | QDockWidget::DockWidgetFloatable
-                               | QDockWidget::DockWidgetClosable);
-    addDockWidget(Qt::RightDockWidgetArea, m_expressDock);
+    m_expressDock = makeDock(QStringLiteral("expressDock"), tr("Express"),
+                             m_express, Qt::RightDockWidgetArea);
     tabifyDockWidget(m_effectsDock, m_expressDock);
     m_expressDock->hide();
 
-    m_fileBrowserDock = new QDockWidget(tr("Explorador de Arquivos"), this);
-    m_fileBrowserDock->setObjectName(QStringLiteral("fileBrowserDock"));
-    m_fileBrowserDock->setWidget(m_fileBrowser);
-    m_fileBrowserDock->setAllowedAreas(Qt::AllDockWidgetAreas);
-    m_fileBrowserDock->setFeatures(QDockWidget::DockWidgetMovable
-                                   | QDockWidget::DockWidgetFloatable
-                                   | QDockWidget::DockWidgetClosable);
-    addDockWidget(Qt::LeftDockWidgetArea, m_fileBrowserDock);
+    m_fileBrowserDock = makeDock(QStringLiteral("fileBrowserDock"),
+                                 tr("Explorador de Arquivos"),
+                                 m_fileBrowser, Qt::LeftDockWidgetArea);
     m_fileBrowserDock->hide();
+
+    // Inspector: dock à direita — o QMainWindow o posiciona entre o widget
+    // central (preview) e a borda direita da janela, encostando no monitor
+    // como no Premiere (passo 3 da réplica estrutural).
+    m_propsDock = makeDock(QStringLiteral("propsDock"), tr("Propriedades"),
+                           m_props, Qt::RightDockWidgetArea);
+    m_propsDock->hide();
 
     // Mixer — dock na parte inferior, ao lado da timeline.
     m_mixer = new MixerWidget(this);
     m_mixer->setProject(&m_project);
     m_mixer->setPreview(m_preview);
-    m_mixerDock = new QDockWidget(tr("Mixer"), this);
-    m_mixerDock->setObjectName(QStringLiteral("mixerDock"));
-    m_mixerDock->setWidget(m_mixer);
-    m_mixerDock->setAllowedAreas(Qt::AllDockWidgetAreas);
-    m_mixerDock->setFeatures(QDockWidget::DockWidgetMovable
-                             | QDockWidget::DockWidgetFloatable
-                             | QDockWidget::DockWidgetClosable);
-    addDockWidget(Qt::BottomDockWidgetArea, m_mixerDock);
+    m_mixerDock = makeDock(QStringLiteral("mixerDock"), tr("Mixer"),
+                           m_mixer, Qt::BottomDockWidgetArea);
     splitDockWidget(m_timelineDock, m_mixerDock, Qt::Vertical);
-    m_mixerDock->setMinimumHeight(120);
     m_mixerDock->hide();
 
     // Mesa (composição 2D) — dock ao lado do preview.
     m_mesa = new MesaWidget(this);
     m_mesa->setProject(&m_project);
-    m_mesaDock = new QDockWidget(tr("Mesa"), this);
-    m_mesaDock->setObjectName(QStringLiteral("mesaDock"));
-    m_mesaDock->setWidget(m_mesa);
-    m_mesaDock->setAllowedAreas(Qt::AllDockWidgetAreas);
-    m_mesaDock->setFeatures(QDockWidget::DockWidgetMovable
-                             | QDockWidget::DockWidgetFloatable
-                             | QDockWidget::DockWidgetClosable);
-    addDockWidget(Qt::RightDockWidgetArea, m_mesaDock);
+    m_mesaDock = makeDock(QStringLiteral("mesaDock"), tr("Mesa"),
+                          m_mesa, Qt::RightDockWidgetArea);
     tabifyDockWidget(m_pancropDock, m_mesaDock);
     m_mesaDock->hide();
 
-    // Histórico de edições (undo/redo) — dock no canto inferior direito,
-    // agrupado com o Mixer.
+    // Histórico de edições (undo/redo) — dock à direita, agrupado na pilha
+    // de Efeitos/Express.
     m_histList = new QListWidget(this);
     m_histList->setSelectionMode(QAbstractItemView::SingleSelection);
     m_histList->setMinimumWidth(180);
     connect(m_histList, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
         jumpToUndo(item->data(Qt::UserRole).toInt());
     });
-    m_histDock = new QDockWidget(tr("Histórico de Edições"), this);
-    m_histDock->setObjectName(QStringLiteral("historyDock"));
-    m_histDock->setWidget(m_histList);
-    m_histDock->setAllowedAreas(Qt::AllDockWidgetAreas);
-    m_histDock->setFeatures(QDockWidget::DockWidgetMovable
-                            | QDockWidget::DockWidgetFloatable
-                            | QDockWidget::DockWidgetClosable);
-    addDockWidget(Qt::RightDockWidgetArea, m_histDock);
-    tabifyDockWidget(m_mixerDock, m_histDock);
+    m_histDock = makeDock(QStringLiteral("historyDock"), tr("Histórico de Edições"),
+                          m_histList, Qt::RightDockWidgetArea);
+    // Agrupado com Efeitos/Express, não com o Mixer: antes o Histórico era
+    // tabificado contra o Mixer e acabava na área de baixo, montando uma pilha
+    // de 3 abas (Mixer|Histórico|Analisadores) com ~120px de altura útil.
+    tabifyDockWidget(m_expressDock, m_histDock);
     m_histDock->hide();
     updateHistoryList();
 
@@ -958,15 +1063,13 @@ void MainWindow::createDocks() {
     scopeLay->setContentsMargins(6, 6, 6, 6);
     scopeLay->addWidget(m_scopeMode);
     scopeLay->addWidget(m_scopes, 1);
-    m_scopesDock = new QDockWidget(tr("Analisadores"), this);
-    m_scopesDock->setObjectName(QStringLiteral("scopesDock"));
-    m_scopesDock->setWidget(scopeBox);
-    m_scopesDock->setAllowedAreas(Qt::AllDockWidgetAreas);
-    m_scopesDock->setFeatures(QDockWidget::DockWidgetMovable
-                              | QDockWidget::DockWidgetFloatable
-                              | QDockWidget::DockWidgetClosable);
-    addDockWidget(Qt::RightDockWidgetArea, m_scopesDock);
-    tabifyDockWidget(m_histDock, m_scopesDock);
+    m_scopesDock = makeDock(QStringLiteral("scopesDock"), tr("Analisadores"),
+                            scopeBox, Qt::RightDockWidgetArea);
+    // Fica na pilha da Mesa (área direita, ao lado do preview), como o
+    // comentário acima descreve. raise() deixa a aba Analyzer selecionada
+    // quando o usuário abre o dock.
+    tabifyDockWidget(m_mesaDock, m_scopesDock);
+    m_scopesDock->raise();
     m_scopesDock->hide();
     auto* scopeTimer = new QTimer(this);
     scopeTimer->setInterval(70);
@@ -980,12 +1083,31 @@ void MainWindow::createDocks() {
     setStyleSheet(globalStyleSheet(savedTheme()));
 
     // Qualquer mudança de arranjo dos painéis agenda o salvamento do layout.
-    for (QDockWidget* dock : {m_poolDock, m_timelineDock, m_pancropDock, m_graphDock,
-                              m_effectsDock, m_expressDock, m_fileBrowserDock,
-                              m_mixerDock, m_mesaDock, m_histDock, m_scopesDock}) {
+    for (QDockWidget* dock : m_allDocks) {
         connect(dock, &QDockWidget::topLevelChanged, this, &MainWindow::scheduleLayoutSave);
         connect(dock, &QDockWidget::visibilityChanged, this, &MainWindow::scheduleLayoutSave);
     }
+
+    setTabPositionsUp();
+
+    // Arr default do app: base de qualquer workspace ainda não salvo.
+    m_defaultLayoutState = saveState();
+}
+
+void MainWindow::applyInitialDockWidths() {
+    // Só faz sentido na primeira exibição: antes disso o Qt ainda não
+    // calculou o layout e resizeDocks() não teria efeito. E nunca sobrescreve
+    // um arranjo já salvo pelo usuário.
+    if (m_widthsApplied || m_hasRestoredLayout) return;
+    m_widthsApplied = true;
+    // Mídias agora tem um painel em LISTA (colunas estilo Premiere), que exige
+    // largura — 260px não cabia nem a metade das colunas.
+    resizeDocks({m_poolDock}, {420}, Qt::Horizontal);
+    resizeDocks({m_fileBrowserDock}, {220}, Qt::Horizontal);
+    resizeDocks({m_effectsDock, m_expressDock, m_histDock}, {260}, Qt::Horizontal);
+    resizeDocks({m_pancropDock, m_mesaDock, m_scopesDock}, {280}, Qt::Horizontal);
+    // Paleta de ferramentas: coluna estreita ao lado da timeline (Tools).
+    if (m_toolsDock) resizeDocks({m_toolsDock}, {60}, Qt::Horizontal);
 }
 
 void MainWindow::createActions() {
@@ -1222,18 +1344,13 @@ void MainWindow::createActions() {
     });
 
     QMenu* viewMenu = menuBar()->addMenu(tr("&Exibir"));
-    viewMenu->addAction(m_poolDock->toggleViewAction());
-    viewMenu->addAction(m_timelineDock->toggleViewAction());
-    viewMenu->addAction(m_pancropDock->toggleViewAction());
-    viewMenu->addAction(m_graphDock->toggleViewAction());
-    viewMenu->addAction(m_effectsDock->toggleViewAction());
-    viewMenu->addAction(m_expressDock->toggleViewAction());
-    viewMenu->addAction(m_fileBrowserDock->toggleViewAction());
-    viewMenu->addAction(m_mixerDock->toggleViewAction());
-    viewMenu->addAction(m_mesaDock->toggleViewAction());
-    viewMenu->addAction(m_histDock->toggleViewAction());
-    viewMenu->addAction(m_scopesDock->toggleViewAction());
+    for (QDockWidget* dock : m_allDocks)
+        viewMenu->addAction(dock->toggleViewAction());
     viewMenu->addSeparator();
+
+    // Workspaces (roadmap 0.7): arranjos nomeados de painéis, à Premiere.
+    m_workspaceMenu = viewMenu->addMenu(tr("Workspaces"));
+    rebuildWorkspaceMenu();
 
     // Preview externo: janela própria (segundo monitor) com o mesmo sinal de
     // vídeo do monitor principal, sem overlays. F11 ou duplo-clique = tela cheia.
@@ -1307,7 +1424,27 @@ void MainWindow::createActions() {
 
     QToolBar* toolTb = new QToolBar(tr("Ferramentas da timeline"), tlContainer);
     toolTb->setMovable(false);
+    toolTb->setOrientation(Qt::Vertical);
+    toolTb->setIconSize(QSize(24, 24));
+    toolTb->setFixedWidth(46);
     toolTb->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    // Paleta de ferramentas vertical, como a Tools do Premiere: fica ao lado
+    // dos cabeçalhos de faixa, com checkout no hover/pressionado do tema.
+    QColor toolsHover = themeColors().canvasBorder;
+    toolsHover.setAlpha(70);
+    QColor toolsChecked = themeColors().accent;
+    toolsChecked.setAlpha(55);
+    toolTb->setStyleSheet(QStringLiteral(
+        "QToolBar{background:transparent;border:none;padding:4px 2px;spacing:4px;}"
+        "QToolBar::separator{background:%1;}"
+        "QToolBar::separator:vertical{height:1px;margin:6px 8px;}"
+        "QToolBar::separator:horizontal{width:1px;margin:8px 6px;}"
+        "QToolBar QToolButton{border:none;border-radius:4px;background:transparent;}"
+        "QToolBar QToolButton:hover{background:%2;}"
+        "QToolBar QToolButton:checked{background:%3;}")
+        .arg(themeColors().transportBorder.name(),
+             toolsHover.name(QColor::HexArgb),
+             toolsChecked.name(QColor::HexArgb)));
     const QStringList toolNames = {
         tr("Selecionar (0)"), tr("Mover (M)"), tr("Tesoura (R)"),
         tr("Envelope (E)"), tr("Lupa (Z)"),
@@ -1386,16 +1523,24 @@ void MainWindow::createActions() {
     connect(rulerAct, &QAction::toggled, m_timeline, &TimelineWidget::setRulerVisible);
     toolTb->addAction(rulerAct);
 
-    tlLay->addWidget(toolTb);
-
+    // Timeline volta a ocupar o dock inteiro (a paleta saiu para dock próprio).
     tlLay->addWidget(m_timeline, 1);
     m_timelineDock->setWidget(tlContainer);
+
+    // Paleta de ferramentas independente e DOCÁVEL, como a Tools do Premiere:
+    // um dock estreito e vertical, encaixado à esquerda da timeline (atrás dos
+    // cabeçalhos de faixa). O usuário pode arrastá-la, encaixá-la em outra
+    // área ou deixá-la flutuando. splitDockWidget + resizeDocks definem a fatia
+    // inicial; o resto é o layout que o usuário salvar (saveState/restoreState).
+    m_toolsDock = makeDock(QStringLiteral("toolsDock"), tr("Ferramentas"),
+                           toolTb, Qt::BottomDockWidgetArea);
+    m_toolsDock->setMinimumWidth(44);
+    splitDockWidget(m_timelineDock, m_toolsDock, Qt::Horizontal);
+    resizeDocks({m_timelineDock, m_toolsDock}, {1920, 60}, Qt::Horizontal);
 }
 
 void MainWindow::setDockLocked(bool locked) {
-    for (QDockWidget* dock : {m_poolDock, m_timelineDock, m_pancropDock, m_graphDock,
-                              m_effectsDock, m_expressDock, m_fileBrowserDock,
-                              m_mixerDock, m_mesaDock, m_histDock, m_scopesDock}) {
+    for (QDockWidget* dock : m_allDocks) {
         if (locked) {
             if (!m_originalFeatures.contains(dock))
                 m_originalFeatures.insert(dock, dock->features());

@@ -137,7 +137,7 @@
 | `Ctrl+roda` | Zoom da timeline |
 | `Ctrl+clique` | Alternar marcador / multi-seleção |
 | `Q` | Ativar/desativar loop |
-| `V` | Mostrar/ocultar linhas de volume |
+| `V` | Mostrar/ocultar a linha de volume do clipe (a da faixa é sempre visível) |
 
 ## Undo/Redo
 

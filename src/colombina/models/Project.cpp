@@ -16,6 +16,7 @@ static QJsonObject mediaToJson(const MediaItem& m) {
     o["duration"] = m.duration;
     o["width"] = m.width;
     o["height"] = m.height;
+    o["fps"] = m.fps;
     o["hasVideo"] = m.hasVideo;
     o["hasAudio"] = m.hasAudio;
     o["audioStreams"] = m.audioStreams;
@@ -38,6 +39,7 @@ static MediaItem mediaFromJson(const QJsonObject& o) {
     m.duration = o["duration"].toDouble();
     m.width = o["width"].toInt();
     m.height = o["height"].toInt();
+    m.fps = o["fps"].toDouble();
     m.hasVideo = o["hasVideo"].toBool();
     m.hasAudio = o["hasAudio"].toBool();
     m.audioStreams = o["audioStreams"].toInt();

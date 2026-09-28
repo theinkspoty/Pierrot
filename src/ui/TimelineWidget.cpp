@@ -16,6 +16,7 @@
 #include "ui/TextEditorDialog.h"
 #include "ui/SettingsDialog.h"
 #include "ui/TlLog.h"
+#include "ui/Theme.h"
 
 #include <QPainter>
 #include <QPainterPath>
@@ -74,8 +75,8 @@
 #include <utility>
 
 namespace {
-constexpr int kHeaderW = 130;
-constexpr int kRulerH = 26;
+constexpr int kHeaderW = 150; // largura do header de faixa (estilo Premiere)
+constexpr int kRulerH = 22;   // régua fina, estilo Premiere
 constexpr int kMarginR = 60;
 constexpr int kZoomW = 64;
 // Tamanhos dos presets de estilo das faixas (minimizada / grande).
@@ -235,6 +236,7 @@ void TimelineWidget::refreshView() {
 
 void TimelineWidget::setProject(Project* p) {
     m_project = p;
+    hideTrackRename();
     m_selected.clear();
     m_secondarySelected.clear();
     clearTrackSelection();
@@ -1345,7 +1347,7 @@ void TimelineWidget::keyPressEvent(QKeyEvent* e) {
     case Qt::Key_V:
         if (ctrl && shift) { pasteAttributes(); e->accept(); break; }
         if (ctrl) { pasteClips(); e->accept(); break; }
-        m_showVolLines = !m_showVolLines; // V: oculta/mostra as linhas de volume
+        m_showVolLines = !m_showVolLines; // V: linha de volume individual do clipe
         invalidateScene();
         e->accept();
         break;
@@ -1418,10 +1420,22 @@ void TimelineWidget::keyPressEvent(QKeyEvent* e) {
     }
 }
 
-// Captura a tecla da Tesoura (default R) globalmente, inclusive quando o foco
-// do teclado está fora da timeline (preview, toolbar etc.). Não interfere na
-// digitação em campos de texto.
 bool TimelineWidget::eventFilter(QObject* o, QEvent* ev) {
+    // Esc no editor inline de nome de faixa: restaura o texto e fecha.
+    if (o == m_trackRename && ev->type() == QEvent::KeyPress) {
+        auto* ke = static_cast<QKeyEvent*>(ev);
+        if (ke->key() == Qt::Key_Escape) {
+            m_trackRename->setText(m_renameOriginal);
+            m_trackRename->clearFocus(); // → editingFinished → commit sem mudança
+            if (m_trackRename && m_trackRename->isVisible())
+                hideTrackRename();
+            return true;
+        }
+        return false;
+    }
+    // Captura a tecla da Tesoura (default R) globalmente, inclusive quando o
+    // foco do teclado está fora da timeline (preview, toolbar etc.). Não
+    // interfere na digitação em campos de texto.
     if (ev->type() == QEvent::KeyPress || ev->type() == QEvent::KeyRelease) {
         auto* ke = static_cast<QKeyEvent*>(ev);
         if (ke->key() == razorHoldKey()) {
@@ -2343,6 +2357,74 @@ void TimelineWidget::createTrackGroup() {
     updateScrollRanges();
     invalidateScene();
     emit modified();
+}
+
+// ── Renomeio inline da faixa (duplo clique no nome, estilo Premiere) ──────
+// Um QLineEdit sem bordas cobre a área do nome; Enter/perda de foco confirma,
+// Esc cancela. O texto só muda de verdade se for diferente do original.
+void TimelineWidget::beginTrackRename(int row, bool audio) {
+    if (!m_project) return;
+    Track* trk = audio ? &m_project->audioTracks[row] : &m_project->videoTracks[row];
+    if (m_trackRename && m_trackRename->isVisible()
+        && m_renameRow == row && m_renameAudio == audio)
+        return;
+    m_renameRow = row;
+    m_renameAudio = audio;
+    m_renameOriginal = trk->name;
+    const int y = audio ? rowY(-1, row) : rowY(row, -1);
+    if (!m_trackRename) {
+        m_trackRename = new QLineEdit(this);
+        m_trackRename->setObjectName(QStringLiteral("trackRename"));
+        m_trackRename->setFrame(false);
+        m_trackRename->installEventFilter(this);
+        connect(m_trackRename, &QLineEdit::editingFinished,
+                this, &TimelineWidget::commitTrackRename);
+        const QColor& bg = themeColors().trackLabelBg;
+        const QColor& fg = themeColors().trackLabelText;
+        const QColor& bd = themeColors().accent;
+        m_trackRename->setStyleSheet(QStringLiteral(
+            "QLineEdit{background:%1;color:%2;border:1px solid %3;"
+            "padding:0;font-size:9pt;font-weight:bold;}")
+            .arg(bg.name(), fg.name(), bd.name()));
+    }
+    m_trackRename->setText(trk->name);
+    // Editor posicionado sobre a faixa do NOME: linha inferior no layout
+    // normal, única linha na faixa recolhida/baixa — mesmo retângulo do desenho.
+    const int rowH = trackH(row, audio);
+    const bool mini = trk->collapsed || rowH - kResizeHandleH < 22;
+    m_trackRename->setGeometry(mini ? headerMiniNameRect(y) : headerNameRect(y));
+    m_trackRename->show();
+    m_trackRename->raise();
+    m_trackRename->setFocus(Qt::OtherFocusReason);
+    m_trackRename->selectAll();
+}
+
+void TimelineWidget::commitTrackRename() {
+    if (!m_project || m_renameRow < 0) return;
+    Track* trk = m_renameAudio
+        ? (m_renameRow < m_project->audioTracks.size()
+               ? &m_project->audioTracks[m_renameRow] : nullptr)
+        : (m_renameRow < m_project->videoTracks.size()
+               ? &m_project->videoTracks[m_renameRow] : nullptr);
+    if (trk) {
+        const QString t = m_trackRename->text().trimmed();
+        if (!t.isEmpty() && t != m_renameOriginal) {
+            emit editStart();
+            trk->name = t;
+            emit modified();
+            invalidateScene();
+        }
+    }
+    hideTrackRename();
+}
+
+void TimelineWidget::hideTrackRename() {
+    if (m_trackRename) m_trackRename->hide();
+    m_renameRow = -1;
+    m_renameAudio = false;
+    m_renameOriginal.clear();
+    setFocus();
+    update();
 }
 
 void TimelineWidget::renameTrackGroup(const QString& gid) {

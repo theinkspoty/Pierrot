@@ -22,8 +22,8 @@
 #include <QFont>
 
 namespace {
-constexpr int kHeaderW = 130;
-constexpr int kRulerH = 26;
+constexpr int kHeaderW = 150; // largura do header de faixa (estilo Premiere)
+constexpr int kRulerH = 22;   // régua fina, estilo Premiere
 constexpr int kZoomW = 64;
 constexpr int kFolderH = 22;
 constexpr int kResizeHandleH = 5;
@@ -107,6 +107,13 @@ QColor audioSolidColor(const Track& tr, int index, qreal val) {
     qreal sat = c.hslSaturationF();
     if (sat <= 0.0) sat = 0.65;
     return QColor::fromHslF(hue, sat, val);
+}
+
+// Texto legível sobre uma cor de fundo: claro -> letra escura, escuro ->
+// letra clara. Usado na faixa de nome dos clipes (áudio e vídeo), que é a
+// mesma anatomia nos dois.
+QColor readableTextOn(const QColor& bg) {
+    return bg.lightnessF() > 0.55 ? QColor(0x1A, 0x1A, 0x1A) : QColor(0xEA, 0xEA, 0xEA);
 }
 }
 
@@ -199,9 +206,11 @@ bool TimelineWidget::recTrackVisible(int idx) const {
 }
 
 int TimelineWidget::recRowY(int idx) const {
-    // rowY(-1, 0) = fundo da seção de vídeo, já contando a barra de pasta
-    // que possa abrir a seção de áudio. Gravação é sempre a última seção.
-    int y = rowY(-1, 0) + 2; // +2: barra divisória da seção
+    if (!m_project) return kRulerH;
+    // Gravação é sempre a última seção, então começa abaixo de TODAS as
+    // faixas de áudio. rowY(-1, audioTracks.size()) dá o fundo da última
+    // faixa de áudio, já contando as barras de pasta.
+    int y = rowY(-1, (int)m_project->audioTracks.size()) + 2; // +2: divisória
     for (int i = 0; i < idx; ++i)
         if (recTrackVisible(i)) y += recTrackH(i);
     return y;
@@ -285,30 +294,13 @@ int TimelineWidget::trackEnvKfAt(const QPoint& p, int& row, bool& audio) const {
 
 void TimelineWidget::drawTrackVolEnvelope(QPainter& p, int row, const Track& tr) {
     const int Hx = kHeaderW;
-    const int rowH = trackH(row, true);
-    const int pad = 6;
     const double t0 = m_viewStart;
     const double t1 = t0 + (width() - Hx) / m_pps;
     p.save();
     p.setClipRect(QRect(Hx, kRulerH, width() - Hx, height() - kRulerH));
 
-    // Preenchimento suave sob a curva (0% no fundo da faixa até a curva).
-    QPolygon band;
-    band << QPoint(Hx, rowY(-1, row) + rowH);
-    for (int px = Hx; px <= width(); px += 2) {
-        const double t = t0 + (px - Hx) / m_pps;
-        if (t > t1) break;
-        const double v = kfValue(tr.kfVolume, tr.volume, t);
-        band << QPoint(px, trackVolLineYAt(row, v));
-    }
-    band << QPoint(width(), rowY(-1, row) + rowH);
-    QColor fill = themeColors().accentGold;
-    fill.setAlpha(34);
-    p.setPen(Qt::NoPen);
-    p.setBrush(fill);
-    p.drawPolygon(band);
-
-    // Curva principal.
+    // Premiere: só a curva + os diamantes dos keyframes, sem preenchimento
+    // colorido sob a linha (o preenchimento era estilo Vegas).
     QPolygon poly;
     poly.reserve((width() - Hx) / 2 + 2);
     for (int px = Hx; px <= width(); px += 2) {
@@ -317,8 +309,11 @@ void TimelineWidget::drawTrackVolEnvelope(QPainter& p, int row, const Track& tr)
         const double v = kfValue(tr.kfVolume, tr.volume, t);
         poly << QPoint(px, trackVolLineYAt(row, v));
     }
+    const bool activeCurve = m_dragMode == TrackEnvVol && m_envRow == row;
     p.setBrush(Qt::NoBrush);
-    p.setPen(QPen(themeColors().accentGold, 1, Qt::SolidLine));
+    p.setPen(QPen(activeCurve ? themeColors().accentGold
+                              : QColor(255, 255, 255),
+                  activeCurve ? 2 : 1, Qt::SolidLine));
     p.drawPolyline(poly);
 
     // Diamantes dos keyframes (maiores quando o ponto está sendo arrastado).
@@ -327,7 +322,7 @@ void TimelineWidget::drawTrackVolEnvelope(QPainter& p, int row, const Track& tr)
         const int ky = trackVolLineYAt(row, tr.kfVolume[k].value);
         const bool hot = m_dragMode == TrackEnvVol && m_envRow == row && m_envKf == k;
         const int r = hot ? 4 : 3;
-        p.setPen(QPen(hot ? QColor(255, 255, 255) : QColor(255, 224, 130),
+        p.setPen(QPen(hot ? QColor(255, 255, 255) : QColor(235, 235, 235),
                       hot ? 2 : 1));
         p.setBrush(Qt::NoBrush);
         p.drawEllipse(QPoint(kx, ky), r, r);
@@ -539,8 +534,10 @@ void TimelineWidget::renderScene(QPainter& p) {
         const int y = rowY(i, -1);
         const int rowH = trackH(i, false);
         const bool sel = isTrackSelected(i, false);
-        p.fillRect(0, y, width(), rowH, sel ? QColor(44, 50, 64)
-                                            : ((i % 2) ? themeColors().trackBgAlt : themeColors().trackBg));
+        // Premiere: fundo chapado em todas as pistas (vídeo e áudio), sem
+        // zebrado — a separação vem da linha divisória no rodapé de cada uma.
+        p.fillRect(0, y, width(), rowH, sel ? QColor(42, 48, 62)
+                                            : themeColors().trackBg);
         if (sel) {
             p.fillRect(0, y, 4, rowH, themeColors().accent);
             p.setPen(QPen(themeColors().accent, 1));
@@ -570,10 +567,11 @@ void TimelineWidget::renderScene(QPainter& p) {
         const int y = rowY(-1, i);
         const int rowH = trackH(i, true);
         const bool sel = isTrackSelected(i, true);
-        // A pista vazia fica escura (como no Premiere); a cor do label é
-        // aplicada apenas nas faixas (clipes de áudio) e no header.
+        // Premiere: a pista de áudio é um fundo chapado, sem listras
+        // alternadas — a separação entre faixas vem da linha divisória
+        // sutil desenhada no rodapé de cada uma.
         p.fillRect(0, y, width(), rowH, sel ? QColor(42, 48, 62)
-                                            : ((i % 2) ? themeColors().trackBg : themeColors().trackBgAlt));
+                                            : themeColors().trackBg);
         if (sel) {
             p.fillRect(0, y, 4, rowH, themeColors().accent);
             p.setPen(QPen(themeColors().accent, 1));
@@ -599,8 +597,7 @@ void TimelineWidget::renderScene(QPainter& p) {
             lastBottom = qMax(lastBottom, y + rowH);
             const bool sel = isRecTrackSelected(i);
             p.fillRect(0, y, width(), rowH, sel ? QColor(46, 40, 44)
-                                                : ((i % 2) ? themeColors().trackBg
-                                                           : themeColors().trackBgAlt));
+                                                : themeColors().trackBg);
             if (sel) {
                 p.fillRect(0, y, 4, rowH, recColor());
                 p.setPen(QPen(recColor(), 1));
@@ -678,10 +675,10 @@ void TimelineWidget::renderScene(QPainter& p) {
     }
     p.restore();
 
-    // Linha/envelope de volume por faixa (estilo Vegas): visível só com a
-    // tecla V, junto com as linhas de volume por clipe — clique na linha
-    // alterna um ponto, em qualquer ferramenta.
-    if (m_showVolLines) {
+    // Linha/envelope de volume da faixa: SEMPRE visível nas faixas de áudio,
+    // como no Premiere (que não tem tecla para ligar/desligar). O volume do
+    // clipe individual continua atrás da tecla V.
+    {
         p.save();
         p.setClipRect(QRect(H, kRulerH, width() - H, height() - kRulerH));
         for (int i = 0; i < (int)m_project->audioTracks.size(); ++i) {
@@ -878,7 +875,7 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
     if (audio) {
         // Clipe de áudio estilo Adobe Premiere: corpo sólido na cor do label
         // (verde por padrão), borda mais clara na mesma cor. Seleção = borda
-        // ciano + corpo mais claro. Não é clipe escuro com onda colorida
+        // branca + corpo mais claro. Não é clipe escuro com onda colorida
         // (Vegas).
         fill = sel ? audioSolidColor(tr, trackIndex, 0.50)
                    : sel2 ? audioSolidColor(tr, trackIndex, 0.34)
@@ -887,14 +884,16 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
                      : sel2 ? themeColors().clipBorderSecondary
                             : audioSolidColor(tr, trackIndex, 0.55);
     } else {
-        fill = sel ? QColor(46, 96, 168) : themeColors().clipBg;
+        // Premiere: clipe selecionado mantém a mesma cor do corpo (um pouco
+        // mais clara) e ganha BORDA BRANCA — sem mudança de matiz.
+        fill = sel ? themeColors().clipBg.lighter(128) : themeColors().clipBg;
         border = sel ? themeColors().clipBorderSelect
                      : sel2 ? themeColors().clipBorderSecondary
                             : themeColors().clipBorder;
     }
     p.setPen(QPen(border, sel ? 2 : sel2 ? 1.5 : 1));
     p.setBrush(fill);
-    p.drawRoundedRect(r, 3, 3);
+    p.drawRoundedRect(r, 2, 2);
 
     const MediaItem* mi = m_project ? m_project->findMedia(c.mediaId) : nullptr;
     const QString path = mi ? mi->filePath : QString();
@@ -946,11 +945,8 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
         drawKeyframeDiamonds(p, r, c, audio);
 
     QString label = c.name.isEmpty() ? tr.name : c.name;
-    if (audio) {
-        label += QString("  \u00b7  v %1%").arg((int)llround(c.volume * 100.0));
-        if (c.hasAudioFx())
-            label += QString("  \u00b7  FX");
-    }
+    if (audio && c.hasAudioFx())
+        label += QString("  \u00b7  FX");
     if (std::fabs(c.speed - 1.0) > 1e-4)
         label += QString("  \u00b7  %1\u00d7").arg(c.speed, 0, 'g', 3);
     QFont f = p.font();
@@ -959,7 +955,21 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
     QFontMetrics fm(f);
     label = fm.elidedText(label, Qt::ElideRight, std::max(1, r.width() - 10));
     QRect labelRect(r.left() + 3, r.top() + 2, r.width() - 6, fm.height());
-    p.fillRect(labelRect, QColor(0, 0, 0, 110));
+    QColor textColor = themeColors().clipText;
+    // Mesma anatomia nos dois tipos de clipe (como no Premiere): faixa de nome
+    // no topo, na cor da faixa, com o nome por cima. Áudio usa um tom mais
+    // claro do corpo; vídeo usa a cor da faixa. Só some quando o clipe é
+    // baixo demais para caber.
+    {
+        const int barH = fm.height() + 4;
+        if (r.height() >= barH + 8) {
+            const QColor bar = audio ? fill.lighter(155) : tint;
+            p.fillRect(QRect(r.left() + 1, r.top() + 1, r.width() - 2, barH), bar);
+            textColor = readableTextOn(bar);
+        } else {
+            p.fillRect(labelRect, QColor(0, 0, 0, 110));
+        }
+    }
     // Ícone de áudio (alto-falante) para clipes de áudio.
     int textX = r.left() + 5;
     if (audio) {
@@ -974,7 +984,7 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
             textX += 17;
         }
     }
-    p.setPen(themeColors().clipText);
+    p.setPen(textColor);
     QRect textRect(textX, r.top() + 2, r.right() - 3 - textX, fm.height());
     p.drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, label);
 
@@ -1109,11 +1119,9 @@ void TimelineWidget::drawAudioWaveform(QPainter& p, const QRect& r, const Clip& 
     }
     const double gain = gPeak > 1e-4 ? (0.92 / gPeak) : 1.0;
 
-    // Onda em tom escuro do label, alpha cresce com a amplitude. Sem grade
-    // dB, sem linha zero, sem marcadores de tempo — fidelidade ao Premiere.
-    // Onda BEM clara (tom quase branco no matiz do label), alpha cresce com a
-    // amplitude — destaque forte sobre o fundo colorido, ideal para cortes.
-    const qreal waveVal = 0.90;
+    // Onda em tom CLARO do matiz do clipe, quase opaca (Premiere: waveform
+    // claro sobre o corpo sólido, sem transparência crescendo por amplitude).
+    const qreal waveVal = 0.78;
 
     for (int x = x0; x <= x1; ++x) {
         float mn = 0.0f, mx = 0.0f;
@@ -1128,7 +1136,7 @@ void TimelineWidget::drawAudioWaveform(QPainter& p, const QRect& r, const Clip& 
 
         const float norm = std::clamp((float)(std::max(std::fabs(mx), std::fabs(mn)) * gain),
                                       0.0f, 1.0f);
-        const qreal alph = qBound(0.55, 0.68 + 0.30 * norm, 1.0);
+        const qreal alph = qBound(0.80, 0.86 + 0.14 * norm, 1.0);
         p.setPen(Qt::NoPen);
         p.setBrush(QColor::fromHslF(hue, sat, waveVal, alph));
         // Coluna sólida de -pico a +pico, espelhada em torno do zero, como o
@@ -1443,289 +1451,329 @@ void TimelineWidget::drawKeyframeDiamonds(QPainter& p, const QRect& r,
     }
 }
 
-// Geometria alinhada entre desenho e hit-test.
-QRect TimelineWidget::headerBarRect(int y, int rowH) const {
-    const int H = kHeaderW;
-    const int barH = 4;
-    const int btnY = y + rowH - kResizeHandleH - kHeaderBtnH;
-    const int contentBottom = btnY - 4;
-    const int contentTop = y + kHeaderNameH;
-    const int contentH = contentBottom - contentTop;
-    if (contentH < 8) return QRect();
-    const int textH = contentH / 2;
-    int barY = contentTop + textH + (contentH - textH - barH) / 2;
-    return QRect(6, barY, H - 12, barH);
+// ── Geometria dos controles do cabeçalho (desenho e hit-test usam a mesma) ──
+// Layout réplica do Premiere (CC 2018+, tema escuro "Main"):
+//   • Linha superior de controles (y+2, 18px): recolher, navegação de
+//     keyframes (◀ ◆ ▶), sync lock (chip; sem backend), toggle de saída
+//     (olho/falante) e, no áudio, os botões M / S / R (gravação de voz).
+//   • Abaixo da linha (y+21): o NOME da faixa à esquerda e o CADEADO (lock)
+//     à direita, como no Premiere (nome entre os controles e o cadeado).
+//   • Áudio ainda tem o VU meter vertical na borda direita (da linha do nome
+//     ao fim), como os meters de faixa do Premiere. Vídeo não tem meter.
+//   • Faixa recolhida/baixa vira uma tira única: nome + olho/falante + cadeado.
+// A largura das alças e o cursor (kResizeHandleH) fecham o layout.
+
+// Cadeado pequeno do cabeçalho (definido abaixo de drawTrackHeader).
+static void drawTrackLockIcon(QPainter& p, const QRect& r, bool locked);
+
+// Linha superior: cada slot tem x fixo (a largura total cobre a linha do
+// áudio, cujos M/S/R terminam em 148; cadeado e meter ficam na borda direita).
+QRect TimelineWidget::headerBtnRect(int y, int slot) const {
+    const int yTop = y + 2;
+    // Tudo tem de caber em kHeaderW (150): o slot 8 (R) terminava em 164 e
+    // vazava para a área de clipes. Layout compacto, com folga de 3px à
+    // direita — o VU meter fica na linha de baixo (y+21), sem conflito.
+    switch (slot) {
+      case 0: return QRect(2,  yTop, 14, 18); // recolher/expandir
+      case 1: return QRect(18, yTop, 15, 18); // keyframe anterior
+      case 2: return QRect(33, yTop, 15, 18); // adicionar/remover keyframe
+      case 3: return QRect(48, yTop, 15, 18); // próximo keyframe
+      case 4: return QRect(66, yTop, 15, 18); // sync lock (sem backend)
+      case 5: return QRect(84, yTop, 18, 18); // toggle de saída (olho/falante)
+      case 6: return QRect(105, yTop, 14, 18);// M (áudio)
+      case 7: return QRect(119, yTop, 14, 18);// S (áudio)
+      case 8: return QRect(133, yTop, 14, 18);// R (áudio; sem backend)
+    }
+    return QRect();
 }
 
-QRect TimelineWidget::headerToggleRect(int y) const {
-    return QRect(kHeaderW - 20, y + 2, 16, 16);
+// Nome da faixa, na linha abaixo dos controles (como o nome no Premiere) —
+// também posiciona o editor inline de nome. Reserva o cadeado à direita.
+QRect TimelineWidget::headerNameRect(int y) const {
+    return QRect(6, y + 21, kHeaderW - 28 - 6, 16);
 }
 
-QRect TimelineWidget::headerCollapseRect(int y) const {
-    return QRect(4, y + 2, 14, 16);
+// Cadeado: fim da faixa do nome (borda direita, antes do VU meter do áudio).
+QRect TimelineWidget::headerLockRect(int y) const {
+    return QRect(kHeaderW - 28, y + 21, 18, 16);
+}
+
+// ── Faixa recolhida (tira única): seta + nome + olho/falante + cadeado ──────
+QRect TimelineWidget::headerMiniNameRect(int y) const {
+    return QRect(18, y + 3, kHeaderW - 64, 16);
+}
+QRect TimelineWidget::headerMiniToggleRect(int y) const {
+    return QRect(kHeaderW - 46, y + 3, 18, 18);
+}
+QRect TimelineWidget::headerMiniLockRect(int y) const {
+    return QRect(kHeaderW - 28, y + 3, 18, 16);
+}
+
+// VU meter vertical do áudio, na borda direita (da linha do nome ao fim).
+QRect TimelineWidget::headerMeterRect(int y, int rowH) const {
+    const int top = y + 21;
+    const int bottom = y + rowH - kResizeHandleH;
+    if (bottom - top < 8) return QRect();
+    return QRect(kHeaderW - 6, top, 4, bottom - top);
+}
+
+// Seta de recolher/expandir do cabeçalho (▾ expandida, › recolhida).
+static void drawCollapseArrow(QPainter& p, const QRect& r, bool collapsed) {
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(0xD3, 0xD3, 0xD3));
+    QPainterPath ar;
+    if (collapsed) {
+        ar.moveTo(r.x() + 2, r.y() + 3);
+        ar.lineTo(r.x() + 9, r.y() + r.height() - 3);
+        ar.lineTo(r.x() + 2, r.y() + r.height() - 3);
+    } else {
+        ar.moveTo(r.x() + 3, r.y() + 3);
+        ar.lineTo(r.x() + r.width() - 4, r.y() + 3);
+        ar.lineTo(r.x() + (r.width() - 1) / 2, r.y() + r.height() - 4);
+    }
+    ar.closeSubpath();
+    p.drawPath(ar);
+    p.setRenderHint(QPainter::Antialiasing, false);
 }
 
 void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& tr, int index, bool selected) {
     const int H = kHeaderW;
-    const QColor tcol = trackColorAt(tr, index);
-    bool anySolo = false;
-    if (m_project) {
-        for (const Track& t : m_project->videoTracks) if (t.solo) { anySolo = true; break; }
-        if (!anySolo)
-            for (const Track& t : m_project->audioTracks) if (t.solo) { anySolo = true; break; }
-    }
 
-    // ── Fundo: neutro escuro, como os cabeçalhos do Premiere; a cor da faixa
-    // fica nos acentos (tira, nome, %, chip FX) e nas faixas (clipes).
-    QColor base = selected
-        ? (tr.audio ? QColor(38, 43, 54) : QColor(40, 45, 56))
-        : themeColors().trackLabelBg;
-    if (tr.locked) base = selected ? QColor(50, 41, 41) : QColor(40, 37, 37);
+    // ── Fundo do cabeçalho (cinza do Premiere): a seleção só clareia um tom
+    // sutilmente azulado; não há cor de faixa nem strip (a cor vive nos clipes).
+    const QColor base = selected ? QColor(0x35, 0x3E, 0x4C) : QColor(0x2B, 0x2B, 0x2C);
     p.fillRect(0, y, H, rowH, base);
-
-    // Left accent: cor da faixa em tira (3px) — contido, estilo Premiere;
-    // seleção em ciano por cima; lock em vermelho suave.
-    if (tr.locked) {
-        p.fillRect(0, y, 3, rowH, QColor(126, 82, 82));
-    } else if (selected) {
-        p.fillRect(0, y, 3, rowH, themeColors().accent);
-    } else {
-        p.fillRect(0, y, 3, rowH, tcol);
-    }
+    p.setPen(QColor(0x15, 0x15, 0x15));
+    p.drawLine(0, y + rowH - 1, H, y + rowH - 1); // separador entre faixas
 
     QFont basef = p.font();
-    const QColor iconCol = tr.locked ? QColor(178, 132, 132) : tcol.lighter(135);
     const bool hidden = !tr.visible;
+    (void)index; // cabeçalho do Premiere é monocromático (sem cor por índice)
 
-    // ── Cabeçalho compacto (faixa recolhida): só nome + toggle de saída + seta.
-    if (tr.collapsed) {
+    const int contentH = rowH - kResizeHandleH;
+
+    // ── Faixa recolhida / baixa: tira única (seta + nome + toggle + cadeado) ─
+    if (tr.collapsed || contentH < 22) {
+        drawCollapseArrow(p, headerBtnRect(y, 0), tr.collapsed);
+
         QFont nf = basef;
         nf.setBold(true);
-        nf.setPointSizeF(8.0);
+        nf.setPointSizeF(8.5);
         p.setFont(nf);
-        p.setPen(hidden ? QColor(120, 116, 112) : themeColors().trackLabelText);
-        p.drawText(QRect(22, y + 1, H - 22 - 20, rowH - 2),
-                   int(Qt::AlignLeft | Qt::AlignVCenter) | Qt::TextSingleLine,
-                   tr.name);
+        p.setPen(hidden ? QColor(0x66, 0x66, 0x66) : QColor(0xD6, 0xD6, 0xD6));
+        const QString nm = p.fontMetrics().elidedText(
+            tr.name, Qt::ElideRight, headerMiniNameRect(y).width());
+        p.drawText(headerMiniNameRect(y), int(Qt::AlignLeft | Qt::AlignVCenter), nm);
         p.setFont(basef);
 
-        // Seta de expandir (recolhida → "›").
-        const QRect cr2 = headerCollapseRect(y);
-        p.setRenderHint(QPainter::Antialiasing, true);
-        QPainterPath ar2;
-        ar2.moveTo(cr2.x() + 2, cr2.y() + 2);
-        ar2.lineTo(cr2.x() + 9, cr2.y() + cr2.height() / 2);
-        ar2.lineTo(cr2.x() + 2, cr2.y() + cr2.height() - 2);
-        ar2.closeSubpath();
-        p.setPen(Qt::NoPen);
-        p.setBrush(themeColors().trackLabelText);
-        p.drawPath(ar2);
-        p.setRenderHint(QPainter::Antialiasing, false);
-
-        // Toggle de saída (olho/falante).
-        const QRect tr2 = headerToggleRect(y);
-        drawOutputToggleIcon(p, tr2, tr, iconCol, hidden);
+        drawOutputToggleIcon(p, headerMiniToggleRect(y), tr, QColor(0xD0, 0xD0, 0xD0), hidden);
+        drawTrackLockIcon(p, headerMiniLockRect(y), tr.locked);
         return;
     }
 
-    // ── Layout proporcional ─────────────────────────────────────────────
-    const int resizeH = kResizeHandleH;  // 5px
-    const int btnH = kHeaderBtnH;        // 18
-    const int btnGap = 3;
-    const int btnY = y + rowH - resizeH - btnH;  // botões na base (acima do resize)
-    const int contentBottom = btnY - 4;           // fim da área de conteúdo (acima dos botões)
-    const int contentTop = y + kHeaderNameH;      // abaixo do ícone/nome (18px para ícone+nome)
-    const int contentH = contentBottom - contentTop;
+    // Cores dos controles (Premiere): chips #333/#4C, glifos claros; quando
+    // ativo M/S acendem no azul do Premiere com legenda branca.
+    const QColor chipBg(0x33, 0x33, 0x33);
+    const QColor chipBd(0x4C, 0x4C, 0x4C);
+    const QColor glyph(0xC4, 0xC4, 0xC4);
+    const QColor glyphDim(0x55, 0x55, 0x55);
+    const QColor activeBlue(0x4A, 0x6F, 0xA5);
 
-    // ── Seta de recolher ────────────────────────────────────────────────
-    const QRect cr = headerCollapseRect(y);
-    p.setRenderHint(QPainter::Antialiasing, true);
-    {
-        QPainterPath ar;
-        ar.moveTo(cr.x() + 3, cr.y() + 3);
-        ar.lineTo(cr.x() + cr.width() - 3, cr.y() + 3);
-        ar.lineTo(cr.x() + cr.width() / 2, cr.y() + cr.height() - 3);
-        ar.closeSubpath();
-        p.setPen(Qt::NoPen);
-        p.setBrush(themeColors().trackLabelText);
-        p.drawPath(ar);
+    // Keyframes do envelope da faixa (só áudio tem kfVolume; vídeo não tem
+    // envelope de faixa → navegação fica apagada, como sem keyframes).
+    const QVector<Keyframe>& kfs = tr.kfVolume;
+    const bool canKf = tr.audio;
+    const double playT = m_playhead;
+    int prevKf = -1, nextKf = -1;
+    bool atKf = false;
+    if (canKf) {
+        for (int i = 0; i < kfs.size(); ++i) {
+            const double t = kfs[i].time;
+            if (std::fabs(t - playT) < 1e-3) atKf = true;
+            if (t < playT - 1e-3 && (prevKf < 0 || t > kfs[prevKf].time)) prevKf = i;
+            if (t > playT + 1e-3 && (nextKf < 0 || t < kfs[nextKf].time)) nextKf = i;
+        }
     }
-    p.setRenderHint(QPainter::Antialiasing, false);
 
-    // ── Ícone (audio/vídeo) na cor da faixa, à direita da seta ──────────
-    {
-        const QColor c = iconCol;
+    // ── Faixa fina do topo (seta + keyframes ◀ ◆ ▶ + sync lock) ──────────
+    drawCollapseArrow(p, headerBtnRect(y, 0), false);
+
+    auto keyGlyph = [&](int slot, bool enabled, bool accentOn) {
+        const QRect r = headerBtnRect(y, slot);
+        const double cx = r.x() + r.width() / 2.0;
+        const double cy = r.y() + r.height() / 2.0;
         p.setRenderHint(QPainter::Antialiasing, true);
-        const int ix = cr.right() + 5;
-        if (tr.audio) {
-            QPainterPath sp;
-            sp.moveTo(ix, y + 8);
-            sp.lineTo(ix + 4.5, y + 5);
-            sp.lineTo(ix + 4.5, y + 11);
-            sp.closeSubpath();
-            p.setPen(Qt::NoPen);
+        p.setPen(Qt::NoPen);
+        if (slot == 2) { // losango central: adicionar/remover keyframe
+            const QColor c = !canKf ? glyphDim : (accentOn ? activeBlue : glyph);
             p.setBrush(c);
-            p.drawPath(sp);
-            p.fillRect(QRectF(ix + 4.5, y + 6.5, 4.5, 3), c);
-            p.setPen(QPen(c, 1));
-            p.drawArc(QRectF(ix + 7, y + 5, 4.5, 6), 0, 180 * 16);
+            QPolygonF dia;
+            dia << QPointF(cx, cy - 4) << QPointF(cx + 4, cy)
+                << QPointF(cx, cy + 4) << QPointF(cx - 4, cy);
+            p.drawPolygon(dia);
         } else {
-            p.setPen(Qt::NoPen);
-            p.setBrush(c);
-            p.drawRoundedRect(QRectF(ix, y + 4.5, 10.5, 7), 1.6, 1.6);
-            p.setBrush(QColor(22, 24, 28));
-            p.drawEllipse(QPointF(ix + 5.2, y + 8), 2.3, 2.3);
+            QPainterPath ar;
+            if (slot == 1) {
+                ar.moveTo(cx + 3, cy - 3.5);
+                ar.lineTo(cx - 3, cy);
+                ar.lineTo(cx + 3, cy + 3.5);
+            } else {
+                ar.moveTo(cx - 3, cy - 3.5);
+                ar.lineTo(cx + 3, cy);
+                ar.lineTo(cx - 3, cy + 3.5);
+            }
+            ar.closeSubpath();
+            p.setBrush(enabled ? glyph : glyphDim);
+            p.drawPath(ar);
         }
         p.setRenderHint(QPainter::Antialiasing, false);
-    }
-
-    // ── Nome da track (à direita da seta+ícone, ocupando o resto) ────────
-    QFont f = basef;
-    f.setBold(true);
-    f.setPointSizeF(8.5);
-    p.setFont(f);
-    p.setPen(hidden ? QColor(120, 116, 112) : themeColors().trackLabelText);
-    p.drawText(QRect(cr.right() + 18, y + 2, H - cr.right() - 18 - 20, 16),
-               int(Qt::AlignLeft | Qt::AlignVCenter) | Qt::TextSingleLine,
-               tr.name);
-
-    // ── Toggle de saída (olho/falante, à direita) ───────────────────────
-    {
-        const QRect trt = headerToggleRect(y);
-        drawOutputToggleIcon(p, trt, tr, iconCol, hidden);
-    }
-
-    // ── Percentual + barra (centralizado na área de conteúdo) ───────────
-    if (contentH > 0) {
-        QFont vf = basef;
-        vf.setPointSizeF(7.5);
-        vf.setBold(true);
-        p.setFont(vf);
-
-        const double val = tr.audio ? std::clamp(tr.volume, 0.0, 2.0) / 2.0
-                                    : std::clamp(tr.opacity, 0.0, 1.0);
-        QString pct;
-        if (tr.audio)
-            pct = QString("%1%").arg((int)llround(tr.volume * 100.0));
-        else
-            pct = QString("%1%").arg((int)llround(val * 100.0));
-        p.setPen(hidden ? QColor(120, 116, 112) : tcol.lighter(150));
-        // Texto na metade de cima da área de conteúdo.
-        const int textH = contentH / 2;
-        p.drawText(QRect(6, contentTop, H - 12, textH),
-                   Qt::AlignRight | Qt::AlignVCenter, pct);
-        // Barra na metade de baixo (se couber).
-        if (contentH >= 8) {
-            const QRect bar = headerBarRect(y, rowH);
-            if (!bar.isEmpty()) {
-                p.setPen(Qt::NoPen);
-                p.setBrush(themeColors().trackBorder);
-                p.drawRoundedRect(QRectF(bar), 2, 2);
-                const int fillW = qMax(2, (int)std::lround(bar.width() * val));
-                p.setBrush(hidden ? QColor(90, 86, 82) : themeColors().clipBorder);
-                p.drawRoundedRect(QRectF(bar.x(), bar.y(), fillW, bar.height()), 2, 2);
-            }
-        }
-        p.setFont(basef);
-    }
-
-    // ── Botões M / S / L ────────────────────────────────────────────────
-    // Faixas muito baixas (sem área de conteúdo) ficam só com nome + toggle.
-    if (contentH > 0) {
-    const bool audible = !tr.muted && !(anySolo && !tr.solo);
-    const QColor dim(128, 128, 138);
-    const int size = btnH;
-    const int bx0 = 6;
-    auto drawBtn = [&](int idx, const QString& label, bool active, const QColor& on) {
-        const int bx = bx0 + idx * (size + btnGap);
-        const QRect r(bx, btnY, size, size);
-        p.setPen(QPen(active ? on.lighter(140) : themeColors().trackBorder, 1));
-        p.setBrush(active ? on : themeColors().trackLabelBg);
-        p.drawRect(r);
-        p.setPen(active ? QColor(255, 255, 255) : dim);
-        QFont bf = basef;
-        bf.setBold(true);
-        bf.setPointSizeF(7.5);
-        p.setFont(bf);
-        p.drawText(r, Qt::AlignCenter, label);
-        p.setFont(basef);
     };
-    drawBtn(0, QStringLiteral("M"), (tr.muted || !audible) && !hidden, QColor(84, 118, 178));
-    drawBtn(1, QStringLiteral("S"), tr.solo && !hidden, QColor(72, 150, 176));
-    drawBtn(2, QStringLiteral("L"), tr.locked, QColor(96, 108, 176));
-    if (tr.audio) {
-        // Chip FX (estilo Vegas): abre o menu de efeitos de áudio da faixa.
-        // Acende em azul quando há efeito ativo.
-        const int fxIdx = 3;
-        const int fx = bx0 + fxIdx * (size + btnGap);
-        const QRect r(fx, btnY, size, size);
-        const bool hasFx = tr.hasAudioFx();
-        p.setPen(QPen(hasFx ? QColor(120, 160, 214) : themeColors().trackBorder, 1));
-        p.setBrush(hasFx ? QColor(70, 104, 156) : themeColors().trackLabelBg);
+    keyGlyph(1, canKf && prevKf >= 0, false); // keyframe anterior
+    keyGlyph(2, canKf, atKf);                 // adicionar/remover (acende em kf)
+    keyGlyph(3, canKf && nextKf >= 0, false); // próximo keyframe
+
+    // Sync lock ("corrente"; sem backend ainda).
+    {
+        const QRect r = headerBtnRect(y, 4);
+        p.setPen(QPen(chipBd, 1));
+        p.setBrush(chipBg);
         p.drawRect(r);
-        p.setPen(hasFx ? QColor(226, 236, 255) : dim);
-        QFont bf = basef;
-        bf.setBold(true);
-        bf.setPointSizeF(7.5);
-        p.setFont(bf);
-        p.drawText(r, Qt::AlignCenter, QStringLiteral("FX"));
-        p.setFont(basef);
+        p.setPen(Qt::NoPen);
+        p.setBrush(glyphDim);
+        p.drawEllipse(QPointF(r.x() + 5, r.y() + r.height() / 2.0 - 1), 3, 2.6);
+        p.drawEllipse(QPointF(r.x() + 11, r.y() + r.height() / 2.0 + 1), 3, 2.6);
     }
-    } // fim do guard de botões (contentH > 0)
+
+    // ── Toggle de saída (olho/falante) ──────────────────────────────────
+    drawOutputToggleIcon(p, headerBtnRect(y, 5), tr, QColor(0xD6, 0xD6, 0xD6), hidden);
+
+    // ── Botões M / S / R do áudio ───────────────────────────────────────
+    if (tr.audio) {
+        auto chip = [&](int slot, const QString& label, bool active) {
+            const QRect r = headerBtnRect(y, slot);
+            p.setPen(QPen(active ? activeBlue.lighter(140) : chipBd, 1));
+            p.setBrush(active ? activeBlue : chipBg);
+            p.drawRect(r);
+            p.setPen(active ? QColor(255, 255, 255) : QColor(0x9C, 0x9C, 0x9C));
+            QFont bf = basef;
+            bf.setBold(true);
+            bf.setPointSizeF(7.5);
+            p.setFont(bf);
+            p.drawText(r, Qt::AlignCenter, label);
+            p.setFont(basef);
+        };
+        chip(6, QStringLiteral("M"), tr.muted);
+        chip(7, QStringLiteral("S"), tr.solo);
+        chip(8, QStringLiteral("R"), false); // gravação de voz: sem backend
+    }
+
+    // ── Nome (linha abaixo dos controles) + cadeado ─────────────────────
+    if (contentH >= 26) {
+        QFont f = basef;
+        f.setBold(true);
+        f.setPointSizeF(8.5);
+        p.setFont(f);
+        p.setPen(hidden ? QColor(0x66, 0x66, 0x66) : QColor(0xD6, 0xD6, 0xD6));
+        const QString nm = p.fontMetrics().elidedText(
+            tr.name, Qt::ElideRight, headerNameRect(y).width());
+        p.drawText(headerNameRect(y), int(Qt::AlignLeft | Qt::AlignVCenter), nm);
+        p.setFont(basef);
+        drawTrackLockIcon(p, headerLockRect(y), tr.locked);
+    }
+
+    // ── VU meter vertical do áudio (borda direita, como no Premiere) ────
+    if (tr.audio) {
+        const QRect mr = headerMeterRect(y, rowH);
+        if (!mr.isEmpty()) {
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(0x1C, 0x1C, 0x1C));
+            p.drawRect(mr);
+            const double v = hidden ? 0.0
+                : std::clamp(kfValue(kfs, tr.volume, m_playhead), 0.0, 2.0) / 2.0;
+            const int fillH = (int)std::lround(mr.height() * std::clamp(v, 0.0, 1.0));
+            if (fillH >= 1) {
+                p.setBrush(QColor(0x5B, 0xBD, 0x6B));
+                p.drawRect(mr.x(), mr.y() + mr.height() - fillH, mr.width(), fillH);
+            }
+            // segmentos do meter (leitura retificada, como no Premiere)
+            p.setPen(QColor(0x2B, 0x2B, 0x2C));
+            for (int sy = mr.y() + 4; sy < mr.y() + mr.height(); sy += 4)
+                p.drawLine(mr.x(), sy, mr.x() + mr.width(), sy);
+        }
+    }
 
     // ── Alça de redimensionamento ────────────────────────────────────────
-    const int gy0 = y + rowH - resizeH;
-    p.fillRect(0, gy0, H, resizeH, themeColors().trackLabelBg);
-    p.setPen(themeColors().rulerTickMajor);
+    const int gy0 = y + rowH - kResizeHandleH;
+    p.fillRect(0, gy0, H, kResizeHandleH, QColor(0x24, 0x24, 0x24));
+    p.setPen(QColor(0x44, 0x44, 0x44));
     const int gx0 = (H - 26) / 2;
     for (int i = 0; i < 4; ++i)
         p.drawLine(gx0 + i * 8, gy0 + 2, gx0 + i * 8, gy0 + 3);
 }
 
+// Cadeado pequeno do cabeçalho, como no Premiere: ícone cinza; travado acende
+// em cinza claro (não há "vermelho de lock" — o bloqueio é só o ícone).
+static void drawTrackLockIcon(QPainter& p, const QRect& r, bool locked) {
+    p.setRenderHint(QPainter::Antialiasing, true);
+    const QColor c = locked ? QColor(0xD3, 0xD3, 0xD3) : QColor(0x6E, 0x6E, 0x6E);
+    const double cx = r.center().x();
+    const double top = r.y() + 2.0;
+    // Alça (arreio) do cadeado.
+    p.setPen(QPen(c, 1.6));
+    p.setBrush(Qt::NoBrush);
+    const int hinge = 3;
+    p.drawArc(QRectF(cx - hinge, top, hinge * 2, hinge * 2 + 2), 0, 180 * 16);
+    // Corpo.
+    p.setPen(Qt::NoPen);
+    p.setBrush(c);
+    p.drawRoundedRect(QRectF(cx - 4.5, top + 4, 9, 7), 1.5, 1.5);
+    // Buraco da fechadura.
+    p.setBrush(QColor(28, 28, 32));
+    p.drawRoundedRect(QRectF(cx - 1.4, top + 6.2, 2.8, 3), 0.8, 0.8);
+    p.setRenderHint(QPainter::Antialiasing, false);
+}
+
 void TimelineWidget::drawOutputToggleIcon(QPainter& p, const QRect& r, const Track& tr,
                                           const QColor& active, bool hidden) {
-    const QColor c = hidden ? QColor(100, 96, 92) : active;
-    const QColor bg = tr.audio ? QColor(48, 56, 72) : QColor(44, 50, 62);
+    // Ícone flat, sem caixa de fundo — como o olho/falante do Premiere.
+    const QColor c = hidden ? QColor(0x6E, 0x6E, 0x6E) : active;
     p.setRenderHint(QPainter::Antialiasing, true);
-    p.setPen(Qt::NoPen);
-    p.setBrush(bg);
-    p.drawRoundedRect(QRectF(r), 3, 3);
-    p.setPen(QPen(hidden ? QColor(100, 96, 92) : active, 1.2));
-    p.setBrush(Qt::NoBrush);
+    const double cx = r.x() + r.width() / 2.0;
+    const double cy = r.y() + r.height() / 2.0;
     if (tr.audio) {
-        // Alto-falante: caixa + cone + ondas.
-        QRectF body(r.x() + 2.0, r.y() + 6.0, 4.5, 4.0);
+        // Alto-falante: corpo + cone + ondas.
         p.setPen(Qt::NoPen);
         p.setBrush(c);
-        p.drawRect(body);
+        p.drawRoundedRect(QRectF(cx - 6.0, cy - 2.0, 5.0, 4.0), 0.8, 0.8);
         QPainterPath cone;
-        cone.moveTo(body.right(), body.top() + 0.5);
-        cone.lineTo(body.right() + 3.5, body.top() - 2.5);
-        cone.lineTo(body.right() + 3.5, body.bottom() + 2.5);
+        cone.moveTo(cx - 1.0, cy - 3.0);
+        cone.lineTo(cx + 3.0, cy - 5.0);
+        cone.lineTo(cx + 3.0, cy + 5.0);
+        cone.lineTo(cx - 1.0, cy + 3.0);
         cone.closeSubpath();
         p.drawPath(cone);
-        p.setPen(QPen(c, 1));
+        p.setPen(QPen(c, 1.1));
         p.setBrush(Qt::NoBrush);
-        p.drawArc(QRectF(body.right() + 3.0, r.y() + 3.0, 7, 10), -52 * 16, 104 * 16);
-        p.drawArc(QRectF(body.right() + 6.0, r.y() + 0.5, 8, 15), -60 * 16, 120 * 16);
+        p.drawArc(QRectF(cx + 2.5, cy - 5.0, 7, 10), -55 * 16, 110 * 16);
+        p.drawArc(QRectF(cx + 5.0, cy - 8.0, 10, 16), -62 * 16, 124 * 16);
     } else {
-        // Olho: elipse + pupila.
-        p.setPen(Qt::NoPen);
-        p.setBrush(c);
-        const double cx = r.x() + r.width() / 2.0;
-        const double cy = r.y() + r.height() / 2.0;
+        // Olho: contorno de elipse + pupila.
+        p.setPen(QPen(c, 1.4));
+        p.setBrush(Qt::NoBrush);
         QPainterPath eye;
-        eye.moveTo(cx - 5.5, cy);
-        eye.quadTo(cx - 5.5, cy - 5, cx + 5.5, cy);
-        eye.quadTo(cx + 5.5, cy + 5, cx - 5.5, cy);
+        eye.moveTo(cx - 6.0, cy);
+        eye.quadTo(cx - 6.0, cy - 5.2, cx + 6.0, cy);
+        eye.quadTo(cx + 6.0, cy + 5.2, cx - 6.0, cy);
         eye.closeSubpath();
         p.drawPath(eye);
-        p.setBrush(QColor(16, 18, 22));
-        p.drawEllipse(QPointF(cx, cy), 1.7, 1.7);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(18, 20, 24));
+        p.drawEllipse(QPointF(cx + 1.0, cy), 2.0, 2.0);
     }
     if (hidden) {
-        // Barra diagonal indicando saída desligada.
-        p.setPen(QPen(QColor(214, 100, 90), 1.4));
+        // Barra diagonal cinza indicando saída desligada (olho/falante diet).
+        p.setPen(QPen(QColor(0xA0, 0xA0, 0xA0), 1.3));
         p.drawLine(r.x() + 2, r.y() + r.height() - 2, r.x() + r.width() - 2, r.y() + 2);
     }
     p.setRenderHint(QPainter::Antialiasing, false);

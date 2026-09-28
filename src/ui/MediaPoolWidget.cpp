@@ -15,9 +15,12 @@
 #include <QVBoxLayout>
 #include <QList>
 #include <QPushButton>
+#include <QToolButton>
+#include <QButtonGroup>
 #include <QDebug>
 #include <QProgressBar>
 #include <QLabel>
+#include <QLineEdit>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QMessageBox>
@@ -28,11 +31,16 @@
 #include <QPolygonF>
 #include <QIcon>
 #include <QListView>
+#include <QTreeWidget>
+#include <QTreeWidgetItem>
+#include <QHeaderView>
+#include <QStackedWidget>
 #include <QApplication>
 #include <QMouseEvent>
 #include <QRubberBand>
 #include <QScrollBar>
 #include <QItemSelection>
+#include <QItemSelectionModel>
 #include <QMimeData>
 #include <QUrl>
 #include <QDragEnterEvent>
@@ -51,6 +59,116 @@ QString formatDuration(double s) {
     return QString("%1:%2")
         .arg(total / 60, 2, 10, QLatin1Char('0'))
         .arg(total % 60, 2, 10, QLatin1Char('0'));
+}
+
+// Timecode de quadro (HH:MM:SS:FF), como o painel Project do Premiere.
+QString poolTc(double s, double fps) {
+    if (fps <= 0.0) fps = 30.0;
+    const qint64 frameLen = qMax<qint64>(1, (qint64)std::llround(fps));
+    const qint64 fr = qMax<qint64>(0, (qint64)std::llround(s * fps));
+    const qint64 f = fr % frameLen;
+    const qint64 total = fr / frameLen;
+    const int h = (int)(total / 3600);
+    const int m = (int)((total % 3600) / 60);
+    const int sec = (int)(total % 60);
+    return QString("%1:%2:%3:%4")
+        .arg(h, 2, 10, QLatin1Char('0'))
+        .arg(m, 2, 10, QLatin1Char('0'))
+        .arg(sec, 2, 10, QLatin1Char('0'))
+        .arg(f, 2, 10, QLatin1Char('0'));
+}
+
+// Fração dos quadros como o Premiere mostra na coluna "Frame Rate".
+QString fmtFrameRate(double fps) {
+    if (fps <= 0.0) return QString();
+    if (fps == std::floor(fps)) return QString::number((int)fps);
+    return QString::number(fps, 'f', 2);
+}
+
+QString videoInfoLabel(const MediaItem& m) {
+    if (!m.hasVideo) return QString();
+    if (m.width > 0 && m.height > 0)
+        return QString("%1×%2").arg(m.width).arg(m.height);
+    return QStringLiteral("Vídeo");
+}
+
+QString audioInfoLabel(const MediaItem& m) {
+    if (!m.hasAudio) return QString();
+    if (m.audioChannels.isEmpty()) return QStringLiteral("Áudio");
+    const int ch = m.audioChannels.constFirst();
+    if (ch <= 0) return QStringLiteral("Áudio");
+    if (ch == 1) return QStringLiteral("Mono");
+    if (ch == 2) return QStringLiteral("Estéreo");
+    return QStringLiteral("%1 canais").arg(ch);
+}
+
+// Miniatura da coluna Nome (lista): centraliza o frame num canvas escuro.
+QIcon makeNameIcon(const QImage& src, const QSize& sz) {
+    QPixmap pm(sz);
+    pm.fill(Qt::transparent);
+    if (!src.isNull()) {
+        const QImage scaled = src.scaled(sz, Qt::KeepAspectRatio,
+                                         Qt::SmoothTransformation);
+        QPainter p(&pm);
+        p.drawImage(QPoint((sz.width() - scaled.width()) / 2,
+                           (sz.height() - scaled.height()) / 2), scaled);
+    }
+    return QIcon(pm);
+}
+
+// Miniatura grande (grade/ícones) com o selo de duração no canto — a
+// assinatura visual do modo ícones do painel Project no Premiere.
+QIcon makeGridThumb(const QImage& src, double dur, const QSize& sz) {
+    QPixmap pm(sz);
+    pm.fill(QColor(0, 0, 0));
+    if (!src.isNull()) {
+        const QImage scaled = src.scaled(sz, Qt::KeepAspectRatio,
+                                         Qt::SmoothTransformation);
+        QPainter p(&pm);
+        p.drawImage(QPoint((sz.width() - scaled.width()) / 2,
+                           (sz.height() - scaled.height()) / 2), scaled);
+    }
+    if (dur > 0.0) {
+        const QString txt = formatDuration(dur);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing);
+        QFont f = p.font();
+        f.setPointSize(7);
+        f.setBold(true);
+        p.setFont(f);
+        const int w = QFontMetrics(f).horizontalAdvance(txt) + 8;
+        const QRectF r(pm.width() - w - 3, pm.height() - 15, w, 12);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0, 0, 0, 170));
+        p.drawRoundedRect(r, 3, 3);
+        p.setPen(QColor(255, 255, 255));
+        p.drawText(r, Qt::AlignCenter, txt);
+    }
+    return QIcon(pm);
+}
+
+// Miniatura que segue o cursor durante o arrasto (uma ou várias mídias).
+QPixmap makePoolDragPixmap(const QPixmap& icon, const QString& text, int count) {
+    QPixmap pm = icon;
+    if (pm.isNull()) {
+        pm = QPixmap(96, 54);
+        pm.fill(QColor(40, 42, 48));
+        QPainter pp(&pm);
+        pp.setPen(QColor(150, 155, 165));
+        pp.drawRect(1, 1, pm.width() - 2, pm.height() - 2);
+        pp.drawText(pm.rect(), Qt::AlignCenter, text);
+    }
+    if (count > 1) {
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0, 0, 0, 190));
+        p.drawEllipse(QRectF(pm.width() - 20, pm.height() - 20, 20, 20));
+        p.setPen(Qt::white);
+        p.drawText(QRect(pm.width() - 20, pm.height() - 20, 20, 20),
+                   Qt::AlignCenter, QString::number(count));
+    }
+    return pm;
 }
 
 // Frame representativo do vídeo para a "capa" no pool de mídia.
@@ -122,6 +240,156 @@ PoolList::PoolList(QWidget* parent) : QListWidget(parent) {
     setTextElideMode(Qt::ElideRight);
     // Aceita arquivos arrastados do sistema para importar mídia.
     setAcceptDrops(true);
+}
+
+// —── PoolTree: visualização em LISTA estilo painel Project ───────────────
+PoolTree::PoolTree(QWidget* parent) : QTreeWidget(parent) {
+    setDragEnabled(false);
+    setDragDropMode(QAbstractItemView::NoDragDrop);
+    setSelectionMode(QAbstractItemView::ExtendedSelection);
+    setSelectionBehavior(QAbstractItemView::SelectRows);
+    setUniformRowHeights(true);
+    setRootIsDecorated(false);
+    setIndentation(0);
+    setAllColumnsShowFocus(false);
+    setTextElideMode(Qt::ElideRight);
+    setIconSize(QSize(44, 25));
+    setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    setColumnCount(7);
+    setHeaderLabels({tr("Nome"), tr("Frame Rate"), tr("Media Start"),
+                     tr("Media End"), tr("Duração"), tr("Vídeo"), tr("Áudio")});
+    header()->setStretchLastSection(true);
+    header()->setHighlightSections(false);
+    // Não decide a seleção aqui: o clique com Ctrl/Shift estende a seleção de
+    // linhas como no Premiere. O arrasto de mídia é interceptado no move.
+    setAcceptDrops(true);
+}
+
+void PoolTree::dragEnterEvent(QDragEnterEvent* e) {
+    if (e->mimeData()->hasUrls())
+        e->acceptProposedAction();
+    else
+        e->ignore();
+}
+
+void PoolTree::dragMoveEvent(QDragMoveEvent* e) {
+    if (e->mimeData()->hasUrls())
+        e->acceptProposedAction();
+    else
+        e->ignore();
+}
+
+void PoolTree::dropEvent(QDropEvent* e) {
+    QStringList files;
+    const QList<QUrl> urls = e->mimeData()->urls();
+    for (const QUrl& u : urls)
+        if (u.isLocalFile())
+            files << u.toLocalFile();
+    if (files.isEmpty()) { e->ignore(); return; }
+    emit filesDropped(files);
+    e->acceptProposedAction();
+}
+
+void PoolTree::mousePressEvent(QMouseEvent* e) {
+    m_pressPos = e->position().toPoint();
+    m_pressItem = itemAt(m_pressPos);
+    m_dragging = false;
+    // A base cuida da seleção (Ctrl/Shift estendem a seleção de linhas).
+    QTreeWidget::mousePressEvent(e);
+}
+
+void PoolTree::mouseMoveEvent(QMouseEvent* e) {
+    const QPoint p = e->position().toPoint();
+    if ((e->buttons() & Qt::LeftButton) && !m_dragging && m_pressItem
+        && (p - m_pressPos).manhattanLength() >= QApplication::startDragDistance()) {
+        const QModelIndex idx = indexFromItem(m_pressItem);
+        if (!selectionModel()->isSelected(idx))
+            selectionModel()->select(idx, QItemSelectionModel::ClearAndSelect);
+        m_dragging = true;
+        qApp->installEventFilter(this);
+        showDragIcon(e->globalPosition().toPoint());
+        emit dragHover(e->globalPosition().toPoint());
+        return;
+    }
+    QTreeWidget::mouseMoveEvent(e);
+}
+
+bool PoolTree::eventFilter(QObject* obj, QEvent* ev) {
+    if (!m_dragging) return QTreeWidget::eventFilter(obj, ev);
+    if (ev->type() == QEvent::MouseMove) {
+        const QPoint g = static_cast<QMouseEvent*>(ev)->globalPosition().toPoint();
+        moveDragIcon(g);
+        emit dragHover(g);
+        return false;
+    }
+    if (ev->type() == QEvent::MouseButtonRelease) {
+        const auto* me = static_cast<QMouseEvent*>(ev);
+        if (me->button() == Qt::LeftButton) {
+            const QPoint g = me->globalPosition().toPoint();
+            cancelDrag();
+            emit mediaDropped(selectedIds(), g);
+            return true; // não deixa a base "finalizar" e limpar a seleção
+        }
+    }
+    if (ev->type() == QEvent::MouseButtonPress || ev->type() == QEvent::WindowDeactivate) {
+        cancelDrag();
+        return true;
+    }
+    return QTreeWidget::eventFilter(obj, ev);
+}
+
+void PoolTree::mouseReleaseEvent(QMouseEvent* e) {
+    hideDragIcon();
+    if (m_dragging) {
+        // O filtro global cuida do release (o cursor pode estar sobre a
+        // timeline); aqui só evita o comportamento padrão.
+        e->accept();
+        return;
+    }
+    QTreeWidget::mouseReleaseEvent(e);
+}
+
+QStringList PoolTree::selectedIds() const {
+    QStringList ids;
+    const QList<QTreeWidgetItem*> items = selectedItems();
+    for (const QTreeWidgetItem* it : items)
+        ids << it->data(0, Qt::UserRole).toString();
+    return ids;
+}
+
+void PoolTree::cancelDrag() {
+    if (qApp) qApp->removeEventFilter(this);
+    hideDragIcon();
+    m_dragging = false;
+    m_pressItem = nullptr;
+    emit dragHoverCleared();
+}
+
+void PoolTree::showDragIcon(const QPoint& globalPos) {
+    if (!m_dragIcon) {
+        m_dragIcon = new QLabel(window());
+        m_dragIcon->setAttribute(Qt::WA_TransparentForMouseEvents);
+        m_dragIcon->setAttribute(Qt::WA_ShowWithoutActivating);
+        m_dragIcon->setMargin(2);
+    }
+    const QList<QTreeWidgetItem*> items = selectedItems();
+    if (items.isEmpty()) return;
+    QPixmap pm = makePoolDragPixmap(
+        items.first()->icon(0).pixmap(96, 54), items.first()->text(0), items.size());
+    m_dragIcon->setPixmap(pm);
+    m_dragIcon->adjustSize();
+    m_dragIcon->move(window()->mapFromGlobal(globalPos + QPoint(8, 8)));
+    m_dragIcon->show();
+    m_dragIcon->raise();
+}
+
+void PoolTree::moveDragIcon(const QPoint& globalPos) {
+    if (m_dragIcon && m_dragIcon->isVisible())
+        m_dragIcon->move(window()->mapFromGlobal(globalPos + QPoint(8, 8)));
+}
+
+void PoolTree::hideDragIcon() {
+    if (m_dragIcon) m_dragIcon->hide();
 }
 
 void PoolList::dragEnterEvent(QDragEnterEvent* e) {
@@ -390,29 +658,8 @@ void PoolList::hideDragIcon() {
 QPixmap PoolList::makeDragPixmap() const {
     const QList<QListWidgetItem*> items = selectedItems();
     if (items.isEmpty()) return QPixmap();
-    QPixmap pm = items.first()->icon().pixmap(96, 54);
-    if (pm.isNull()) {
-        // Sem miniatura (ex.: áudio sem imagem): um quadro padrão para o
-        // arrasto ter feedback visual.
-        pm = QPixmap(96, 54);
-        pm.fill(QColor(40, 42, 48));
-        QPainter pp(&pm);
-        pp.setPen(QColor(150, 155, 165));
-        pp.drawRect(1, 1, pm.width() - 2, pm.height() - 2);
-        pp.drawText(pm.rect(), Qt::AlignCenter, items.first()->text());
-    }
-    if (items.size() > 1) {
-        // Vários itens: selo com a contagem no canto da miniatura.
-        QPainter p(&pm);
-        p.setRenderHint(QPainter::Antialiasing);
-        p.setPen(Qt::NoPen);
-        p.setBrush(QColor(0, 0, 0, 190));
-        p.drawEllipse(QRectF(pm.width() - 20, pm.height() - 20, 20, 20));
-        p.setPen(Qt::white);
-        p.drawText(QRect(pm.width() - 20, pm.height() - 20, 20, 20),
-                   Qt::AlignCenter, QString::number(items.size()));
-    }
-    return pm;
+    return makePoolDragPixmap(
+        items.first()->icon().pixmap(96, 54), items.first()->text(), items.size());
 }
 
 QStringList PoolList::selectedIds() const {
@@ -424,38 +671,92 @@ QStringList PoolList::selectedIds() const {
 
 MediaPoolWidget::MediaPoolWidget(QWidget* parent) : QWidget(parent) {
     m_list = new PoolList(this);
-    // Repassa o arrasto manual da lista para a janela principal, que liga ao
-    // feedback e à soltura na timeline.
+    m_tree = new PoolTree(this);
+    // Repassa o arrasto manual das duas visualizações para a janela principal,
+    // que liga ao feedback e à soltura na timeline.
     connect(m_list, &PoolList::dragHover, this, &MediaPoolWidget::dragHover);
     connect(m_list, &PoolList::dragHoverCleared, this, &MediaPoolWidget::dragHoverCleared);
     connect(m_list, &PoolList::mediaDropped, this, &MediaPoolWidget::mediaDropped);
+    connect(m_tree, &PoolTree::dragHover, this, &MediaPoolWidget::dragHover);
+    connect(m_tree, &PoolTree::dragHoverCleared, this, &MediaPoolWidget::dragHoverCleared);
+    connect(m_tree, &PoolTree::mediaDropped, this, &MediaPoolWidget::mediaDropped);
     // Importa arquivos arrastados do sistema para o painel.
     connect(m_list, &PoolList::filesDropped, this, &MediaPoolWidget::importPaths);
+    connect(m_tree, &PoolTree::filesDropped, this, &MediaPoolWidget::importPaths);
     setAcceptDrops(true);
 
-    m_addBtn = new QPushButton(tr("Adicionar"), this);
-    m_removeBtn = new QPushButton(tr("Remover"), this);
-    auto* genBtn = new QPushButton(tr("Gerador"), this);
-    m_addBtn->setToolTip(tr("Importar mídia (Ctrl+I)"));
-    m_removeBtn->setToolTip(tr("Remover a mídia selecionada do projeto"));
-    genBtn->setToolTip(tr("Criar mídia gerada (cor sólida, como no Vegas)"));
-    connect(m_addBtn, &QPushButton::clicked, this, &MediaPoolWidget::addFiles);
-    connect(m_removeBtn, &QPushButton::clicked, this, &MediaPoolWidget::removeSelected);
-    connect(genBtn, &QPushButton::clicked, this, &MediaPoolWidget::addGenerator);
-    connect(&MediaCache::instance(), &MediaCache::thumbnailReady,
-            this, &MediaPoolWidget::onThumbReady);
-    // Duplo clique: adiciona a mídia na timeline no playhead (fallback para o
-    // arrastar/soltar, que pode falhar em alguns ambientes/Wayland).
+    // Pilha de visualizações: LISTA (padrão, como o painel Project do
+    // Premiere) e ÍCONES (grade antiga).
+    m_stack = new QStackedWidget(this);
+    m_stack->addWidget(m_tree);
+    m_stack->addWidget(m_list);
+    m_stack->setCurrentWidget(m_tree);
+
+    // Duplo clique em qualquer visualização: mídia para a timeline no playhead.
     connect(m_list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* it) {
         if (it) emit mediaToTimeline(it->data(Qt::UserRole).toString());
     });
+    connect(m_tree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* it, int) {
+        if (it) emit mediaToTimeline(it->data(0, Qt::UserRole).toString());
+    });
+    connect(&MediaCache::instance(), &MediaCache::thumbnailReady,
+            this, &MediaPoolWidget::onThumbReady);
 
-    auto* bar = new QHBoxLayout;
-    bar->setContentsMargins(0, 0, 0, 0);
-    bar->addWidget(m_addBtn);
-    bar->addWidget(genBtn);
-    bar->addWidget(m_removeBtn);
-    bar->addStretch();
+    // Barra inferior estilo Premiere: busca à esquerda; ações e o par
+    // Lista/Ícones à direita.
+    m_search = new QLineEdit(this);
+    m_search->setPlaceholderText(tr("Buscar mídia…"));
+    m_search->setClearButtonEnabled(true);
+    connect(m_search, &QLineEdit::textChanged, this, [this](const QString& s) {
+        m_filter = s.trimmed();
+        refresh();
+    });
+
+    auto* addBtn = new QPushButton(tr("Adicionar"), this);
+    auto* genBtn = new QPushButton(tr("Gerador"), this);
+    m_removeBtn = new QPushButton(tr("Remover"), this);
+    addBtn->setToolTip(tr("Importar mídia (Ctrl+I)"));
+    m_removeBtn->setToolTip(tr("Remover a mídia selecionada do projeto"));
+    genBtn->setToolTip(tr("Criar mídia gerada (cor sólida, como no Vegas)"));
+    connect(addBtn, &QPushButton::clicked, this, &MediaPoolWidget::addFiles);
+    connect(m_removeBtn, &QPushButton::clicked, this, &MediaPoolWidget::removeSelected);
+    connect(genBtn, &QPushButton::clicked, this, &MediaPoolWidget::addGenerator);
+
+    auto* listBtn = new QToolButton(this);
+    listBtn->setText(tr("Lista"));
+    listBtn->setCheckable(true);
+    listBtn->setChecked(true);
+    listBtn->setToolTip(tr("Visualização em lista (colunas, como o Premiere)"));
+    auto* iconBtn = new QToolButton(this);
+    iconBtn->setText(tr("Ícones"));
+    iconBtn->setCheckable(true);
+    iconBtn->setToolTip(tr("Visualização em ícones (grade)"));
+    m_viewGroup = new QButtonGroup(this);
+    m_viewGroup->setExclusive(true);
+    m_viewGroup->addButton(listBtn);
+    m_viewGroup->addButton(iconBtn);
+    connect(listBtn, &QToolButton::clicked, this, [this]() {
+        m_stack->setCurrentWidget(m_tree);
+        updateStatusLabel();
+    });
+    connect(iconBtn, &QToolButton::clicked, this, [this]() {
+        m_stack->setCurrentWidget(m_list);
+        updateStatusLabel();
+    });
+
+    m_statusLabel = new QLabel(this);
+    m_statusLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+
+    auto* bottom = new QHBoxLayout;
+    bottom->setContentsMargins(0, 0, 0, 0);
+    bottom->setSpacing(4);
+    bottom->addWidget(m_search, 1);
+    bottom->addWidget(addBtn);
+    bottom->addWidget(genBtn);
+    bottom->addWidget(m_removeBtn);
+    bottom->addWidget(listBtn);
+    bottom->addWidget(iconBtn);
+    bottom->addWidget(m_statusLabel);
 
     m_importBar = new QProgressBar(this);
     m_importBar->setRange(0, 100);
@@ -468,9 +769,15 @@ MediaPoolWidget::MediaPoolWidget(QWidget* parent) : QWidget(parent) {
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(6, 6, 6, 6);
     lay->setSpacing(4);
-    lay->addLayout(bar);
+    lay->addWidget(m_stack, 1);
     lay->addWidget(m_importBar);
-    lay->addWidget(m_list, 1);
+    lay->addLayout(bottom);
+
+    // Contador de itens/seleção no rodapé (como o painel Project).
+    connect(m_list->selectionModel(), &QItemSelectionModel::selectionChanged,
+            this, [this]() { updateStatusLabel(); });
+    connect(m_tree->selectionModel(), &QItemSelectionModel::selectionChanged,
+            this, [this]() { updateStatusLabel(); });
 }
 
 void MediaPoolWidget::setProject(Project* p) {
@@ -483,15 +790,18 @@ void MediaPoolWidget::refreshFromProject() {
 }
 
 void MediaPoolWidget::refresh() {
+    const QStringList selIds = currentSelection();
     m_list->clear();
-    if (!m_project) return;
+    m_tree->clear();
+    if (!m_project) { updateStatusLabel(); return; }
     if (m_audioIcon.isNull()) m_audioIcon = makeAudioIconPixmap().toImage();
     if (m_videoPlaceholder.isNull()) m_videoPlaceholder = makePlaceholderPixmap().toImage();
     // Agrupa os pedidos de thumb por arquivo: um único lote por caminho em vez
     // de uma decodificação isolada por item (bem mais rápido ao importar N vídeos).
     QHash<QString, QList<double>> wantByFile;
     for (const MediaItem& m : m_project->media) {
-        auto* item = new QListWidgetItem();
+        if (!m_filter.isEmpty() && !m.name.contains(m_filter, Qt::CaseInsensitive))
+            continue;
         QString tags;
         if (m.hasVideo) tags += QString("Vídeo %1x%2  ·  ").arg(m.width).arg(m.height);
         if (m.hasAudio) {
@@ -507,37 +817,111 @@ void MediaPoolWidget::refresh() {
         }
         if (QFileInfo(m.filePath).suffix().compare(QLatin1String("mkv"), Qt::CaseInsensitive) == 0)
             tags += QString("[MKV experimental]  ·  ");
-        item->setText(QString("%1\n%2%3").arg(m.name, tags, formatDuration(m.duration)));
-        item->setData(Qt::UserRole, m.id);
-        item->setToolTip(m.isSolid ? tr("Mídia gerada (gerador)") : m.filePath);
+        const QString tooltip = m.isSolid ? tr("Mídia gerada (gerador)") : m.filePath;
+        const QString fullText = QString("%1\n%2%3").arg(m.name, tags, formatDuration(m.duration));
+
+        // Miniatura crua (base para as duas visualizações).
+        QImage thumb;
         if (m.isSolid) {
             // Gerador de mídia: ícone com o padrão gerado, sem thumb.
             const int iw = qBound(16, m.width > 0 ? m.width : 96, 96);
             const int ih = qBound(9, m.height > 0 ? m.height : 54, 54);
-            QImage ic = generatorFrame(m, iw, ih);
-            setThumb(m.id, ic);
-            item->setIcon(QIcon(QPixmap::fromImage(ic)));
+            thumb = generatorFrame(m, iw, ih);
         } else if (m.hasVideo) {
             if (m_thumbs.contains(m.id)) {
-                item->setIcon(QIcon(QPixmap::fromImage(m_thumbs.value(m.id))));
+                thumb = m_thumbs.value(m.id);
             } else {
-                item->setIcon(QIcon(QPixmap::fromImage(m_videoPlaceholder)));
+                thumb = m_videoPlaceholder;
                 const double t = poolThumbTime(m.duration);
                 MediaCache& cache = MediaCache::instance();
                 const QImage img = cache.thumb(m.filePath, t);
                 if (!img.isNull()) {
                     setThumb(m.id, img);
+                    thumb = img;
                 } else {
                     wantByFile[m.filePath].append(t);
                 }
             }
         } else {
-            item->setIcon(QIcon(QPixmap::fromImage(m_audioIcon)));
+            thumb = m_audioIcon;
         }
-        m_list->addItem(item);
+        if (thumb.isNull()) thumb = m_videoPlaceholder;
+
+        // Visualização em ÍCONES (grade).
+        auto* it = new QListWidgetItem();
+        if (m.hasVideo)
+            it->setIcon(makeGridThumb(thumb, m.duration, QSize(96, 54)));
+        else
+            it->setIcon(QIcon(QPixmap::fromImage(thumb)));
+        it->setText(fullText);
+        it->setData(Qt::UserRole, m.id);
+        it->setToolTip(tooltip);
+        m_list->addItem(it);
+
+        // Visualização em LISTA (colunas estilo painel Project do Premiere).
+        const double fps = m.fps > 0.0 ? m.fps
+                         : (m_project->fps > 0 ? (double)m_project->fps : 30.0);
+        auto* tr = new QTreeWidgetItem(m_tree);
+        tr->setIcon(0, makeNameIcon(thumb, QSize(44, 25)));
+        tr->setText(0, m.name);
+        tr->setText(1, m.hasVideo ? fmtFrameRate(m.fps) : QString());
+        tr->setText(2, poolTc(0.0, fps));
+        tr->setText(3, poolTc(m.duration, fps));
+        tr->setText(4, poolTc(m.duration, fps));
+        tr->setText(5, videoInfoLabel(m));
+        tr->setText(6, audioInfoLabel(m));
+        tr->setData(0, Qt::UserRole, m.id);
+        tr->setToolTip(0, tooltip);
     }
+    restoreSelection(selIds);
+    updateStatusLabel();
     for (auto it = wantByFile.constBegin(); it != wantByFile.constEnd(); ++it)
         MediaCache::instance().requestThumbs(it.key(), it.value());
+}
+
+void MediaPoolWidget::updateStatusLabel() {
+    if (!m_statusLabel) return;
+    const int total = m_project ? m_project->media.size() : 0;
+    int sel = 0;
+    if (m_stack && m_stack->currentWidget() == m_tree)
+        sel = m_tree->selectedItems().size();
+    else if (m_list)
+        sel = m_list->selectedItems().size();
+    if (sel > 0)
+        m_statusLabel->setText(tr("%1 itens · %2 selecionados").arg(total).arg(sel));
+    else
+        m_statusLabel->setText(tr("%1 itens").arg(total));
+}
+
+QStringList MediaPoolWidget::currentSelection() const {
+    QStringList ids;
+    if (m_stack && m_stack->currentWidget() == m_tree) {
+        const QList<QTreeWidgetItem*> items = m_tree->selectedItems();
+        for (const QTreeWidgetItem* it : items)
+            ids << it->data(0, Qt::UserRole).toString();
+    } else if (m_list) {
+        const QList<QListWidgetItem*> items = m_list->selectedItems();
+        for (const QListWidgetItem* it : items)
+            ids << it->data(Qt::UserRole).toString();
+    }
+    return ids;
+}
+
+void MediaPoolWidget::restoreSelection(const QStringList& ids) {
+    if (ids.isEmpty()) return;
+    if (m_stack && m_stack->currentWidget() == m_tree) {
+        for (int i = 0; i < m_tree->topLevelItemCount(); ++i) {
+            QTreeWidgetItem* it = m_tree->topLevelItem(i);
+            if (ids.contains(it->data(0, Qt::UserRole).toString()))
+                it->setSelected(true);
+        }
+    } else if (m_list) {
+        for (int i = 0; i < m_list->count(); ++i) {
+            QListWidgetItem* it = m_list->item(i);
+            if (ids.contains(it->data(Qt::UserRole).toString()))
+                it->setSelected(true);
+        }
+    }
 }
 
 void MediaPoolWidget::onThumbReady(const QString& filePath, double seconds) {
@@ -553,10 +937,26 @@ void MediaPoolWidget::onThumbReady(const QString& filePath, double seconds) {
 void MediaPoolWidget::setThumb(const QString& mediaId, const QImage& img) {
     if (img.isNull()) return;
     m_thumbs.insert(mediaId, img);
+    const MediaItem* mi = nullptr;
+    if (m_project)
+        for (const MediaItem& m : m_project->media)
+            if (m.id == mediaId) { mi = &m; break; }
+    const double dur = mi ? mi->duration : 0.0;
+    const bool isVideo = mi ? mi->hasVideo : true;
+    // Atualiza a miniatura na grade (ícones) e na coluna Nome (lista).
+    const QIcon gridIc = isVideo
+        ? makeGridThumb(img, dur, QSize(96, 54))
+        : QIcon(QPixmap::fromImage(img));
+    const QIcon nameIc = makeNameIcon(img, QSize(44, 25));
     for (int i = 0; i < m_list->count(); ++i) {
         QListWidgetItem* it = m_list->item(i);
         if (it && it->data(Qt::UserRole).toString() == mediaId)
-            it->setIcon(QIcon(QPixmap::fromImage(img)));
+            it->setIcon(gridIc);
+    }
+    for (int i = 0; i < m_tree->topLevelItemCount(); ++i) {
+        QTreeWidgetItem* it = m_tree->topLevelItem(i);
+        if (it && it->data(0, Qt::UserRole).toString() == mediaId)
+            it->setIcon(0, nameIc);
     }
 }
 
@@ -607,6 +1007,7 @@ void MediaPoolWidget::importPaths(const QStringList& files) {
             m.duration = info.duration;
             m.width = info.width;
             m.height = info.height;
+            m.fps = info.fps;
             m.hasVideo = info.hasVideo;
             m.hasAudio = info.hasAudio;
             m.audioStreams = info.audioStreams;
@@ -764,11 +1165,17 @@ void MediaPoolWidget::dropEvent(QDropEvent* e) {
 
 void MediaPoolWidget::removeSelected() {
     if (!m_project) return;
-    const auto items = m_list->selectedItems();
-    if (items.isEmpty()) return;
+    QStringList ids;
+    const QList<QListWidgetItem*> lItems = m_list->selectedItems();
+    for (const QListWidgetItem* it : lItems)
+        ids << it->data(Qt::UserRole).toString();
+    const QList<QTreeWidgetItem*> tItems = m_tree->selectedItems();
+    for (const QTreeWidgetItem* it : tItems)
+        ids << it->data(0, Qt::UserRole).toString();
+    ids.removeDuplicates();
+    if (ids.isEmpty()) return;
     emit editStart();
-    for (const QListWidgetItem* it : items) {
-        const QString id = it->data(Qt::UserRole).toString();
+    for (const QString& id : ids) {
         m_thumbs.remove(id);
         for (int i = 0; i < m_project->media.size(); ++i) {
             if (m_project->media[i].id == id) {

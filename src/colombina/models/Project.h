@@ -49,6 +49,7 @@ struct MediaItem {
     double duration = 0.0;
     int width = 0;
     int height = 0;
+    double fps = 0.0;           // fps do stream de vídeo (0 = desconhecido)
     bool hasVideo = false;
     bool hasAudio = false;
     int audioStreams = 0;

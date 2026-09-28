@@ -24,6 +24,7 @@ class QKeyEvent;
 class QContextMenuEvent;
 class QVariantAnimation;
 class QTimer;
+class QLineEdit;
 
 // Chave do cache de conteúdo visual dos clipes (onda/thumb + envelope + fades).
 // O epoch é bumpado em mudanças estruturais; rolagem/zoom mantêm o epoch e só
@@ -177,7 +178,7 @@ protected:
     void dragLeaveEvent(QDragLeaveEvent*) override;
     void dropEvent(QDropEvent*) override;
 private:
-    enum DragMode { None, MoveClip, TrimLeft, TrimRight, ResizeSpeed, FadeIn, FadeOut, ClipOpacity, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, RulerLoopEdge, ResizeTrack, TrackVol, TrackOp, ClipVol, TrackDrag, TrackEnvVol,
+    enum DragMode { None, MoveClip, TrimLeft, TrimRight, ResizeSpeed, FadeIn, FadeOut, ClipOpacity, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, RulerLoopEdge, ResizeTrack, TrackVol, ClipVol, TrackDrag, TrackEnvVol,
         RippleEdit,    // Trim com ripple (desloca subsequentes)
         RollingEdit,   // Ajusta fronteira entre 2 clipes
         SlipEdit,      // Mudar in/out sem mudar posição
@@ -277,11 +278,21 @@ private:
                               const QColor& active, bool hidden);
     int headerBtnAt(const QPoint& pos, int& row, bool& audio) const;
     // Geometria dos controles do cabeçalho (desenho e hit-test usam a mesma):
-    // barra de volume/opacidade, toggle de saída (olho/falante) e seta de
-    // recolher. Mantém o arrasto e o desenho sempre alinhados.
-    QRect headerBarRect(int y, int rowH) const;
-    QRect headerToggleRect(int y) const;
-    QRect headerCollapseRect(int y) const;
+    // linha superior com os slots fixos (recolher, keyframes ◀◆▶, sync lock,
+    // olho/falante, M/S/R), nome e cadeado na linha de baixo, VU meter vertical
+    // do áudio na borda direita e o retângulo da tira recolhida. Mantém o
+    // desenho e o clique sempre alinhados e posiciona o editor inline de nome.
+    QRect headerBtnRect(int y, int slot) const;    // 0..8 (ordem fixa da linha)
+    QRect headerLockRect(int y) const;
+    QRect headerNameRect(int y) const;
+    QRect headerMiniNameRect(int y) const;         // tira recolhida/baixa
+    QRect headerMiniToggleRect(int y) const;
+    QRect headerMiniLockRect(int y) const;
+    QRect headerMeterRect(int y, int rowH) const;  // VU vertical (áudio)
+    // Renomeio inline da faixa (duplo clique no nome, estilo Premiere).
+    void beginTrackRename(int row, bool audio);
+    void commitTrackRename();
+    void hideTrackRename();
     bool trackLocked(const Clip* c) const;
     int volLineY(int row, bool audio, const Track& tr) const;
     int volRowAt(const QPoint& pos, int& row) const;
@@ -348,7 +359,8 @@ private:
     bool m_snap = true;
     bool m_showGrid = true;
     bool m_showRuler = true;
-    bool m_showVolLines = false;
+    bool m_showVolLines = false;   // V: linha de volume individual do clipe
+                                   // (a da faixa é sempre visível)
     double m_loopIn = -1.0;
     double m_loopOut = -1.0;
     bool m_loopEnabled = false; // região desenhada mas loop só com "Q"
@@ -422,9 +434,6 @@ private:
     QString m_dragHoverName;
     int m_volRow = -1;
     double m_volOrig = 1.0;
-    // Arrasto da barra de volume/opacidade no cabeçalho: TrackOp com alvo de
-    // volume (faixa de áudio) ou opacidade (faixa de vídeo).
-    bool m_opIsVolume = false;
     QString m_volClip;      // clipe cujo volume está sendo ajustado
     double m_volClipOrig = 1.0;
     int m_volRowOrig = -1;   // faixa de origem ao iniciar ClipVol
@@ -439,6 +448,13 @@ private:
     bool m_envAudio = false;
     int m_envKf = -1;
     int m_envOrigY = 0;
+
+    // Editor inline do nome da faixa (duplo clique no cabeçalho, estilo
+    // Premiere). Cobra a área do nome até Enter/Esc/perda de foco.
+    QLineEdit* m_trackRename = nullptr;
+    int m_renameRow = -1;
+    bool m_renameAudio = false;
+    QString m_renameOriginal;
 
     QHash<ClipVisKey, QPixmap> m_clipPix;
     qint64 m_clipBytes = 0;

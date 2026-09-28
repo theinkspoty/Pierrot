@@ -13,6 +13,7 @@
 #include <QHash>
 #include <QPair>
 #include <QImage>
+#include <QIcon>
 #include <QTransform>
 #include "colombina/models/Project.h"
 #include "colombina/ffmpeg/FFmpegDecoder.h"
@@ -92,7 +93,12 @@ protected:
     void mouseReleaseEvent(QMouseEvent*) override;
     const Clip* clipAt(double t) const override;
     double audioClockSec() const override;
-private:
+ private:
+    // Aplica o QSS do contador de tempo a partir dos tokens do tema, para que
+    // ele acompanhe a troca claro/escuro.
+    void refreshTimeLabelStyle();
+    // Quadro a quadro (Premiere): pausa a reprodução e busca ±1 frame.
+    void stepFrame(int dir);
     // ── Hooks do PlaybackEngine (chamados por onSeek/onPrefetch/...) ──
     void applySeekVisual(double t);  // decodifica e desenha o quadro em `t`
     void onSeek(double t) override;
@@ -136,11 +142,21 @@ private:
     QImage m_frameFull;
     QLabel* m_timeLabel = nullptr;
     QComboBox* m_zoomCombo = nullptr;
-    QWidget* m_topBar = nullptr;
+    QWidget* m_topBar = nullptr;    // aba "Program: <nome>" (topo, como no Premiere)
+    QWidget* m_bottomBar = nullptr; // transporte + quality/zoom (rodapé, como no Premiere)
     double m_zoom = 0.0; // 0 = ajustar à área; senão fração (1.0 = 100%)
     int m_previewQuality = 720; // largura máxima de decodificação (360/480/720/1080/3840)
     QToolButton* m_qualityBtn = nullptr;
     QMenu* m_qualityMenu = nullptr;
+    // Transporte do monitor (estilo Premiere): quadro anterior, play/pausa,
+    // quadro seguinte e loop. Botões planos com ícones desenhados do tema.
+    QToolButton* m_stepBackBtn = nullptr;
+    QToolButton* m_stepFwdBtn = nullptr;
+    QToolButton* m_loopBtn = nullptr;
+    QToolButton* m_fullscreenBtn = nullptr;
+    QLabel* m_programLabel = nullptr; // "Program: <nome da sequência>"
+    QIcon m_playIcon;
+    QIcon m_pauseIcon;
     QRect m_videoRect;
     double m_lastSrcT = -1.0;
     int m_lastDecodeW = -1;
@@ -284,9 +300,8 @@ private:
     OfxPluginManager* m_ofxManager = nullptr;
     QVector<OfxPluginInstance> m_clipOfxFx; // efeitos OFX do clipe ativo
 
-    // ── Grade visual do preview (estilo Vegas) ────────────────────────
+    // ── Margens de segurança do monitor (Action 90% + Title 80%) ─────────
     bool m_showGrid = false;
-    int m_gridDivisions = 3; // NxN linhas de grade
     QToolButton* m_gridBtn = nullptr;
     void drawGrid(QPainter& p, const QRect& canvas);
 

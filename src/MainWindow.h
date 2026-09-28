@@ -14,7 +14,9 @@
 #include <QIcon>
 #include <QDockWidget>
 #include <QPointer>
+#include <QActionGroup>
 class QVBoxLayout;
+class QMenu;
 #include <functional>
 #include <deque>
 #include "colombina/models/Project.h"
@@ -62,6 +64,25 @@ private:
     void jumpToUndo(int index);
     void updateHistoryList();
     void createDocks();
+    // Cria um dock com o boilerplate padrão (objectName estável para
+    // saveState/restoreState, áreas permitidas, features) e o registra em
+    // m_allDocks. `content` pode ser nullptr: o widget do dock é montado
+    // depois (a Timeline é montada em createActions()).
+    QDockWidget* makeDock(const QString& objectName, const QString& title,
+                          QWidget* content, Qt::DockWidgetArea area);
+    void setTabPositionsUp();
+    // Larguras iniciais das colunas de docks (item 5 do roadmap). Aplicado
+    // uma vez no primeiro showEvent, quando o Qt já calculou o layout.
+    void applyInitialDockWidths();
+    // Workspaces (item 3 do roadmap 0.7): N arranjos nomeados de painéis, no
+    // estilo Premiere. O slot "layout" do QSettings continua sendo o workspace
+    // corrente, então o layout existente do usuário vira o workspace "Edição"
+    // sem perda. Os demais ficam em workspaces/<nome>/state.
+    void rebuildWorkspaceMenu();
+    void applyWorkspace(const QString& name);
+    void captureCurrentWorkspace();
+    void saveWorkspaceAs(const QString& name);
+    QStringList workspaceNames() const;
     void createActions();
     void saveSettings();
     void restoreSettings();
@@ -181,6 +202,7 @@ private:
     QString m_maskDialogClipId;               // clipe que está sendo editado no momento
     QDockWidget* m_poolDock = nullptr;
     QDockWidget* m_timelineDock = nullptr;
+    QDockWidget* m_toolsDock = nullptr; // paleta vertical de ferramentas (Tools)
     QDockWidget* m_pancropDock = nullptr;
     QDockWidget* m_graphDock = nullptr;
     QDockWidget* m_effectsDock = nullptr;
@@ -191,6 +213,21 @@ private:
     ScopeWidget* m_scopes = nullptr;      // analisadores (waveform/histograma/vectorscope)
     QComboBox* m_scopeMode = nullptr;
     QDockWidget* m_scopesDock = nullptr;
+    QDockWidget* m_propsDock = nullptr;     // Inspector (passo 3, ROADMAP 7.1)
+    // Registro de todos os docks criados por makeDock(), na ordem de criação.
+    // O menu Exibir e o salvamento do layout percorrem esta lista em vez de
+    // repetir os nomes à mão.
+    QVector<QDockWidget*> m_allDocks;
+    // Workspaces nomeados. m_workspaceMenu fica sob Exibir; o QActionGroup
+    // garante que só um workspace apareça marcado (item 4 do roadmap).
+    QMenu* m_workspaceMenu = nullptr;
+    QActionGroup* m_workspaceGroup = nullptr;
+    QString m_currentWorkspace;
+    // Arranjo padrão dos docks, capturado logo após createDocks(). É o
+    // fallback de um workspace que ainda não tem estado salvo.
+    QByteArray m_defaultLayoutState;
+    bool m_widthsApplied = false;   // larguras padrão já aplicadas (1x)
+    bool m_hasRestoredLayout = false;  // havia arranjo salvo no QSettings
     QVBoxLayout* m_centralLay = nullptr;
     QHash<QDockWidget*, QDockWidget::DockWidgetFeatures> m_originalFeatures;
     QAction* m_lockAction = nullptr;

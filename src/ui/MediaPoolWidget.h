@@ -7,6 +7,7 @@
 
 #include <QWidget>
 #include <QListWidget>
+#include <QTreeWidget>
 #include <QImage>
 #include <QHash>
 #include <QPoint>
@@ -22,6 +23,10 @@ class QPixmap;
 class QDragEnterEvent;
 class QDragMoveEvent;
 class QDropEvent;
+class QTreeWidget;
+class QLineEdit;
+class QButtonGroup;
+class QStackedWidget;
 
 // Lista de mídia com arrasto manual (não usa o DnD do compositor, que pode
 // falhar em alguns ambientes/Wayland). O arrasto inteiro acontece dentro do
@@ -68,6 +73,40 @@ private:
     QLabel* m_dragIcon = nullptr;
 };
 
+// Visualização em LISTA do painel de mídias (padrão do projeto, como o painel
+// Project do Premiere): tabela com colunas Nome/Frame Rate/Media Start/Media
+// End/Duração/Info de vídeo/Info de áudio. Mesmo arrasto manual da PoolList,
+// sem o rubber band (a seleção por linhas fica com a base).
+class PoolTree : public QTreeWidget {
+    Q_OBJECT
+public:
+    explicit PoolTree(QWidget* parent = nullptr);
+signals:
+    void dragHover(const QPoint& globalPos);
+    void dragHoverCleared();
+    void mediaDropped(const QStringList& mediaIds, const QPoint& globalPos);
+    void filesDropped(const QStringList& files);
+protected:
+    void mousePressEvent(QMouseEvent* e) override;
+    void mouseMoveEvent(QMouseEvent* e) override;
+    void mouseReleaseEvent(QMouseEvent* e) override;
+    bool eventFilter(QObject* obj, QEvent* ev) override;
+    void dragEnterEvent(QDragEnterEvent* e) override;
+    void dragMoveEvent(QDragMoveEvent* e) override;
+    void dropEvent(QDropEvent* e) override;
+private:
+    QStringList selectedIds() const;
+    void cancelDrag();
+    void showDragIcon(const QPoint& globalPos);
+    void moveDragIcon(const QPoint& globalPos);
+    void hideDragIcon();
+    QPoint m_pressPos;
+    QTreeWidgetItem* m_pressItem = nullptr;
+    bool m_dragging = false;
+    QLabel* m_dragIcon = nullptr;
+    friend class MediaPoolWidget;
+};
+
 class MediaPoolWidget : public QWidget {
     Q_OBJECT
 public:
@@ -99,9 +138,17 @@ protected:
 private:
     void refresh();
     void setThumb(const QString& mediaId, const QImage& img);
+    void updateStatusLabel();
+    QStringList currentSelection() const;
+    void restoreSelection(const QStringList& ids);
     Project* m_project = nullptr;
-    PoolList* m_list = nullptr;
-    QPushButton* m_addBtn = nullptr;
+    PoolList* m_list = nullptr;    // visualização em ícones (grade)
+    PoolTree* m_tree = nullptr;    // visualização em lista (padrão Premiere)
+    QStackedWidget* m_stack = nullptr;
+    QLineEdit* m_search = nullptr; // busca (filtra as duas visualizações)
+    QButtonGroup* m_viewGroup = nullptr;
+    QLabel* m_statusLabel = nullptr;
+    QString m_filter;
     QPushButton* m_removeBtn = nullptr;
     QProgressBar* m_importBar = nullptr;
     QHash<QString, QImage> m_thumbs; // mediaId -> thumb (independente do item)

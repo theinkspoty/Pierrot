@@ -284,6 +284,297 @@ Manter a ordem alta → média → cara. **Nada disso entra antes do bloco 1–4
   1–4 verdes no CI, 0 crash conhecido sem fix, abertura 4K < meta, save nunca
   trunca. Só então o naipe muda de alpha pra beta/stable.
 
+## 7. Interface 0.7 — painéis, workspaces e densidade (2026-09-28)
+
+Escopo desta seção: **a camada de organização da UI**, não features de edição.
+Registrado a pedido de "deixar mais parecido com After Effects". A conclusão da
+análise (ver "Por que painéis, não paleta" abaixo) é que o que faz AE/Premiere
+parecerem profissionais **não é a cor** — é o sistema de painéis + workspaces
+salvos. O Pierrot já tem os dois tijolos; falta a casa.
+
+### Estado atual (auditado em `src/MainWindow.cpp`)
+
+O que já existe e é **bom** — não redesenhar:
+
+- **12 docks** criados programaticamente (`:823`–`:969`), todos com o mesmo
+  bloco de 5 linhas (criar → `setWidget` → `setFeatures` → `addDockWidget`).
+- **Layout já persistido**: `saveState()`/`restoreState()` em
+  `saveSettings` (`:598`) e `restoreSettings` (`:688`), com guarda de
+  `layoutVersion` (`kLayoutVersion = 3`, `:101`) **e** validação
+  `saneLayoutArray()` (`:173`, checa o magic `0xff` do `QDataStream`).
+  Isso é mais maduro que muito editor em produção.
+- **Agrupamento em abas** já em 4 pilhas:
+  `Efeitos|Express` (`:880`), `Pancrop|Mesa` (`:920`),
+  `Mixer|Histórico` (`:939`), `Mixer|Histórico|Analisadores` (`:969`).
+- **Menu Exibir** lista os 12 toggles (`:1225`–`:1235`).
+- **89 tokens de cor** nomeados em `src/ui/Theme.h`, já cobrindo monitor, canvas,
+  timeline, régua, faixa, clipe, dock, input, botão e accent. A paleta **não é
+  o gargalo**.
+- `setDockLocked` (`:819`, `:1213`) + ação "travar layout" — impede arrastar
+  painel acidentalmente.
+
+### Itens
+
+- [ ] **Desempilhar Mixer / Histórico / Analisadores** — bug real, não feature.
+  Hoje `tabifyDockWidget(m_mixerDock, m_histDock)` (`:939`) seguido de
+  `tabifyDockWidget(m_histDock, m_scopesDock)` (`:969`) **encadeia** os três
+  numa pilha só de 3 abas em ~100 px de altura útil. Aceito: Mixer e
+  Analisadores em pilhas separadas, Histórico escondido por padrão.
+  Risco: baixo. Arquivos: `MainWindow.cpp`.
+- [ ] **Registry de painéis** — os 12 blocos de 5 linhas viram uma tabela
+  `struct PanelDef { id, title, factory, defaultArea, tabGroup }` + um laço.
+  Aceito: adicionar um 13º painel custa 1 linha na tabela; `Exibir` gerado a
+  partir do registry em vez de 12 `addAction` manuais.
+  Risco: baixo-médio (mexe na construção da janela). Ganho: maintibilidade.
+  Arquivos: `MainWindow.cpp`, `MainWindow.h`.
+- [ ] **Workspaces** — a feature que mais entrega "igual ao Adobe", e sai
+  **barato** porque `saveState()`/`restoreState()` já serializam tudo:
+  um workspace é só o `QByteArray` guardado sob um nome + um `QComboBox` no
+  menu Exibir. Presets iniciais: `Padrão`, `Edição` (só timeline+pool+monitor),
+  `Áudio` (mixer grande), `Composição` (Mesa grande, timeline encolhido),
+  `Efeitos`.
+  Risco: médio. Cuidado com `kLayoutVersion`: trocar o layout padrão tem que
+  bumpingar a versão, senão `restoreState()` (`:688`) vai reidratar um estado gravado
+  com a pilha de 3 abas. Arquivos: `MainWindow.cpp`, `SettingsDialog.*`.
+- [ ] **Agrupamento do menu Exibir** — `QActionGroup` por região, com
+  separadores e checkboxes de lock/hide. O `#include <QActionGroup>` já existe
+  (`:62`) mas não é usado em lugar nenhum. Risco: baixo (cosmético).
+- [ ] **Larguras iniciais das colunas** — nenhum `resizeDocks()` no código
+  inteiro; as colunas herdam proportions do Qt. Definir larguras por
+  workspace, junto do item de Workspaces. Risco: baixo.
+- [ ] **`setTabPosition` por área** — nada define; herda o default do Qt
+  (North). Esquerda/direitaBottom é o padrão do AE/Premiere para pilhas
+  verticais. Risco: baixo (cosmético).
+- [ ] **Densidade** — fonte menor, padding menor, números tabulares alinhados
+  à direita (duração, tempo, frequência, dB). Barato, muda a percepção
+  inteira do app. Risco: baixo, mas **revisar todas as caixas**: o
+  `GraphEditorWidget` sozinho tem 2601 linhas e é o mais sensível.
+  Arquivos: `Theme.cpp` + widgets.
+- [ ] **Escuro em 3 níveis de profundidade** — `monitorBg` quase preto,
+  `canvasBg` um tom acima, `timelineBg` entre os dois. Os tokens já existem
+  separados; falta fixar os *valores*. Risco: baixo (só `Theme.cpp`).
+- [ ] **Documentar a `Mesa` no `FEATURES.md`** — a `Mesa` é ~1200 linhas de
+  canvas de composição descrito no código como "estilo After Effects
+  Composition Panel", e **não aparece no FEATURES.md**.<Funcionalidade órfã:
+  existe, funciona, e ninguém descobre. Risco: zero (só doc).
+
+### Por que painéis, não paleta
+
+Comparação com AE e Premiere (ambos usam o mesmo modelo):
+
+| | After Effects | Premiere | Pierrot hoje |
+|---|---|---|---|
+| Unidade de UI | painéis dockáveis | painéis dockáveis | ✅ docks |
+| Agrupamento | abas | abas | ✅ 4 pilhas |
+| Layouts salvos | workspaces (Standard, Animation, Paint, Motion Tracking, Text, Minimal) | 16 workspaces | ❌ nenhum |
+| Nº de painéis | ~20 | 25 | 12 |
+
+A entrada `workspace` aparece **0 vezes** em `src/`. É o gap real.
+
+### Sobre "parecer com After Effects" — decisão REVERTIDA em 2026-09-28
+
+Cuidado de identidade: o README declara o Pierrot como **Vegas + Final Cut
+Express**, e a epistemologia dos dois é oposta — AE é composição + nós,
+Vegas é timeline + ferramentas. A decisão original era 0.7 = "escuro, denso,
+profissional" mantendo identidade Vegas, não "clone do AE".
+
+**Revertido pelo usuário após teste visual.** A UI com cor do Premiere mas
+topologia do Pierrot foi avaliada como "o Pierrot com cores novas" — o que é
+exatamente o resultado previsível: trocar tokens não muda a leitura da
+interface. Cor é a camada mais superficial; a sensação de " Premiere" vem da
+**estrutura de painéis**, não da paleta. Reclassificado: o alvo é **fidelidade
+estrutural ao Premiere**, mantendo apenas a identidade Vegas onde não houver
+equivalente (Mesa, Express, gravação de faixa).
+
+Ver seção 7.1.
+
+## 7.1 Replica estrutural do Premiere (2026-09-28)
+
+> **Situação (atualizada nesta sessão):** a premissa do item 1 abaixo é falsa —
+> `QMainWindow` **aceita** docks nos 4 lados com um widget central; o bug de
+> tamanho das docks veio de o preview **virar dock** (sem `setCentralWidget`), e
+> foi revertido. **Decisão:** o preview volta a ser o `setCentralWidget` (central
+> host + barra de transporte no `m_centralLay`), o que destrava os passos 2–5
+> sem risco de escala. A Central de Mídias já é fiel ao painel Project do
+> Premiere (lista com colunas + ícones + barra de busca) e o monitor teve o
+> transporte/toolbar desenhados no padrão do Program Monitor (veja 7.2).
+
+O que separa o Pierrot do Premiere não é tema — é topologia. Cinco diferenças,
+em ordem de impacto:
+
+1. **Preview depende de `setCentralWidget`** (histórico do bug de docks). No
+   Premiere o Program Monitor é um dock comum, o que permite Source ao lado
+   e Inspector encostando. Com o preview central, docks funcionam nos lados;
+   a réplica total do fluxo Source/Program ainda depende do passo 2.
+2. **Não há Source monitor.** O Premiere tem Source/Program lado a lado; o
+   Pierrot só oferece preview em janela separada (2º monitor).
+3. **Inspector é janela flutuante** (`ClipPropertiesWidget`), não painel ao
+   lado do preview.
+4. **Timeline sem header no padrão Premiere** — não há coluna fixa com nome da
+   faixa + toggle de visibilidade + controles.
+5. **Mixer à parte**, em vez de controles inline nas faixas de áudio.
+
+### Ordem de implementação
+
+O passo 1 destrava todos os outros; nada mais funciona direito antes dele.
+
+| # | Passo | Risco | Reaproveita |
+|---|-------|-------|-------------|
+| 1 | Preview sai do centro e vira dock | **Alto** | `PreviewWidget` |
+| 2 | Source monitor ao lado do Program | Médio | `PreviewWidget` + seek/playback |
+| 3 | Inspector vira dock (sai da janela) | Baixo | `ClipPropertiesWidget` |
+| 4 | Header de faixa estilo Premiere | Baixo | `TimelinePaint` + `TimelineDrag` |
+| 5 | Controles inline de áudio na timeline | Médio | `MixerWidget` |
+
+> **Risco do passo 1, anotado:** hoje o preview escala junto com a janela
+> (ancorado no layout central). Ao virar dock, o cálculo de escala/posição muda
+> e pode deixar o vídeo cortado, centralizado errado ou semletterbox. O vídeo
+> **não** é reprocessado — é apresentação. Se quebrar, quebra a tela, não o
+> projeto do usuário. Ainda assim: se um passo quebrar playback, o passo para
+> e a palheta volta atrás. Nada de seguir adiante com o preview quebrado.
+>
+> Passos 2, 3 e 5 reaproveitam widgets existentes — não é reescrita de engine.
+> O passo 4 mexe em `kHeaderW`/`kRulerH`, que são **duplicados em 3 arquivos**
+> (`TimelinePaint`, `TimelineDrag`, `TimelineWidget`) e servem tanto para
+> **pintar** quanto para **detectar clique**. Mudar só umdess tres desalinha o
+> clique do que se vê. Mudar sempre os três juntos.
+
+### 7.2 Program Monitor réplica (2026-09-28)
+
+Monitor (preview central) desenhado no padrão do Program Monitor do Premiere:
+
+- **Barra de transporte no topo**, com botões planos desenhados do tema
+  (`makeMonitorIcon`): quadro anterior, play/pausa (ícone alterna no
+  `onStateChanged`; o rótulo do `PlaybackEngine` é limpo), quadro seguinte e
+  loop `QToolButton` checkable. `stepFrame(dir)` pausa e busca ±1 frame.
+- **Cluster direito**, na ordem do Premiere: margens de segurança/grade
+  (ex-`=#=`, agora `MSafe`), resolução (`m_qualityBtn`), zoom (`m_zoomCombo`),
+  fullscreen expandi (`MFullscreen`; Esc sai).
+- **Rótulo `Program: <nome>`** no topo esquerdo, atualizado no `setProject`
+  (nome do `Project`).
+- **Timecode flutuando** no canto inferior-esquerdo da área de vídeo
+  (posicionado no `resizeEvent`, `WA_TransparentForMouseEvents`); o pill
+  continua os tokens do tema (`refreshTimeLabelStyle`).
+- **Barra de transporte inferior do MainWindow removida** — o transporte agora
+  vive no monitor. `Home`/`End` (início/fim) e `Espaço` (play) seguem como
+  atalhos da janela (via `addAction`), sem barra visual.
+- **Paleta de ferramentas vertical e DOCÁVEL** na timeline (Tools do Premiere):
+  virou um `QDockWidget` próprio (`toolsDock`, "Ferramentas") com a `QToolBar`
+  em `Qt::Vertical`, estilo plano com hover/checked do tema. Encaixada por
+  padrão à esquerda da timeline — `splitDockWidget(m_timelineDock,
+  m_toolsDock, Qt::Horizontal)` + `resizeDocks({…},{1920, 60})` — atrás dos
+  cabeçalhos de faixa, mas o usuário pode arrastar/encaixar/flutuar como no
+  Premiere (entra em `m_allDocks`/`saveState`). Botões de snap/loop/ripple/
+  estilo/grid/régua continuam abaixo do separador. A timeline ocupa o dock
+  inteiro de novo (`tlLay->addWidget(m_timeline)`).
+- **Atalhos**: Ctrl+G (grade) mantido; Alt+←/→ continuam no `nudgeSelected`
+  global do MainWindow — frame-step ficou só nos botões do monitor (o
+  `eventFilter` global já faz ±1 frame com ←/→).
+
+### 7.3 Header de faixa réplica do Premiere (2026-09-28)
+
+Passo 4 da 7.1. A coluna de cabeçalho já existia (`kHeaderW=150`), mas com
+layout estilo Vegas (M/S/L embaixo à esquerda + %/barra no meio); o cabeçalho
+foi **refeito do zero** no layout do Premiere CC 2018+ (tema escuro "Main"):
+
+- **Linha superior de controles** (`y+2`, 18px, slots de x fixo via
+  `headerBtnRect(y,slot)`): seta de recolher (0) + navegação de keyframes
+  `◀ ◆ ▶` (1/2/3, funcional só no áudio por `kfVolume`) + sync lock (4, chip
+  visual **sem backend**) + toggle de saída olho/falante (5) + botões **M/S/R**
+  (6/7/8, só áudio). R (gravação de voz) é visual, sem backend.
+- **Linha do nome** (`y+21`): NOME à esquerda (`headerNameRect`) e **cadeado**
+  à direita (`headerLockRect`), como no Premiere — nome *abaixo* dos controles.
+- **Áudio**: **VU meter vertical** na borda direita (`headerMeterRect`, da linha
+  do nome até a alça de resize), exibição estática do volume+envelope **sem
+  arrasto** (o `TrackOp` do header foi removido — meter é display-only). Vídeo
+  não tem meter, como no Premiere.
+- **Cores fiéis ao Premiere** (tema escuro): fundo monolítico `#2B2B2B`
+  (seleção `#343E4E`, azul sutil), separador inferior `#151515`, nome
+  ~`#D6D6D6`, chips `#333/#4C` com M/S ativos em azul `#4A6FA5` + legenda
+  branca, ícones/cadeado/toggles em cinza (cadeado acende quando travado, sem
+  "vermelho de lock"), **sem tira lateral colorida** (a cor de faixa vive nos
+  clipes).
+- **Faixa recolhida / baixa** (`collapsed` ou `contentH<22`): tira única com
+  seta + nome + olho/falante + cadeado (`headerMiniNameRect`/`Toggle`/`Lock`).
+- **Keyframes do header**: `◆` adiciona/remove `kfVolume` no playhead (padrão
+  `upsertKeyframe`/`trackEnvelopePress`), `◀`/`▶` pulam o playhead para o
+  keyframe anterior/próximo (`setPlayhead`). Vídeo desenha o cluster **apagado**
+  (sem envelope de faixa de vídeo); os chips FX saem do header (o FX continua
+  no badge do clipe).
+- **Interações do Premiere**: duplo clique no nome renomeia **inline** (editor
+  `QLineEdit` sobre a faixa — `beginTrackRename`/`commitTrackRename`); clique no
+  header seleciona a faixa inteira e arrasta para reordenar (já existia); cursor
+  de resize na alça (já existia).
+- **Geometria centralizada** (`headerBtnRect`, `headerNameRect`, `headerLockRect`,
+  `headerMini*Rect`, `headerMeterRect`) usada em comum por desenho, hit-test
+  (`headerBtnAt` com slots 0..8 + cadeado 9) e editor inline — desenho e clique
+  nunca desalinham.
+- **Linha de controles compacta**: os 9 slots tinham o R em x=148..164 e
+  vazavam para a área de clipes (`kHeaderW=150`). Reorganizados em x=2..147,
+  com 3px de folga à direita; o cluster ◀◆▶ e o M/S/R seguem colados, como no
+  Premiere.
+- **Não-tocado**: clipes, régua, ferramentas, mixer — passo 4 é visual de
+  cabeçalho + interação, não refactor de engine.
+
+### 7.4 Corpo da faixa de áudio réplica do Premiere (2026-09-28)
+
+Complemento da 7.3: o **cabeçalho** já estava fiel ao Premiere, mas o **corpo**
+da faixa de áudio ainda tinha marcas do Vegas. Ajustado para o Premiere CC:
+
+- **Fundo da pista chapado**: saiu o zebrado (`trackBg`/`trackBgAlt` alternado
+  por índice) — toda pista de áudio usa `trackBg` e a separação vem só da linha
+  divisória no rodapé. Vídeo e gravação mantêm o zebrado.
+- **Clipe de áudio**: faixa clara no topo (mesma matiz do corpo, `lighter(155)`)
+  com o **nome em texto escuro** no mesmo matiz, no lugar da caixa preta
+  semitransparente; o sufixo `v N%` saiu do rótulo (o Premiere não mostra) e o
+  badge `FX` foi mantido. Onda em tom **claro** (`waveVal 0.78`, alpha ~0.86–1.0)
+  sobre o corpo sólido.
+- **Linha de volume da faixa sempre visível** (o Premiere não tem tecla para
+  isso): desenhada sempre, junto do envelope com keyframes. O envelope perdeu o
+  **preenchimento dourado** (Vegas) — agora é só curva + diamantes, linha
+  branca (dourada só enquanto arrasta).
+- **Envelope sempre presente**: `drawTrackVolEnvelope` saiu de trás de `V`.
+- **Interação acompanha**: clicar **na linha** da faixa arma o ajuste de volume
+  sem a tecla `V` (idem o cursor `SizeVer` e o tooltip dB, que agora testam a
+  proximidade da linha). O "segurar na faixa inteira = volume" (toda a altura,
+  estilo Vegas) **continua atrás de `V`** para não sequestrar o clique/marquee
+  normal. A tecla `V` agora controla **só** a linha de volume individual do
+  clipe.
+- **Vídeo no mesmo padrão** (para combinar com o áudio):
+  - fundo da pista **chapado** (saiu o zebrado) e **mesma cor de seleção**
+    (`#2A303E`) em vídeo, áudio e gravação — a separação entre faixas vem só
+    da linha divisória;
+  - o clipe de vídeo ganhou a **mesma faixa de nome no topo** que o de áudio,
+    agora na **cor da faixa** (`tint`), com o texto escolhido por contraste
+    (`readableTextOn`: claro→letra escura, escuro→letra clara). Antes era uma
+    caixa preta semitransparente só no áudio;
+  - a faixa some quando o clipe é baixo demais (`height < nome+8`), caindo
+    para a caixa preta-antiga;
+  - o **corpo** do clipe de vídeo continua cinza-azulado (`clipBg`) e o de
+    áudio na cor da faixa: no Premiere vídeo é neutro e áudio é colorido.
+- **Não-tocado**: cabeçalho (7.3), régua, ferramentas, mixer, modelo de dados
+  — só desenho/interação do corpo das faixas.
+
+### Escopo fechado
+
+**Refator de layout, não de engine.** Corte, keyframe, export e paridade
+preview↔export **não** são tocados — decisão mantida da conversa de escopo.
+Se algo quebrar, quebra a apresentação, não os dados.
+
+### Sobre usar modelo de IA com screenshot
+
+Um print do Premiere não produz réplica. A diferença aqui é estrutural
+(pegadas em `setCentralWidget` e janelas flutuantes), e um modelo que não rodou
+o Pierrot não tem como saber onde elas estão. O que um modelo **entregou** foi
+uma paleta neutra medida + acento `#2680EB` + densidade de timeline — útil,
+mas é a camada mais rasa. **Restante: código.**
+
+> Conflito com a regra do roadmap: o bloco "núcleo de foco" diz para não
+> implementar feature nova antes de fechar QA/robustez/performance. Este bloco
+> é **UI, não feature** — não mexe no kernel nem em paridade preview↔export,
+> então não colide com a regra de ouro. Mas se o núcleo de foco estiver
+> atrasado, isto espera: é o item com menor risco de causar perda de trabalho.
+
 ## Critério geral (como saber que estamos no caminho)
 
 > Pior feature é a que **perde trabalho**; segunda pior é a que **trava a UI**.
