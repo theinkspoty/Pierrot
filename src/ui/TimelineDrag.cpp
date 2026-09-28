@@ -718,44 +718,56 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
 
     // Destaque das alças (opacidade no centro, fades nos cantos) ao passar o
     // mouse sobre o topo de um clipe de vídeo. Repinta só quando o alvo muda.
-    // Ignorado durante arrastos.
+    // Ignorado durante arrastos. Throttle: só recalcula a cada 4px de movimento.
     QString newGrip, newCorner;
     int newSide = 0;
     if (m_dragMode == None && !(e->buttons() & Qt::LeftButton)
         && e->pos().y() >= kRulerH) {
-        bool hAudio = false;
-        int hrow = -1;
-        if (rowFromY(e->pos().y(), hrow, hAudio) && hrow >= 0) {
-            Clip* hc = clipAt(hrow, hAudio, std::max(0.0, xToTime(e->pos().x())));
-            if (hc) {
-                const int topY = hAudio ? rowY(-1, hrow) : rowY(hrow, -1);
-                if (e->pos().y() - topY <= 14) {
-                    const int hcx = (int)timeToX(hc->pos);
-                    const int hcw = (int)(hc->dur * m_pps);
-                    const int hdx = e->pos().x() - hcx;
-                    if (hdx <= 12) { newCorner = hc->id; newSide = -1; }
-                    else if (hcw - hdx <= 12) { newCorner = hc->id; newSide = 1; }
-                    else if (!hAudio) newGrip = hc->id;
+        const int hoverDx = e->pos().x() - m_lastHoverPos.x();
+        const int hoverDy = e->pos().y() - m_lastHoverPos.y();
+        if (std::abs(hoverDx) >= 4 || std::abs(hoverDy) >= 4
+            || m_hoverGripClip.isEmpty() != m_lastHoverClipId.isEmpty()) {
+            m_lastHoverPos = e->pos();
+            bool hAudio = false;
+            int hrow = -1;
+            if (rowFromY(e->pos().y(), hrow, hAudio) && hrow >= 0) {
+                Clip* hc = clipAt(hrow, hAudio, std::max(0.0, xToTime(e->pos().x())));
+                if (hc) {
+                    const int topY = hAudio ? rowY(-1, hrow) : rowY(hrow, -1);
+                    if (e->pos().y() - topY <= 14) {
+                        const int hcx = (int)timeToX(hc->pos);
+                        const int hcw = (int)(hc->dur * m_pps);
+                        const int hdx = e->pos().x() - hcx;
+                        if (hdx <= 12) { newCorner = hc->id; newSide = -1; }
+                        else if (hcw - hdx <= 12) { newCorner = hc->id; newSide = 1; }
+                        else if (!hAudio) newGrip = hc->id;
+                    }
                 }
+            }
+            if (newGrip != m_hoverGripClip || newCorner != m_hoverCornerClip
+                || newSide != m_hoverCornerSide) {
+                m_hoverGripClip = newGrip;
+                m_hoverCornerClip = newCorner;
+                m_hoverCornerSide = newSide;
+                update();
             }
         }
     }
-    if (newGrip != m_hoverGripClip || newCorner != m_hoverCornerClip
-        || newSide != m_hoverCornerSide) {
-        m_hoverGripClip = newGrip;
-        m_hoverCornerClip = newCorner;
-        m_hoverCornerSide = newSide;
-        update();
-    }
 
     // Tooltip dB (estilo Vegas): sobre a linha de volume/envelope de uma
-    // faixa de áudio, mostra o valor em dB sob o cursor.
+    // faixa de áudio, mostra o valor em dB sob o cursor. Throttle: só recalcula
+    // se o mouse mudou de faixa ou moveu >= 4px.
     if (m_dragMode == None && !(e->buttons() & Qt::LeftButton)) {
-        QString tip;
         const QPoint& at = e->pos();
         int vrow;
-        if (m_showVolLines && at.x() >= kHeaderW && at.y() >= kRulerH
-            && volRowAt(at, vrow) >= 0) {
+        const bool overVol = m_showVolLines && at.x() >= kHeaderW && at.y() >= kRulerH
+            && volRowAt(at, vrow) >= 0;
+        const int tipDx = at.x() - m_lastHoverPos.x();
+        const int tipDy = at.y() - m_lastHoverPos.y();
+        if (overVol && (std::abs(tipDx) >= 4 || std::abs(tipDy) >= 4
+                        || vrow != m_lastHoverRow)) {
+            m_lastHoverRow = vrow;
+            QString tip;
             int r2;
             bool a2;
             const bool overClip = rowFromY(at.y(), r2, a2)
@@ -774,13 +786,16 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                 const double db = 20.0 * std::log10(std::max(val, 1e-4));
                 tip = QStringLiteral("Volume: %1 dB").arg(db, 0, 'f', 1);
             }
-        }
-        if (tip != m_lastVolTip) {
-            m_lastVolTip = tip;
-            if (tip.isEmpty())
-                QToolTip::hideText();
-            else
-                QToolTip::showText(mapToGlobal(at), tip, this);
+            if (tip != m_lastVolTip) {
+                m_lastVolTip = tip;
+                if (tip.isEmpty())
+                    QToolTip::hideText();
+                else
+                    QToolTip::showText(mapToGlobal(at), tip, this);
+            }
+        } else if (!overVol && !m_lastVolTip.isEmpty()) {
+            m_lastVolTip.clear();
+            QToolTip::hideText();
         }
     }
 

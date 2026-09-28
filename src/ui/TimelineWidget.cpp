@@ -242,6 +242,10 @@ void TimelineWidget::setProject(Project* p) {
     m_clipBytes = 0;
     m_cursorT = -1.0;
     m_lastMax = -1;
+    m_lastHoverPos = QPoint(-999, -999);
+    m_lastHoverClipId.clear();
+    m_lastHoverRow = -1;
+    m_lastHoverAudio = false;
     emit selectionChanged(QString());
     rebuildClipIndex();
     invalidateScene();

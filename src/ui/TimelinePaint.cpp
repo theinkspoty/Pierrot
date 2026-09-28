@@ -170,20 +170,25 @@ bool TimelineWidget::rowFromY(int y, int& row, bool& audio) const {
 
 Clip* TimelineWidget::clipAt(int row, bool audio, double t) const {
     if (!m_project) return nullptr;
-    auto top = [t](QVector<Clip>& clips) -> Clip* {
-        Clip* best = nullptr;
-        for (auto& c : clips)
-            if (t >= c.pos && t < c.pos + c.dur)
-                if (!best || c.pos > best->pos) best = &c;
-        return best;
-    };
-    if (audio) {
-        if (row < 0 || row >= (int)m_project->audioTracks.size()) return nullptr;
-        return top(m_project->audioTracks[row].clips);
-    } else {
-        if (row < 0 || row >= (int)m_project->videoTracks.size()) return nullptr;
-        return top(m_project->videoTracks[row].clips);
+    const auto& clips = audio
+        ? (row >= 0 && row < (int)m_project->audioTracks.size()
+           ? m_project->audioTracks[row].clips : QVector<Clip>{})
+        : (row >= 0 && row < (int)m_project->videoTracks.size()
+           ? m_project->videoTracks[row].clips : QVector<Clip>{});
+    if (clips.isEmpty()) return nullptr;
+    // Busca binária: clips são ordenados por pos. Encontra o último cujo
+    // início é <= t.
+    int lo = 0, hi = clips.size() - 1;
+    while (lo <= hi) {
+        const int mid = (lo + hi) / 2;
+        if (clips[mid].pos <= t) lo = mid + 1;
+        else hi = mid - 1;
     }
+    if (hi >= 0 && hi < clips.size()) {
+        Clip& c = const_cast<Clip&>(clips[hi]);
+        if (t >= c.pos && t < c.pos + c.dur) return &c;
+    }
+    return nullptr;
 }
 
 int TimelineWidget::volLineY(int row, bool audio, const Track& tr) const {
@@ -204,13 +209,17 @@ int TimelineWidget::trackVolLineYAt(int row, double value) const {
 
 int TimelineWidget::trackEnvKfAt(const QPoint& p, int& row, bool& audio) const {
     if (!m_project) return -1;
+    const double t0 = m_viewStart;
+    const double t1 = t0 + (width() - kHeaderW) / m_pps;
     for (int i = 0; i < (int)m_project->audioTracks.size(); ++i) {
         const Track& tr = m_project->audioTracks[i];
         if (tr.kfVolume.isEmpty() || !trackVisible(i, true)) continue;
         const int y = rowY(-1, i);
         if (p.y() < y || p.y() >= y + trackH(i, true)) continue;
         for (int k = 0; k < tr.kfVolume.size(); ++k) {
-            const int kx = (int)(kHeaderW + (tr.kfVolume[k].time - m_viewStart) * m_pps);
+            const double kt = tr.kfVolume[k].time;
+            if (kt < t0 - 0.1 || kt > t1 + 0.1) continue; // pula keyframes fora da view
+            const int kx = (int)(kHeaderW + (kt - m_viewStart) * m_pps);
             const int ky = trackVolLineYAt(i, tr.kfVolume[k].value);
             if (std::abs(p.x() - kx) <= 6 && std::abs(p.y() - ky) <= 6) {
                 row = i;

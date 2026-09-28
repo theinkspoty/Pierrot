@@ -449,4 +449,10 @@ private:
     int m_autoScrollDir = 0; // -1 esquerda, +1 direita (px por tick)
     QPoint m_autoScrollMouse;
     int m_lastMax = -1; // último newMax de updateScrollRanges (para log)
+
+    // Throttle do hover: evita rodar clipAt/trackEnvKfAt a cada pixel.
+    QPoint m_lastHoverPos{-999, -999};
+    QString m_lastHoverClipId;
+    int m_lastHoverRow = -1;
+    bool m_lastHoverAudio = false;
 };
