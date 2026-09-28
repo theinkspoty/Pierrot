@@ -1515,15 +1515,23 @@ QStringList ProjectExporter::buildCommand(const Project& project,
             // Lógica Vegas: volume efetivo = envelope do clipe (relativo, base 1.0)
             // × volume do clipe × envelope da faixa (tempo absoluto da timeline),
             // limitado a 200% como no preview. O preview aplica o mesmo produto
-            // (PreviewWidget::buildMixSources).
+            // (PreviewWidget::buildMixSources: c->volume × kfValue × trackVol).
             const bool trackEnv = ar.tr && !ar.tr->kfVolume.isEmpty();
             const bool clipEnv = !c->kfVolume.isEmpty();
             if (clipEnv || trackEnv
                 || std::fabs(c->volume * ar.trackVol - 1.0) > 1e-4) {
+                //Sempre inclui c->volume (multiplicador base do clipe) — o preview
+                //multiplica clipVol × envelope × trackVol; sem clipVol o export
+                //toca mais alto quando volume < 1.0.
+                const QString clipGain =
+                    clipEnv
+                        ? QStringLiteral("%1*%2")
+                              .arg(num(c->volume))
+                              .arg(kfExpr(c->kfVolume, 1.0, c->pos))
+                        : num(c->volume);
                 const QString gain =
                     QStringLiteral("clip(%1*%2,0,2)")
-                        .arg(clipEnv ? kfExpr(c->kfVolume, 1.0, c->pos)
-                                     : num(c->volume))
+                        .arg(clipGain)
                         .arg(trackEnv ? kfExpr(ar.tr->kfVolume, ar.tr->volume, 0.0)
                                       : num(ar.trackVol));
                 fc.last().append(QStringLiteral(",volume='%1'").arg(gain));
