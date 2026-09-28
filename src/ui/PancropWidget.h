@@ -119,6 +119,7 @@ private:
     FFmpegDecoder m_decoder;
     QImage m_frame;
     QString m_framePath;
+    QString m_lastDecodedClipId;  // para forçar reset do decoder ao trocar de clipe
 
     QSlider* m_cropL = nullptr;
     QSlider* m_cropR = nullptr;

@@ -684,6 +684,13 @@ void PancropWidget::loadFrame() {
     const MediaItem* mi = m_project->findMedia(c->mediaId);
     if (!mi || !mi->hasVideo) { m_frame = QImage(); m_framePath.clear(); return; }
     const QString vpath = ProxyManager::instance().resolveVideo(mi->filePath);
+    // Força reset do decoder ao trocar de clipe — mesmo que o arquivo fonte seja
+    // o mesmo, o estado interno (m_lastFrame/m_nextFrame/m_lastPtsSec) fica do
+    // clipe anterior e pode devolver o frame errado.
+    if (m_lastDecodedClipId != c->id) {
+        if (m_decoder.isOpen()) m_decoder.close();
+        m_lastDecodedClipId = c->id;
+    }
     if (!m_decoder.isOpen() || m_decoder.source() != vpath)
         m_decoder.open(vpath);
     if (!m_decoder.isOpen()) { m_frame = QImage(); m_framePath.clear(); return; }
@@ -1334,6 +1341,21 @@ void PancropWidget::paintViewfinder(QWidget* view) {
     p.drawLine(QPointF(anchorDisp.x(), anchorDisp.y() - 4.0),
                QPointF(anchorDisp.x(), anchorDisp.y() + 4.0));
 
+    // ── Indicador de resolução do projeto (estilo Vegas) ─────────────
+    p.restore();  // restaura antes de desenhar o overlay sem rotação
+    p.save();
+    const QString resLabel = QString("%1×%2").arg((int)W).arg((int)H);
+    QFont f = view->font();
+    f.setPointSize(9);
+    f.setBold(true);
+    p.setFont(f);
+    p.setPen(QColor(0, 0, 0, 160));
+    const QRect r = view->rect();
+    p.drawText(r.adjusted(8, 0, -8, -8), Qt::AlignBottom | Qt::AlignRight,
+               resLabel);
+    p.setPen(QColor(255, 255, 255, 200));
+    p.drawText(r.adjusted(7, -1, -9, -9), Qt::AlignBottom | Qt::AlignRight,
+               resLabel);
     p.restore();
 }
 
