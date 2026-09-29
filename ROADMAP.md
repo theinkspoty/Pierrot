@@ -250,7 +250,12 @@ Cada item abaixo indica quem destrava o quê, pra não virar lista sem critério
 ## 4.5. Backlog kernel — anotado para atualização futura (2026-09-22)
 
 Sem prioridade imediata; registrar para a próxima passada no núcleo
-(`src/colombina`). Ordem sugerida pela análise do KERNEL.md:
+(`src/colombina`). Ordem sugerida pela análise do KERNEL.md.
+
+> **Conferido contra o código em 2026-09-29:** nenhum item desta fila foi
+> implementado; P2 e P5 estão parciais. O detalhamento com `arquivo:linha` e o
+> inventário de testes estão na **seção 4.6** — use esta lista como resumo e a
+> 4.6 como detalhe.
 
 - [ ] **Versionamento de schema `.Blanc`** — `format_version`; abrir versão
   futura avisa em vez de desserializar errado. (já listado em "2. Robustez")
@@ -583,6 +588,9 @@ mas é a camada mais rasa. **Restante: código.**
 > contra o código. **Oito já estavam implementados** e ainda marcados como
 > pendentes, e **dois diagnósticos de bug estavam errados**. ✅ = concluído,
 > ⚠️ = parcial. As evidências `arquivo:linha` valem para o commit auditado.
+> A auditoria cobriu `src/**` C++; `src/rust/` foi deixado de fora por não ser
+> C++ — e é lá que mora a segunda implementação do DSP de áudio, o que só ficou
+> visível depois.
 
 ### Bugfixes (urgent)
 
@@ -597,6 +605,22 @@ mas é a camada mais rasa. **Restante: código.**
   produto, não bug:** remover `AnimatedDocks` e/ou o `QDockWidget::title:hover`
   de `Theme.cpp:285-287` resolve, mas colide com o layout Premiere-like
   documentado em `MainWindow.cpp:955-956`.
+- [ ] **Fallback de áudio duplicado sem teste de paridade (risco de divergência)**
+  ⚠️ *auditado em 2026-09-29*. O DSP de efeitos existe em duas implementações
+  independentes: a porta Rust `src/rust/pierrot_audiofx/src/lib.rs` e o
+  `AudioFxFallback` C++ em `src/ui/PreviewWidget.cpp:311-498`. `PreviewWidget`
+  escolhe via `using AudioFx = AudioFxBridge/Fallback` sob `#ifdef
+  PIERROT_ENABLE_RUST`, e `CMakeLists.txt:157` deixa a opção **OFF por padrão** —
+  ou seja, **o build padrão executa o C++ e o Rust nem é compilado**. Hoje as
+  duas são portas fiéis (mesmos delays `[1557,1617,1491,1422]`, mesmo
+  `fb = 0.60+0.28*size`, mesmo `damp = 0.4-0.25*size`, mesmos pesos de mix,
+  mesmas bandas de EQ por canal), mas **nada impede que um refactor mexa numa e
+  não na outra**, e a divergência apareceria só no áudio de quem compilou com
+  Rust. Agravante: o fallback está enterrado dentro de um `.cpp` de 4000 linhas,
+  então nenhum teste consegue alcançá-lo. Mitigação proposta: extrair
+  `AudioFxFallback` para `src/ui/AudioFxFallback.h` (a classe é autocontida —
+  só `std` math, nenhum tipo Qt) e adicionar `tst_audiofx_parity.cpp` que passe
+  o mesmo buffer pelas duas implementações e falhe no CI se divergirem.
 - [ ] **Faixa de gravação não pode ser removida**: `Project::addRecordingTrack()`
   é chamado pelo menu de faixas (`TimelineWidget.cpp:1853`), mas o
   `Project::removeRecordingTrack()` correspondente (`Project.h:743`) não tem
@@ -703,22 +727,311 @@ mas é a camada mais rasa. **Restante: código.**
 
 ### v0.8.1 (áudio/efeitos)
 
-- [x] **Reverb melhorado** ✅ `SimpleReverb`
-  (`src/rust/pierrot_audiofx/src/lib.rs:111`) = 4 comb + 2 allpass (Freeverb
+- [x] **Reverb melhorado** ✅ `SimpleReverb` = 4 comb + 2 allpass (Freeverb
   simplificado), exposto por `reverb`/`reverbMix`/`reverbSize`
   (`Project.h:521-523`). ⚠️ Ainda **sem IR**: `reverbSize` só mexe em `fb` e
   `damp`, não nos tempos de atraso, e o wet é mono.
+  ⚠️ **Existe em DOIS lugares e o build padrão usa o C++**: a porta Rust em
+  `src/rust/pierrot_audiofx/src/lib.rs:111`, e o fallback C++
+  `AudioFxFallback` em `src/ui/PreviewWidget.cpp:311`. `PIERROT_ENABLE_RUST`
+  está `OFF` por padrão (`CMakeLists.txt:157`), então quem roda é o C++.
 - [ ] **EQ com gráfico editável**: existem 3 bandas
   (`eqLow`/`eqMid`/`eqHigh`, `Project.h:515-517`), mas são peaking de Q fixo em
-  120/1000/6000 Hz (`lib.rs:204-206`), ajustáveis **só por número**. Não há
+  120/1000/6000 Hz (Q fixo), ajustáveis **só por número**. Não há
   widget de curva de resposta de frequência — o `GraphEditorWidget` edita
-  keyframes de propriedades, não a curva de EQ.
+  keyframes de propriedades, não a curva de EQ. ⚠️ Mesma duplicação do reverb:
+  `lib.rs:204-206` (Rust) e `PreviewWidget.cpp` (C++, `AudioFxFallback::configure`),
+  com o C++ como o caminho realmente compilado por padrão.
 - [ ] **Motion blur profissional** ⚠️ parcial: existe amostragem temporal com
   shutter em fração de quadro e 2–32 amostras (`MesaRenderer.cpp:117-140` para
   câmera, `:396-430` para camadas), mas **só na Mesa** — clipes da timeline
   normal não têm motion blur de shutter, e no export viram `boxblur` gaussiano
   (`ProjectExporter.cpp:1375-1376`). Faltam shutter angle em graus, detecção de
   velocidade e compilação/otimização das amostras.
+
+## 4.6. Consolidação da pasta `Arquivos/` (auditoria de 2026-09-29)
+
+> **Para quem vai pegar o projeto:** a pasta `Arquivos/` tem 7 documentos de
+> análise — alguns são **relatório de estado** (leitura, não tarefa) e outros são
+> **fila de trabalho**. A tabela abaixo diz o que é cada um e se o conteúdo já
+> está no roadmap. Tudo foi reconferido contra o código em 2026-09-29; as
+> evidências `arquivo:linha` valem para o commit auditado.
+> Legenda: ✅ feito · ⚠️ parcial · ❌ não feito.
+
+### Índice dos documentos
+
+| Documento | Data | Tipo | Situação |
+|---|---|---|---|
+| `Arquivos/Atualizações/Plano-Atualizacao-Kernel.md` | 22/09 | **Fila P0–P6** | 1 ✅ parcial, 5 ❌ — consolidado abaixo |
+| `Arquivos/Relatorios/Relatorio-Performance-Playback.md` | 28/09 | **Diagnóstico + 10 fixes** | 1 ✅, 9 ❌ — consolidado abaixo |
+| `Arquivos/Relatorios/Relatorio-Features-Vegas-FCE.md` | 22/09 | Inventário ✓/◐/✗ + 8 itens | 1 ⚠️ melhor do que o doc, 7 ❌ — consolidado abaixo |
+| `Arquivos/Relatorios/Relatorio-Audio.md` | 22/09 | Relatório ("nos conformes") | 1 ⚠️ novo (ordem de FX), resto já registrado |
+| `Arquivos/Arquitetura/KERNEL.md` | 22/09 | Arquitetura + 6 gaps vs Vegas | Referência; gaps já no backlog do kernel |
+| `Arquivos/Arquitetura/README.md` | 29/09 | Convenção de docs `ARQUIVOS.md` | Regra editorial, não tarefa |
+| `Arquivos/Relatorios/Relatorio-Possiveis-Bugs.md` | 29/09 | 17 achados estáticos | ✅ todos tratados (seção "Tarefas pendentes") |
+| `Arquivos/melhorias/LEMBRETE.md` | — | 1 item: "melhorar os mixers" | ✅ **resolvido** |
+
+**LEMBRETE.md — resolvido.** O lembrete "Melhorar os mixers de áudio" foi
+atendido pelo mixer estilo Premiere (fader vertical, VU com LED e peak hold de
+1500 ms, knob de pan, mute/solo, dB↔linear, strip master —
+`MixerWidget.cpp:79-88`, `:90-152`, `:155-234`, `:397-414`), já marcado em
+"UI/Layout". ⚠️ Restam bus send/auxiliar, pan law selecionável e leitura numérica
+de pan — podem ser anexados a esse item.
+
+### Fila do kernel — `Plano-Atualizacao-Kernel.md` (P0–P6)
+
+Confirma a seção 4.5 acima; aqui com o estado real. **Nada da fila foi
+implementado** — o documento é de 22/09 e continua inteiro.
+
+- [ ] **P0 — Versionamento de schema `.Blanc`** ❌ `toJson()`/`fromJson()`
+  (`Project.cpp:637-698` / `:700-793`) não gravam nenhum campo de versão;
+  `openProjectFile()` (`MainWindow.cpp:2249-2283`) só checa `QJsonParseError` e
+  `doc.isObject()`, sem aviso de versão futura. Existe **apenas** uma migração
+  pontual ad-hoc: o marcador `mesaPosAbs` (`Project.cpp:695`, aplicada em
+  `:773-792`) — ou seja, o padrão "campo ausente = versão antiga" já é usado,
+  mas não há leitura de versão. O arquivo não é mutado no load
+  (`m_modified = false` em `MainWindow.cpp:2277`) — isso hoje é por acaso, não
+  por design.
+- [ ] **P1 — Indexação O(1) por id** ❌ os quatro finders são varreduras
+  lineares: `findGroup` (`Project.h:673-677`), `findMesa` (`:679-688`),
+  `findMesaForTrack` (`:694-698`, **O(n·m)** — o pior) e `findMedia`
+  (`:765-769`). Chamados por quadro em `MesaRenderer.cpp:278,357` e
+  `PlaybackEngine.cpp:404-408`. Não existe `QHash` de índice no modelo. Há um
+  cache adjacente, mas só na casca e só para dimensões: `m_mediaSizes` em
+  `MesaWidget.h:118-121`, cujo próprio comentário admite "evita varredura linear
+  de findMedia a cada hover/hit test" — a correção foi local, não no `Project`.
+- [ ] **P2 — Load `.Blanc` assíncrono e defensivo** ⚠️ metade feito. **Async
+  ❌**: `openProjectFile()` (`MainWindow.cpp:2249-2264`) faz `readAll` +
+  `fromJson` + `snapshotState()` (`:2270`) na thread da UI, enquanto o **save já
+  é async** (`MainWindow.cpp:2326-2400`, `QtConcurrent::run` em `:2387`) — a
+  assimetria é real. **Defensivo ⚠️**: sem `try`/`catch`, mas o
+  `QJsonParseError` é checado (`:2257-2263`) e toda leitura usa
+  `.toInt(default)`/`.toBool(false)` com guardas de tamanho
+  (`Project.cpp:493`, `:747`), o que evita crash sem tratamento de exceção.
+  Falta o que o plano pede: limite de recursão/tamanho (risco de DoS por JSON
+  gigante) e **teste de fuzz** — não existe. O mais próximo é
+  `tst_serialization.cpp:273-296` e `:343-355`, que testam campo ausente com
+  JSON **válido**, nunca JSON quebrado; o caminho `QJsonParseError` vive no
+  `MainWindow` e não é testável.
+- [ ] **P3 — GPU na composição** ❌ `MesaRenderer` é 100% CPU:
+  `QImage` + `QPainter` em `MesaRenderer.cpp:125-127` e `:162-164`, blend modes
+  mapeados para `QPainter::CompositionMode_*` (`:383-390`), cache de composto
+  também em `QImage`. Zero OpenCL/CUDA/QOpenGL/shader/Vulkan — as únicas
+  menções a OpenCL no `src/` são comentários do SDK OFX vendorizado, e o
+  `CMakeLists.txt` não linka OpenGL/OpenCL. (`warmTracks()` paraleliza o
+  *decode* com QtConcurrent, mas a composição em si é serial e na CPU.)
+  ⚠️ **Fora de escopo mas já existente:** VAAPI no decode
+  (`FFmpegDecoder.cpp:101-124`, `:491-529`) e nvenc/vaapi no encode
+  (`ProjectExporter.cpp:248-260`, `:1715-1738`).
+- [ ] **P4 — Smart render (stream copy)** ❌ a cadeia sempre recodifica: `-map
+  "[vout]"` (`ProjectExporter.cpp:1710`), `-c:v` explícito (`:1721`), `-c:a`
+  explícito (`:1743`). Busca por `copy`/`stream copy` no arquivo só acha
+  `this->copy` e copyright. O único caminho rápido é o opt-in de encoder de
+  hardware (`:1718-1720`), que acelera mas **não** evita re-codificar. A
+  pré-renderização existente (`:921-962`) só se aplica a sólidos/texto, nunca a
+  mídia real.
+- [ ] **P5 — Sanitizers + `-Wall -Wextra` no CI** ⚠️ o CI existe e é real
+  (`.github/workflows/ci.yml`: push/PR em `main`, matrix Qt6+Qt5 em
+  `ubuntu-24.04`, `cmake --build`, `ctest --output-on-failure`) — mas **zero
+  sanitizers** e **zero `-Wall -Wextra`** no `CMakeLists.txt`
+  (`CMAKE_CXX_FLAGS` vazio no `CMakeCache.txt:45`). Sem `.clang-format` nem
+  `.clang-tidy`. ⚠️ Como não há `-Wall`, o CI hoje **não veria warnings** se
+  houvesse — é pré-requisito de quase todo o resto desta seção.
+- [ ] **P6 — Cobertura do kernel >50%** ❌ zero infraestrutura: sem
+  `-DPIERROT_ENABLE_COVERAGE`, sem `--coverage`/`gcov`, sem lcov/gcovr/upload no
+  workflow, sem `*.gcda` no `build/`. O `ctest` do CI já daria a base, mas sem
+  instrumentação a métrica não existe.
+
+**Inventário de testes (útil para quem pegar o projeto).** `enable_testing()` em
+`CMakeLists.txt:243`; 7 alvos com `add_test` em `:258`, `:270`, `:283`, `:309`,
+`:335`, `:348`, `:375` — `tst_keyframes`, `tst_serialization`, `tst_edl`,
+`tst_exporter`, `tst_audio_conform`, `tst_audio_conform_intervals`,
+`tst_export_pipeline`. ⚠️ **`MesaRenderer` não tem teste direto** (é linkado por
+dependência de símbolo, mas `render()` nunca é exercitado) — é a maior peça do
+kernel sem cobertura, o que pesa contra o P6.
+
+### Performance de playback — `Relatorio-Performance-Playback.md` (10 fixes)
+
+Relatório de 28/09, **anterior** às últimas mudanças. Verificado hoje: **1 dos
+10 já está feito, 9 pendentes.** Nenhuma das mudanças do chroma key robusto tocou
+estes caminhos.
+
+- [x] **Fix 10 — Throttle de `scopesFrame()`** ✅ já existia **antes** do
+  relatório (commit `d950f2b`, 27/08): timer dedicado de 70 ms ≈ 14,3 fps em
+  `MainWindow.cpp:1074-1080`, com guarda `if (!m_scopesDock->isVisible()) return`.
+  `scopesFrame()` (`PreviewWidget.cpp:1589-1598`) não é chamado em nenhum paint
+  path. ⚠️ Ganho residual: o `scaled(160,90)` roda a cada disparo mesmo com o
+  frame parado; um cache por `m_currentFrameIndex` daria o mesmo sem mudar a
+  cadência.
+- [ ] **Fix 1 — Mover `applyCrop()` + `applyBasicEffects()` para o worker** ❌
+  maior impacto e maior risco. `FrameWorker::decodeOne()`
+  (`PreviewWidget.cpp:93`) não recebe nenhum parâmetro de crop/efeito e o
+  `struct FrameReq` (`PreviewWidget.h:224-230`) não tem campos para eles. Tudo
+  roda na UI thread: `applyCrop` em `:3211` (caminho crítico), `:2936`, `:2947`,
+  `:2372`, `:2832`; `applyBasicEffects` em `:3826`, `:3242`, `:1774`. Os
+  parâmetros (`m_clipBrightness`, `m_clipMasks`, `m_clipChromaKey*`,
+  `m_clipOfxFx`) são preenchidos na UI thread em `updateFrame()` (`:2750-2784`).
+  ⚠️ **O snapshot descrito no plano ainda não existe** — é pré-requisito, não
+  detalhe. E o `m_lainkaPrevFrame` (onion skin) atravessa essa fronteira, o que
+  precisa ser decidido antes.
+- [ ] **Fix 2 — Limitar `requestLowerLayers()` a 1 por tick** ❌ o laço
+  (`PreviewWidget.cpp:3006-3032`) emite **um `requestFrame()` por camada
+  visível** sem contador nem `break`; `dbgLayerDecodes` (`:2989`) existe mas só
+  alimenta `qDebug` (`:3065-3070`). ⚠️ Mitigações que já amortecem: coalesce por
+  clipe em `requestFrame()` (`:2969-2976`), prioridade do clipe do topo em
+  `kickFrameWorker()` (`:3101-3107`) e poda de órfãos (`:3081-3095`), cache de
+  camada tolerando ±3 frames (`:3026`). Com ≥4 faixas de vídeo o sintoma H3
+  permanece. **Correção barata: um `break` em `:3030`.**
+- [ ] **Fix 3 — Pré-alocar o buffer de compositing** ❌ `QImage acc(canvas.size(),
+  ARGB32)` é alocado a cada paint (`:1859`). `m_compositedCache`
+  (`PreviewWidget.h:287`) é cache de **resultado**, não de scratch: só é
+  reaproveitado se `m_compositedEpoch == m_currentFrameIndex` (`:1852-1854`), o
+  que nunca ocorre durante playback. ✅ **A infraestrutura já existe no mesmo
+  arquivo:** `ImgPool` (`src/colombina/export/LainkaFx.h:46-83`, pool de 4
+  buffers) já é usado em chroma key (`:3482`), blur (`:3578`) e motion blur
+  (`:3811`, `:3822`) — só não no compositing.
+- [ ] **Fix 4 — `QPainter::setOpacity()` em vez do COW manual** ❌
+  `drawLayer()` (`:1695-1704`) ainda faz `QImage img2 = img;` + `QPainter
+  ip(&img2)` + `fillRect`, o que **deta** o buffer compartilhado → deep copy de
+  8–33 MB por camada com alpha < 1. `setOpacity` existe no arquivo, mas só em
+  `:2123` e `:3818`. ⚠️ **Atenção:** a troca não é mecânica — muda o resultado
+  visual quando `L.mode != CompositionMode_SourceOver`, porque os blend modes de
+  faixa (`:1867`) interagem com o alpha pré-multiplicado. Precisa ser avaliado
+  contra o blend mode.
+- [ ] **Fix 5 — Double-buffer no `AudioMixer`** ❌ `AudioMixer` é definido
+  **dentro** de `PreviewWidget.cpp:510` (não existe `AudioMixer.h`;
+  `PreviewWidget.h:29` só faz forward-declare) — o que também torna a classe
+  intestável. `readData()` segura `m_mutex` (`:1121`) do início (`:766`) ao fim
+  (`:1090`) do chunk ≈ 10 ms a 480 samples; `updateSources()` adquire
+  `m_jobMutex` + `m_mutex` (`:576-578`). Busca por `staging`/`doubleBuffer` no
+  arquivo: **0 ocorrências**. O que existe é otimização de scratch, não de lock
+  (`m_srcBuf`/`m_winBuf` realocados só quando a capacidade cresce, `:789-793`).
+- [ ] **Fix 6 — Cache de mix sources** ❌ `updateMixAudio()` reconstrói as duas
+  listas a cada tick (`:2695-2702`), chamado 1× por frame em
+  `PlaybackEngine.cpp:391`. `buildMixSources()` (`:2381-2515`) itera todas as
+  faixas e todos os clipes, com `findMedia()` por clipe e busca de transição em
+  laço **O(clipes²)** por clipe (`:2437-2443`); `buildWarmSources()` varre tudo
+  de novo (`:2522-2599`). `m_trackFx.clear()` roda a cada `updateSources`
+  (`:594`). ⚠️ **Cuidado ao cachear:** `si.mediaPos` e `si.vol` variam
+  continuamente (volume por keyframe/fade), então o cache precisa separar a
+  **topologia** (keys, paths, streams, clipPos/Dur — invariantes) dos **valores
+  por tick**.
+- [ ] **Fix 7 — `desengasga` adaptativo** ❌ o intervalo é um literal fixo de
+  10 s: `else if (nowMs - m_desengasgaLastMs >= 10000)` em
+  `PreviewWidget.cpp:2202`, sem nenhuma referência a duração de clipe,
+  `clipAt()` ou `m_playhead` no bloco (`:2196-2206`). `releaseBuffers()` no
+  `FFmpegDecoder` limpa o cache de frames (`FFmpegDecoder.cpp:749`) sem noção
+  de clipe. M3 (stall/degradação progressiva) permanece integral.
+- [ ] **Fix 8 — Pré-criar e reusar o `QAudioSink`** ❌ `new QAudioSink(def, fmt,
+  this)` dentro de `startAudio()` (`:2655`), destruído em `stopAudio()`
+  (`:2670-2674`) — ou seja, a cada play, vindo de `togglePlay()`, `shuttle()` e
+  `playFrom()` (`PlaybackEngine.cpp:148`, `:184`, `:219-224`). O
+  `QAudioFormat` é remontado do zero a cada play (`:2616-2626`). `m_audioSink`/
+  `m_audioOut` (`PreviewWidget.h:209-210`) são só ponteiros. ⚠️ O que já
+  amortece: delay de 100 ms antes de `startAudio()`
+  (`PlaybackEngine.cpp:124-127`), que esconde o freeze no primeiro tick mas não
+  elimina o custo.
+- [ ] **Fix 9 — Remover `waitReadyBeforeSink()` do path da UI** ❌ **ainda
+  bloqueia a UI thread**, e para **todas** as reproduções após a primeira da
+  sessão: `waitReadyBeforeSink(..., 300)` em `:2643`; o `else` só pula na 1ª vez
+  (`:2646`) e `m_audioConformWarmed` nunca é resetado. `AudioConformCache::waitReady()`
+  faz **loop com `sleep_for(2ms)`** até 300 ms
+  (`AudioConformCache.cpp:193-216`). O próprio código admite o problema em
+  `PlaybackEngine.cpp:125` ("~300ms"). ⚠️ Contra-medida do relatório (iniciar o
+  sink e aceitar 1–2 quadros de silêncio) ainda não foi avaliada.
+- **Uso de memória — inalterado.** `kFrameCacheMax = 120`
+  (`FFmpegDecoder.h:158`) e `kBudgetBytes = 512 MB`
+  (`AudioConformCache.h:138`) continuam iguais, sem limite por bytes (pior caso
+  em 4K). ⚠️ **Correção ao relatório:** a tabela dele superestima o cache de
+  quadros em ~4× (diz "960 MB"); o comentário do código diz ~240 MB, que é o
+  número certo. **M2 (rebuild O(n) do índice do LRU) persiste** e **não estava
+  na lista de 10 fixes** — `FFmpegDecoder.cpp:719-720`, `:731-732`, `:744-745`;
+  vale ~6 µs/decode.
+
+⚠️ **Ordem de esforço sugerida** (barata → cara), diferente da prioridade de
+impacto do relatório: **Fix 4 e Fix 3** são as duas correções mais baratas do
+arquivo (uma troca por `setOpacity` e uma por `ImgPool::get/release`, com a
+infraestrutura já presente em `LainkaFx.h:46`); depois **Fix 6** (cache de
+topologia), **Fix 2** (um `break`), **Fix 8**, e por último **Fix 1**. **Fix 7 e
+Fix 9** se resolvem junto do Fix 1 (o `desengasga` já roda no worker; falta só
+torná-lo adaptativo).
+
+### Gaps Vegas/FCE — `Relatorio-Features-Vegas-FCE.md`, seção 4
+
+Inventário de 22/09 com marcações ✓/◐/✗. Re conferido hoje: **7 dos 8 "pontos
+para roubar" continuam não feitos, e 1 está melhor do que o documento registra.**
+
+- [x] **Efeitos em nível de projeto/mídia** ❌ confirmado como não feito: busca
+  por `projectFx`/`globalFx`/`mediaFx` em `src/` retorna **zero**. Efeitos de
+  áudio e vídeo existem só em nível de **clipe** e de **faixa**
+  (`AudioEffectsDialog`, `TrackAudioFxDialog`, `PreviewWidget:835`).
+- [ ] **"Open Format Timeline"** ❌ não conforma o projeto à mídia. `fps` e
+  resolução só são definidos **manualmente** (`ProjectSettingsDialog.cpp:119`,
+  `WelcomeWindow.cpp:706-707`); nada ajusta o projeto ao primeiro clipe, e nada
+  marca um clipe como "mestre" de resolução/fps.
+- [ ] **Expanded Edit Mode / Trim Start–End** ❌ busca por `ExpandedEdit`,
+  `TrimStart`, `TrimEnd`, `L-cut`, `JCut`, `LCut` retorna **zero**. O único
+  diálogo é `TrimmerDialog`, que é in/out de **mídia**, não emenda na timeline.
+  (A indicatorização de borda estilo Premiere foi implementada em 2026-09-29,
+  mas é feedback visual, não Expanded Edit.)
+- [ ] **Effects packages / presets de cadeia** ⚠️ **melhor do que o doc diz.**
+  `saveClipPreset()`/`applyClipPreset()` (`TimelineWidget.cpp:994-1043`) já
+  gravam em `QSettings` o **JSON completo do clipe**, e esse JSON inclui a cadeia
+  **OFX** (`pluginId`, `enabled`, todos os `params` — `clipattrs.h:120-138`) e o
+  áudio do clipe (`eqLow`/`eqMid`/`eqHigh`/`denoise`/`normalize`/`invertPhase` —
+  `:112-118`). ⚠️ Falta: preset em nível de faixa e de projeto, e um formato de
+  pacote em arquivo compartilhável (hoje é local e volátil).
+- [ ] **Audio scrub / J-cut-L-cut / Voice Over** ❌ os três continuam
+  inexistentes. (a) Sem pitch-shift no scrub — o áudio segue o playhead sem
+  variação. (b) Sem conceito de J/L-cut: o export só usa `adelay`
+  (`ProjectExporter.cpp:1523`) para alinhar o início do clipe, o que é
+  sincronização, não transição de áudio entre clipes. (c) Zero ocorrências de
+  `VoiceOver`/narração.
+- [ ] **Multicam por matching de áudio + scene detection** ❌ busca por
+  `silencedetect`, `scene_change`, `sceneDetect` retorna **zero**. Sem detecção
+  de corte de cena e sem análise de waveform para sync entre clipes. (A ausência
+  de multicam em si já está registrada no relatório e no KERNEL.md.)
+- [ ] **Speech-to-text / edição baseada em texto** ❌ busca por `transcri`,
+  `whisper`, `caption`, `subtitle` retorna **zero** — e **nem legendas
+  existem** (o único match de "legenda" no `src/` é a legenda branca de um botão
+  M/S, `TimelinePaint.cpp:1634`).
+- [ ] **Scrub no valor numérico (arrastar o número)** ❌ não existe. Busca por
+  `ScrubSpinBox`/`SpinBoxDrag`/`dragToScrub`: zero. Nenhum spinbox é
+  customizado — em `src/ui/` só há *forward-declares* de `QSpinBox`/
+  `QDoubleSpinBox` em 9 headers. Todos os campos numéricos exigem digitar.
+
+**Correções ao relatório de Vegas/FCE:** as marcações ✓/◐/✗ continuam válidas em
+geral, com **duas ressalvas** — (1) o item 4 é melhor que o registrado (o preset
+já serializa a cadeia OFX inteira, não só atributos de transformação), e (2) a
+seção 1.1 marcava "crossfade automático ✗" **e isso segue certo**: crossfade só
+existe com sobreposição manual. Os itens ✗ de herança do FCE (three-point
+editing, storyboard, nesting de sequências, batch/AAF) **continuam fora de
+escopo** — são itens de produto, não dívida técnica.
+
+### Relatório de áudio — `Relatorio-Audio.md` (4 pontos de atenção)
+
+O relatório conclui "está nos conformes" e está **correto**: as duas pontas
+concordam em volume, pan, invert, EQ, automação e velocidade. Dos 4 pontos de
+atenção, **3 já estavam registrados** e **1 é novo**:
+
+- [ ] **Ordem de invert/denoise difere entre preview e export** ❌ *(item novo —
+  não estava no roadmap)* ⚠️ baixa severidade. No preview o invert é aplicado
+  **antes** do gate/denoise; no export a cadeia é `afftdn` (denoise) **antes**
+  do `aeval` de invert. Efeito auditivo mínimo, mas é uma assimetria real
+  documentada — e num projeto que tem "paridade preview↔export é lei" como
+  princípio (`KERNEL.md`), ela é dívida. **Barato:** inverter a ordem em um dos
+  dois lados.
+- **Áudio × envelope de velocidade (`kfSpeed`)** — ✅ já registrado na Fase 2
+  (`ROADMAP.md:57,63`): vídeo usa `clipSrcTime` (integra a curva) e o áudio
+  segue o `speed` base nos dois lados. Paridade preservada; o comportamento
+  ideal (pitch/time variável) segue pendente.
+- **Reverb/denoise/normalize são aproximações diferentes dos dois lados** — ℹ️
+  informativo, não é bug nem tarefa. Carátersimilar, não bit-exato. O que
+  **precisa** ficar registrado é que quem depende do loudness final deve
+  validar no export (`loudnorm` real, I=−14, TP −1,5).
+- **DSP duplicado Rust/C++ sem teste de paridade** — ✅ já registrado em
+  "Bugfixes" (2026-09-29), com a proposta de extrair `AudioFxFallback` e criar
+  `tst_audiofx_parity.cpp`.
 
 ## Critério geral (como saber que estamos no caminho)
 

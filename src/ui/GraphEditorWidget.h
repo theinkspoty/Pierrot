@@ -22,10 +22,10 @@ class QTimer;
 class QVBoxLayout;
 
 // Ferramenta ativa do gráfico (como na barra de ferramentas do Premiere).
-enum CanvasTool {
-    ToolSelect = 0, // selecionar/mover keyframes (padrão)
-    ToolAdd,        // clicar adiciona keyframe linear
-    ToolCurve       // clicar cria ponto suave; arrastar define handles bezier
+enum class CanvasTool {
+    Select = 0, // selecionar/mover keyframes (padrão)
+    Add,        // clicar adiciona keyframe linear
+    Curve       // clicar cria ponto suave; arrastar define handles bezier
 };
 
 // Propriedades animáveis exibidas no editor de curvas.
@@ -162,7 +162,7 @@ private:
     bool m_marqueeActive = false;
     QPoint m_marqueeStart;
     QRect m_marqueeRect;
-    CanvasTool m_tool = ToolSelect;
+    CanvasTool m_tool = CanvasTool::Select;
     bool m_curveNewKey = false;
     // Coalesce o sinal pesado `modified()`: durante o arrasto um evento de
     // mouse por vez dispararia re-render do preview a cada movimento, travando

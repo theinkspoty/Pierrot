@@ -43,7 +43,7 @@ constexpr int kMarginL = 10;
 constexpr int kMarginR = 8;
 constexpr int kMarginT = 5;
 constexpr int kMarginB = 14;
-constexpr int kRulerH = 16;
+constexpr int kCanvasRulerH = 16;
 
 double niceStep(double raw) {
     if (raw <= 0) return 1.0;
@@ -481,14 +481,14 @@ void GraphCanvas::valueRange(double* lo, double* hi) const {
 }
 
 QRect GraphCanvas::plotRect() const {
-    return QRect(kMarginL, kRulerH + kMarginT,
+    return QRect(kMarginL, kCanvasRulerH + kMarginT,
                  std::max(10, width() - kMarginL - kMarginR),
-                 std::max(10, height() - kRulerH - kMarginT - kMarginB));
+                 std::max(10, height() - kCanvasRulerH - kMarginT - kMarginB));
 }
 
 QRect GraphCanvas::rulerRect() const {
     return QRect(kMarginL, 0,
-                 std::max(10, width() - kMarginL - kMarginR), kRulerH);
+                 std::max(10, width() - kMarginL - kMarginR), kCanvasRulerH);
 }
 
 double GraphCanvas::xToT(int x) const {
@@ -1139,7 +1139,7 @@ void GraphCanvas::mousePressEvent(QMouseEvent* e) {
     }
     // Perto da linha do playhead (sem keyframe/handle por cima): arrasta a
     // agulha como nas outras janelas.
-    if (m_tool == ToolSelect && hasData()) {
+    if (m_tool == CanvasTool::Select && hasData()) {
         const double rel = (m_mesaMode || m_camMode) ? std::max(0.0, m_playhead)
                                       : std::clamp(m_playhead - m_clip->pos, 0.0, m_clip->dur);
         if (std::abs(e->pos().x() - tToX(rel)) <= 5) {
@@ -1156,7 +1156,7 @@ void GraphCanvas::mousePressEvent(QMouseEvent* e) {
         }
     }
     // Ferramentas de adicionar/curva: clicar em espaço vazio cria um keyframe.
-    if (m_tool != ToolSelect) {
+    if (m_tool != CanvasTool::Select) {
         QVector<Keyframe>& K = *keys();
         const double t = snapTime(xToT(e->pos().x()));
         for (int i = 0; i < K.size(); ++i)
@@ -1169,7 +1169,7 @@ void GraphCanvas::mousePressEvent(QMouseEvent* e) {
         Keyframe nk;
         nk.time = t;
         nk.value = (K.isEmpty() ? baseValue() : kfValue(K, baseValue(), t));
-        nk.interp = (m_tool == ToolCurve) ? KfSmooth : KfLinear;
+        nk.interp = (m_tool == CanvasTool::Curve) ? KfSmooth : KfLinear;
         nk.ox = nk.oy = nk.ix = nk.iy = 0.0;
         K.append(nk);
         sortKeys();
@@ -1181,8 +1181,8 @@ void GraphCanvas::mousePressEvent(QMouseEvent* e) {
         emit editStart();
         m_undoPushed = true;
         m_dragKey = idx;
-        m_dragHandle = (m_tool == ToolCurve) ? idx : -1;
-        m_curveNewKey = (m_tool == ToolCurve);
+        m_dragHandle = (m_tool == CanvasTool::Curve) ? idx : -1;
+        m_curveNewKey = (m_tool == CanvasTool::Curve);
         m_grabT = xToT(e->pos().x());
         m_grabV = yToV(e->pos().y());
         m_selOrig.clear();
@@ -1336,7 +1336,7 @@ void GraphCanvas::mouseReleaseEvent(QMouseEvent* e) {
 }
 
 void GraphCanvas::mouseDoubleClickEvent(QMouseEvent* e) {
-    if (!hasData() || m_tool != ToolSelect) {
+    if (!hasData() || m_tool != CanvasTool::Select) {
         QWidget::mouseDoubleClickEvent(e);
         return;
     }
@@ -1473,9 +1473,9 @@ void GraphCanvas::keyPressEvent(QKeyEvent* e) {
         return;
     }
     // V/P/B trocam a ferramenta ativa.
-    if (e->key() == Qt::Key_V) { setTool(ToolSelect); e->accept(); return; }
-    if (e->key() == Qt::Key_P) { setTool(ToolAdd); e->accept(); return; }
-    if (e->key() == Qt::Key_B) { setTool(ToolCurve); e->accept(); return; }
+    if (e->key() == Qt::Key_V) { setTool(CanvasTool::Select); e->accept(); return; }
+    if (e->key() == Qt::Key_P) { setTool(CanvasTool::Add); e->accept(); return; }
+    if (e->key() == Qt::Key_B) { setTool(CanvasTool::Curve); e->accept(); return; }
     if (!ks || m_selKeys.isEmpty()) { QWidget::keyPressEvent(e); return; }
 
     if (e->key() == Qt::Key_Delete || e->key() == Qt::Key_Backspace) {
@@ -2035,9 +2035,9 @@ GraphEditorWidget::GraphEditorWidget(QWidget* parent) : QWidget(parent) {
 
     auto* tools = new QButtonGroup(this);
     tools->setExclusive(true);
-    tools->addButton(m_toolSel, ToolSelect);
-    tools->addButton(m_toolAdd, ToolAdd);
-    tools->addButton(m_toolCurve, ToolCurve);
+    tools->addButton(m_toolSel, static_cast<int>(CanvasTool::Select));
+    tools->addButton(m_toolAdd, static_cast<int>(CanvasTool::Add));
+    tools->addButton(m_toolCurve, static_cast<int>(CanvasTool::Curve));
     topBar->addWidget(m_toolSel);
     topBar->addWidget(m_toolAdd);
     topBar->addWidget(m_toolCurve);

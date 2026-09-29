@@ -8,9 +8,6 @@
 #include <algorithm>
 #include <cmath>
 
-// Constantes auxiliares
-static constexpr double kMinDur = 0.04;
-
 // ── Funções auxiliares internas ────────────────────────────────────────
 
 // Verifica se a faixa está travada.
