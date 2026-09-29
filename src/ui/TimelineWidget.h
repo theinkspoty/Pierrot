@@ -26,6 +26,32 @@ class QVariantAnimation;
 class QTimer;
 class QLineEdit;
 
+// Constantes de geometria e ferramentas compartilhadas entre TimelinePaint,
+// TimelineDrag e TimelineWidget. Viviam triplicadas nos três .cpp — mesmos
+// valores, três cópias — e qualquer divergência silenciosa desalinhavam o
+// desenho do header do hit-test (ex.: `kHeaderW` separa o cabeçalho do
+// conteúdo, então divergir faz o arraste responder no lugar errado).
+constexpr int kHeaderW = 150;      // largura do header de faixa (estilo Premiere)
+constexpr int kRulerH = 22;        // régua fina, estilo Premiere
+constexpr int kZoomW = 64;         // botão de zoom na régua
+constexpr int kMinDragH = 40;      // altura mínima p/ um arraste de faixa valer
+constexpr int kMaxRowH = 400;      // teto de altura de faixa
+constexpr int kResizeHandleH = 5;  // alça de resize na borda do clipe
+constexpr int kHeaderBtnH = 18;    // altura dos botões do header
+constexpr int kHeaderNameH = 18;   // altura da caixa de nome no header
+constexpr int kVideoRowH = 56;
+constexpr int kAudioRowH = 56;     // padrão: alto o bastante p/ a barra de volume
+constexpr int kMinRowH = 24;       // faixa recolhida
+constexpr int kFolderH = 22;
+constexpr double kMinDur = 0.04;   // duração mínima de um clipe
+constexpr double kMinPps = 2.0;
+constexpr double kMaxPps = 4000.0;
+
+enum Tool {
+    ToolSelect = 0, ToolMove = 1, ToolScissors = 2, ToolEnvelope = 3, ToolZoom = 4,
+    ToolRipple = 5, ToolRolling = 6, ToolSlip = 7, ToolSlide = 8, ToolRateStretch = 9
+};
+
 // Chave do cache de conteúdo visual dos clipes (onda/thumb + envelope + fades).
 // O epoch é bumpado em mudanças estruturais; rolagem/zoom mantêm o epoch e só
 // o tamanho muda, permitindo reaproveitar o blit entre repaints.
@@ -65,12 +91,8 @@ public:
     QStringList selectedIds() const { return m_selected; }
     // Localiza um clipe (vídeo ou áudio) pelo id — usado pelo editor de máscara.
     Clip* findClipById(const QString& id);
-    // IDs dos clipes com seleção secundária (tom suave, criados pelo último corte).
-    QStringList secondarySelectedIds() const { return m_secondarySelected; }
     // Limpa a seleção primária.
     void clearSelection() { m_selected.clear(); m_secondarySelected.clear(); update(); }
-    // Limpa a seleção secundária.
-    void clearSecondarySelection() { m_secondarySelected.clear(); update(); }
     // Valores do loop.
     double loopIn() const { return m_loopIn; }
     double loopOut() const { return m_loopOut; }

@@ -75,7 +75,4 @@ private:
 
     // Parâmetros OFX descobertos (pluginId -> lista de definições completas).
     QHash<QString, QVector<OfxParamDefInfo>> m_ofxParamDefs;
-
-    // Widgets de parâmetros OFX (para leitura dos valores).
-    QHash<QString, QWidget*> m_ofxParamWidgets;
 };

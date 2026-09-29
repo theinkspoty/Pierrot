@@ -61,7 +61,6 @@ public:
 
     QStringList searchPaths() const;
     void addSearchPath(const QString& path);
-    void clearSearchPaths() { m_extraPaths.clear(); }
 
     QJsonObject toJson() const;
     void fromJson(const QJsonObject& obj);

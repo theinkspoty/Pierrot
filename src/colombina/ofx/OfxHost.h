@@ -243,7 +243,6 @@ private:
     static OfxEffectInstance* instFromHandle(OfxImageEffectHandle h);
     static OfxPropSet* propSetFromHandle(OfxPropertySetHandle h);
     static OfxParamInst* paramFromHandle(OfxParamHandle h);
-    static OfxParamDef* paramDefFromHandle(OfxParamSetHandle h, OfxParamHandle h2);
 
     // Storage para handles (C++ objects)
     struct PropSetStorage : OfxPropSet {};

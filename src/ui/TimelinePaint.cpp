@@ -22,25 +22,7 @@
 #include <QFont>
 
 namespace {
-constexpr int kHeaderW = 150; // largura do header de faixa (estilo Premiere)
-constexpr int kRulerH = 22;   // régua fina, estilo Premiere
-constexpr int kZoomW = 64;
-constexpr int kFolderH = 22;
-constexpr int kResizeHandleH = 5;
-constexpr int kVideoRowH = 56;
-constexpr int kAudioRowH = 56; // padrão: alto o bastante p/ a barra de volume
-constexpr int kHeaderBtnH = 18;
-constexpr int kHeaderNameH = 18;
-constexpr int kMinRowH = 24;
-constexpr int kMaxRowH = 400;
-constexpr double kMinPps = 2.0;
-constexpr double kMaxPps = 4000.0;
-constexpr double kMinDur = 0.04;
 
-enum Tool {
-    ToolSelect = 0, ToolMove = 1, ToolScissors = 2, ToolEnvelope = 3, ToolZoom = 4,
-    ToolRipple = 5, ToolRolling = 6, ToolSlip = 7, ToolSlide = 8, ToolRateStretch = 9
-};
 
 // Vermelho da seção de gravação (divisória e destaque de seleção). O
 // `Track::color` das faixas de gravação já vem vermelho do modelo.

@@ -75,32 +75,14 @@
 #include <utility>
 
 namespace {
-constexpr int kHeaderW = 150; // largura do header de faixa (estilo Premiere)
-constexpr int kRulerH = 22;   // régua fina, estilo Premiere
 constexpr int kMarginR = 60;
-constexpr int kZoomW = 64;
 // Tamanhos dos presets de estilo das faixas (minimizada / grande).
 constexpr int kPresetMinV = 34, kPresetMinA = 28;
 constexpr int kPresetMaxV = 100, kPresetMaxA = 78;
-constexpr int kVideoRowH = 56;
-constexpr int kAudioRowH = 56; // padrão: alto o bastante p/ a barra de volume
-constexpr int kMinRowH = 24;
-constexpr int kMinDragH = 40; // piso ao arrastar a borda (não deixa a faixa minúscula)
-constexpr int kMaxRowH = 400;
-constexpr int kResizeHandleH = 5;
-constexpr int kFolderH = 22; // altura da faixa de cabeçalho de uma pasta
-constexpr double kMinPps = 2.0;
-constexpr double kMaxPps = 4000.0;
-constexpr double kMinDur = 0.04;
 // Duração padrão ao inserir uma imagem na timeline (imagens não têm duração
 // própria; sem isto entrariam como um clipe de ~1s, estreito demais).
 constexpr double kDefaultImageDur = 3.0;
 
-// Modos de ferramenta (índices usados pela barra de ferramentas).
-enum Tool {
-    ToolSelect = 0, ToolMove = 1, ToolScissors = 2, ToolEnvelope = 3, ToolZoom = 4,
-    ToolRipple = 5, ToolRolling = 6, ToolSlip = 7, ToolSlide = 8, ToolRateStretch = 9
-};
 
 
 

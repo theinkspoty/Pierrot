@@ -597,6 +597,12 @@ mas é a camada mais rasa. **Restante: código.**
   produto, não bug:** remover `AnimatedDocks` e/ou o `QDockWidget::title:hover`
   de `Theme.cpp:285-287` resolve, mas colide com o layout Premiere-like
   documentado em `MainWindow.cpp:955-956`.
+- [ ] **Faixa de gravação não pode ser removida**: `Project::addRecordingTrack()`
+  é chamado pelo menu de faixas (`TimelineWidget.cpp:1853`), mas o
+  `Project::removeRecordingTrack()` correspondente (`Project.h:743`) não tem
+  **nenhum** caller. O usuário cria faixa de gravação pelo menu e não tem como
+  apagá-la. O método foi preservado na limpeza de código morto de 2026-09-29
+  justamente por ser feature faltando, não lixo. (Achado de 2026-09-29.)
 - [ ] **Ctrl+Z undo excessivo**: desfazer às vezes volta mais de 1 ação. O
   arraste já empilha um passo por gesto (`m_dragUndoPushed`,
   `TimelineDrag.cpp:666`), então o excedente vem de outro caminho:

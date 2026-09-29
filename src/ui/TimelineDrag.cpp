@@ -30,20 +30,7 @@
 #include <cmath>
 
 namespace {
-constexpr int kHeaderW = 150; // largura do header de faixa (estilo Premiere)
-constexpr int kRulerH = 22;   // régua fina, estilo Premiere
-constexpr int kZoomW = 64;
-constexpr int kMinDragH = 40;
-constexpr int kMaxRowH = 400;
-constexpr int kResizeHandleH = 5;
-constexpr int kHeaderBtnH = 18;
-constexpr int kHeaderNameH = 18;
-constexpr double kMinDur = 0.04;
 
-enum Tool {
-    ToolSelect = 0, ToolMove = 1, ToolScissors = 2, ToolEnvelope = 3, ToolZoom = 4,
-    ToolRipple = 5, ToolRolling = 6, ToolSlip = 7, ToolSlide = 8, ToolRateStretch = 9
-};
 
 double mediaInsertDur(const MediaItem& m) {
     if (isImageFile(m.filePath)) return 3.0;

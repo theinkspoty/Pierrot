@@ -57,42 +57,11 @@
 #include <vector>
 #include <QHash>
 #include <QMutex>
-#include <QFile>
-#include <QDir>
-#include <QStandardPaths>
-#include <QTime>
 
 // Diagnóstico do caminho de áudio do preview: ligue com PIERROT_AUDIO_DEBUG=1.
 static bool audioDbg() {
     static const bool on = qEnvironmentVariableIsSet("PIERROT_AUDIO_DEBUG");
     return on;
-}
-
-// Log de áudio em arquivo + console. Arquivo: $QStandardPaths::AppConfigLocation
-// (ex.: ~/.config/Pierrot/pierrot_audio.log), append, reaberto a cada execução.
-static QFile* audioLogFile() {
-    static QFile* f = [] {
-        QFile* fp = nullptr;
-        if (qEnvironmentVariableIsSet("PIERROT_AUDIO_DEBUG")) {
-            const QString dir =
-                QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-            QDir().mkpath(dir);
-            fp = new QFile(dir + QStringLiteral("/pierrot_audio.log"));
-            fp->open(QIODevice::Append | QIODevice::Text);
-        }
-        return fp;
-    }();
-    return f;
-}
-static void audioLog(const QString& s) {
-    if (QFile* f = audioLogFile()) {
-        f->write(QStringLiteral("%1 %2\n")
-                     .arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss.zzz")),
-                          s)
-                     .toUtf8());
-        f->flush();
-    }
-    if (audioDbg()) qDebug().noquote() << "[audio]" << s;
 }
 
 // Diagnóstico da composição multi-faixa do preview: ligue com PIERROT_COMPOSE_DEBUG=1.

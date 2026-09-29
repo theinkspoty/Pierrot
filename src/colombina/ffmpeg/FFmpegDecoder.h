@@ -68,7 +68,6 @@ public:
 
     // Áudio: PCM contínuo, interleaved S16, 48 kHz estéreo.
     bool hasAudio() const;
-    int audioSampleRate() const { return m_audioOutRate; }
     int audioChannels() const { return m_audioOutCh; }
     void seekAudio(double seconds);
     int decodeAudio(void* outBuf, int maxBytes);
