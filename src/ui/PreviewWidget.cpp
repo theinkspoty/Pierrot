@@ -2809,6 +2809,8 @@ void PreviewWidget::updateFrame() {
     m_clipChromaKey = clip->chromaKey;
     m_clipChromaKeyColor = clip->chromaKeyColor;
     m_clipChromaKeySimilarity = clip->chromaKeySimilarity;
+    m_clipChromaKeySoftness = clip->chromaKeySoftness;
+    m_clipChromaKeySpillSuppress = clip->chromaKeySpillSuppress;
     m_clipOfxFx = clip->ofxFx;
     m_clipMasks = clip->masks;
 
@@ -3426,6 +3428,8 @@ void PreviewWidget::applyBasicEffects(QImage& img) {
     c.chromaKey = m_clipChromaKey;
     c.chromaKeyColor = m_clipChromaKeyColor;
     c.chromaKeySimilarity = m_clipChromaKeySimilarity;
+    c.chromaKeySoftness = m_clipChromaKeySoftness;
+    c.chromaKeySpillSuppress = m_clipChromaKeySpillSuppress;
     // Máscaras do clipe do topo: aplicadas na mesma ordem (início) e espaço
     // (quadro já cortado) que nas camadas inferiores — o topo também respeita
     // o recorte por forma. `m_lastSrcT` é o tempo relativo do clipe.
@@ -3503,7 +3507,8 @@ void PreviewWidget::applyBasicEffectsOn(QImage& img, const Clip& c, double rel) 
     if (c.hasMask())
         applyMasks(img, c, rel);
 
-    // Chroma Key: remove cor específica.
+    // Chroma Key robusto: distância perceptual ponderada, bordas suaves,
+    // supressão de spill e curva de transição suave (smoothstep).
     if (c.chromaKey) {
         QImage result = ImgPool::get(QImage::Format_ARGB32, img.width(), img.height());
         result.fill(Qt::transparent);
@@ -3511,27 +3516,93 @@ void PreviewWidget::applyBasicEffectsOn(QImage& img, const Clip& c, double rel) 
         const int h = img.height();
         const QColor key = c.chromaKeyColor;
         const double sim = std::clamp(c.chromaKeySimilarity, 0.0, 1.0);
-        const double range = sim * 255.0;
+        const double soft = std::clamp(c.chromaKeySoftness, 0.0, 1.0);
+        const double spill = std::clamp(c.chromaKeySpillSuppress, 0.0, 1.0);
         const int kr = key.red(), kg = key.green(), kb = key.blue();
+
+        // Pesos perceptuais (BT.601): olho humano mais sensível ao verde.
+        constexpr double wR = 0.299, wG = 0.587, wB = 0.114;
+
+        // Faixa total. A tolerância da borda é ABSOLUTA (distância perceptual),
+        // não proporcional à similaridade: com o mapeamento relativo anterior
+        // (core * (1 + soft*3)) a rampa default ficava com ~11 de 255 — corte
+        // duro — e aumentar a similaridade estrangulava a suavidade.
+        const double coreRange = sim * 255.0;
+        const double fullRange = coreRange + soft * 255.0;
+        const double coreSq = coreRange * coreRange;
+        const double fullSq = fullRange * fullRange;
+
+        // Canal dominante da cor-chave: define qual componente o spill remove.
+        // Antes isto era fixo em verde, então o controle não fazia nada em
+        // fundo azul/vermelho. Ties (ciano, magenta, amarelo, cinza) ficam de
+        // fora — sem canal dominante definido não há respingo a atribuir.
+        const int keyCh = (kg >= kr && kg >= kb) ? 1 : (kb >= kr ? 2 : 0);
+        const int keyVals[3] = { kr, kg, kb };
+        const bool keyDominates = keyVals[keyCh] > keyVals[(keyCh + 1) % 3]
+                               && keyVals[keyCh] > keyVals[(keyCh + 2) % 3];
+
         for (int y = 0; y < h; ++y) {
             const uchar* src = img.constScanLine(y);
             uchar* dst = result.scanLine(y);
             for (int x = 0; x < w; ++x) {
                 const int si = x * 4;
-                const double dr = src[si + 0] - kr;
-                const double dg = src[si + 1] - kg;
-                const double db = src[si + 2] - kb;
-                const double dist = std::sqrt(dr * dr + dg * dg + db * db);
-                if (dist < range) {
-                    dst[si + 0] = src[si + 0];
-                    dst[si + 1] = src[si + 1];
-                    dst[si + 2] = src[si + 2];
-                    dst[si + 3] = (uchar)std::clamp((int)(dist / range * 255.0), 0, 255);
-                } else {
-                    dst[si + 0] = src[si + 0];
-                    dst[si + 1] = src[si + 1];
-                    dst[si + 2] = src[si + 2];
+                const int pr = src[si + 0], pg = src[si + 1], pb = src[si + 2];
+                const int dr = pr - kr, dg = pg - kg, db = pb - kb;
+
+                // Distância perceptual ponderada (evita sqrt no loop principal).
+                const double distSq = wR * dr * dr + wG * dg * dg + wB * db * db;
+
+                if (distSq >= fullSq) {
+                    // Fora da faixa: pixel opaco.
+                    dst[si + 0] = pr;
+                    dst[si + 1] = pg;
+                    dst[si + 2] = pb;
                     dst[si + 3] = 255;
+                } else {
+                    // Dentro da faixa: alpha com transição suave.
+                    const double dist = std::sqrt(distSq);
+                    double alpha;
+                    if (dist <= coreRange) {
+                        alpha = 0.0; // match total → totalmente transparente
+                    } else {
+                        // Curva smoothstep na borda (mais suave que linear).
+                        const double t = (dist - coreRange) / (fullRange - coreRange);
+                        const double s = t * t * (3.0 - 2.0 * t); // smoothstep
+                        alpha = s * 255.0;
+                    }
+
+                    dst[si + 0] = pr;
+                    dst[si + 1] = pg;
+                    dst[si + 2] = pb;
+
+                    // Supressão de spill: remove o respingo da cor-chave nos
+                    // pixels da borda (foreground contaminado pela luz do fundo).
+                    if (spill > 0.0 && keyDominates) {
+                        const int pv[3] = { pr, pg, pb };
+                        const int otherA = pv[(keyCh + 1) % 3];
+                        const int otherB = pv[(keyCh + 2) % 3];
+                        // Só há respingo onde a cor-chave ainda domina o pixel.
+                        // O teste antigo era `pixLum > keyLum`, que descartava
+                        // justamente os pixels escuros contaminados (cabelo
+                        // preto, sombra) — os casos mais visíveis.
+                        if (pv[keyCh] > otherA && pv[keyCh] > otherB) {
+                            // Peso em sino: o respingo é visível nos pixels de
+                            // borda, meio transparentes. `1 - alpha/255` era
+                            // máximo onde o pixel é invisível e zero onde é
+                            // opaco — invertido em relação à visibilidade.
+                            const double a = alpha / 255.0;
+                            const double bell = 4.0 * a * (1.0 - a);
+                            const double spillAmt = spill * (0.35 + 0.65 * bell);
+                            // Despill clássico: puxa o canal da chave em direção
+                            // à média dos outros dois. Com spillAmt = 1 o canal
+                            // vira essa média; valores menores corrigem em parte.
+                            const int replacement = (otherA + otherB) / 2;
+                            const int corrected = (int)std::lround(
+                                pv[keyCh] - spillAmt * (pv[keyCh] - replacement));
+                            dst[si + keyCh] = (uchar)std::clamp(corrected, 0, 255);
+                        }
+                    }
+                    dst[si + 3] = (uchar)std::clamp((int)std::lround(alpha), 0, 255);
                 }
             }
         }

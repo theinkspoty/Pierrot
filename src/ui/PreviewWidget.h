@@ -200,6 +200,8 @@ protected:
     bool m_clipChromaKey = false;
     QColor m_clipChromaKeyColor{Qt::green};
     double m_clipChromaKeySimilarity = 0.15;
+    double m_clipChromaKeySoftness = 0.10;
+    double m_clipChromaKeySpillSuppress = 0.5;
     QVector<Mask> m_clipMasks; // máscaras do clipe ativo (aplicadas no crop)
 
     // Áudio do preview (mixer com um decoder por clipe ativo).

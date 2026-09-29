@@ -324,6 +324,8 @@ struct Clip {
     bool chromaKey = false;
     QColor chromaKeyColor{Qt::green};
     double chromaKeySimilarity = 0.15;
+    double chromaKeySoftness = 0.10;    // suavidade da borda (0=dura, 1=muito suave)
+    double chromaKeySpillSuppress = 0.5; // supressão de spill (0=nenhuma, 1=máxima)
 
     // ── Correção de cor (estilo vegas: Lift/Gamma/Gain) ─────────────────
     // Lift: afeta os PRETOS (escala com 255 - pixel). Gamma: curva de poder

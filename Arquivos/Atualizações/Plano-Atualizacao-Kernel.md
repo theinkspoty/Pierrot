@@ -1,7 +1,7 @@
 # Plano de atualização do núcleo (kernel `src/colombina`)
 
 Plano de trabalho para a próxima passada de melhoria no núcleo do Pierrot.
-Baseado no relatório `Arquivos/Relatorios/KERNEL.md` e no backlog registrado no
+Baseado no relatório `Arquivos/Arquitetura/KERNEL.md` e no backlog registrado no
 ROADMAP.md (seção 4.5). Ordenado por prioridade de impacto/recompensa.
 Criado em 2026-09-22.
 

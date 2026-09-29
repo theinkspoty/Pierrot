@@ -579,66 +579,140 @@ mas é a camada mais rasa. **Restante: código.**
 
 ## Tarefas pendentes (2026-09-28)
 
+> **Auditoria de 2026-09-29:** todos os itens desta seção foram conferidos
+> contra o código. **Oito já estavam implementados** e ainda marcados como
+> pendentes, e **dois diagnósticos de bug estavam errados**. ✅ = concluído,
+> ⚠️ = parcial. As evidências `arquivo:linha` valem para o commit auditado.
+
 ### Bugfixes (urgent)
 
-- [ ] **Bug dock**: janela docável se destaca mas volta à posição ao soltar o
-  mouse. Provável causa: `QDockWidget` com `setAllowedAreas` + restauração
-  incorreta do state no `QMainWindow::restoreState`.
-- [ ] **Ctrl+Z undo excessivo**: desfazer às vezes volta mais de 1 ação. Pode
-  ser `push()` duplo no mesmo evento ou undo-agrupamento (macro) quebrado.
-- [ ] **Selecionador de área sobre o cabeçalho**: o marquee/area-selecionador
-  sobrepõe o header das tracks quando a timeline está scrollada para cima.
-- [ ] **Save de janelas dockáveis**: o estado (posição/visibilidade) não é
-  restaurado corretamente entre sessões.
+- [ ] **Bug dock** ⚠️ *diagnóstico corrigido*: a janela docável se destaca ao
+  passar o mouse e volta à posição ao soltar. A causa **não** é
+  `setAllowedAreas` nem `restoreState` — `restoreState` só roda em
+  `applyWorkspace()` (`:642`) e no boot (`:810`), nunca durante um arraste. A
+  causa real é `QMainWindow::AnimatedDocks` (que por definição "highlights the
+  dock areas during a drag") somado a `AllowNestedDocks` (que faz o Qt devolver
+  o dock ao soltar fora de uma área válida), ambos deliberadamente ativados em
+  `MainWindow.cpp:960-962` para permitir docks aninhados. **É decisão de
+  produto, não bug:** remover `AnimatedDocks` e/ou o `QDockWidget::title:hover`
+  de `Theme.cpp:285-287` resolve, mas colide com o layout Premiere-like
+  documentado em `MainWindow.cpp:955-956`.
+- [ ] **Ctrl+Z undo excessivo**: desfazer às vezes volta mais de 1 ação. O
+  arraste já empilha um passo por gesto (`m_dragUndoPushed`,
+  `TimelineDrag.cpp:666`), então o excedente vem de outro caminho:
+  `pushUndo()` (`MainWindow.cpp:2054`) empilha um snapshot inteiro do projeto a
+  cada chamada, sem coalescing geral — os spinboxes de `ClipPropertiesWidget`
+  emitem `editStart`/`emitEdited` por valor. Falta um macro/timer que agregue
+  entradas relacionadas.
+- [ ] **Selecionador de área sobre o cabeçalho** ⚠️ *diagnóstico corrigido*: o
+  sintoma é real, mas o gatilho é o scroll **horizontal**, não "scrollada para
+  cima" — a vertical já está correta (`rowY()` usa `kRulerH - m_viewTop`, e
+  `renderScene` recorta tudo a partir de `y = kRulerH`, então `zr` bater). A
+  causa é `xToTime()` (`TimelinePaint.cpp:126-128`) sem clamp para
+  `x >= kHeaderW`: arrastando para a esquerda de `kHeaderW` com
+  `m_viewStart > 0`, `timeToX(m_zoomT1)` volta para dentro da coluna do
+  cabeçalho, e o rect do `ZoomSelect` (`TimelinePaint.cpp:878`) não tem o
+  `.intersected()` que o Marquee já tem em `:888`. **Correção de uma linha.**
+- [x] **Save de janelas dockáveis** ✅ persiste em disco
+  (`settings.setValue("layout", saveState())`, `MainWindow.cpp:709`), com
+  workspaces nomeados em `:671` e autosave de 500 ms em `:601-604`;
+  `restoreSettings()` valida o blob com `saneLayoutArray()` antes de aplicar
+  (`:810`). Risco residual: `kLayoutVersion` (`:114`) descarta silenciosamente
+  todos os layouts salvos quando é incrementado — já aconteceu 3x, ver o
+  comentário em `:101-113`.
 
 ### Timeline (alta prioridade)
 
-- [ ] **Keyframes de áudio ocultos por padrão**: a linha de volume/envelope
-  começa escondida; `Shift+V` liga/desliga (substitui o `V` que agora controla
-  só o clipe).
-- [ ] **M = marcador/comment na timeline**: tecla `M` adiciona um marcador
-  (flag) na posição do playhead, como no Premiere.
-- [ ] **Clip resize/move responsivo e "duro"**: o arrasto e resize de clipes
+- [x] **Keyframes de áudio ocultos por padrão** ✅ `m_showVolLines` começa
+  `false` (`TimelineWidget.h:373`) e `Shift+V` liga/desliga
+  (`TimelineWidget.cpp:1386`).
+- [x] **M = marcador na timeline** ✅ `Qt::Key_M` → `toggleMarker(m_playhead)`
+  em `TimelineWidget.cpp:1438`, como no Premiere. **Decidido em 2026-09-29:**
+  `M` permanece como marcador; comentário (que ainda não existe) será
+  `Ctrl+Alt+M`, também como no Premiere.
+- [ ] **Clip resize/move responsivo e "duro"**: o arraste e resize de clipes
   está impreciso com delay visível. Causa provável: redesenho a cada
-  `mouseMoveEvent` sem `QApplication::processEvents` ou sem invalidação
-  incremental; pode ser o cache `m_clipPix` recriando o pixmap inteiro a
-  cada frame.
-- [ ] **Mover keyframes horizontal no editor de curvas**: tornar o arraste
-  mais fluido e preciso.
+  `mouseMoveEvent` sem invalidação incremental; o cache `m_clipPix` recria o
+  pixmap do clipe a cada quadro em `TimelinePaint.cpp:1000-1004`.
+- [x] **Mover keyframes horizontal no editor de curvas** ✅ quanto ao
+  *funcionamento*: `GraphCanvas::moveSelected()` reescreve `k.time` livremente,
+  com snap ao frame (`GraphEditorWidget.cpp:800`, `snapTime` em `:798`). ⚠️ O
+  que falta é a **fluência** pedida no texto original — o keyframe já é
+  editável no eixo X.
 
 ### UI/Layout (média prioridade)
 
-- [ ] **Preview responsivo**: o Program Monitor e o PanCrop devem se ajustar
-  ao tamanho da janela sem sobrepor outros elementos.
-- [ ] **Barra de ferramentas com scroll**: quando o espaço é pequeno, a toolbar
-  deve mostrar scroll em vez de truncar os botões.
-- [ ] **Tamanho mínimo do Media Pool**: reduzir o mínimo horizontal para caber
-  em telas menores.
-- [ ] **Detector de rolagem automática**: diminuir a zona de sensibilidade no
-  lado direito da timeline para não atrapalhar o usuário.
-- [ ] **Sistema de volume**: melhorar a experiência geral do volume das faixas.
+- [ ] **Preview responsivo**: o `PreviewWidget` tem `resizeEvent`
+  (`PreviewWidget.cpp:1645`) e recalcula `m_videoRect`, mas o `PancropWidget`
+  **não tem nenhum** `resizeEvent` — é essa a origem do PanCrop não se ajustar.
+- [ ] **Barra de ferramentas com scroll** ⚠️ parcial: já é um `QToolBar`
+  vertical com `setFixedWidth(46)` (`MainWindow.cpp:1427-1429`) e o Qt exibe um
+  chevron quando o conteúdo não cabe, mas não há código de overflow próprio.
+  Como a orientação é vertical, o problema prático é truncamento na **altura**,
+  não na largura.
+- [ ] **Tamanho mínimo do Media Pool** ⚠️ não existe `setMinimumWidth` no
+  `MediaPoolWidget` nem no `FileBrowserWidget` — o único constrain é
+  `m_places->setMaximumWidth(140)` (`FileBrowserWidget.cpp:262`), que limita o
+  máximo da lista "places", não o mínimo do painel. A largura inicial (420) vem
+  de `resizeDocks` em `MainWindow.cpp:1105`.
+- [x] **Detector de rolagem automática** ✅ já reduzido: `rightEdge = 16` contra
+  `leftEdge = 32` (`TimelineDrag.cpp:62-63`). Ressquício: os dois são literais
+  mágicos dentro de `startAutoScroll()`, não `constexpr` nomeadas.
+- [x] **Mixer de áudio estilo Premiere** ✅ *(estava fora do roadmap)*
+  fader vertical por faixa, medidor VU com LED e peak hold de 1500 ms, knob de
+  pan rotativo, mute/solo, conversão dB↔linear com label em dB e strip master
+  (`MixerWidget.cpp:79-88`, `:90-152`, `:155-234`, `:254`, `:397-414`).
+  ⚠️ Sem bus send/auxiliar, sem pan law selecionável e sem leitura numérica de
+  pan.
+- [ ] **Sistema de volume** ⚠️ parcial: o modelo tem `volume`/`pan`/mute/solo,
+  automação (`kfVolume`/`kfPan` com resolvedores) e EQ/reverb/denoise por faixa
+  (`Project.h:510-532`), e o mixer tem fader, VU, pan e mute/solo. Faltam
+  normalização por faixa/master (hoje só existe `Clip::normalize`, por clipe),
+  limiter/compressor/gate, leitura em dBFS (o VU consome RMS linear 0..1) e
+  pan law selecionável (equal-power fixo).
 
 ### Features (média prioridade)
 
-- [ ] **Exportação de GIF transparente**: suportar canal alpha na exportação
-  de GIF (paleta + transparente).
-- [ ] **PNG transparente otimizado**: otimizar o render de PNGs com alpha em
-  tracks com muitas camadas e animações de PanCrop (cache, lazy decode).
+- [ ] **Exportação de GIF transparente**: a cadeia atual força saída **opaca** —
+  o comentário em `ProjectExporter.cpp:1697-1700` registra que o `[vout]` chega
+  com fundo preto composto por baixo. Falta um caminho com `colorkey`/`rgba` +
+  `palettegen` com alpha.
+- [ ] **PNG transparente otimizado**: não há cache nem lazy decode de PNG com
+  alpha em lugar nenhum (busca por `lazy`/`pngCache`/`decodeCache` não retorna
+  nada). Falta implementar.
 
 ### Roadmap v0.8
 
-- [ ] **Auto Track**: criação automática de faixas ao arrastar clipes para
-  áreas vazias (como o Premiere).
-- [ ] **Clip composto / Mesa**: agrupamento de clipes em um sub-timeline
-  renderizável (nested sequence / precomp).
+- [x] **Auto Track** ✅ criação automática de faixas ao arrastar clipes para
+  áreas vazias: `findFreeTrack` (`TimelineDrag.cpp:1807-1821`) com hierarquia
+  de 3 níveis — faixa sob o mouse → primeira faixa livre → **cria faixa nova**
+  (`:1819`) —, aplicado a vídeo (`:1836`) e a cada stream de áudio (`:1861`).
+- [ ] **Clip composto / Mesa** ⚠️ parcial: a **Mesa** existe
+  (`MesaComposition`, `Project.h:215-246`) como composição 2D de camadas no
+  estilo After Effects, com câmera e keyframes. Mas **não** é um nested
+  sequence do Premiere: as faixas continuam visíveis e editáveis na timeline
+  principal, e não existe um "clipe Mesa" que possa ser movido, cortado ou
+  colocado em outra faixa. O agrupamento em sub-timeline renderizável continua
+  não implementado.
 
 ### v0.8.1 (áudio/efeitos)
 
-- [ ] **Reverb melhorado**: modelo mais fiel (IR ou paramétrico).
-- [ ] **EQ com gráfico editável**: equalizador paramétrico com curva
-  arrastável no painel de efeitos.
-- [ ] **Motion blur profissional**: implementação fiel ao Premiere (shutter
-  angle, samples, compilação por camada).
+- [x] **Reverb melhorado** ✅ `SimpleReverb`
+  (`src/rust/pierrot_audiofx/src/lib.rs:111`) = 4 comb + 2 allpass (Freeverb
+  simplificado), exposto por `reverb`/`reverbMix`/`reverbSize`
+  (`Project.h:521-523`). ⚠️ Ainda **sem IR**: `reverbSize` só mexe em `fb` e
+  `damp`, não nos tempos de atraso, e o wet é mono.
+- [ ] **EQ com gráfico editável**: existem 3 bandas
+  (`eqLow`/`eqMid`/`eqHigh`, `Project.h:515-517`), mas são peaking de Q fixo em
+  120/1000/6000 Hz (`lib.rs:204-206`), ajustáveis **só por número**. Não há
+  widget de curva de resposta de frequência — o `GraphEditorWidget` edita
+  keyframes de propriedades, não a curva de EQ.
+- [ ] **Motion blur profissional** ⚠️ parcial: existe amostragem temporal com
+  shutter em fração de quadro e 2–32 amostras (`MesaRenderer.cpp:117-140` para
+  câmera, `:396-430` para camadas), mas **só na Mesa** — clipes da timeline
+  normal não têm motion blur de shutter, e no export viram `boxblur` gaussiano
+  (`ProjectExporter.cpp:1375-1376`). Faltam shutter angle em graus, detecção de
+  velocidade e compilação/otimização das amostras.
 
 ## Critério geral (como saber que estamos no caminho)
 

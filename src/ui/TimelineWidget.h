@@ -90,7 +90,10 @@ public:
     void addTrack(bool audio);
     void addRecordingTrack();
     void updateScrollRanges();
+    void ensureScrollRangeReaches(double tEnd); // leve: só alarga o hbar (arraste)
+    void markTrimEdge(double tEdge, bool ripple); // indicador de trim (borda)
     void invalidateScene();
+    void invalidateSceneContent(); // leve: sem rebuildClipIndex (para fade/opacity)
     void nudgeSelected(int dir);
 public slots:
     void cutAtPlayhead();
@@ -357,6 +360,14 @@ private:
     // Ferramenta anterior salva ao segurar R (corte momentâneo) p/ restaurar.
     int m_tempToolStore = -1;
     bool m_snap = true;
+    double m_snapLineX = -1.0; // posição X da guia de alinhamento (-1 = invisível)
+    // Indicador de trim (estilo Premiere): linha grossa na borda sob arraste.
+    // Amarelo = ripple, vermelho = trim regular e roll — é a mesma convenção de
+    // cor do cursor contextual do Premiere. X em -1 = nenhum indicador.
+    double m_trimEdgeX = -1.0;
+    int    m_trimEdgeRow = -1;
+    bool   m_trimEdgeAudio = false;
+    bool   m_trimEdgeRipple = false;
     bool m_showGrid = true;
     bool m_showRuler = true;
     bool m_showVolLines = false;   // Shift+V: linha de volume/envelope da faixa
@@ -408,6 +419,7 @@ private:
     QPixmap m_staticCache;
     bool m_staticDirty = true;
     QHash<QString, ClipOrig> m_dragOrig;
+    QHash<QString, ClipOrig> m_rippleOrig; // faixa inteira no início do ripple
     QVector<ClipboardEntry> m_clipboard;
     int m_resizeRow = -1;
     bool m_resizeAudio = false;

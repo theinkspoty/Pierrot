@@ -413,6 +413,28 @@ void ExpressWidget::createBuiltInTab(const QString& effectId)
         simRow->addWidget(simSl, 1);
         simRow->addWidget(simLbl);
         form->addRow(tr("Similaridade:"), simRow);
+
+        auto* softSl = new QSlider(Qt::Horizontal);
+        softSl->setRange(0, 100);
+        softSl->setValue(c ? (int)llround(c->chromaKeySoftness * 100.0) : 10);
+        auto* softLbl = new QLabel(QString::number(softSl->value()));
+        connect(softSl, &QSlider::valueChanged, softLbl, [softLbl](int v) { softLbl->setText(QString::number(v)); });
+        connect(softSl, &QSlider::valueChanged, this, [this](int v) { applyBuiltInValue("chromaKeySoftness", v / 100.0); });
+        auto* softRow = new QHBoxLayout;
+        softRow->addWidget(softSl, 1);
+        softRow->addWidget(softLbl);
+        form->addRow(tr("Suavidade borda:"), softRow);
+
+        auto* spillSl = new QSlider(Qt::Horizontal);
+        spillSl->setRange(0, 100);
+        spillSl->setValue(c ? (int)llround(c->chromaKeySpillSuppress * 100.0) : 50);
+        auto* spillLbl = new QLabel(QString::number(spillSl->value()));
+        connect(spillSl, &QSlider::valueChanged, spillLbl, [spillLbl](int v) { spillLbl->setText(QString::number(v)); });
+        connect(spillSl, &QSlider::valueChanged, this, [this](int v) { applyBuiltInValue("chromaKeySpillSuppress", v / 100.0); });
+        auto* spillRow = new QHBoxLayout;
+        spillRow->addWidget(spillSl, 1);
+        spillRow->addWidget(spillLbl);
+        form->addRow(tr("Supressão spill:"), spillRow);
     }
     else if (effectId == "pierrot_lainka") {
         auto* chk = new QCheckBox(tr("Ativar LAINKA"));
@@ -1043,6 +1065,8 @@ void ExpressWidget::applyBuiltInValue(const QString& key, double value)
     else if (key == "saturation") m_currentClip->saturation = value;
     else if (key == "blur") m_currentClip->blur = value;
     else if (key == "chromaKeySimilarity") m_currentClip->chromaKeySimilarity = value;
+    else if (key == "chromaKeySoftness") m_currentClip->chromaKeySoftness = value;
+    else if (key == "chromaKeySpillSuppress") m_currentClip->chromaKeySpillSuppress = value;
     else if (key == "lainkaSkip") m_currentClip->lainkaSkip = qMax(1, (int)value);
     else if (key == "lainkaJitterPos") m_currentClip->lainkaJitterPos = value;
     else if (key == "lainkaJitterRot") m_currentClip->lainkaJitterRot = value;

@@ -66,6 +66,8 @@ inline QJsonObject toJson(const Clip& c) {
     o["chromaKey"] = c.chromaKey;
     o["chromaKeyColor"] = c.chromaKeyColor.name(QColor::HexArgb);
     o["chromaKeySimilarity"] = c.chromaKeySimilarity;
+    o["chromaKeySoftness"] = c.chromaKeySoftness;
+    o["chromaKeySpillSuppress"] = c.chromaKeySpillSuppress;
     o["liftR"] = c.liftR; o["liftG"] = c.liftG; o["liftB"] = c.liftB;
     o["gammaR"] = c.gammaR; o["gammaG"] = c.gammaG; o["gammaB"] = c.gammaB;
     o["gainR"] = c.gainR; o["gainG"] = c.gainG; o["gainB"] = c.gainB;
@@ -178,6 +180,8 @@ inline void applyJson(Clip& c, const QJsonObject& o) {
         if (QColor::isValidColorName(sc)) c.chromaKeyColor = QColor(sc);
     }
     if (key("chromaKeySimilarity")) c.chromaKeySimilarity = d("chromaKeySimilarity", c.chromaKeySimilarity);
+    if (key("chromaKeySoftness")) c.chromaKeySoftness = d("chromaKeySoftness", c.chromaKeySoftness);
+    if (key("chromaKeySpillSuppress")) c.chromaKeySpillSuppress = d("chromaKeySpillSuppress", c.chromaKeySpillSuppress);
     if (key("liftR")) c.liftR = d("liftR", c.liftR);
     if (key("liftG")) c.liftG = d("liftG", c.liftG);
     if (key("liftB")) c.liftB = d("liftB", c.liftB);

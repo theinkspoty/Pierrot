@@ -832,7 +832,47 @@ void TimelineWidget::renderOverlays(QPainter& p) {
         const int rx = (int)timeToX(m_razorT);
         p.setPen(QPen(QColor(255, 255, 255, 190), 1, Qt::DashLine));
         p.drawLine(rx, R, rx, height());
-    } else if (m_dragMode == ZoomSelect) {
+    }
+
+    // Guia de alinhamento: linha branca vertical quando o clipe arrastado
+    // encaixa com a borda de outro clipe, um marcador ou a agulha (S).
+    if (m_snapLineX >= 0.0) {
+        const int sx = (int)m_snapLineX;
+        if (sx >= H && sx <= width()) {
+            // Duas passadas: um halo translúcido dá legibilidade sobre clipe
+            // claro sem engrossar a linha de fato.
+            p.setPen(QPen(QColor(255, 255, 255, 70), 3));
+            p.drawLine(sx, R, sx, height());
+            p.setPen(QPen(QColor(255, 255, 255, 220), 1));
+            p.drawLine(sx, R, sx, height());
+        }
+    }
+
+    // Indicador de trim: a borda sob arraste ganha uma linha grossa na altura
+    // da faixa, na cor que o Premiere associa à operação — amarelo = ripple,
+    // vermelho = trim regular e roll. As duas barras horizontais nas pontas
+    // dão a mesma leitura de "corte" do Premiere.
+    if (m_trimEdgeX >= 0.0 && m_trimEdgeRow >= 0 && m_project &&
+        trackVisible(m_trimEdgeRow, m_trimEdgeAudio)) {
+        const int ex = (int)m_trimEdgeX;
+        const int ty = m_trimEdgeAudio ? rowY(-1, m_trimEdgeRow)
+                                       : rowY(m_trimEdgeRow, -1);
+        const int th = trackH(m_trimEdgeRow, m_trimEdgeAudio);
+        if (ex >= H && ex <= width() && th > 0) {
+            const QColor c = m_trimEdgeRipple ? QColor(255, 196, 0)
+                                              : QColor(235, 64, 52);
+            p.setPen(QPen(QColor(0, 0, 0, 120), 4));
+            p.drawLine(ex, ty, ex, ty + th);
+            p.setPen(QPen(c, 3));
+            p.drawLine(ex, ty, ex, ty + th);
+            // Barras de extremidade.
+            p.setPen(QPen(c, 2));
+            p.drawLine(ex - 4, ty, ex + 4, ty);
+            p.drawLine(ex - 4, ty + th, ex + 4, ty + th);
+        }
+    }
+
+    if (m_dragMode == ZoomSelect) {
         const int zx1 = (int)timeToX(m_zoomT0);
         const int zx2 = (int)timeToX(m_zoomT1);
         const QRect zr(QPoint(std::min(zx1, zx2), R), QPoint(std::max(zx1, zx2), height()));

@@ -18,6 +18,7 @@
 #include <QPixmap>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QColorDialog>
 #include <QSignalBlocker>
 #include <QTimer>
 #include <QToolButton>
@@ -563,6 +564,49 @@ void ClipPropertiesWidget::rebuild() {
                 clip->chromaKey = on;
                 emitEdited();
             });
+        // Seletor de cor do chroma key.
+        {
+            auto* row = new QWidget(m_body);
+            auto* h = new QHBoxLayout(row);
+            h->setContentsMargins(8, 0, 4, 0);
+            h->setSpacing(4);
+            auto* name = new QLabel(tr("Cor:"), row);
+            name->setStyleSheet(QStringLiteral("color:%1; font-size:11px;")
+                                .arg(themeColors().text.name()));
+            h->addWidget(name, 1);
+            auto* colorBtn = new QPushButton(row);
+            colorBtn->setFixedSize(40, 18);
+            colorBtn->setCursor(Qt::PointingHandCursor);
+            auto updateBtnColor = [colorBtn, clip]() {
+                const QColor c = clip->chromaKeyColor;
+                colorBtn->setStyleSheet(QStringLiteral(
+                    "QPushButton { background:%1; border:1px solid %2; border-radius:2px; }")
+                    .arg(c.name(), themeColors().inputBorder.name()));
+            };
+            updateBtnColor();
+            connect(colorBtn, &QPushButton::clicked, this,
+                    [this, clip, updateBtnColor]() {
+                        QColor col = QColorDialog::getColor(clip->chromaKeyColor, this,
+                                                            tr("Cor do chroma key"));
+                        if (col.isValid()) {
+                            beginEdit();
+                            clip->chromaKeyColor = col;
+                            updateBtnColor();
+                            emitEdited();
+                        }
+                    });
+            h->addWidget(colorBtn, 0);
+            m_body->layout()->addWidget(row);
+        }
+        addSpinRow(tr("Similaridade:"), 0, 100, 1, 0, 50, 100.0,
+            [clip]() { return clip->chromaKeySimilarity; },
+            [clip](double v) { clip->chromaKeySimilarity = v; });
+        addSpinRow(tr("Suavidade borda:"), 0, 100, 1, 0, 50, 100.0,
+            [clip]() { return clip->chromaKeySoftness; },
+            [clip](double v) { clip->chromaKeySoftness = v; });
+        addSpinRow(tr("Supressão spill:"), 0, 100, 1, 0, 50, 100.0,
+            [clip]() { return clip->chromaKeySpillSuppress; },
+            [clip](double v) { clip->chromaKeySpillSuppress = v; });
     }
 
     // ═══ 5. Motion / Camada da MESA ══════════════════════════════════

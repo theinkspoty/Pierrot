@@ -226,6 +226,8 @@ static QJsonObject clipToJson(const Clip& c) {
     o["chromaKey"] = c.chromaKey;
     o["chromaKeyColor"] = c.chromaKeyColor.name();
     o["chromaKeySimilarity"] = c.chromaKeySimilarity;
+    o["chromaKeySoftness"] = c.chromaKeySoftness;
+    o["chromaKeySpillSuppress"] = c.chromaKeySpillSuppress;
     o["liftR"] = c.liftR; o["liftG"] = c.liftG; o["liftB"] = c.liftB;
     o["gammaR"] = c.gammaR; o["gammaG"] = c.gammaG; o["gammaB"] = c.gammaB;
     o["gainR"] = c.gainR; o["gainG"] = c.gainG; o["gainB"] = c.gainB;
@@ -374,6 +376,8 @@ static Clip clipFromJson(const QJsonObject& o) {
     const QString ckc = o["chromaKeyColor"].toString();
     if (QColor::isValidColorName(ckc)) c.chromaKeyColor = QColor(ckc);
     c.chromaKeySimilarity = o["chromaKeySimilarity"].toDouble(0.15);
+    c.chromaKeySoftness = o["chromaKeySoftness"].toDouble(0.10);
+    c.chromaKeySpillSuppress = o["chromaKeySpillSuppress"].toDouble(0.5);
     c.liftR = o["liftR"].toDouble(0.0);
     c.liftG = o["liftG"].toDouble(0.0);
     c.liftB = o["liftB"].toDouble(0.0);

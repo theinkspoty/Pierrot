@@ -81,6 +81,23 @@ void TimelineWidget::stopAutoScroll() {
     m_autoScrollDir = 0;
 }
 
+// Registra onde desenhar o indicador de trim: a borda do clipe sob arraste,
+// na faixa onde ela está. `ripple` escolhe a cor (amarelo no Premiere para
+// ripple, vermelho para trim regular e roll).
+void TimelineWidget::markTrimEdge(double tEdge, bool ripple) {
+    m_trimEdgeX = timeToX(tEdge);
+    m_trimEdgeRipple = ripple;
+    m_trimEdgeRow = -1;
+    m_trimEdgeAudio = false;
+    if (m_dragClip.isEmpty()) return;
+    int row = -1;
+    bool audio = false;
+    if (clipTrackIndex(m_dragClip, row, audio)) {
+        m_trimEdgeRow = row;
+        m_trimEdgeAudio = audio;
+    }
+}
+
 // Rola a timeline e, quando aplicável, reposiciona a agulha/loop/arrasto sob o
 // cursor para que a operação continue na nova área visível.
 void TimelineWidget::autoScrollTick() {
@@ -593,6 +610,16 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
                 } else {
                     m_dragMode = TrimRight; // TrimRight com ripple
                 }
+                // rippleTrimLeft/Right medem o delta contra o estado CORRENTE
+                // do clipe e deslocam os vizinhos, então um arraste ao vivo
+                // precisa voltar ao estado original a cada mousemove. Guarda a
+                // faixa inteira: os vizinhos deslocados não estão em
+                // m_dragOrig (que só traz o clipe e seu grupo).
+                m_rippleOrig.clear();
+                if (Track* tr = trackOf(clip)) {
+                    for (const Clip& other : tr->clips)
+                        m_rippleOrig.insert(other.id, { other.pos, other.in, other.dur });
+                }
             } else if (m_tool == ToolRolling) {
                 // Rolling Edit: ajustar fronteira entre 2 clipes
                 auto [clipA, clipB] = adjacentClips(clip);
@@ -686,6 +713,12 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
 
     m_mousePos = e->pos();
     m_mouseOnRuler = (e->pos().y() < kRulerH);
+    // A guia de alinhamento é recalculada só nos ramos de arraste que a usam
+    // (MoveClip/Trim). Limpando aqui, ela não sobrevive a um mousemove que
+    // sai das faixas — antes ficava congelada no último ponto de snap.
+    m_snapLineX = -1.0;
+    m_trimEdgeX = -1.0;
+    m_trimEdgeRow = -1;
 
     // Ctrl+press num clipe: superou o limite de movimento => duplica e
     // passa a arrastar a cópia (estilo Vegas). Ficou no clique => o release
@@ -1079,33 +1112,17 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                     // de vídeo, áudio só em faixas de áudio). O membro do
                     // grupo vinculado NÃO acompanha na vertical: ele mantém a
                     // faixa em que está (só a posição no tempo anda junto).
-    int row;
-    bool audio;
-    int vrow;
-    int cvrow;
-    if (m_showVolLines && clipVolAt(e->pos(), cvrow) != nullptr) {
-        setCursor(Qt::SizeVerCursor);
-        return;
-    }
-    if (volRowAt(e->pos(), vrow) >= 0) {
-        int r2;
-        bool a2;
-        bool overClip = false;
-        if (rowFromY(e->pos().y(), r2, a2) && clipAt(r2, a2, xToTime(e->pos().x())) != nullptr)
-            overClip = true;
-        if (!overClip && m_showVolLines) {
-            // Shift+V ativo: o cursor de ajuste aparece sobre a linha.
-            const Track& ctr = m_project->audioTracks[vrow];
-            const bool onLine = std::abs(e->pos().y() - trackVolLineYAt(vrow,
-                                  kfValue(ctr.kfVolume, ctr.volume,
-                                          xToTime(e->pos().x())))) <= 6;
-            if (onLine) {
-                setCursor(Qt::SizeVerCursor);
-                return;
-            }
-        }
-    }
-    if (rowFromY(e->pos().y(), row, audio)) {
+                    int row;
+                    bool audio;
+                    // Nota: os hit-tests de volume (clipVolAt/volRowAt) ficavam
+                    // aqui dentro, sob `if (m_dragMode == MoveClip)`, e o clique
+                    // de volume era ignorado por causa disso — o `return` deles
+                    // congelava o arraste quando o cursor cruzava uma linha de
+                    // volume. O bloco foi removido: durante um arraste ativo o
+                    // gesto já foi capturado, então nenhum hit-test deve
+                    // interromper o mouseMove. As funções são const, logo não
+                    // tinham efeito colateral além do return.
+                    if (rowFromY(e->pos().y(), row, audio)) {
                         // Só o clipe sob o mouse acompanha na vertical (muda de
                         // faixa se o tipo bater). Os demais membros do grupo
                         // mantêm suas faixas — só a posição no tempo anda junto.
@@ -1127,7 +1144,16 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                         }
                     }
                     const double raw = m_dragOrigPos + dt;
-                    const double snapped = snapToEdges(snapTime(raw), m_dragClip);
+                    const double grid = snapTime(raw);
+                    const double snapped = snapToEdges(grid, m_dragClip);
+                    // Guia de alinhamento: só marca snap de BORDA. Comparar com
+                    // `grid` e não com `raw` é o que importa — `snapTime()`
+                    // quantiza para a grade de frames quase sempre, então
+                    // comparar com `raw` acendia a guia em quase todo mousemove.
+                    if (std::fabs(snapped - grid) > 1e-6)
+                        m_snapLineX = timeToX(snapped);
+                    else
+                        m_snapLineX = -1.0;
                     const double delta = snapped - m_dragOrigPos;
                     QSet<QString> moving;
                     for (auto it = m_dragOrig.begin(); it != m_dragOrig.end(); ++it)
@@ -1139,11 +1165,59 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                                                       std::max(0.0, it.value().pos + delta),
                                                       moving);
                     }
-                } else if (m_dragMode == TrimLeft) {
+                } else if (m_dragMode == TrimLeft && m_tool == ToolRipple) {
+                    // Ripple Edit: trim esquerdo com ripple (desloca subsequentes).
+                    // Precisa vir ANTES do TrimLeft genérico: o ripple também
+                    // usa TrimLeft/TrimRight como m_dragMode, então depois do
+                    // ramo genérico este teste nunca era alcançado.
+                    // Restaura a faixa antes de aplicar — rippleTrimLeft mede
+                    // o delta contra o estado corrente, então sem restaurar o
+                    // arraste congelaria no primeiro mousemove.
+                    for (auto it = m_rippleOrig.begin(); it != m_rippleOrig.end(); ++it) {
+                        Clip* sc = findClipById(it.key());
+                        if (sc) {
+                            sc->pos = it.value().pos;
+                            sc->in = it.value().in;
+                            sc->dur = it.value().dur;
+                        }
+                    }
                     const double minEnd = std::max(0.0, m_dragOrigPos + m_dragOrigDur - kMinDur);
                     const double np = std::clamp(snapToEdges(snapTime(m_dragOrigPos + dt)),
                                                  0.0, minEnd);
                     const double delta = np - m_dragOrigPos;
+                    m_snapLineX = -1.0;
+                    markTrimEdge(np, /*ripple=*/true);
+                    rippleTrimLeft(clip, m_dragOrigIn + delta);
+                } else if (m_dragMode == TrimRight && m_tool == ToolRipple) {
+                    // Ripple Edit: trim direito com ripple (desloca subsequentes)
+                    for (auto it = m_rippleOrig.begin(); it != m_rippleOrig.end(); ++it) {
+                        Clip* sc = findClipById(it.key());
+                        if (sc) {
+                            sc->pos = it.value().pos;
+                            sc->in = it.value().in;
+                            sc->dur = it.value().dur;
+                        }
+                    }
+                    const double end = snapToEdges(snapTime(m_dragOrigPos + m_dragOrigDur + dt));
+                    const double newDur = std::max(kMinDur, end - clip->pos);
+                    m_snapLineX = -1.0;
+                    markTrimEdge(end, /*ripple=*/true);
+                    rippleTrimRight(clip, newDur);
+                } else if (m_dragMode == TrimLeft) {
+                    const double minEnd = std::max(0.0, m_dragOrigPos + m_dragOrigDur - kMinDur);
+                    const double rawLeft = m_dragOrigPos + dt;
+                    const double gridLeft = snapTime(rawLeft);
+                    const double snappedLeft = snapToEdges(gridLeft);
+                    const double np = std::clamp(snappedLeft, 0.0, minEnd);
+                    // Compara com gridLeft (pós-quantização, pré-clamp): usar o
+                    // np já clampado acendia a guia no limite de duração,
+                    // onde não houve snap nenhum.
+                    if (std::fabs(snappedLeft - gridLeft) > 1e-6)
+                        m_snapLineX = timeToX(snappedLeft);
+                    else
+                        m_snapLineX = -1.0;
+                    const double delta = np - m_dragOrigPos;
+                    markTrimEdge(np, /*ripple=*/false);
                     for (auto it = m_dragOrig.begin(); it != m_dragOrig.end(); ++it) {
                         Clip* sc = findClipById(it.key());
                         if (!sc) continue;
@@ -1153,29 +1227,30 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                         sc->dur = o.dur - delta;
                     }
                 } else if (m_dragMode == TrimRight) {
-                    const double end = snapToEdges(snapTime(m_dragOrigPos + m_dragOrigDur + dt));
+                    const double rawEnd = m_dragOrigPos + m_dragOrigDur + dt;
+                    const double gridEnd = snapTime(rawEnd);
+                    const double end = snapToEdges(gridEnd);
+                    if (std::fabs(end - gridEnd) > 1e-6)
+                        m_snapLineX = timeToX(end);
+                    else
+                        m_snapLineX = -1.0;
                     const double newDur = std::max(kMinDur, end - clip->pos);
                     const double deltaDur = newDur - m_dragOrigDur;
+                    markTrimEdge(end, /*ripple=*/false);
                     for (auto it = m_dragOrig.begin(); it != m_dragOrig.end(); ++it) {
                         Clip* sc = findClipById(it.key());
                         if (sc) sc->dur = std::max(kMinDur, it.value().dur + deltaDur);
                     }
-                } else if (m_dragMode == TrimLeft && m_tool == ToolRipple) {
-                    // Ripple Edit: trim esquerdo com ripple (desloca subsequentes)
-                    const double minEnd = std::max(0.0, m_dragOrigPos + m_dragOrigDur - kMinDur);
-                    const double np = std::clamp(snapToEdges(snapTime(m_dragOrigPos + dt)),
-                                                 0.0, minEnd);
-                    const double delta = np - m_dragOrigPos;
-                    rippleTrimLeft(clip, m_dragOrigIn + delta);
-                } else if (m_dragMode == TrimRight && m_tool == ToolRipple) {
-                    // Ripple Edit: trim direito com ripple (desloca subsequentes)
-                    const double end = snapToEdges(snapTime(m_dragOrigPos + m_dragOrigDur + dt));
-                    const double newDur = std::max(kMinDur, end - clip->pos);
-                    rippleTrimRight(clip, newDur);
                 } else if (m_dragMode == RollingEdit) {
                     // Rolling Edit: ajustar fronteira entre 2 clipes
                     const double delta = (e->pos().x() - m_dragStart.x()) / m_pps;
                     rollingEdit(delta);
+                    // No roll as duas bordas andam juntas, então o indicador
+                    // fica na emenda — Premiere marca essa emenda em vermelho.
+                    // rollingEdit() já reposicionou clipB: a emenda é a borda
+                    // direita de clipA.
+                    if (Clip* clipA = findClipById(m_rollClipA))
+                        markTrimEdge(clipA->pos + clipA->dur, /*ripple=*/false);
                 } else if (m_dragMode == SlipEdit) {
                     // Slip Edit: mudar in/out sem mudar posição
                     const double delta = (e->pos().x() - m_dragStart.x()) / m_pps;
@@ -1202,7 +1277,7 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                                                      std::max(0.0, dur - 0.1));
                         if (m_dragMode == FadeIn) sc->fadeIn = nf;
                         else sc->fadeOut = nf;
-                        invalidateScene();
+                        invalidateSceneContent();
                     }
                 } else if (m_dragMode == ClipOpacity) {
                     // Vegas: arrastar o topo do clipe de vídeo para baixo reduz
@@ -1216,11 +1291,14 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                             const double dy = (double)(e->pos().y() - m_dragStart.y())
                                               / (double)rowH;
                             sc->opacity = std::clamp(m_dragOrigOpacity - dy, 0.0, 1.0);
-                            invalidateScene();
+                            invalidateSceneContent();
                         }
                     }
                 }
-                updateScrollRanges();
+                // A duração do projeto MUDA ao mover/trimar (é o máx de pos+dur),
+                // então a barra horizontal precisa acompanhar o mouse. Só a
+                // alarga — não recalcula o range vertical a cada mousemove.
+                ensureScrollRangeReaches(m_project->duration());
                 update();
                 emit modified();
             }
@@ -1349,8 +1427,12 @@ void TimelineWidget::mouseReleaseEvent(QMouseEvent* e) {
     m_dragClip.clear();
     m_dragUndoPushed = false;
     m_dragOrig.clear();
+    m_rippleOrig.clear();
     m_volRow = -1;
     m_volClip.clear();
+    m_snapLineX = -1.0; // limpa guia de alinhamento
+    m_trimEdgeX = -1.0; // limpa indicador de trim
+    m_trimEdgeRow = -1;
     m_volPending = false;
     m_envPending = false;
     m_envRow = -1;
@@ -1366,6 +1448,9 @@ void TimelineWidget::mouseReleaseEvent(QMouseEvent* e) {
     m_dropGroup.clear();
     stopAutoScroll();
     setCursor(Qt::ArrowCursor);
+    // Ressincroniza o range depois do arraste: durante o gesto só a barra
+    // horizontal era alargada, então um encurtamento fica defasado até aqui.
+    updateScrollRanges();
     update();
 }
 
@@ -1910,6 +1995,10 @@ double TimelineWidget::snapToEdges(double t, const QString& excludeId) const {
         for (const Track& tr : m_project->audioTracks)
             for (const Clip& c : tr.clips)
                 considerClip(c);
+        // Premiere alinha também com marcadores, não só com bordas de clipe e
+        // agulha (ver "Snap in Timeline").
+        for (const Marker& mk : m_project->markers)
+            consider(mk.time);
     }
     return best;
 }

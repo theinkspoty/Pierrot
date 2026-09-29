@@ -1286,10 +1286,19 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                 if (!msk.isEmpty())
                     fc.last().append(QLatin1Char(',') + msk);
             }
-            if (v.c->chromaKey)
-                fc.last().append(QStringLiteral(",chromakey=color=%1:similarity=%2:blend=0.1")
+            if (v.c->chromaKey) {
+                // `blend` do chromakey do ffmpeg é a suavidade da borda — o
+                // equivalente exportável de chromaKeySoftness. Estava fixo em
+                // 0.1, então o controle de suavidade não tinha efeito algum no
+                // render final. Mapeamento escolhido para reproduzir o 0.1 no
+                // default (softness = 0.10) e cobrir toda a faixa 0→1.
+                // A supressão de spill não tem filtro equivalente no ffmpeg.
+                const double blend = std::clamp(v.c->chromaKeySoftness, 0.01, 0.9);
+                fc.last().append(QStringLiteral(",chromakey=color=%1:similarity=%2:blend=%3")
                                      .arg(hexColor(v.c->chromaKeyColor))
-                                     .arg(num(std::clamp(v.c->chromaKeySimilarity, 0.0, 1.0))));
+                                     .arg(num(std::clamp(v.c->chromaKeySimilarity, 0.0, 1.0)))
+                                     .arg(num(blend)));
+            }
             if (v.c->brightness != 0.0 || v.c->contrast != 1.0 || v.c->saturation != 1.0)
                 fc.last().append(QStringLiteral(",eq=brightness=%1:contrast=%2:saturation=%3")
                                      .arg(num(std::clamp(v.c->brightness, -1.0, 1.0)))

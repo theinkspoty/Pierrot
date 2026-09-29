@@ -185,6 +185,12 @@ TimelineWidget::TimelineWidget(QWidget* parent) : QWidget(parent) {
         if (m_dragMode == MoveClip || m_dragMode == TrimLeft
             || m_dragMode == TrimRight || m_dragMode == ResizeTrack)
             refreshView();
+        else if (m_dragMode == FadeIn || m_dragMode == ClipOpacity)
+            // Fade/opacidade não mudam o conteúdo cacheado dos clipes (onda,
+            // thumb) nem o conjunto de clipes — só o alpha de composição.
+            // invalidateScene() aqui refazia o rebuildClipIndex() por mousemove
+            // e anulava a versão leve usada no arraste.
+            invalidateSceneContent();
         else
             invalidateScene();
     });
@@ -226,6 +232,14 @@ void TimelineWidget::invalidateScene() {
     ++m_clipEpoch;
     m_staticDirty = true;
     rebuildClipIndex();
+    update();
+}
+
+void TimelineWidget::invalidateSceneContent() {
+    // Versão leve: invalida só o cache de conteúdo (fade/opacity), sem
+    // reconstruir o índice de clipes — chamada durante arraste contínuo.
+    ++m_clipEpoch;
+    m_staticDirty = true;
     update();
 }
 
@@ -667,6 +681,24 @@ void TimelineWidget::updateScrollRanges() {
     m_viewTop = m_vbar->value();
 }
 
+// Versão barata de updateScrollRanges() para uso durante o arraste: só garante
+// que a barra horizontal alcance `tEnd`. Mover/trimar clipes MUDA a duração do
+// projeto (Project::duration() é o máx de pos+dur), então a premissa de que o
+// range horizontal é constante durante o arraste é falsa — sem isto, esticar o
+// último clipe faz a borda de trim travar no limite da barra. Não recalcula o
+// range vertical (alturas de faixa/pastas não mudam no arraste) e nunca
+// encolhe, evitando que a view pule de lugar a cada mousemove.
+void TimelineWidget::ensureScrollRangeReaches(double tEnd) {
+    if (!m_project) return;
+    const int viewW = std::max(1, width() - m_vbar->sizeHint().width());
+    const int wantMax = std::max(0, kHeaderW + (int)(tEnd * m_pps) + kMarginR - viewW);
+    if (wantMax > m_hbar->maximum()) {
+        m_hbar->setMaximum(wantMax);
+        m_lastMax = wantMax;
+    }
+    m_viewStart = m_hbar->value() / m_pps;
+}
+
 // timeToX — implementado em TimelinePaint.cpp
 
 // xToTime, trackH, rowY, rowFromY, clipAt, volLineY, clipVolLineY — implementados em TimelinePaint.cpp
@@ -1094,6 +1126,8 @@ void TimelineWidget::pasteAttributes() {
             dst->chromaKey = src.chromaKey;
             dst->chromaKeyColor = src.chromaKeyColor;
             dst->chromaKeySimilarity = src.chromaKeySimilarity;
+            dst->chromaKeySoftness = src.chromaKeySoftness;
+            dst->chromaKeySpillSuppress = src.chromaKeySpillSuppress;
         }
         if (chkOfxFx->isChecked()) {
             dst->ofxFx = src.ofxFx;

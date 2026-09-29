@@ -10,6 +10,7 @@
 
 #include <QtTest>
 
+#include "clipattrs.h"
 #include "colombina/models/Project.h"
 
 static Project makeProject() {
@@ -78,6 +79,8 @@ static Project makeProject() {
     c.chromaKey = true;
     c.chromaKeyColor = QColor(0, 255, 0);
     c.chromaKeySimilarity = 0.2;
+    c.chromaKeySoftness = 0.35;
+    c.chromaKeySpillSuppress = 0.8;
     c.liftR = 0.1;
     c.gammaG = 1.1;
     c.gainB = -0.1;
@@ -206,6 +209,8 @@ private slots:
     void recordingTracksRoundTrip();
     void legacyProjectWithoutRecordingTracksLoads();
     void promoteRecordingTrackMovesItToAudio();
+    void clipAttrsRoundTripKeepsChromaKeyBands();
+    void clipAttrsLegacyKeepsChromaKeyDefaults();
 };
 
 void TestSerialization::roundTripIsLossless() {
@@ -237,6 +242,8 @@ void TestSerialization::roundTripPreservesKeyFields() {
     QCOMPARE(c.transitionType, QStringLiteral("wipeleft"));
     QVERIFY(c.grayscale);
     QVERIFY(c.chromaKey);
+    QVERIFY(qAbs(c.chromaKeySoftness - 0.35) < 1e-9);
+    QVERIFY(qAbs(c.chromaKeySpillSuppress - 0.8) < 1e-9);
     QVERIFY(c.hasColorGrade());
     QVERIFY(c.hasTransform());
     QVERIFY(c.hasAudioFx());
@@ -374,6 +381,45 @@ void TestSerialization::promoteRecordingTrackMovesItToAudio() {
     p.promoteRecordingTrack(99, 0);
     QCOMPARE(p.recordingTracks.size(), 1);
     QCOMPARE(p.audioTracks.size(), 3);
+}
+
+// Presets gravam/leem softness e spill: sem isto, salvar e reaplicar um preset
+// devolvia os campos ao default silenciosamente.
+void TestSerialization::clipAttrsRoundTripKeepsChromaKeyBands() {
+    Clip c;
+    c.chromaKey = true;
+    c.chromaKeyColor = QColor(0, 0, 255);
+    c.chromaKeySimilarity = 0.42;
+    c.chromaKeySoftness = 0.37;
+    c.chromaKeySpillSuppress = 0.93;
+
+    const QJsonObject o = clipattrs::toJson(c);
+    QVERIFY(o.contains(QStringLiteral("chromaKeySoftness")));
+    QVERIFY(o.contains(QStringLiteral("chromaKeySpillSuppress")));
+
+    Clip d;
+    clipattrs::applyJson(d, o);
+    QVERIFY(d.chromaKey);
+    QCOMPARE(d.chromaKeyColor, QColor(0, 0, 255));
+    QVERIFY(qAbs(d.chromaKeySimilarity - 0.42) < 1e-9);
+    QVERIFY(qAbs(d.chromaKeySoftness - 0.37) < 1e-9);
+    QVERIFY(qAbs(d.chromaKeySpillSuppress - 0.93) < 1e-9);
+}
+
+// Preset antigo (sem as chaves novas) não pode zerar os campos — tem de manter
+// o default do struct.
+void TestSerialization::clipAttrsLegacyKeepsChromaKeyDefaults() {
+    Clip c;
+    QJsonObject o = clipattrs::toJson(c);
+    o.remove(QStringLiteral("chromaKeySoftness"));
+    o.remove(QStringLiteral("chromaKeySpillSuppress"));
+
+    Clip d;
+    d.chromaKeySoftness = 0.10;
+    d.chromaKeySpillSuppress = 0.5;
+    clipattrs::applyJson(d, o);
+    QVERIFY(qAbs(d.chromaKeySoftness - 0.10) < 1e-9);
+    QVERIFY(qAbs(d.chromaKeySpillSuppress - 0.5) < 1e-9);
 }
 
 QTEST_APPLESS_MAIN(TestSerialization)
