@@ -579,7 +579,12 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
     // arquivo — na maioria dos MP4 o áudio é o stream 1); caso contrário o
     // "melhor" stream.
     int aidx = resolveAudioStream(fmt, audioStream);
-    if (aidx < 0 && audioStream >= 0) {
+    // Sem isto o default (audioStream = -1, "melhor stream") nunca abria áudio:
+    // resolveAudioStream devolve -1 para k < 0 e a guarda abaixo exigia
+    // audioStream >= 0, então o av_find_best_stream ficava inalcançável e
+    // hasAudio() ficava sempre falso para quem abre sem índice explícito
+    // (MediaCache, ProjectExporter e o Bench em dec.hasAudio()).
+    if (aidx < 0) {
         aidx = av_find_best_stream(fmt, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
     }
     if (aidx >= 0) {
@@ -684,7 +689,7 @@ void FFmpegDecoder::freeAllLocked() {
     if (m_frame) av_frame_unref(m_frame);
     if (m_audioPkt) av_packet_unref(m_audioPkt);
     if (m_audioFrame) av_frame_unref(m_audioFrame);
-    frameCacheClear();
+    frameCacheClearLocked();
 }
 
 bool FFmpegDecoder::isOpen() const {
@@ -707,7 +712,7 @@ bool FFmpegDecoder::usesHardware() const {
 
 // ── Frame cache LRU ────────────────────────────────────────────────────────
 
-QImage FFmpegDecoder::frameFromCache(const FrameCacheKey& key) {
+QImage FFmpegDecoder::frameFromCacheLocked(const FrameCacheKey& key) {
     auto it = m_frameCacheIdx.find(key);
     if (it == m_frameCacheIdx.end()) return QImage();
     const int idx = it.value();
@@ -721,7 +726,7 @@ QImage FFmpegDecoder::frameFromCache(const FrameCacheKey& key) {
     return m_frameCacheLru.first().img;
 }
 
-void FFmpegDecoder::frameToCache(const FrameCacheKey& key, const QImage& img) {
+void FFmpegDecoder::frameToCacheLocked(const FrameCacheKey& key, const QImage& img) {
     if (img.isNull()) return;
     auto it = m_frameCacheIdx.find(key);
     if (it != m_frameCacheIdx.end()) {
@@ -745,7 +750,7 @@ void FFmpegDecoder::frameToCache(const FrameCacheKey& key, const QImage& img) {
         m_frameCacheIdx.insert(m_frameCacheLru[i].key, i);
 }
 
-void FFmpegDecoder::frameCacheClear() {
+void FFmpegDecoder::frameCacheClearLocked() {
     m_frameCacheLru.clear();
     m_frameCacheIdx.clear();
 }
@@ -759,7 +764,7 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
     const double targetSec = m_isImage ? 0.0 : std::max(0.0, seconds);
     if (!m_isImage && m_fps > 0.0) {
         const FrameCacheKey cacheKey{(int64_t)std::floor(targetSec * m_fps), maxWidth};
-        result = frameFromCache(cacheKey);
+        result = frameFromCacheLocked(cacheKey);
         if (!result.isNull()) return result;
     }
 
@@ -1075,7 +1080,7 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
     // Armazena no cache LRU se decode foi bem-sucedido
     if (!result.isNull() && !m_isImage && m_fps > 0.0) {
         const FrameCacheKey cacheKey{(int64_t)std::floor(targetSec * m_fps), maxWidth};
-        frameToCache(cacheKey, result);
+        frameToCacheLocked(cacheKey, result);
     }
 
     // Auto-cura: hardware decodificou quadro(s) mas nada virou imagem (driver
@@ -1114,13 +1119,21 @@ void FFmpegDecoder::releaseBuffers() {
         m_lastFrameSec = -1.0;
         m_nextFrameSec = -1.0;
         m_lastPtsSec = -1.0;
-        frameCacheClear();
+        frameCacheClearLocked();
     }
 }
 
 bool FFmpegDecoder::hasAudio() const {
     QMutexLocker locker(&m_audioMutex);
     return m_aCtx != nullptr && m_audioStream >= 0;
+}
+
+// m_audioOutCh é escrito por open() sob m_audioMutex; a UI lê isto de outra
+// thread ao montar o mixer, então o getter precisa do mesmo lock — sem ele a
+// leitura corre junto com a escrita (data race) enquanto um arquivo é aberto.
+int FFmpegDecoder::audioChannels() const {
+    QMutexLocker locker(&m_audioMutex);
+    return m_audioOutCh;
 }
 
 void FFmpegDecoder::seekAudio(double seconds) {

@@ -36,6 +36,10 @@ sudo apt install cmake g++ pkg-config \
 Se usar Qt 5 em vez de Qt 6: substitua `qt6-base-dev` por `qtbase5-dev`,
 `qt6-multimedia-dev` por `qtmultimedia5-dev`.
 
+> **Qt6 é requisito.** O Qt5 aparece acima só por herança de instrução antiga —
+> o código usa APIs que só existem no Qt6 e **não compila** com Qt5. O job Qt5
+> do CI foi removido em 2026-09-29 por isso.
+
 ## Compilar
 
 ```bash

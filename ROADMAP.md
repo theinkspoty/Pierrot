@@ -16,17 +16,50 @@ pronto. Marcamos `[ ]` (não feito) / `[x]` (feito).
 
 Sem isso, nenhuma feature nova sobrevive.
 
-- [ ] **Suíte de testes** — hoje não há teste nenhum (CMakeLists não tem alvo de teste).
-  - Usar Qt Test ou doctest (sem dependência nova pesada).
-  - Cobrir: serialização `.Blanc` round-trip (`src/models/Project.cpp`), interpolação
-    de keyframes `kfValue`/`upsertKeyframe` (`src/models/Project.h`), geração do
-    comando ffmpeg (`ProjectExporter`), frames de referência do `MesaRenderer`.
-  - Aceite: `ctest` verde no CI.
-- [ ] **CI** — build em Ubuntu (Qt6 + Qt5) e geração do AppImage (`packaging/build-appimage.sh`).
-- [ ] **Endurecimento de crash** — reduzir `SIGSEGV` em decode concorrente
-  (o `MesaRenderer` já documenta mutex nos decoders; auditar caminhos de
-  `FFmpegDecoder` não serializados). Estender o `CrashReporter` para capturar
-  stack de threads secundárias.
+- [x] **Suíte de testes** — 8 alvos em `CMakeLists.txt`, `ctest` verde (8/8).
+  - Qt Test, sem dependência nova. Cobre os quatro pontos pedidos:
+    round-trip `.Blanc` (`tst_serialization`), interpolação de keyframes
+    `kfValue`/`upsertKeyframe` (`tst_keyframes`), geração do comando ffmpeg
+    (`tst_exporter` p/ caminhos de erro, `tst_export_pipeline` p/ o caminho
+    feliz rodando o ffmpeg CLI de verdade), frames de referência do
+    `MesaRenderer` (`tst_export_pipeline` compara com `generatorFrame()` —
+    mesma fonte de verdade do preview).
+  - Extras já lá: `tst_edl`, `tst_audio_conform`, `tst_audio_conform_intervals`,
+    `tst_crashreporter`.
+- [ ] **CI** — build Qt6 + `ctest` já rodam (`.github/workflows/ci.yml`).
+  - ⚠️ **O job Qt5 está quebrado e não é regressão recente**: o código usa APIs
+    só de Qt6 sem guarda de versão e **não compila com Qt5** (~76 erros num
+    checkout limpo do HEAD em 2026-09-29). Culpados: `QColor::isValidColorName`
+    e `QVariant::metaType` (`Project.cpp`), `QVector::sort` e
+    `QVector<QList>`↔`QVector<QList>` (`NleInterchange.cpp`),
+    `QFuture::results` (`MesaRenderer.cpp`), `QVector::resize` de 2 args
+    (`tests/tst_audio_conform.cpp`), e `#include <QDateTime>` faltando em
+    `MediaCache.cpp`. Ou se adiciona as guardas de versão, ou se decide que Qt6
+    é requisito e o job sai do CI — mas ele não pode continuar verde-por-mentira.
+  - Falta: job `asan`/`ubsan`, AppImage como artefato, `-Wall -Wextra`.
+- [~] **Endurecimento de crash** — diagnóstico e a lacuna de lock fechadas;
+  os SIGSEGV em si ainda não foram reduzidos.
+  - Auditoria do `FFmpegDecoder`: já está quase todo serializado
+    (`open`/`close` com os dois mutexes; `isOpen`/`source`/`fps`/`usesHardware`
+    em `m_mutex`; `hasAudio`/`seekAudio`/`decodeAudio` em `m_audioMutex`).
+    Única lacuna real corrigida: `audioChannels()` lia `m_audioOutCh` sem
+    `m_audioMutex` enquanto `open()` escreve sob ele.
+  - O cache LRU de frames estava correto, mas por convenção e não por
+    assert; as funções ganharam o sufixo `Locked` e a pré-condição foi
+    documentada.
+  - `CrashReporter` agora grava o inventário das threads: as registradas com o
+    que estavam fazendo, e todas as de `/proc/self/task` (pool do Qt, FFmpeg
+    interno) marcadas como não registradas. O `CrashReporter` foi movido para
+    `colombina` — era infra de kernel presa em `src/`, inalcançável dos workers
+    de decode — e os workers (`preview-frame`, `preview-prefetch`, `cache-picos`,
+    `cache-thumbs`, `export-build`) usam `CrashReporter::TrackedThread`.
+  - `tst_crashreporter` trava os dois bugs que só apareceram com um crash real:
+    o TID vinha de `pthread_self()` (que no glibc é ponteiro de descritor, não
+    TID, então nunca casava com o `/proc`), e o registro estava no `run()` do
+    QThread — mas o Qt emite `started` **antes** de `run()`, então um worker
+    ligado a `started` que bloqueia (o padrão de exportação) nunca se
+    registrava.
+  - Falta: rodar `asan`/`ubsan` em CI e caçar os SIGSEGV de verdade.
 - [ ] **Projetos grandes** — carregar/salvar com progresso e sem travar a UI
   (mover serialização para thread; hoje `toJson`/`fromJson` é síncrono).
 
@@ -175,17 +208,34 @@ Cada item abaixo indica quem destrava o quê, pra não virar lista sem critério
 
 ## 1. Confiança do código (QA, CI e ferramentas)
 
-- [ ] **CI GitHub Actions** — jobs: Ubuntu Qt6 + Qt5 (build), `ctest`, e um job
-  "asan" com `-fsanitize=address,undefined`. Publicar AppImage como artefato.
+- [x] **CI GitHub Actions** — jobs `build` (Qt6 + `ctest`) e `sanitizers`
+  (`asan`+`ubsan`). O `tst_crashreporter` fica de fora do job de sanitizer,
+  porque ele morre de SIGSEGV de propósito.
+  - O job Qt5 foi removido: o código não compila com Qt5 (ver Fase 0) e o job
+    estava verde-por-mentira. Qt6 é requisito.
+  - Falta: AppImage como artefato, `-Wall -Wextra`, medir cobertura no CI.
 - [ ] **Modo de build `-Wall -Wextra`** no default e aspirar `-Werror` só no CI.
 - [ ] **`.clang-format` + `.clang-tidy`** e rodar (só format-diff) no CI —
   sem religar o codebase inteiro de uma vez.
 - [ ] **Cobertura do kernel `colombina`** (gcov/lcov) — meta inicial >50% do
   kernel, medido no CI (baixar na hora de aceitar novo teste).
+  - Medido em 2026-09-29 (gcov sobre o `ctest` atual): **15,0%** do kernel
+    (1668/11097 linhas). Longe da meta de 50%.
+  - O que está coberto: `NleInterchange` 88%, `clipattrs.h` 77%,
+    `AudioConformCache` 42/57%, `Project.h` 33%, `Project.cpp` 18%,
+    `ProjectExporter` 10%, `generators.h` 8%.
+  - O buraco é justamente onde dói: **`MesaRenderer.cpp` 0,0%** (566 linhas),
+    **`ProxyManager.cpp` 0,0%** (394), **`FFmpegDecoder.cpp` 2,3%** (2583) —
+    os três arquivos que carregam a concorrência. Por isso o job `asan` sozinho
+    não acha SIGSEGV de decode: o ASAN só reporta o que ele executa, e esses
+    caminhos não rodam em nenhum teste. Teste de concorrência que abra e
+    decodifique de verdade é pré-requisito, não detalhe.
 - [ ] **Fuzz do parser `.Blanc`** — corpus de JSONs malformados/abruptos:
   abrir não pode crashar nem travar (parse com limites de recursão/tamanho).
-- [ ] **Regressão de crash** — cada crash encontrado vira um teste Qt Test
-  reproduzindo o cenário (nem que seja "não crasha"). Meta: 0 crash refixado.
+- [x] **Regressão de crash** — primeiro caso fechado.
+  - `tst_crashreporter` (fork + SIGSEGV real, confere o relatório gerado).
+    Preservou dois bugs que só se manifesto com crash de verdade — ver Fase 0.
+  - Meta: 0 crash refixado. Falta cobrir os achados do `asan`/`ubsan`.
 - [ ] **Benchmark no CI** — reusar `Bench` (`--bench`/`--stress`) com limite de
   tempo por execução, pra pegar regressão de performance antes da release.
 

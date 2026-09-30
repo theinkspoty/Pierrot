@@ -4,6 +4,7 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "MediaCache.h"
+#include "colombina/CrashReporter.h"
 #include "colombina/util.h"
 #include "colombina/ffmpeg/ProxyManager.h"
 
@@ -180,7 +181,7 @@ MediaCache::MediaCache() {
 
     // Dois workers em threads separadas: gerar os picos de um áudio longo
     // não deve travar a geração de thumbnails (e vice-versa).
-    m_peaksThread = new QThread(this);
+    m_peaksThread = new CrashReporter::TrackedThread("cache-picos", this);
     m_peaksWorker = new CacheWorker;
     m_peaksWorker->moveToThread(m_peaksThread);
     connect(m_peaksThread, &QThread::finished, m_peaksWorker, &QObject::deleteLater);
@@ -191,7 +192,7 @@ MediaCache::MediaCache() {
     m_peaksThread->setPriority(QThread::LowPriority);
     m_peaksThread->start();
 
-    m_thumbsThread = new QThread(this);
+    m_thumbsThread = new CrashReporter::TrackedThread("cache-thumbs", this);
     m_thumbsWorker = new CacheWorker;
     m_thumbsWorker->moveToThread(m_thumbsThread);
     connect(m_thumbsThread, &QThread::finished, m_thumbsWorker, &QObject::deleteLater);

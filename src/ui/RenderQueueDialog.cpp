@@ -5,6 +5,7 @@
 
 #include "ui/RenderQueueDialog.h"
 #include "ui/ExportDialog.h"
+#include "colombina/CrashReporter.h"
 
 #include <QListWidget>
 #include <QProgressBar>
@@ -237,7 +238,7 @@ void RenderQueueDialog::startNextJob() {
     // Snapshot do projeto para o worker: o pré-render das bandas Mesa é caro
     // em CPU e roda fora da UI; a cópia evita corrida com edições na timeline.
     m_projectSnap = *m_project;
-    m_buildThread = new QThread(this);
+    m_buildThread = new CrashReporter::TrackedThread("export-build", this);
     m_buildWorker = new ExportBuildWorker(m_projectSnap, s);
     m_buildWorker->moveToThread(m_buildThread);
     connect(m_buildThread, &QThread::started, m_buildWorker, &ExportBuildWorker::run);

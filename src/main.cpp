@@ -13,7 +13,7 @@
 #include "ui/ClickLogger.h"
 #include "ui/Theme.h"
 #include "Bench.h"
-#include "CrashReporter.h"
+#include "colombina/CrashReporter.h"
 #include <QMessageBox>
 #include <QFileInfo>
 #include <QTextStream>
@@ -25,6 +25,7 @@ int main(int argc, char** argv) {
     // Instala o relatório de crash O MAIS CEDO possível: se o app fechar de
     // repente (SIGSEGV/SIGABRT/etc.), grava backtrace e infos em ~/Pierrot-crash-*.txt.
     CrashReporter::install();
+    CrashReporter::registerThread("ui-principal");
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     QApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
 #endif

@@ -48,6 +48,7 @@ set(COLOMBINA_SOURCES
     src/colombina/ofx/OfxHost.cpp
     src/colombina/ofx/OfxRenderer.cpp
     src/colombina/render/MesaRenderer.cpp
+    src/colombina/CrashReporter.cpp
 )
 
 set(COLOMBINA_HEADERS
@@ -66,12 +67,12 @@ set(COLOMBINA_HEADERS
     src/colombina/render/MesaRenderer.h
     src/colombina/generators.h
     src/colombina/util.h
+    src/colombina/CrashReporter.h
 )
 
 # ── Casca: a UI (muda o tempo todo) ────────────────────────────────────
 set(PIERROT_APP_SOURCES
     src/main.cpp
-    src/CrashReporter.cpp
     src/Bench.cpp
     src/MainWindow.cpp
     src/ui/MediaPoolWidget.cpp
@@ -116,7 +117,6 @@ set(PIERROT_APP_SOURCES
 
 set(PIERROT_APP_HEADERS
     src/MainWindow.h
-    src/CrashReporter.h
     src/Bench.h
     src/clipattrs.h
     src/version.h
@@ -314,6 +314,44 @@ add_test(NAME tst_exporter COMMAND tst_exporter)
 # ficheiros de áudio não existem de propósito: o worker só descodifica quando
 # há janelas pedidas, e o teste nunca pede nenhuma. Linka a pilha de FFmpeg
 # porque o .cpp chama o decoder, mas não chega a abrí-lo.
+# tst_crashreporter: o relatório de crash tem que listar as threads e o que
+# elas estavam fazendo. Faz fork e mata o filho com SIGSEGV de verdade, então
+# roda isolado e rápido. Precisa do CrashReporter compilado junto.
+add_executable(tst_crashreporter
+    tests/tst_crashreporter.cpp
+    src/colombina/CrashReporter.cpp
+)
+target_include_directories(tst_crashreporter PRIVATE src src/colombina/ofx/sdk)
+target_link_libraries(tst_crashreporter PRIVATE
+    ${PIERROT_QT_TEST}
+    ${PIERROT_QT_CORE}
+)
+add_test(NAME tst_crashreporter COMMAND tst_crashreporter)
+
+# tst_concurrency: exercita de verdade os caminhos serializados do
+# FFmpegDecoder (frameAt concorrente, close() sobre decode em andamento,
+# accessors de áudio durante open, dois decoders no mesmo arquivo). Gera
+# mídia com o ffmpeg CLI; sem ffmpeg no PATH pula. É o que dá dente ao job de
+# ASAN/UBSAN — a cobertura do decoder era 2,3% e a do MesaRenderer 0%.
+add_executable(tst_concurrency
+    tests/tst_concurrency.cpp
+    src/colombina/ffmpeg/FFmpegDecoder.cpp
+)
+target_include_directories(tst_concurrency PRIVATE src src/colombina/ofx/sdk)
+target_link_libraries(tst_concurrency PRIVATE
+    ${PIERROT_QT_TEST}
+    ${PIERROT_QT_CORE}
+    ${PIERROT_QT_GUI}
+    ${PIERROT_QT_CONCURRENT}
+    FFmpeg::avformat
+    FFmpeg::avcodec
+    FFmpeg::avutil
+    FFmpeg::swscale
+    FFmpeg::swresample
+    ${CMAKE_DL_LIBS}
+)
+add_test(NAME tst_concurrency COMMAND tst_concurrency)
+
 add_executable(tst_audio_conform
     tests/tst_audio_conform.cpp
     src/colombina/ffmpeg/AudioConformCache.cpp

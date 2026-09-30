@@ -68,7 +68,7 @@ public:
 
     // Áudio: PCM contínuo, interleaved S16, 48 kHz estéreo.
     bool hasAudio() const;
-    int audioChannels() const { return m_audioOutCh; }
+    int audioChannels() const;
     void seekAudio(double seconds);
     int decodeAudio(void* outBuf, int maxBytes);
 
@@ -159,7 +159,11 @@ private:
     QList<FrameCacheEntry> m_frameCacheLru;     // frente = mais recente
     QHash<FrameCacheKey, int> m_frameCacheIdx;  // key → índice no LRU
 
-    QImage frameFromCache(const FrameCacheKey& key);
-    void   frameToCache(const FrameCacheKey& key, const QImage& img);
-    void   frameCacheClear();
+    // O cache é válido SOMENTE sob m_mutex (por isso o sufixo Locked, mesmo
+    // idioma de freeAllLocked). O índice é reconstruído a cada inserção e
+    // frameAt() roda em thread própria: tocar a lista fora do lock já
+    // racingaria com o decode e corromperia o índice.
+    QImage frameFromCacheLocked(const FrameCacheKey& key);
+    void   frameToCacheLocked(const FrameCacheKey& key, const QImage& img);
+    void   frameCacheClearLocked();
 };

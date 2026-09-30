@@ -7,6 +7,7 @@
 
 #include "ui/SettingsDialog.h"
 #include "ui/TlLog.h"
+#include "colombina/CrashReporter.h"
 #include "colombina/ffmpeg/ProxyManager.h"
 #include "colombina/ffmpeg/AudioConformCache.h"
 #include "colombina/ofx/OfxRenderer.h"
@@ -91,6 +92,7 @@ public:
 
 public slots:
     void decodeOne(const QString& clipId, const QString& path, double t, int maxW, double dt) {
+        CrashReporter::setActivity("decodificando quadro do preview");
         if (!m_mainDecoder->isOpen() || m_mainDecoder->source() != path) {
             if (m_prefetchDecoder->isOpen() && m_prefetchDecoder->source() == path) {
                 // O decodificador de prefetch já abriu e aqueceu este arquivo: swap instantâneo!
@@ -259,6 +261,7 @@ public:
 
 public slots:
     void decode(const QString& path, double t, int maxW, double step) {
+        CrashReporter::setActivity("prefetch do proximo clipe");
         static QElapsedTimer dbgClock;
         const bool dbgOn = playDbg();
         if (dbgOn && !dbgClock.isValid()) dbgClock.start();
@@ -1501,7 +1504,7 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
 
     // Thread de vídeo: decodificar quadros aqui tira a decodificação (que é
     // cara em arquivos grandes/4K/MKV) do caminho da UI.
-    m_frameThread = new QThread(this);
+    m_frameThread = new CrashReporter::TrackedThread("preview-frame", this);
     m_frameWorker = new FrameWorker;
     m_frameWorker->moveToThread(m_frameThread);
     connect(m_frameThread, &QThread::finished, m_frameWorker, &QObject::deleteLater);
@@ -1514,7 +1517,7 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     // Thread de prefetch em background: decodifica o próximo clipe fora do
     // caminho do worker (que mantém o pipeline m_ready). Sem isto, o open+2
     // frameAt do prefetch (500-800ms) congelava o worker por corte.
-    m_bgPrefetchThread = new QThread(this);
+    m_bgPrefetchThread = new CrashReporter::TrackedThread("preview-prefetch", this);
     m_bgPrefetchWorker = new BgPrefetchWorker;
     m_bgPrefetchWorker->moveToThread(m_bgPrefetchThread);
     connect(m_bgPrefetchThread, &QThread::finished, m_bgPrefetchWorker, &QObject::deleteLater);
