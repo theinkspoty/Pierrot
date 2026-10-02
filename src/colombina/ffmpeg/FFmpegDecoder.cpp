@@ -26,6 +26,7 @@ extern "C" {
 #include <QSet>
 #include <QSettings>
 #include <QThread>
+#include <chrono>
 
 // Diagnóstico do caminho de áudio do preview: ligue com PIERROT_AUDIO_DEBUG=1.
 static bool audioDbg() {
@@ -712,9 +713,20 @@ bool FFmpegDecoder::usesHardware() const {
 
 // ── Frame cache LRU ────────────────────────────────────────────────────────
 
+quint64 FFmpegDecoder::s_cacheHits = 0;
+quint64 FFmpegDecoder::s_cacheMisses = 0;
+quint64 FFmpegDecoder::s_lastWorkNs = 0;
+quint64 FFmpegDecoder::s_workTotalNs = 0;
+quint64 FFmpegDecoder::s_discardCount = 0;
+quint64 FFmpegDecoder::s_lastDiscard = 0;
+quint64 FFmpegDecoder::s_seekCount = 0;
+quint64 FFmpegDecoder::s_seekTotalNs = 0;
+quint64 FFmpegDecoder::s_lastSeekNs = 0;
+
 QImage FFmpegDecoder::frameFromCacheLocked(const FrameCacheKey& key) {
     auto it = m_frameCacheIdx.find(key);
-    if (it == m_frameCacheIdx.end()) return QImage();
+    if (it == m_frameCacheIdx.end()) { ++s_cacheMisses; return QImage(); }
+    ++s_cacheHits;
     const int idx = it.value();
     if (idx < 0 || idx >= m_frameCacheLru.size()) return QImage();
     // Move para frente (mais recente)
@@ -879,6 +891,7 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
                            || targetSec > m_lastPtsSec + 2.0);
 
     if (needSeek) {
+        const qint64 seekT0 = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
         const int seekErr = av_seek_frame(fmt, m_stream, target, AVSEEK_FLAG_BACKWARD);
         if (seekErr < 0) {
             qWarning() << "av_seek_frame failed for video:" << seekErr;
@@ -891,6 +904,9 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
             av_frame_unref(reinterpret_cast<AVFrame*>(m_nextFrame));
         m_lastFrameSec = -1.0;
         m_nextFrameSec = -1.0;
+        s_lastSeekNs = quint64(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() - seekT0);
+        s_seekTotalNs += s_lastSeekNs;
+        ++s_seekCount;
     }
 
     if (!m_pkt || !m_frame) {
@@ -961,9 +977,12 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
         m_lastPtsSec = nfSec; // progresso do codec
     }
 
+    quint64 discarded = 0;
+    s_lastDiscard = 0;
     while (!chosen && !atEof) {
         while (avcodec_receive_frame(cc, m_frame) == 0) {
             decodedAny = true;
+            ++discarded;
             double fsec = 0.0;
             AVFrame* src = hostFrame(m_frame, fsec);
             if (!src) {
@@ -973,6 +992,7 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
             const bool usingScratch = (src != m_frame);
 
             if (fsec <= targetSec + tolerance) {
+                ++discarded;
                 keepAsDisplay(src, fsec);
                 m_lastPtsSec = fsec;
                 av_frame_unref(m_frame);
@@ -1077,8 +1097,18 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
     av_frame_unref(m_frame);
     av_packet_unref(m_pkt);
 
-    // Armazena no cache LRU se decode foi bem-sucedido
-    if (!result.isNull() && !m_isImage && m_fps > 0.0) {
+    s_lastDiscard = discarded;
+    s_discardCount += discarded;
+
+    // Armazena no cache LRU se decode foi bem-sucedido.
+    // PIERROT_FRAME_CACHE=0 desliga: o LRU tem acerto ~0,1% em playback linear
+    // (cada quadro é pedido uma vez) e cada inserção reconstrói o índice O(n),
+    // então é preciso medir se ele custa mais do que economiza.
+    static const bool kCacheOn = [] {
+        const QByteArray v = qgetenv("PIERROT_FRAME_CACHE");
+        return v.isEmpty() || v != "0";
+    }();
+    if (kCacheOn && !result.isNull() && !m_isImage && m_fps > 0.0) {
         const FrameCacheKey cacheKey{(int64_t)std::floor(targetSec * m_fps), maxWidth};
         frameToCacheLocked(cacheKey, result);
     }

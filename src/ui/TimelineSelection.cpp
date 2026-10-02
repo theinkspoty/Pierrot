@@ -137,14 +137,22 @@ void TimelineWidget::selectAllClips() {
 
 void TimelineWidget::selectInMarquee(bool add) {
     if (!m_project) return;
-    const double t0 = xToTime(m_marqueeRect.left());
-    const double t1 = xToTime(m_marqueeRect.right());
+    // Recorta defensivamente à área de conteúdo: o paint já clipa o rubber
+    // band, mas a seleção usava o rect bruto — marquee que "sobia" para o
+    // header/régua selecionava clipes com tempo errado (xToTime < viewStart).
+    const QRect content(kHeaderW, kRulerH,
+                        qMax(1, width() - kHeaderW),
+                        qMax(1, height() - kRulerH));
+    const QRect mr = m_marqueeRect.normalized().intersected(content);
+    if (mr.isEmpty()) return;
+    const double t0 = xToTime(mr.left());
+    const double t1 = xToTime(mr.right());
     if (t1 - t0 < 1e-9) return;
     QStringList found;
     auto collect = [&](const Track& tr, bool audio, int row) {
         const int y = audio ? rowY(-1, row) : rowY(row, -1);
         const int rowH = trackH(row, audio);
-        if (m_marqueeRect.bottom() < y || m_marqueeRect.top() > y + rowH) return;
+        if (mr.bottom() < y || mr.top() > y + rowH) return;
         for (const Clip& c : tr.clips)
             if (c.pos + c.dur > t0 && c.pos < t1)
                 found.append(c.id);

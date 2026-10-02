@@ -21,6 +21,9 @@
 #include <QElapsedTimer>
 #include <QFont>
 
+#include <algorithm>
+#include <cmath>
+
 namespace {
 
 
@@ -956,7 +959,7 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
     const MediaItem* mi = m_project ? m_project->findMedia(c.mediaId) : nullptr;
     const QString path = mi ? mi->filePath : QString();
     const ClipVisKey key{c.id, r.width(), r.height(), m_clipEpoch,
-                         tint.rgba()};
+                         tint.rgba(), (float)c.in, (float)c.dur};
     QPixmap content = m_clipPix.value(key);
     if (content.isNull() || content.size() != r.size()) {
         content = QPixmap(r.size());
@@ -1133,8 +1136,6 @@ void TimelineWidget::drawAudioWaveform(QPainter& p, const QRect& r, const Clip& 
     }
 
     const FFmpegAudioPeaks& pk = cache.peaks(path, c.audioStreamIndex);
-    if (pk.min.isEmpty()) return;
-
     const int bps = pk.bucketsPerSecond > 0 ? pk.bucketsPerSecond : 1;
     const int x0 = r.left();
     const int x1 = r.right();
@@ -1150,8 +1151,14 @@ void TimelineWidget::drawAudioWaveform(QPainter& p, const QRect& r, const Clip& 
                       : sel2 ? QColor::fromHslF(hue, sat, 0.34)
                              : QColor::fromHslF(hue, sat, 0.38));
 
-    // Agrega min/max por coluna de pixel e descobre o pico global do clipe,
-    // para normalizar a altura (autogain) como o Premiere faz.
+    // Baseline sempre visível (inclusive em silêncio): a onda não "some"
+    // em cortes pequenos com poucos picos nem em corte 100% silêncio.
+    p.setPen(QPen(QColor(10, 10, 12, 90), 1));
+    p.drawLine(x0, midY, x1, midY);
+
+    if (pk.min.isEmpty()) return;
+
+    // Agrega min/max por coluna de pixel.
     const auto colMinMax = [&](int x, float& mn, float& mx) {
         mn = 0.0f;
         mx = 0.0f;
@@ -1168,12 +1175,24 @@ void TimelineWidget::drawAudioWaveform(QPainter& p, const QRect& r, const Clip& 
         }
     };
 
-    float gPeak = 0.0f;
+    // Autogain por percentil p95 em vez do pico máximo: um transiente isolado
+    // num corte com muito silêncio não estoura a altura nem faz o resto da
+    // onda desaparecer. Fallback: se o p95 for ~0 (corte quase todo silêncio),
+    // usa o máximo absoluto para pelo menos um pico aparecer.
+    QVector<float> peaks;
+    peaks.reserve(x1 - x0 + 1);
     for (int x = x0; x <= x1; ++x) {
         float mn = 0.0f, mx = 0.0f;
         colMinMax(x, mn, mx);
-        const float p = std::max(std::fabs(mx), std::fabs(mn));
-        if (p > gPeak) gPeak = p;
+        peaks.append(std::max(std::fabs(mx), std::fabs(mn)));
+    }
+    std::sort(peaks.begin(), peaks.end());
+    float gPeak = 0.0f;
+    if (!peaks.isEmpty()) {
+        const qsizetype idx = qMin<qsizetype>(peaks.size() - 1,
+                                              (qsizetype)(peaks.size() * 0.95));
+        gPeak = peaks[idx];
+        if (gPeak < 1e-4f) gPeak = peaks.last();
     }
     const double gain = gPeak > 1e-4 ? (0.92 / gPeak) : 1.0;
 
@@ -1184,16 +1203,18 @@ void TimelineWidget::drawAudioWaveform(QPainter& p, const QRect& r, const Clip& 
     for (int x = x0; x <= x1; ++x) {
         float mn = 0.0f, mx = 0.0f;
         colMinMax(x, mn, mx);
-        if (mx <= 1e-4f && mn >= -1e-4f) continue;
+        const float absPeak = std::max(std::fabs(mx), std::fabs(mn));
+        // Coluna de silêncio: não desenha barra (a baseline já cobre); a onda
+        // contínua evita "buracos" em cortes pequenos com silêncio.
+        if (absPeak <= 1e-4f) continue;
 
-        const int py0 = (int)std::lround(midY - mx * amp * gain);
-        const int py1 = (int)std::lround(midY - mn * amp * gain);
-        const int top = qBound(r.top(), py0, r.bottom());
-        const int bot = qBound(r.top(), py1, r.bottom());
+        const int top = qBound(r.top(), (int)std::lround(midY - mx * amp * gain),
+                               r.bottom());
+        const int bot = qBound(r.top(), (int)std::lround(midY - mn * amp * gain),
+                               r.bottom());
         if (top >= bot) continue;
 
-        const float norm = std::clamp((float)(std::max(std::fabs(mx), std::fabs(mn)) * gain),
-                                      0.0f, 1.0f);
+        const float norm = std::clamp(absPeak * (float)gain, 0.0f, 1.0f);
         const qreal alph = qBound(0.80, 0.86 + 0.14 * norm, 1.0);
         p.setPen(Qt::NoPen);
         p.setBrush(QColor::fromHslF(hue, sat, waveVal, alph));

@@ -38,6 +38,7 @@ public:
     // Limiar de resolução (px de largura) que dispara a geração de proxy.
     static constexpr int kThresholdWidth = 2560;
 
+
     // Path a usar para DECODE DE VÍDEO de preview/thumbs: o proxy se existir
     // (e estiver habilitado), senão o original. Determinístico (mesmo src →
     // mesmo proxy), para evitar cache keys inconsistentes.
@@ -59,6 +60,10 @@ public:
     // ainda não têm proxy (os proxies antigos continuam em cache).
     void setProjectUsesProxies(bool on);
     bool projectUsesProxies() const;
+
+    // Há geração em andamento (na fila ou no job ativo)? Usado pelo harness de
+    // A/B para só medir depois que os proxies ficaram prontos.
+    bool busy() const;
 
 signals:
     void proxyReady(const QString& srcPath);
@@ -95,11 +100,15 @@ private:
 
     // Estado persistido: src → proxy.
     QHash<QString, QString> m_map;
+    // Memo de resolveVideo(): srcPath -> caminho a decodificar. Invalida em
+    // todo ponto onde m_map muda (ver ProxyManager.cpp).
+    mutable QHash<QString, QString> m_resolved;
     QSet<QString> m_failed; // srcs que falharam (não re-tentar por ora)
     QString m_stateFile;
 
     // Cache de "não é candidato" (largura abaixo do limiar).
     mutable QSet<QString> m_small;
+    int m_thresholdWidth = kThresholdWidth;
 
     // Protege os mapas de estado, lidos de threads de workers (MediaCache).
     mutable QMutex m_mutex;

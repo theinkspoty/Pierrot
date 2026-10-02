@@ -82,6 +82,7 @@ set(PIERROT_APP_SOURCES
     src/ui/TimelinePaint.cpp
     src/ui/TimelineDrag.cpp
     src/ui/PlaybackEngine.cpp
+    src/ui/PreviewProfiler.cpp
     src/ui/PreviewWidget.cpp
     src/ui/TlLog.cpp
     src/ui/PancropWidget.cpp

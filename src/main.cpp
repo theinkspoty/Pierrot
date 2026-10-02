@@ -82,6 +82,44 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Harness de reprodução (A/B proxy vs original, sem interação):
+    //   pierrot --autoplay <projeto.Blanc> [--seconds=20] [--from=0]
+    //          [--proxy|--no-proxy] [--warmup=3] [--wait-proxy] [--json=/tmp/x.json]
+    // Abre o projeto, reproduz, grava o relatório de métricas e sai sozinho.
+    for (int i = 1; i < argc; ++i) {
+        if (qstrcmp(argv[i], "--autoplay") == 0 && i + 1 < argc) {
+            const QString project = QString::fromLocal8Bit(argv[i + 1]);
+            double seconds = 20.0;
+            double from = 0.0;
+            double warmup = 3.0;
+            int useProxies = -1; // -1 = respeita o projeto
+            bool waitProxy = false;
+            QString json = QStringLiteral("/tmp/pierrot-autoplay.json");
+            for (int j = i + 2; j < argc; ++j) {
+                const QByteArray a = argv[j];
+                auto num = [&](const char* key, double def) {
+                    const QByteArray p = QByteArray("--") + key + "=";
+                    if (a.startsWith(p)) return a.mid(p.size()).toDouble();
+                    return def;
+                };
+                if (a == "--proxy") useProxies = 1;
+                else if (a == "--no-proxy") useProxies = 0;
+                else if (a == "--wait-proxy") waitProxy = true;
+                else if (a.startsWith("--json=")) json = QString::fromLocal8Bit(a.mid(7));
+                else if (a.startsWith("--seconds=")) seconds = num("seconds", 20.0);
+                else if (a.startsWith("--from=")) from = num("from", 0.0);
+                else if (a.startsWith("--warmup=")) warmup = num("warmup", 3.0);
+            }
+            // O profiler é o consumidor; sem estas env vars ele nem registra.
+            qputenv("PIERROT_PERF_JSON", json.toUtf8());
+            MainWindow w;
+            w.openProjectFile(project);
+            w.show();
+            w.autoplay(seconds, useProxies, from, warmup, waitProxy, json);
+            return app.exec();
+        }
+    }
+
     // O editor é criado somente após a janela de boas-vindas, como no fluxo
     // original. Fechar a boas-vindas (X) encerra o exec() com Rejected e abre
     // o editor vazio; criar/abrir projeto carrega o projeto nele.

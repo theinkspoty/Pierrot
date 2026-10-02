@@ -54,6 +54,7 @@
 #include <cmath>
 #include <climits>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <vector>
 #include <QHash>
@@ -309,7 +310,7 @@ private:
 // exportação aplica via ffmpeg:
 //   equalizer f=120/1000/6000 Q=1  -> biquad peaking por banda
 //   aeval (inverter fase)          -> multiplica por -1
-//   afftdn (denoise)               -> aproximação: noise gate suave
+//   afftdn (denoise)               -> gate espectral (STFT + piso adaptativo)
 //   loudnorm (normalizar -14 LUFS) -> aproximação: AGC lento + soft clip
 class AudioFxFallback {
 public:
@@ -399,6 +400,270 @@ public:
         }
     };
 
+    // FFT radix-2 iterativa (idêntica à do kernel Rust).
+    static void fftRadix2(QVector<double>& re, QVector<double>& im) {
+        const int n = re.size();
+        if (n <= 1) return;
+        int j = 0;
+        for (int i = 1; i < n; ++i) {
+            int bit = n >> 1;
+            while (j & bit) { j ^= bit; bit >>= 1; }
+            j ^= bit;
+            if (i < j) {
+                std::swap(re[i], re[j]);
+                std::swap(im[i], im[j]);
+            }
+        }
+        for (int len = 2; len <= n; len <<= 1) {
+            const double ang = -2.0 * M_PI / len;
+            const double wlenRe = std::cos(ang);
+            const double wlenIm = std::sin(ang);
+            const int half = len >> 1;
+            for (int i = 0; i < n; i += len) {
+                double wRe = 1.0, wIm = 0.0;
+                for (int k = 0; k < half; ++k) {
+                    const double uRe = re[i + k];
+                    const double uIm = im[i + k];
+                    const int idx = i + k + half;
+                    const double vRe = re[idx] * wRe - im[idx] * wIm;
+                    const double vIm = re[idx] * wIm + im[idx] * wRe;
+                    re[i + k] = uRe + vRe;
+                    im[i + k] = uIm + vIm;
+                    re[idx] = uRe - vRe;
+                    im[idx] = uIm - vIm;
+                    const double nWr = wRe * wlenRe - wIm * wlenIm;
+                    wIm = wRe * wlenIm + wIm * wlenRe;
+                    wRe = nWr;
+                }
+            }
+        }
+    }
+    static void ifftRadix2(QVector<double>& re, QVector<double>& im) {
+        for (double& v : im) v = -v;
+        fftRadix2(re, im);
+        const double n = (double)re.size();
+        for (int i = 0; i < re.size(); ++i) {
+            re[i] /= n;
+            im[i] = -im[i] / n;
+        }
+    }
+
+    // Denoise espectral: STFT 512/hop 256 + piso por mediana + gate em dB.
+    // Fallback C++ do SpectralDenoise de pierrot_audiofx/src/lib.rs — as duas
+    // implementações devem produzir o mesmo áudio.
+    //
+    // Ver a nota longa no cabeçalho do lib.rs: os pontos que realmente
+    // importavam foram (1) `outHead` POR CANAL — quando era um campo só, o
+    // canal direito perdia as amostras de índice ímpar e o áudio saía com
+    // −3 dB e fase invertida; (2) sqrt-Hann em vez de Hann (−2,3 dB e
+    // modulação a 187 Hz); (3) `preroll` POR CANAL, senão o início do clipe
+    // saía com fade-in (envelope a 0.48 do steady-state); (5) mediana em vez
+    // de mínimo, porque o mínimo de um tom estável É a potência do tom; (6) as
+    // duas proteções por cv e por tendência, que impedem o gate de cortar tom,
+    // voz e sweep.
+    //
+    // Medido (mesmos testes do lib.rs): tom 997 Hz a=30 −0,11 dB; sweep
+    // 200→3200 Hz a=30 −0,44 dB; voz+chiado a=18 −3,28 dB; chiado branco
+    // a=30 −5,66 dB; silêncio permanece silêncio.
+    //
+    // Limitações conhecidas: a remoção satura perto de −6 dB (a=50 → −6,00 dB)
+    // porque o piso mediano subestima o ruído — é o preço de proteger o sinal.
+    // E a API de streaming é de tamanho fixo: há latência fixa de N+HOP
+    // amostras e os últimos HOP (5,3 ms) de cada clipe não são renderizados.
+    struct SpectralDenoise {
+        static constexpr int FFT = 512;
+        static constexpr int HOP = 256;
+        static constexpr int BINS = FFT / 2 + 1;
+        static constexpr int MIN_WIN = 40;      // ≈210 ms de histórico por bin
+        static constexpr int LEARN_FRAMES = 56; // ≈300 ms sem gate
+        static constexpr double FLOOR_BIAS = 0.7; // calibra a mediana
+        static constexpr double GAIN_TAU = 0.030; // suavização temporal
+        static constexpr double CV_PROTECT = 0.35; // cv < isso ⇒ estacionário
+        static constexpr double RISE_PROTECT = 6.0;// mag > mediana·6 ⇒ sinal
+        static constexpr double GATE_LO_DB = 0.0; // abaixo disso = no piso
+        static constexpr double FS = 48000.0;
+
+        bool enabled = false;
+        double amount = 12.0;
+        QVector<double> window;   // sqrt-Hann periódica
+        QVector<double> inFifo[2];
+        QVector<double> ola[2];
+        QVector<double> noise[2];   // piso de ruído (potência)
+        QVector<double> gainDb[2]; // ganho suavizado em dB
+        QVector<double> freqDb, freqDb2; // ping-pong da suavização em frequência
+        QVector<double> hist;      // 2·BINS·MIN_WIN, cursor circular
+        int hpos[2] = {0, 0};      // POR CANAL
+        QVector<double> win;       // janela de trabalho (mediana por bin)
+        QVector<double> outFifo[2];
+        int outHead[2] = {0, 0};   // POR CANAL (bug: era compartilhado)
+        int preroll[2] = {0, 0};   // POR CANAL
+        QVector<double> fftRe, fftIm, mag, rawDb;
+        int frames = 0;
+
+        SpectralDenoise() {
+            window.resize(FFT);
+            for (int i = 0; i < FFT; ++i)
+                window[i] = std::sqrt(0.5 - 0.5 * std::cos(2.0 * M_PI * i / FFT));
+            reset(); // zera todos os buffers
+        }
+        void reset() {
+            inFifo[0].clear(); inFifo[1].clear();
+            ola[0].fill(0.0, FFT); ola[1].fill(0.0, FFT);
+            noise[0].fill(1e-12, BINS); noise[1].fill(1e-12, BINS);
+            gainDb[0].fill(0.0, BINS); gainDb[1].fill(0.0, BINS);
+            freqDb.fill(0.0, BINS);
+            freqDb2.fill(0.0, BINS);
+            win.fill(0.0, MIN_WIN);
+            hist.fill(0.0, 2 * BINS * MIN_WIN);
+            hpos[0] = 0; hpos[1] = 0;
+            outFifo[0].clear(); outFifo[1].clear();
+            outHead[0] = 0; outHead[1] = 0;
+            preroll[0] = HOP; preroll[1] = HOP;
+            fftRe.fill(0.0, FFT); fftIm.fill(0.0, FFT); mag.fill(0.0, BINS);
+            rawDb.fill(0.0, BINS);
+            frames = 0;
+        }
+        void setParams(bool en, double amt) {
+            enabled = en;
+            amount = std::clamp(amt, 1.0, 50.0);
+        }
+        double popOut(int ch) {
+            const int h = outHead[ch];
+            if (h >= outFifo[ch].size()) {
+                outFifo[ch].clear();
+                outHead[ch] = 0;
+                return 0.0;
+            }
+            const double v = outFifo[ch][h];
+            outHead[ch] = h + 1;
+            // Pré-roll: descarta o 1º segmento, que viria só com uma frame de
+            // contribuição (peso w²[0..N/2] incompleto).
+            if (preroll[ch] > 0) {
+                --preroll[ch];
+                return 0.0;
+            }
+            if (h > 8192 && h * 2 > outFifo[ch].size()) {
+                outFifo[ch].remove(0, h);
+                outHead[ch] = 0;
+            }
+            return v;
+        }
+        void processChannelFrame(int ch) {
+            for (int i = 0; i < FFT; ++i) {
+                fftRe[i] = inFifo[ch][i] * window[i];
+                fftIm[i] = 0.0;
+            }
+            fftRadix2(fftRe, fftIm);
+            for (int b = 0; b < BINS; ++b)
+                mag[b] = fftRe[b] * fftRe[b] + fftIm[b] * fftIm[b];
+
+            // Histórico circular (cursor por canal).
+            const int hp = hpos[ch];
+            for (int b = 0; b < BINS; ++b)
+                hist[(ch * BINS + b) * MIN_WIN + hp] = mag[b];
+            hpos[ch] = (hp + 1) % MIN_WIN;
+
+            // No warmup o histórico tem posições nunca escritas: pré-preenche
+            // com o frame atual para o piso sair de uma estimativa real já na
+            // 1ª frame. `frames` incrementa 1x por canal.
+            const int filled = qMax(1, qMin(frames, MIN_WIN));
+            if (filled < MIN_WIN) {
+                for (int b = 0; b < BINS; ++b) {
+                    const int base = (ch * BINS + b) * MIN_WIN;
+                    for (int k = hp + 1; k < MIN_WIN; ++k)
+                        hist[base + k] = mag[b];
+                }
+            }
+
+            // Piso = mediana da janela, com as duas proteções:
+            //   cv < CV_PROTECT  ⇒ bin estacionário (tom cv 0.00, voz 0.02,
+            //                        chiado 1.0) ⇒ intocado;
+            //   mag atual > mediana·RISE_PROTECT ⇒ o bin está sendo ocupado
+            //                        por sinal agora (sweep/música).
+            for (int b = 0; b < BINS; ++b) {
+                const int base = (ch * BINS + b) * MIN_WIN;
+                for (int k = 0; k < filled; ++k) win[k] = hist[base + k];
+                for (int k = filled; k < MIN_WIN; ++k) win[k] = std::numeric_limits<double>::infinity();
+                std::sort(win.begin(), win.end());
+                const double median = win[filled / 2];
+                double sum = 0.0;
+                for (int k = 0; k < filled; ++k) sum += win[k];
+                const double mean = sum / filled;
+                double var = 0.0;
+                for (int k = 0; k < filled; ++k) {
+                    const double d = win[k] - mean;
+                    var += d * d;
+                }
+                var /= filled;
+                const double cv = mean > 0.0 ? std::sqrt(var) / mean
+                                            : std::numeric_limits<double>::infinity();
+                const bool rising = mag[b] > median * RISE_PROTECT;
+                noise[ch][b] = (cv < CV_PROTECT || rising)
+                    ? 1e-12
+                    : std::max(median * FLOOR_BIAS, 1e-12);
+            }
+
+            // Gate: rampa de −amount dB no piso até 0 dB em `amount` dB acima.
+            if (frames < LEARN_FRAMES) {
+                rawDb.fill(0.0, BINS);
+            } else {
+                for (int b = 0; b < BINS; ++b) {
+                    const double snrDb = 10.0 * std::log10(std::max(mag[b], 1e-300) / noise[ch][b]);
+                    const double t = std::clamp((snrDb - GATE_LO_DB) / amount, 0.0, 1.0);
+                    rawDb[b] = amount * (t - 1.0);
+                }
+            }
+
+            // Suavização temporal em dB (τ = 30 ms) e em frequência (3 taps × 2).
+            const double at = 1.0 - std::exp(-(double)HOP / (FS * GAIN_TAU));
+            for (int b = 0; b < BINS; ++b) {
+                gainDb[ch][b] += (rawDb[b] - gainDb[ch][b]) * at;
+                freqDb[b] = gainDb[ch][b];
+            }
+            // Ping-pong para não alocar a cada frame.
+            for (int pass = 0; pass < 2; ++pass) {
+                freqDb.swap(freqDb2);
+                for (int b = 1; b < BINS - 1; ++b)
+                    freqDb[b] = 0.25 * freqDb2[b - 1] + 0.5 * freqDb2[b] + 0.25 * freqDb2[b + 1];
+                freqDb[0] = freqDb2[0];
+                freqDb[BINS - 1] = freqDb2[BINS - 1];
+                for (int b = 0; b < BINS; ++b) gainDb[ch][b] = freqDb[b];
+            }
+
+            for (int b = 0; b < BINS; ++b) {
+                const double lin = std::clamp(std::pow(10.0, gainDb[ch][b] / 20.0), 0.0, 1.0);
+                fftRe[b] *= lin;
+                fftIm[b] *= lin;
+            }
+            ++frames;
+
+            ifftRadix2(fftRe, fftIm);
+            // OLA com a mesma sqrt-Hann: w_a·w_s = Hann, soma 1.0 com 50% overlap.
+            for (int i = 0; i < FFT; ++i)
+                ola[ch][i] += fftRe[i] * window[i];
+            for (int i = 0; i < HOP; ++i)
+                outFifo[ch].append(ola[ch][i]);
+            for (int i = 0; i < FFT - HOP; ++i)
+                ola[ch][i] = ola[ch][i + HOP];
+            for (int i = FFT - HOP; i < FFT; ++i)
+                ola[ch][i] = 0.0;
+            inFifo[ch].remove(0, HOP);
+        }
+        void processStereo(double* data, int nframes) {
+            if (!enabled) return;
+            for (int f = 0; f < nframes; ++f) {
+                inFifo[0].append(data[2 * f]);
+                inFifo[1].append(data[2 * f + 1]);
+                while (inFifo[0].size() >= FFT) {
+                    processChannelFrame(0);
+                    processChannelFrame(1);
+                }
+                data[2 * f] = popOut(0);
+                data[2 * f + 1] = popOut(1);
+            }
+        }
+    };
+
     void configure(double eqLow, double eqMid, double eqHigh, bool denoise,
                    double denoiseAmt, bool invertPhase, bool normalize,
                    bool reverb, double reverbMix, double reverbSize) {
@@ -421,8 +686,7 @@ public:
             high[ch].peaking(6000.0, 1.0, std::clamp(eqHigh, -12.0, 12.0), fs);
         }
         invert = invertPhase;
-        gateEnabled = denoise;
-        gateAmount = std::clamp(denoiseAmt, 1.0, 50.0);
+        dn.setParams(denoise, denoiseAmt);
         agcEnabled = normalize;
         reverbEnabled = reverb;
         reverbMixAmt = std::clamp(reverbMix, 0.0, 1.0);
@@ -435,7 +699,7 @@ public:
         for (int ch = 0; ch < 2; ++ch) {
             low[ch].reset(); mid[ch].reset(); high[ch].reset();
         }
-        gateEnv = 0.0;
+        dn.reset();
         agcLevel = 0.0;
         agcGain = 1.0;
         rv.setup(reverbSizeAmt); // limpa os buffers do reverb
@@ -443,24 +707,20 @@ public:
 
     // Processa `frames` amostras estéreo interleaved S16 no próprio buffer.
     void process(int16_t* buf, int frames) {
+        QVector<double> tmp((qsizetype)frames * 2);
         for (int f = 0; f < frames; ++f) {
             double l = buf[2 * f] / 32768.0;
             double r = buf[2 * f + 1] / 32768.0;
             l = high[0].tick(mid[0].tick(low[0].tick(l)));
             r = high[1].tick(mid[1].tick(low[1].tick(r)));
             if (invert) { l = -l; r = -r; }
-            if (gateEnabled) {
-                const double peak = qMax(std::fabs(l), std::fabs(r));
-                gateEnv = peak > gateEnv ? peak : gateEnv * 0.999;
-                const double db = 20.0 * std::log10(gateEnv + 1e-9);
-                const double floorDb = -50.0;
-                double g = 1.0;
-                if (db < floorDb) {
-                    const double depth = 1.0 - (db - floorDb) / (0.0 - floorDb);
-                    g = std::pow(10.0, -(gateAmount * depth) / 20.0);
-                }
-                l *= g; r *= g;
-            }
+            tmp[2 * f] = l;
+            tmp[2 * f + 1] = r;
+        }
+        dn.processStereo(tmp.data(), frames);
+        for (int f = 0; f < frames; ++f) {
+            double l = tmp[2 * f];
+            double r = tmp[2 * f + 1];
             if (agcEnabled) {
                 const double lvl = 0.5 * (l * l + r * r);
                 agcLevel = agcLevel * 0.999 + lvl * 0.001;
@@ -488,9 +748,6 @@ private:
     int m_key = -1;
     Biquad low[2], mid[2], high[2];
     bool invert = false;
-    bool gateEnabled = false;
-    double gateAmount = 12.0;
-    double gateEnv = 0.0;
     bool agcEnabled = false;
     double agcLevel = 0.0;
     double agcGain = 1.0;
@@ -498,6 +755,7 @@ private:
     double reverbMixAmt = 0.0;
     double reverbSizeAmt = 0.5;
     SimpleReverb rv; // DSP do Reverb EX (evita conflito com o parâmetro bool)
+    SpectralDenoise dn;
 };
 
 // O DSP dos efeitos vive no kernel Rust (lib pierrot_audiofx) quando o build
@@ -676,7 +934,9 @@ public:
                 initSource(s, w);
             }
             // Conform: garante o trecho sob o playhead + horizonte de leitura.
-            conform.request(s->cache, w.mediaPos, 3.0);
+            // 4s (era 3s): dá folga para o worker preencher à frente sem
+            // lacuna no corte, mesmo com sessões do doFill em rodízio.
+            conform.request(s->cache, w.mediaPos, 4.0);
             applyParams(s, w);
             if (w.isAudioTrack) {
                 AudioFx& tfx = m_trackFx[qMakePair(w.isAudioTrack, w.trackIndex)];
@@ -1287,6 +1547,10 @@ void PreviewWidget::refreshTimeLabelStyle() {
 }
 
 PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
+    // O QElapsedTimer da instrumentação precisa estar rodando antes do primeiro
+    // tick — sem start() ele fica inválido para sempre e todas as leituras de
+    // latência (worker/prefetch) davam 0, mascarando o gargalo de decode.
+    m_perfT.start();
     const QColor glyph = themeColors().monitorLabel;
     QColor hoverBg = themeColors().canvasBorder;
     hoverBg.setAlpha(70);
@@ -1585,6 +1849,16 @@ void PreviewWidget::setProject(Project* p) {
 }
 
 void PreviewWidget::refreshView() {
+    // Todo caminho de EDIÇÃO passa por aqui: TimelineWidget::modified,
+    // MediaPoolWidget::mediaChanged (mídia trocada), GraphEditorWidget::modified
+    // (keyframes de crop/LAINKA), PancropWidget::modified, MaskEditorDialog e
+    // ExpressWidget. O tick de playback NÃO passa por aqui (ele vai por
+    // applySeekVisual), então este é o ponto exato para invalidar o memo de
+    // applyCrop(): a chave carrega tempo e crop, mas não os parâmetros de LAINKA,
+    // MotiOn, efeitos básicos, máscaras ou a identidade do arquivo — mudar
+    // qualquer um deles com o playhead parado manteria a chave e devolveria o
+    // quadro antigo.
+    m_cropMemo = QImage();
     updateFrame();
     update();
 }
@@ -1627,6 +1901,62 @@ using namespace LainkaFx;
 
 void PreviewWidget::paintEvent(QPaintEvent*) {
     QPainter p(this);
+    PreviewProfiler::Scope paintScope(PreviewProfiler::active() ? &profFrame().paintNs : nullptr);
+    renderFrame(p);
+    // Os indicadores vão SEMPRE por cima, em qualquer caminho de render. Antes
+    // eles ficavam no fim de renderFrame(), que tem vários `return` antecipado
+    // (projeto vazio, cache de composição, caminho de clip único) — ou seja,
+    // em projetos com 2+ camadas o overlay de perf nunca aparecia, que é
+    // justamente o cenário que se quer diagnosticar.
+    drawPlaybackBadges(p);
+}
+
+void PreviewWidget::drawPlaybackBadges(QPainter& p) {
+    // Indicador de frames perdidos (visível quando há drops, sem env var).
+    if (m_playing && m_perf.droppedTotal > 0) {
+        p.save();
+        p.resetTransform();
+        QFont df = p.font();
+        df.setPointSizeF(8);
+        df.setBold(true);
+        p.setFont(df);
+        const QString dropTxt = QStringLiteral("Dropped: %1").arg(m_perf.droppedTotal);
+        const QRect dropR(width() - 130, 8, 122, 18);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(180, 50, 50, 180));
+        QPainterPath dropBg;
+        dropBg.addRoundedRect(QRectF(dropR), 3.0, 3.0);
+        p.drawPath(dropBg);
+        p.setPen(QColor(255, 255, 255, 220));
+        p.drawText(dropR, Qt::AlignCenter, dropTxt);
+        p.restore();
+    }
+
+    // Indicador de qualidade adaptativa (mostra quando auto-baixou).
+    if (m_adaptiveActive) {
+        p.save();
+        p.resetTransform();
+        QFont af = p.font();
+        af.setPointSizeF(8);
+        af.setBold(true);
+        p.setFont(af);
+        const QString adpTxt = QStringLiteral("Auto: %1p").arg(m_previewQuality);
+        const QRect adpR(width() - 130, m_playing && m_perf.droppedTotal > 0 ? 30 : 8, 122, 18);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(50, 120, 180, 180));
+        QPainterPath adpBg;
+        adpBg.addRoundedRect(QRectF(adpR), 3.0, 3.0);
+        p.drawPath(adpBg);
+        p.setPen(QColor(255, 255, 255, 220));
+        p.drawText(adpR, Qt::AlignCenter, adpTxt);
+        p.restore();
+    }
+
+    // Diagnóstico de performance (PIERROT_PERF_DEBUG=1).
+    drawPerfOverlay(p);
+}
+
+void PreviewWidget::renderFrame(QPainter& p) {
 
     // Fundo do console (área ao redor do monitor).
     p.fillRect(m_videoRect, themeColors().monitorBg);
@@ -1855,10 +2185,20 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
         if (!m_compositedCache.isNull() && m_compositedEpoch == m_currentFrameIndex
             && m_compositedCache.size() == canvas.size()
             && m_compositedLayerCount == layers.size()) {
+            if (PreviewProfiler::active()) {
+                profFrame().compositeEvaluated = true;
+                profFrame().compositeHit = true;
+            }
             p.drawImage(canvas.topLeft(), m_compositedCache);
             drawMaskOverlay(p, canvas, k);
             return;
         }
+        if (PreviewProfiler::active()) {
+            profFrame().compositeEvaluated = true;
+            profFrame().compositeHit = false;
+            profFrame().layers = layers.size();
+        }
+        PreviewProfiler::Scope compScope(PreviewProfiler::active() ? &profFrame().compositeNs : nullptr);
         QImage acc(canvas.size(), QImage::Format_ARGB32);
         acc.fill(Qt::black);
         QPainter ap(&acc);
@@ -1961,75 +2301,54 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
 
     // Overlay de edição de máscara (formas + alças do clipe sob edição).
     drawMaskOverlay(p, canvas, k);
-
-    // Indicador de frames perdidos (visível quando há drops, sem env var).
-    if (m_playing && m_perf.droppedTotal > 0) {
-        p.save();
-        p.resetTransform();
-        QFont df = p.font();
-        df.setPointSizeF(8);
-        df.setBold(true);
-        p.setFont(df);
-        const QString dropTxt = QStringLiteral("Dropped: %1").arg(m_perf.droppedTotal);
-        const QRect dropR(width() - 130, 8, 122, 18);
-        p.setPen(Qt::NoPen);
-        p.setBrush(QColor(180, 50, 50, 180));
-        QPainterPath dropBg;
-        dropBg.addRoundedRect(QRectF(dropR), 3.0, 3.0);
-        p.drawPath(dropBg);
-        p.setPen(QColor(255, 255, 255, 220));
-        p.drawText(dropR, Qt::AlignCenter, dropTxt);
-        p.restore();
-    }
-
-    // Indicador de qualidade adaptativa (mostra quando auto-baixou).
-    if (m_adaptiveActive) {
-        p.save();
-        p.resetTransform();
-        QFont af = p.font();
-        af.setPointSizeF(8);
-        af.setBold(true);
-        p.setFont(af);
-        const QString adpTxt = QStringLiteral("Auto: %1p").arg(m_previewQuality);
-        const QRect adpR(width() - 130, m_playing && m_perf.droppedTotal > 0 ? 30 : 8, 122, 18);
-        p.setPen(Qt::NoPen);
-        p.setBrush(QColor(50, 120, 180, 180));
-        QPainterPath adpBg;
-        adpBg.addRoundedRect(QRectF(adpR), 3.0, 3.0);
-        p.drawPath(adpBg);
-        p.setPen(QColor(255, 255, 255, 220));
-        p.drawText(adpR, Qt::AlignCenter, adpTxt);
-        p.restore();
-    }
-
-    // Diagnóstico de performance (PIERROT_PERF_DEBUG=1).
-    drawPerfOverlay(p);
 }
 
 void PreviewWidget::drawPerfOverlay(QPainter& p) {
     static const bool on = qEnvironmentVariableIsSet("PIERROT_PERF_DEBUG");
     if (!on) return;
+    // Estágios do tick corrente (ms). O registro vive no PlaybackEngine e é
+    // preenchido pelos dois lados — o widget escreve as fases assíncronas
+    // (worker, prefetch, paint) no mesmo registro em que o tick está.
+    const PreviewProfiler::Frame& fr = profFrame();
+    const PreviewProfiler& prof = PreviewProfiler::instance();
+    const auto ms = [](double ns) { return ns / 1e6; };
+
     p.save();
     p.resetTransform();
-    const QRect box(8, 8, 340, 140);
-    p.fillRect(box, QColor(0, 0, 0, 180));
+    const QRect box(8, 8, 392, 172);
+    p.fillRect(box, QColor(0, 0, 0, 190));
     QFont f = p.font();
     f.setPointSizeF(8);
     p.setFont(f);
     p.setPen(QColor(255, 255, 255));
-    QString txt = QStringLiteral(
-        "tick(ms): seek %1  prefetch %2  mix %3  total %4\n"
-        "worker->frame: %5 ms   prefetch->ready: %6 ms\n"
-        "corte: %7   (cortes cruzados: %8)\n"
-        "prefetch: req=%9 val=%10\n"
-        "dropped: %11   adaptive: %12")
-        .arg(m_perf.seekMs).arg(m_perf.prefetchMs).arg(m_perf.mixMs)
-        .arg(m_perf.totalMs)
-        .arg(m_perf.workerMs).arg(m_perf.prefetchLatMs)
-        .arg(m_perf.cut ? QStringLiteral("SIM") : QStringLiteral("não"))
-        .arg(m_perf.cutCount)
-        .arg(m_prefetch.requested ? 1 : 0).arg(m_prefetch.valid ? 1 : 0)
+    const QString txt = QStringLiteral(
+        "fonte: %1   quadros: %2   p95 tick %3 ms  p95 decode %4 ms\n"
+        "tick %5 ms = clock %6 + seek %7 + prefetch %8 + mix %9\n"
+        "decode(worker->frame) %10 ms   prefetch->ready %11 ms\n"
+        "paint %12 ms (comp %13)   resolve proxy %14 ms\n"
+        "prefetch %15   fila %16   camadas %17   cortes %18\n"
+        "dropped %19   skip %20   adaptive %21")
+        .arg(prof.wroteProxy() ? QStringLiteral("PROXY")
+                               : QStringLiteral("original"))
+        .arg(prof.frameCount())
+        .arg(ms(prof.stats(QStringLiteral("tickNs")).p95), 0, 'f', 1)
+        .arg(ms(prof.stats(QStringLiteral("workerNs")).p95), 0, 'f', 1)
+        .arg(ms(fr.tickNs), 0, 'f', 1)
+        .arg(ms(fr.clockNs), 0, 'f', 1)
+        .arg(ms(fr.seekNs), 0, 'f', 1)
+        .arg(ms(fr.prefetchNs), 0, 'f', 1)
+        .arg(ms(fr.mixNs), 0, 'f', 1)
+        .arg(ms(fr.workerNs), 0, 'f', 1)
+        .arg(ms(fr.prefetchLatNs), 0, 'f', 1)
+        .arg(ms(fr.paintNs), 0, 'f', 1)
+        .arg(ms(fr.compositeNs), 0, 'f', 1)
+        .arg(ms(fr.resolveNs), 0, 'f', 1)
+        .arg(fr.prefetchHit ? QStringLiteral("HIT") : QStringLiteral("miss"))
+        .arg(fr.queue)
+        .arg(fr.layers)
+        .arg(prof.cuts())
         .arg(m_perf.droppedTotal)
+        .arg(fr.skipped)
         .arg(m_adaptiveActive
              ? QStringLiteral("ON (%1p)").arg(m_previewQuality)
              : QStringLiteral("OFF"));
@@ -2185,6 +2504,27 @@ void PreviewWidget::onSeek(double t) {
     applySeekVisual(t);
 }
 
+// Intervalo do "desengasgo" (flush periódico dos buffers do decoder).
+// Padrão 0 = desligado. PIERROT_DESENGASGA_MS=<ms> religa.
+//
+// Medido numa fonte 1080p60 (H.264 High@4.2, 252 s, 13 Mbps), 3 runs de 252 s:
+// com o flush a cada 30 s aparecem 7 travamentos de decode de 114-338 ms,
+// exatamente a cada 30 s (26/56/86/116/146/176/206 s); desligado, zero picos
+// e p99 de decode idêntico (0,55 ms). A degradação de buffer que o flush existia
+// para evitar não se confirma: com o flush desligado o p95 de decode ficou plano
+// ao longo dos 4 minutos (0,35 -> 0,37 ms). Baixar de 10s para 30s só dilatou o
+// custo, não o reduziu, porque o custo é o re-seek frio que o flush provoca —
+// não a frequência. Fica desligado por padrão; se o engasgo reaparecer em
+// alguma fonte específica, religue por env var em vez de reintroduzir o padrão.
+static qint64 desengasgaIntervalMs() {
+    static const qint64 v = [] {
+        bool ok = false;
+        const qint64 e = qEnvironmentVariableIntValue("PIERROT_DESENGASGA_MS", &ok);
+        return ok && e >= 0 ? e : qint64(0);
+    }();
+    return v;
+}
+
 // Decodifica e desenha o quadro na posição `t` (o transporte/relógio é do
 // PlaybackEngine; aqui só a parte visual/decodificação).
 void PreviewWidget::applySeekVisual(double t) {
@@ -2196,13 +2536,23 @@ void PreviewWidget::applySeekVisual(double t) {
     // frameAt em vídeos longos — a causa do vídeo engasgar com áudio perfeito.
     // O flush é barato (releaseBuffers não fecha o arquivo; o próximo pedido
     // faz re-seek) e roda no worker thread, seriado com os decodeOne.
-    if (m_playing && m_frameWorker) {
+    if (m_playing && m_frameWorker && desengasgaIntervalMs() > 0) {
         const qint64 nowMs = m_desengasgaT.isValid()
                                  ? m_desengasgaT.elapsed() : 0;
         if (!m_desengasgaT.isValid()) {
             m_desengasgaT.start();
             m_desengasgaLastMs = 0;
-        } else if (nowMs - m_desengasgaLastMs >= 10000) {
+        } else if (nowMs - m_desengasgaLastMs >= desengasgaIntervalMs()) {
+            // Medido numa fonte 1080p60 (H.264 High@4.2, 252 s, 13 Mbps):
+            // cada flush custa um re-seek frio de 114-304 ms, ou seja, 4
+            // travamentos de ~0,25 s em 120 s de reprodução — exatamente a cada
+            // 30 s. Baixar de 10s para 30s só dilatou o custo, não o reduziu.
+            // E o problema que ele existia para evitar não aparece: com o flush
+            // desligado o p95 de decode ficou plano (0,35-0,37 ms) nos 4
+            // minutos, sem degradação. Por isso o intervalo virou configurável
+            // (PIERROT_DESENGASGA_MS=0) em vez de fixo — desligar é o padrão
+            // melhor medido, mas se algum dia o engasgo reaparecer em outra
+            // fonte, basta ligar de volta por env var.
             m_desengasgaLastMs = nowMs;
             QMetaObject::invokeMethod(m_frameWorker, "desengasga", Qt::QueuedConnection);
         }
@@ -2526,7 +2876,7 @@ QVector<AudioMixer::SourceInfo> buildWarmSources(
     const Project* p, double t, const QVector<AudioMixer::SourceInfo>& active) {
     QVector<AudioMixer::SourceInfo> out;
     if (!p) return out;
-    constexpr double kWarmWin = 0.6; // segundos à frente do playhead
+    constexpr double kWarmWin = 0.8; // segundos à frente do playhead
     bool anySolo = false;
     for (const Track& tr : p->videoTracks)
         if (tr.solo) { anySolo = true; break; }
@@ -2641,10 +2991,12 @@ void PreviewWidget::startAudio(double t) {
     // Pré-aquece o head do playhead ANTES de o sink puxar: sem isso os
     // primeiros chunks do warm-up frio saem mudo. Na primeira reprodução,
     // pular o wait para não congelar a UI (o áudio pode ter um leve
-    // atraso de 1-2 frames, imperceptível).
+    // atraso de 1-2 frames, imperceptível). Timeout de 150ms (era 300ms):
+    // o conform já roda em background; segurar a UI por 300ms era um
+    // micro-travamento perceptível no play.
     if (m_audioConformWarmed) {
         m_audioFeed->waitReadyBeforeSink((int)(0.15 * AudioConformCache::kSampleRate),
-                                         300);
+                                         150);
     } else {
         m_audioConformWarmed = true;
     }
@@ -2702,6 +3054,15 @@ void PreviewWidget::updateMixAudio(double t, bool reseek) {
     const QVector<AudioMixer::SourceInfo> warm =
         buildWarmSources(m_project, t, sources);
     m_audioFeed->updateSources(sources, reseek, warm, -1, t);
+}
+
+QString PreviewWidget::resolvePreviewVideo(const QString& srcPath) {
+    if (!PreviewProfiler::active())
+        return ProxyManager::instance().resolveVideo(srcPath);
+    const qint64 t0 = PreviewProfiler::nowNs();
+    const QString resolved = ProxyManager::instance().resolveVideo(srcPath);
+    profFrame().resolveNs += PreviewProfiler::nowNs() - t0;
+    return resolved;
 }
 
 void PreviewWidget::updateFrame() {
@@ -2887,7 +3248,7 @@ void PreviewWidget::updateFrame() {
             std::clamp(kfValue(under->kfCropB, under->cropB, rel), 0.0, 0.9) * 1000.0);
         const MediaItem* um = m_project->findMedia(under->mediaId);
         if (um && um->hasVideo && m_frameWorker) {
-            const QString uvpath = ProxyManager::instance().resolveVideo(um->filePath);
+            const QString uvpath = resolvePreviewVideo(um->filePath);
             const double uSrcT = clipSrcTime(*under, m_playhead - under->pos);
             QMutexLocker l(&m_frameMutex);
             const bool already = m_underRequested && m_underPath == uvpath
@@ -2916,7 +3277,15 @@ void PreviewWidget::updateFrame() {
 
     // Path efetivo de vídeo do clipe do topo: proxy se houver (consistente com
     // requestFrame/onFrameReady e o cache).
-    const QString vpath = ProxyManager::instance().resolveVideo(m->filePath);
+    const QString vpath = resolvePreviewVideo(m->filePath);
+    if (PreviewProfiler::active()) {
+        // O que o A/B proxy-vs-original precisa saber: de onde saiu o quadro
+        // que vai aparecer na tela (o clipe do topo), não quantas camadas
+        // inferiores resolveram para proxy.
+        profFrame().proxy = (vpath != m->filePath);
+        profFrame().cut = (m_profTopClipId != m->id);
+        m_profTopClipId = m->id;
+    }
 
     // Se temos um quadro pré-carregado que bate com a posição de entrada do novo clipe, exibe imediatamente.
     bool usedPrefetch = false;
@@ -2953,11 +3322,13 @@ void PreviewWidget::updateFrame() {
         }
     }
     if (usedPrefetch) {
+        if (PreviewProfiler::active()) profFrame().prefetchHit = true;
         // Já no tick do corte, dispara o próximo frame: o decoder trocado está
         // posicionado e decodifica adiante, evitando "segurar" o frame do corte.
         requestFrame(clip->id, vpath, srcT + 1.0 / projFps(m_project), decW);
         return;
     }
+    if (PreviewProfiler::active()) profFrame().prefetchHit = false;
     requestFrame(clip->id, vpath, srcT, decW);
 }
 
@@ -3021,7 +3392,7 @@ void PreviewWidget::requestLowerLayers(int decW) {
         // Cor sólida não tem arquivo: é gerada na pintura, não pede decode.
         if (m->isSolid) continue;
         const double srcT = clipSrcTime(*c, m_playhead - c->pos);
-        const QString vpath = ProxyManager::instance().resolveVideo(m->filePath);
+        const QString vpath = resolvePreviewVideo(m->filePath);
         {
             QMutexLocker l(&m_frameMutex);
             const auto it = m_layerCache.constFind(c->id);
@@ -3071,6 +3442,10 @@ void PreviewWidget::requestLowerLayers(int decW) {
                   .arg(m_playhead, 0, 'f', 3)
                   .arg(top ? top->id.mid(0,8) : QString())
                   .arg(m_reqQueue.size());
+    if (PreviewProfiler::active()) {
+        profFrame().lowerReq = dbgLayerDecodes;
+        profFrame().queue = m_reqQueue.size();
+    }
 }
 
 // Chamado com m_frameMutex segurado.
@@ -3122,11 +3497,22 @@ static void clipCrop(const Clip& c, double rel, int& cL, int& cR, int& cT, int& 
 }
 
 void PreviewWidget::onFrameReady(const QString& clipId, const QString& path, double t, int maxW, const QImage& img) {
+    const qint64 workerLatNs =
+        (PreviewProfiler::active() && m_perfT.isValid() && m_perfWorkerStartNs > 0)
+            ? m_perfT.nsecsElapsed() - m_perfWorkerStartNs
+            : 0;
+    if (PreviewProfiler::active())
+        profFrame().workerNs = workerLatNs; // latência do decode: dispatch -> quadro pronto
+        profFrame().cacheHits = FFmpegDecoder::cacheHits();
+        profFrame().cacheMisses = FFmpegDecoder::cacheMisses();
+        profFrame().decSeekNs = qint64(FFmpegDecoder::lastSeekNs());
+        profFrame().decDiscard = FFmpegDecoder::lastDiscard();
+        profFrame().decWorkNs = FFmpegDecoder::lastWorkNs();
     {
         QMutexLocker l(&m_frameMutex);
         m_workerBusy = false;
-        if (m_perfT.isValid() && m_perfWorkerStartNs > 0)
-            m_perf.workerMs = (m_perfT.nsecsElapsed() - m_perfWorkerStartNs) / 1000000;
+        m_perfWorkerStartNs = 0;
+        if (workerLatNs > 0) m_perf.workerMs = workerLatNs / 1000000;
         kickFrameWorker(); // continua com o próximo pedido, se houver
     }
 
@@ -3162,7 +3548,7 @@ void PreviewWidget::onFrameReady(const QString& clipId, const QString& path, dou
             }
         }
         // Acumula dropped frames para o overlay.
-        m_perf.droppedTotal += consumeDroppedFrames();
+        m_perf.droppedTotal += consumeDroppedFrames(); // só o overlay do live
     }
 
     if (img.isNull() || !m_project) return;
@@ -3173,7 +3559,10 @@ void PreviewWidget::onFrameReady(const QString& clipId, const QString& path, dou
             if (c.id == clipId) { clip = &c; break; }
     if (!clip) return;
     const MediaItem* m = m_project->findMedia(clip->mediaId);
-    if (!m || ProxyManager::instance().resolveVideo(m->filePath) != path) return;
+    if (!m) return;
+    if (resolvePreviewVideo(m->filePath) != path) return;
+    if (PreviewProfiler::active())
+        profFrame().proxy = (path != m->filePath); // o quadro exibido veio de proxy?
 
     // Ignora quadros decodificados para outra posição (scrub/seek rápido muito distante).
     const double wantT = clipSrcTime(*clip, m_playhead - clip->pos);
@@ -3251,9 +3640,12 @@ void PreviewWidget::onFrameReady(const QString& clipId, const QString& path, dou
 }
 
 void PreviewWidget::onPrefetchReady(const QString& path, double t, int maxW, const QImage& img) {
+    const qint64 latNs =
+        (PreviewProfiler::active() && m_perfT.isValid() && m_perfPrefetchStartNs > 0)
+            ? m_perfT.nsecsElapsed() - m_perfPrefetchStartNs : 0;
+    if (PreviewProfiler::active()) profFrame().prefetchLatNs = latNs;
     QMutexLocker l(&m_frameMutex);
-    if (m_perfT.isValid() && m_perfPrefetchStartNs > 0)
-        m_perf.prefetchLatMs = (m_perfT.nsecsElapsed() - m_perfPrefetchStartNs) / 1000000;
+    if (latNs > 0) m_perf.prefetchLatMs = latNs / 1000000;
     m_perfPrefetchStartNs = 0;
     // Quadro do clipe de trás (transição ativa).
     if (m_underRequested && m_underPath == path
@@ -3277,10 +3669,13 @@ void PreviewWidget::onBgPrefetchDone(const QString& path, double t, int maxW,
                                      const QImage& frame0, const QImage& frame1,
                                      FFmpegDecoder* decoder) {
     const double step = m_project ? 1.0 / projFps(m_project) : 1.0 / 30.0;
+    const qint64 latNs =
+        (PreviewProfiler::active() && m_perfT.isValid() && m_perfPrefetchStartNs > 0)
+            ? m_perfT.nsecsElapsed() - m_perfPrefetchStartNs : 0;
+    if (PreviewProfiler::active()) profFrame().prefetchLatNs = latNs;
     {
         QMutexLocker l(&m_frameMutex);
-        if (m_perfT.isValid() && m_perfPrefetchStartNs > 0)
-            m_perf.prefetchLatMs = (m_perfT.nsecsElapsed() - m_perfPrefetchStartNs) / 1000000;
+        if (latNs > 0) m_perf.prefetchLatMs = latNs / 1000000;
         m_perfPrefetchStartNs = 0;
         m_bgPrefetchBusy = false;
         if (m_prefetch.requested && m_prefetch.path == path && m_prefetch.maxW == maxW) {
@@ -3346,7 +3741,7 @@ void PreviewWidget::updatePrefetch() {
     // Prefetch no mesmo tamanho do quadro com qualidade (nunca abaixo da tela).
     const int widgetW = m_videoRect.width() > 0 ? m_videoRect.width() : 960;
     const int decW = qMax(160, qMax(m_previewQuality, widgetW));
-    const QString vpath = ProxyManager::instance().resolveVideo(nextMedia->filePath);
+    const QString vpath = resolvePreviewVideo(nextMedia->filePath);
 
     {
         QMutexLocker l(&m_frameMutex);
@@ -3785,6 +4180,35 @@ void PreviewWidget::applyBasicEffectsOn(QImage& img, const Clip& c, double rel) 
 
 // Aplica pan/crop sobre o quadro cheio (m_frameFull) e guarda em m_frame.
 void PreviewWidget::applyCrop() {
+    // Memo LAINKA: em stop motion o tempo quantizado é constante por N quadros,
+    // mas esta cadeia inteira é cara e síncrona na thread da UI (o warp 8x8 são
+    // 64 transforms de tile e o MotiOn desenha o quadro N vezes com
+    // SmoothPixmapTransform). Como nada aqui depende do tempo NÃO quantizado —
+    // o jitter/flicker/warp usam m_lainkaQuantizedTime e as máscaras usam
+    // m_lastSrcT, que também é o tempo quantizado — o resultado de um quadro
+    // vale para os N-1 seguintes.
+    //
+    // Duas exceções, ambas com saída dependente do histórico/relógio:
+    //  - onion skin e o MotiOn do LAINKA consomem `prevFrame` (o quadro
+    //    anterior), que deixa de ser atualizado enquanto o memo acerta;
+    //  - OFX recebe m_playhead cru e pode variar a cada quadro.
+    // O crop entra na chave porque os keyframes dele são avaliados no tempo
+    // NÃO quantizado: com crop animado o recorte anda dentro da janela de stop
+    // motion mesmo com o tempo quantizado parado.
+    const bool memoOk = m_clipLainkaEnabled
+                        && m_clipOfxFx.isEmpty()
+                        && m_clipLainkaOnionSkin < 1e-6
+                        && m_clipLainkaMotionBlur < 1e-6;
+    if (memoOk && !m_cropMemo.isNull() && m_cropMemoClipId == m_clipLainkaId
+        && m_cropMemoTime == m_lainkaQuantizedTime
+        && m_cropMemoSrcT == m_lastSrcT
+        && m_cropMemoSrcW == m_lastDecodeW
+        && m_cropMemoCropL == m_lastCropL && m_cropMemoCropR == m_lastCropR
+        && m_cropMemoCropT == m_lastCropT && m_cropMemoCropB == m_lastCropB) {
+        m_frame = m_cropMemo;
+        return;
+    }
+
     m_frame = applyCropTo(m_frameFull, m_lastCropL, m_lastCropR, m_lastCropT, m_lastCropB);
     // Aplica efeito LAINKA (stop motion) após o crop.
     if (m_clipLainkaEnabled) {
@@ -3838,6 +4262,23 @@ void PreviewWidget::applyCrop() {
                 }();
         m_frame = OfxRenderer::applyOfxEffects(m_frame, m_clipOfxFx, m_ofxManager,
                                                 m_playhead);
+    }
+
+    if (memoOk) {
+        m_cropMemo = m_frame;
+        m_cropMemoClipId = m_clipLainkaId;
+        m_cropMemoTime = m_lainkaQuantizedTime;
+        m_cropMemoSrcT = m_lastSrcT;
+        m_cropMemoSrcW = m_lastDecodeW;
+        m_cropMemoCropL = m_lastCropL;
+        m_cropMemoCropR = m_lastCropR;
+        m_cropMemoCropT = m_lastCropT;
+        m_cropMemoCropB = m_lastCropB;
+    } else if (!m_cropMemo.isNull()) {
+        // Fora do LAINKA (ou com OFX/onion skin/MotiOn temporal) não há acerto
+        // possível, então libera a imagem em vez de segurar ~8 MB à toa — o que
+        // o comentário do membro promete.
+        m_cropMemo = QImage();
     }
 }
 

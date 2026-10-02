@@ -228,7 +228,10 @@ void AudioConformCache::doFill(Chunk* c, double startSec, double horizonSec,
     // PERSISTENTE (vive entre sessões do mesmo chunk): continuar o fronterio é
     // decode contínuo SEM re-open/re-seek — essencial para não criar lacunas
     // (o "flick") em reprodução longa de um único arquivo.
-    const qint64 goal = qMin(secToFrame(horizonSec), secToFrame(2.0));
+    // 3.5s cobre o horizonte pedido pelo mixer (3s ativo / 6s warm em duas
+    // sessões) sem deixar o worker "faminto" entre pedidos — causa de
+    // micro-silêncio no corte quando a sessão antiga (2.0s) não alcançava.
+    const qint64 goal = qMin(secToFrame(horizonSec), secToFrame(3.5));
     qint64 sessionWritten = 0;
 
     std::vector<int16_t> buf(4096 * kChannels); // ~85ms por acesso

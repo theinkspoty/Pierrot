@@ -10,6 +10,8 @@
 #include <QHash>
 #include <QByteArray>
 #include <QStringList>
+#include <QElapsedTimer>
+#include <memory>
 #include <QJsonDocument>
 #include <QIcon>
 #include <QDockWidget>
@@ -50,6 +52,15 @@ public:
     explicit MainWindow(QWidget* parent = nullptr);
     void openProjectFile(const QString& path);
     void createProject(int width, int height, int fps, const QString& name);
+
+    // Harness de reprodução sem interação (`pierrot --autoplay`). Abre o
+    // projeto, fixa a preferência de proxy, espera os proxies ficarem prontos
+    // (opcional), reproduz por `seconds` e grava o relatório do
+    // PreviewProfiler em `jsonOut`. `useProxies` < 0 mantém o que o projeto
+    // pede; `warmupSec` descarta o início da reprodução (cache/decoders ainda
+    // frios) antes de começar a medir.
+    void autoplay(double seconds, int useProxies, double fromSec,
+                  double warmupSec, bool waitProxies, const QString& jsonOut);
 protected:
     void closeEvent(QCloseEvent* event) override;
     void showEvent(QShowEvent* event) override;
@@ -60,6 +71,16 @@ private slots:
     void setModified();
     void autoSave();
 private:
+    // Estado compartilhado da espera por proxies: vive no heap porque o timer
+    // de polling sobrevive ao retorno de awaitProxiesThenMeasure().
+    struct ProxyWaitState {
+        QElapsedTimer waited;
+        int tries = 0;
+    };
+    void awaitProxiesThenMeasure(double start, double warmupSec, double seconds);
+    void startMeasuredRun(double start, double warmupSec, double seconds);
+    QString m_autoplayJsonOut;
+
     void setUndoLabel(const QString& label);
     void jumpToUndo(int index);
     void updateHistoryList();

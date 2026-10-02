@@ -23,6 +23,7 @@
 #include "colombina/export/NleInterchange.h"
 #include "ui/ScopeWidget.h"
 #include "ui/PreviewMonitor.h"
+#include "ui/PreviewProfiler.h"
 #include "ui/ProjectSettingsDialog.h"
 #include "ui/SettingsDialog.h"
 #include "ui/Theme.h"
@@ -2276,10 +2277,96 @@ void MainWindow::openProjectFile(const QString& path) {
     m_currentFile = path;
     m_modified = false;
     ProxyManager::instance().setProjectUsesProxies(m_project.useProxies);
+    // Sonda as mídias do projeto para enfileirar proxies. Sem isso, abrir um
+    // projeto do disco nunca gerava proxy nenhum: probeAndQueue() só era
+    // chamado na importação de mídia nova, então um projeto 4K aberto de um
+    // .Blanc reproduzia do original a vida inteira (a menos que outra sessão
+    // tivesse gerado antes e deixado o metadata.json).
+    for (const MediaItem& mi : m_project.media)
+        if (mi.hasVideo && !mi.filePath.isEmpty())
+            ProxyManager::instance().probeAndQueue(mi.filePath);
     applyUndoState();
     updateTitle();
     addRecentProject(path);
     statusBar()->showMessage(tr("Projeto aberto: %1").arg(path));
+}
+
+// Espera a fila de proxies esvaziar (teto de 10 min) e então abre a janela
+// medida. Fora daqui fica o warm-up: abrir decoders e aquecer caches.
+void MainWindow::awaitProxiesThenMeasure(double start, double warmupSec, double seconds) {
+    auto* poll = new QTimer(this);
+    poll->setInterval(500);
+    // O timer é dono da janela e pode ficar vivo bem depois deste retorno, então
+    // o estado da espera precisa sobreviver à stack: capturar &waited/&tries
+    // deixava a lambda lendo memória de pilha destruída (UB) bem depois do fim
+    // de awaitProxiesThenMeasure().
+    auto st = std::make_shared<ProxyWaitState>();
+    st->waited.start();
+    connect(poll, &QTimer::timeout, poll, [this, poll, st, start, warmupSec, seconds]() {
+        const bool timeout = st->waited.elapsed() > 600000;
+        if (ProxyManager::instance().busy() && !timeout && ++st->tries <= 1200) return;
+        if (timeout)
+            qWarning("[autoplay] proxies ainda em fila após 10 min — medindo assim mesmo.");
+        poll->stop();
+        poll->deleteLater();
+        startMeasuredRun(start, warmupSec, seconds);
+    });
+    poll->start();
+}
+
+// Abre a janela medida: roda `warmupSec` fora da coleta, zera o profiler,
+// reproduz `seconds` e grava o JSON.
+void MainWindow::startMeasuredRun(double start, double warmupSec, double seconds) {
+    m_preview->playFrom(start);
+    QTimer::singleShot(int(warmupSec * 1000.0), this, [this, seconds, start]() {
+        PreviewProfiler::instance().beginSession(QStringLiteral("autoplay"),
+                                                 m_project.useProxies, m_project.fps);
+        m_preview->seek(start);
+        m_preview->playFrom(start);
+        QTimer::singleShot(int(seconds * 1000.0), this, [this]() {
+            PreviewProfiler::instance().endSession();
+            const auto& prof = PreviewProfiler::instance();
+            const bool ok = prof.dumpJson(m_autoplayJsonOut);
+            qInfo("[autoplay] relatório %s: %d quadros, fonte=%s, cortes=%d, dropped=%lld",
+                  ok ? "gravado" : "FALHOU", prof.frameCount(),
+                  prof.wroteProxy() ? "proxy" : "original", prof.cuts(),
+                  static_cast<long long>(prof.droppedTotal()));
+            m_preview->setLoopEnabled(false);
+            m_preview->togglePlay(); // pausa
+            QTimer::singleShot(200, qApp, &QCoreApplication::quit);
+        });
+    });
+}
+
+// ── Harness de reprodução sem interação (pierrot --autoplay) ──────────────
+//
+// Existe para o A/B proxy-vs-original ser reproduzível: a comparação depende
+// de a partida começar sempre do mesmo lugar, com os proxies no mesmo estado de
+// calor. Fica em uma função só, com o mínimo de conhecimento de
+// ProxyManager/PreviewProfiler, para não espalhar isso pela classe.
+void MainWindow::autoplay(double seconds, int useProxies, double fromSec,
+                          double warmupSec, bool waitProxies, const QString& jsonOut) {
+    m_autoplayJsonOut = jsonOut;
+    if (useProxies >= 0) {
+        m_project.useProxies = useProxies != 0;
+        ProxyManager::instance().setProjectUsesProxies(m_project.useProxies);
+    }
+    if (!m_preview || m_project.duration() <= 0.0) {
+        qWarning("[autoplay] projeto vazio ou sem duração — nada a medir.");
+        QTimer::singleShot(0, qApp, &QCoreApplication::quit);
+        return;
+    }
+
+    // Loop sobre o projeto inteiro: a reprodução não pode parar no fim de uma
+    // faixa e polluir a comparação com um trecho sem clipe.
+    m_preview->setLoopRange(0.0, m_project.duration());
+    m_preview->setLoopEnabled(true);
+
+    const double start = std::clamp(fromSec, 0.0, std::max(0.0, m_project.duration() - 0.5));
+    if (waitProxies)
+        awaitProxiesThenMeasure(start, warmupSec, seconds);
+    else
+        startMeasuredRun(start, warmupSec, seconds);
 }
 
 void MainWindow::createProject(int width, int height, int fps, const QString& name) {

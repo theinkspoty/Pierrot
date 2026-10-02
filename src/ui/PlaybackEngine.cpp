@@ -41,7 +41,18 @@ void PlaybackEngine::setFrameInterval() {
     // Dispara em metade do período do frame: o tick calcula o frame alvo pelo
     // clock de alta precisão e avança exatamente 1 frame por vez. Com timer
     // grosseiro (1x/frame), o QTimer atrasado pela UI fazia o llround pular frames.
-    m_timer->setInterval(fps > 0.0 ? qBound(8, (int)std::lround(1000.0 / fps / 2.0), 40) : 33);
+    // Taxa de polling do loop. Medido: a 2x o fps sobra so ~0,67 ms de folga
+    // entre o intervalo (8 ms) e a duracao do quadro (16,67 ms a 60 fps), e
+    // qualquer jitter do timer acima disso faz o playhead atravessar dois
+    // quadros num unico tick — o quadro do meio nunca e exibido. Isso explica
+    // os drops de 1 quadro que apareciam com decode e event loop rapidos.
+    // PIERROT_TICK_DIV=2|3|4|5 permite medir; maior divisor = mais folga.
+    static const int kTickDiv = [] {
+        bool ok = false;
+        const int d = qEnvironmentVariableIntValue("PIERROT_TICK_DIV", &ok);
+        return (ok && d >= 1 && d <= 8) ? d : 2;
+    }();
+    m_timer->setInterval(fps > 0.0 ? qBound(2, (int)std::lround(1000.0 / fps / kTickDiv), 40) : 33);
 }
 
 void PlaybackEngine::seek(double t) {
@@ -83,7 +94,12 @@ void PlaybackEngine::applySeekInternal(double t) {
                         .arg(prev, 0, 'f', 3).arg(m_playhead, 0, 'f', 3)
                         .arg(m_playing ? 1 : 0));
     m_currentFrameIndex = std::llround(m_playhead * fps);
-    onSeek(m_playhead);
+    {
+        // onSeek decodifica/adota o quadro do playhead — é o trabalho
+        // dominante do tick, então é medido aqui.
+        PreviewProfiler::Scope s(&m_prof.seekNs);
+        onSeek(m_playhead);
+    }
     onPlayheadMoved(m_playhead);
 }
 
@@ -210,10 +226,26 @@ void PlaybackEngine::stopPlaybackInternal() {
     onStateChanged(false);
 }
 
+// Envolve tickImpl() para registrar um sample por tick (inclusive os ticks que
+// retornam cedo por ainda não ter cruzado o boundary do frame — são esses que
+// revelam o tick "barato" ao lado do tick caro).
 void PlaybackEngine::tick() {
+    if (!PreviewProfiler::active()) { tickImpl(); return; }
+    const qint64 t0 = PreviewProfiler::nowNs();
+    tickImpl();
+    m_prof.tickNs = PreviewProfiler::nowNs() - t0;
+    m_prof.seq = ++m_profSeq;
+    PreviewProfiler::instance().add(m_prof);
+    m_prof = PreviewProfiler::Frame();
+}
+
+void PlaybackEngine::tickImpl() {
     if (!m_project) { stopPlaybackInternal(); return; }
     const double fps = projFps(m_project);
     const double dur = m_project->duration();
+
+    // ── Fase 1: relógio (wall + slew de áudio) ────────────────────────
+    const qint64 clockStart = PreviewProfiler::active() ? PreviewProfiler::nowNs() : 0;
 
     // Audio adiado:100ms após o play, dispara o startAudio.
     if (m_delayedAudioPending && m_playing) {
@@ -315,6 +347,51 @@ void PlaybackEngine::tick() {
     // Determina o índice de frame com base no clock de alta precisão
     const qint64 targetFrame = std::llround(t * fps);
 
+    // Atraso sobre o agendamento. O loop roda a 2x o fps do projeto, então
+    // entre ticks há ~8 ms de ociosidade que NAO e bloqueio: so conta o
+    // excedente acima do intervalo do timer. Medido sempre (nao so quando o
+    // profiler esta ligado) porque e a metrica que explica perda de quadro.
+    {
+        const qint64 now = PreviewProfiler::nowNs();
+        const qint64 scheduled = m_timer ? qint64(m_timer->interval()) * 1000000 : 0;
+        const qint64 over = (m_lastTickStartNs > 0 && scheduled > 0)
+                                ? std::max<qint64>(0, (now - m_lastTickStartNs) - scheduled)
+                                : 0;
+        m_stallNs = over;
+        m_lastTickStartNs = now;
+
+        // A causa de perder quadro nesta maquina NAO e o decode (que tem ~50x de
+        // folga contra o orcamento por quadro): e um travamento raro e pontual
+        // do event loop, observado de 0,4 a 0,9 s e ~1 run em 8, com tick e
+        // decode rapidos no mesmo instante. Como e raro demais para caçar em
+        // execucoes de teste, registra com contexto na hora: hora, tamanho do
+        // salto de quadro e intervalo do timer. Se aparecer num teste pesado,
+        // o log diz quando e o quão.
+        if (over >= kStallReportNs) {
+            qWarning().noquote()
+                << QStringLiteral("[play] BLOQUEIO %1ms em t=%2s | quadro %3->%4 (pulou %5) | timer=%6ms")
+                       .arg(double(over) / 1e6, 0, 'f', 0)
+                       .arg(t, 0, 'f', 3)
+                       .arg(qlonglong(m_currentFrameIndex))
+                       .arg(qlonglong(targetFrame))
+                       .arg(qlonglong(targetFrame - m_currentFrameIndex))
+                       .arg(qlonglong(scheduled / 1000000));
+        }
+    }
+
+    if (PreviewProfiler::active()) {
+        m_prof.fps = fps;
+        m_prof.playhead = t;
+        m_prof.clockNs = PreviewProfiler::nowNs() - clockStart;
+        // Espelha o dropped do engine (linha abaixo): o indice avanca 1 por
+        // tick em reproducao normal, entao "pular N quadros" e N-1, nao N.
+        // Antes contava todo avanco sequencial como skip e o total batia com o
+        // numero de quadros do video inteiro.
+        m_prof.skipped = std::max(0, std::abs(int(targetFrame - m_currentFrameIndex)) - 1);
+        m_prof.wallMs = QDateTime::currentMSecsSinceEpoch();
+        m_prof.stallNs = double(m_stallNs);
+    }
+
     // Se o timer acordou ligeiramente antes de 1 frame inteiro passar, não
     // repete nem duplica o frame. No shuttle o frame anda para trás (ré):
     // avança só quando o alvo cruzou o frame atual na direção da taxa.
@@ -323,11 +400,19 @@ void PlaybackEngine::tick() {
         // Frame-skip: quantos frames o playhead pulou desde o último tick.
         // Se >1, o decode não acompanhou — conta como dropped.
         const qint64 skip = targetFrame - m_currentFrameIndex - 1;
-        if (skip > 0) m_droppedFrames += skip;
+        if (skip > 0) { m_droppedFrames += skip; m_droppedMonotonic += skip; }
     } else {
         if (targetFrame >= m_currentFrameIndex) return;
         const qint64 skip = m_currentFrameIndex - targetFrame - 1;
-        if (skip > 0) m_droppedFrames += skip;
+        if (skip > 0) { m_droppedFrames += skip; m_droppedMonotonic += skip; }
+    }
+
+    if (PreviewProfiler::active()) {
+        // delta por tick na série, acumulado no mesmo Frame: por construção a
+        // soma de `dropped` na série é igual ao `droppedTotal` do relatório.
+        m_prof.dropped = int(m_droppedMonotonic - m_droppedProfSnapshot);
+        m_prof.droppedTotal = m_droppedMonotonic;
+        m_droppedProfSnapshot = m_droppedMonotonic;
     }
 
     // Log de diagnóstico: mostra a cada frame cruzado o estado do relógio.
@@ -350,6 +435,7 @@ void PlaybackEngine::tick() {
     }
 
     m_currentFrameIndex = targetFrame;
+    if (PreviewProfiler::active()) m_prof.frameIdx = targetFrame;
     if (fps <= 0.0) t = m_playStart + elapsed * m_playRate;
 
     if (m_loopEnabled && m_loopOut > m_loopIn) {
@@ -383,12 +469,18 @@ void PlaybackEngine::tick() {
         return;
     }
 
-    applySeekInternal(t);
-    onPrefetch();
+    applySeekInternal(t); // onSeek (decodifica o quadro) roda dentro daqui
+    {
+        PreviewProfiler::Scope s(&m_prof.prefetchNs);
+        onPrefetch();
+    }
     // Mixer acompanha o playhead: volumes/fades e troca de clipes acontecem
     // aqui, sem reiniciar o sink a cada transição. No shuttle (≠1x) o sink
     // fica mudo (stopAudio) e não deve ser reposicionado por frame.
-    if (m_playRate == 1.0) onMixAudio(t, false);
+    if (m_playRate == 1.0) {
+        PreviewProfiler::Scope s(&m_prof.mixNs);
+        onMixAudio(t, false);
+    }
 }
 
 // Clipe de vídeo (com mídia) no topo em `t`. Clipes de texto independentes são

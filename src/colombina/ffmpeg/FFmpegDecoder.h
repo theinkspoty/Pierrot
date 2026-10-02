@@ -164,6 +164,33 @@ private:
     // frameAt() roda em thread própria: tocar a lista fora do lock já
     // racingaria com o decode e corromperia o índice.
     QImage frameFromCacheLocked(const FrameCacheKey& key);
+
+public:
+    // Diagnóstico: quantas vezes o LRU realmente evitou um decode. Sem isso
+    // não há como saber se aumentar kFrameCacheMax ajuda ou só gasta memória.
+    static quint64 s_cacheHits, s_cacheMisses;
+    static void resetCacheStats() { s_cacheHits = s_cacheMisses = 0; }
+    static quint64 cacheHits()   { return s_cacheHits; }
+    static quint64 cacheMisses() { return s_cacheMisses; }
+    // Tempo gasto em seek+flush dentro de frameAt. Até agora isso era
+    // invisível: o `seek` medido no engine só enxerga o tick, não o seek que
+    // acontece na thread do decoder — por isso um seek de 300ms aparecia como
+    // "seek=0ms" e o custo sobrava sem dono.
+    static quint64 s_seekCount, s_seekTotalNs, s_lastSeekNs;
+    static void resetSeekStats() { s_seekCount = s_seekTotalNs = s_lastSeekNs = 0; }
+    static quint64 seekCount()    { return s_seekCount; }
+    static quint64 seekTotalNs()  { return s_seekTotalNs; }
+    static quint64 lastSeekNs()   { return s_lastSeekNs; }
+    // Quantos quadros o laço de frameAt decodificou e_DESCARTOU antes de achar
+    // o alvo. É o custo escondido de um seek: com GOP aberto, decodificar do
+    // keyframe até o alvo paga dezenas de quadros que ninguém vê.
+    static quint64 s_discardCount, s_lastDiscard;
+    static quint64 lastDiscard()  { return s_lastDiscard; }
+    // Tempo total dentro de decodeOne. Comparado com a latência dispatch->pronto
+    // (wrk), separa "o worker demorou" de "o pedido ficou na fila esperando".
+    static quint64 s_lastWorkNs, s_workTotalNs;
+    static quint64 lastWorkNs()   { return s_lastWorkNs; }
+    static quint64 discardTotal() { return s_discardCount; }
     void   frameToCacheLocked(const FrameCacheKey& key, const QImage& img);
     void   frameCacheClearLocked();
 };

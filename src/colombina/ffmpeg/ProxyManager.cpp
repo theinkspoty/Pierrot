@@ -21,6 +21,7 @@
 #include <QtDebug>
 
 namespace {
+
 QString ffmpegExe() {
     return QStringLiteral("ffmpeg");
 }
@@ -33,7 +34,11 @@ void ProxyWorker::process(const QString& srcPath, const QString& proxyPath) {
     // vídeo-apenas (-an). Escala 1920 na maior dimensão (suficiente p/ preview)
     // mantendo o aspect ratio. Gera um arquivo temporário e move por cima só
     // quando terminado, para nunca deixar um proxy parcial.
-    const QString tmp = proxyPath + QStringLiteral(".tmp");
+    // O temporário PRECISA manter a extensão do container: com "...mp4.tmp" o
+    // ffmpeg não consegue inferir o formato de saída e aborta com exit 234
+    // ("Unable to choose an output format"), o que fazia TODA geração de proxy
+    // falhar silenciosamente, em qualquer resolução.
+    const QString tmp = proxyPath + QStringLiteral(".tmp.mp4");
     QFile::remove(tmp);
 
     QProcess proc;
@@ -50,26 +55,38 @@ void ProxyWorker::process(const QString& srcPath, const QString& proxyPath) {
 
     proc.start(ffmpegExe(), args);
     if (!proc.waitForStarted(5000)) {
+        qWarning("[proxy] nao consegui iniciar ffmpeg para %s: %s",
+                 qPrintable(srcPath), qPrintable(proc.errorString()));
         emit proxyFailed(srcPath);
         return;
     }
     if (!proc.waitForFinished(1200000)) { // 20 min de teto
         proc.kill();
         proc.waitForFinished(2000);
+        qWarning("[proxy] tempo esgotado (20 min) em %s", qPrintable(srcPath));
         emit proxyFailed(srcPath);
         return;
     }
     if (proc.exitCode() != 0 || !QFileInfo::exists(tmp)) {
+        // A falha era silenciosa: o preview só continuava usando o original e
+        // nada indicava por quê. A cauda do stderr do ffmpeg é o que separa
+        // "codec ausente", "disco cheio" e "fonte corrompida".
+        const QByteArray errTail = proc.readAllStandardError().right(600);
+        qWarning("[proxy] ffmpeg falhou (exit %d) em %s\n%s",
+                 proc.exitCode(), qPrintable(srcPath), errTail.constData());
         QFile::remove(tmp);
         emit proxyFailed(srcPath);
         return;
     }
-    QFile::remove(proxyPath);
     if (!QFile::rename(tmp, proxyPath)) {
+        qWarning("[proxy] rename falhou (%s -> %s)",
+                 qPrintable(tmp), qPrintable(proxyPath));
         QFile::remove(tmp);
         emit proxyFailed(srcPath);
         return;
     }
+    qInfo("[proxy] pronto: %s (%lld KB)",
+          qPrintable(srcPath), static_cast<long long>(QFileInfo(proxyPath).size() / 1024));
     emit proxyReady(srcPath, proxyPath);
 }
 
@@ -89,6 +106,14 @@ ProxyManager::~ProxyManager() {
 
 ProxyManager::ProxyManager() {
     m_enabled = QSettings().value("proxiesEnabled", true).toBool();
+    // Limiar sobrescrevível: o padrão ignora fontes < 2560px, o que numa
+    // biblioteca só 1080p significa proxy nunca gerado — e o proxy é gerado a
+    // 1920px, então para uma fonte 1080p ele ainda é uma reencode bem mais
+    // barata de decodificar. PIERROT_PROXY_MIN_WIDTH=<px> sobrescreve (0 = não
+    // filtrar por largura).
+    bool ok = false;
+    const int envW = qEnvironmentVariableIntValue("PIERROT_PROXY_MIN_WIDTH", &ok);
+    m_thresholdWidth = (ok && envW >= 0) ? envW : kThresholdWidth;
     QDir().mkpath(proxyDir());
     m_stateFile = proxyDir() + QStringLiteral("/metadata.json");
     loadState();
@@ -121,10 +146,18 @@ QString ProxyManager::resolveVideo(const QString& srcPath) const {
     QMutexLocker l(&m_mutex);
     if (!m_enabled || !m_projectUsesProxies || srcPath.isEmpty()) return srcPath;
     if (m_small.contains(srcPath)) return srcPath;
+    // Memoizado: sem isto cada chamada fazia MD5 do caminho completo +
+    // QStandardPaths::writableLocation() + QFile::exists() (um stat), tudo sob
+    // o mutex — e isso é chamado várias vezes por quadro só para descobrir que
+    // a resposta não mudou. Custo medido: 0,13 ms por quadro (era ~1/3 do tick
+    // inteiro com proxy ligado).
+    const auto it = m_resolved.constFind(srcPath);
+    if (it != m_resolved.constEnd()) return it.value();
     const QString proxy = proxyPathFor(srcPath);
-    if (m_map.value(srcPath) == proxy && QFile::exists(proxy))
-        return proxy;
-    return srcPath;
+    const QString out = (m_map.value(srcPath) == proxy && QFile::exists(proxy))
+                            ? proxy : srcPath;
+    m_resolved.insert(srcPath, out);
+    return out;
 }
 
 bool ProxyManager::hasProxy(const QString& srcPath) const {
@@ -136,27 +169,31 @@ bool ProxyManager::hasProxy(const QString& srcPath) const {
 
 void ProxyManager::probeAndQueue(const QString& srcPath) {
     QMutexLocker l(&m_mutex);
-    if (!m_enabled || srcPath.isEmpty() || m_small.contains(srcPath) || m_failed.contains(srcPath))
-        return;
-    // Inline hasProxy() check to avoid deadlock (hasProxy locks m_mutex too).
+    if (!m_enabled) { return; }
+    if (srcPath.isEmpty()) return;
+    if (m_small.contains(srcPath)) { return; }
+    if (m_failed.contains(srcPath)) { return; }
     const QString proxy = proxyPathFor(srcPath);
-    if (m_map.value(srcPath) == proxy && QFile::exists(proxy)) return;
-    if (m_map.contains(srcPath)) return; // já gera/gerou (removido? re-probe)
-    if (m_pending.contains(srcPath) || m_activeSrc == srcPath) return;
+    if (m_map.value(srcPath) == proxy && QFile::exists(proxy)) { return; }
+    if (m_map.contains(srcPath)) { return; }
+    if (m_pending.contains(srcPath)) { return; }
+    if (m_activeSrc == srcPath) { return; }
 
     // Probe leve: só precisa da largura. Não abre stream pesado.
     const FFmpegMediaInfo info = FFmpegDecoder::probe(srcPath);
     if (!info.hasVideo) { m_small.insert(srcPath); return; }
-    if (info.width > 0 && info.width < kThresholdWidth) {
+    // Registrar ANTES da decisão de largura: toda fonte com vídeo é candidata
+    // potencial, e é esta lista que permite reavaliar quando o limiar muda.
+    m_videoSrcs.insert(srcPath);
+    if (info.width > 0 && info.width < m_thresholdWidth) {
         m_small.insert(srcPath);
         return;
     }
 
     // Candidata a proxy: sempre registrada, mesmo com a preferência do projeto
     // desligada (assim, ao reativar, dá para enfileirar sem re-probar do zero).
-    m_videoSrcs.insert(srcPath);
     // Preferência do projeto OFF: preview usa o original e nada é gerado agora.
-    if (!m_projectUsesProxies) return;
+    if (!m_projectUsesProxies) { return; }
 
     m_pending.insert(srcPath);
     const bool busy = !m_pending.isEmpty() || m_running;
@@ -192,6 +229,12 @@ bool ProxyManager::projectUsesProxies() const {
     return m_projectUsesProxies;
 }
 
+bool ProxyManager::busy() const {
+    QMutexLocker l(&m_mutex);
+    return !m_pending.isEmpty() || m_running;
+}
+
+
 void ProxyManager::pump() {
     if (m_running || m_pending.isEmpty()) return;
     QString src = *m_pending.begin();
@@ -206,6 +249,7 @@ void ProxyManager::onProxyReady(const QString& srcPath, const QString& proxyPath
     {
         QMutexLocker l(&m_mutex);
         m_map.insert(srcPath, proxyPath);
+        m_resolved.insert(srcPath, proxyPath);
     }
     saveState(); // I/O outside mutex to avoid blocking resolveVideo()
     m_running = false;
@@ -219,6 +263,8 @@ void ProxyManager::onProxyFailed(const QString& srcPath) {
     {
         QMutexLocker l(&m_mutex);
         m_failed.insert(srcPath);
+        // O proxy não veio: a fonte volta a ser o original.
+        m_resolved.remove(srcPath);
     }
     saveState(); // I/O outside mutex to avoid blocking resolveVideo()
     m_running = false;
@@ -244,6 +290,7 @@ void ProxyManager::loadState() {
         const QJsonObject o = v.toObject();
         m_map.insert(o.value(QStringLiteral("src")).toString(),
                      o.value(QStringLiteral("proxy")).toString());
+        m_resolved.clear(); // revalidado na primeira resolveVideo()
     }
     m_small.clear();
     // Valida: se o proxy sumiu do disco, remove do estado (será re-gerado).

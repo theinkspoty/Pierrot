@@ -1075,7 +1075,15 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                     }
                 }
             }
-            m_marqueeRect = QRect(m_dragStart, e->pos()).normalized();
+            // Recorta o marquee à área de conteúdo (fora do header e da
+            // régua). Sem isso, o selectInMarquee usava o rect bruto e
+            // selecionava clipes com t0 < m_viewStart (xToTime no header)
+            // quando o arraste "subia" para o cabeçalho — pior com a
+            // timeline scrolled para o meio (header logo abaixo da régua).
+            m_marqueeRect = QRect(m_dragStart, e->pos()).normalized()
+                                .intersected(QRect(kHeaderW, kRulerH,
+                                                   qMax(1, width() - kHeaderW),
+                                                   qMax(1, height() - kRulerH)));
             update();
             return;
         }

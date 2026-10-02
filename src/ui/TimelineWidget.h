@@ -54,22 +54,32 @@ enum Tool {
 
 // Chave do cache de conteúdo visual dos clipes (onda/thumb + envelope + fades).
 // O epoch é bumpado em mudanças estruturais; rolagem/zoom mantêm o epoch e só
-// o tamanho muda, permitindo reaproveitar o blit entre repaints.
+// o tamanho muda, permitindo reaproveitar o blit entre repaints. `in`/`dur`
+// entram na chave para o trim (que pode manter a mesma largura em px) não
+// reaproveitar o pixmap do trecho de mídia anterior.
 struct ClipVisKey {
     QString id;
     int w = 0;
     int h = 0;
     quint64 epoch = 0;
     quint32 tint = 0; // cor da faixa (rgba) para redesenhar o waveform
+    float in = 0.0f;
+    float dur = 0.0f;
     bool operator==(const ClipVisKey& o) const {
         return id == o.id && w == o.w && h == o.h && epoch == o.epoch
-            && tint == o.tint;
+            && tint == o.tint && in == o.in && dur == o.dur;
     }
 };
 
 inline uint qHash(const ClipVisKey& k, uint seed = 0) {
-    return qHash(k.id, seed) ^ (k.w * 0x9E3779B1u) ^ (k.h * 0x85EBCA77u)
-        ^ (uint(k.epoch) * 0xC2B2AE3Du) ^ (k.tint * 0xC96B9B3Fu);
+    uint h = qHash(k.id, seed);
+    h = qHash(k.w, h);
+    h = qHash(k.h, h);
+    h = qHash(k.epoch, h);
+    h = qHash(k.tint, h);
+    h = qHash(k.in, h);
+    h = qHash(k.dur, h);
+    return h;
 }
 
 class TimelineWidget : public QWidget {

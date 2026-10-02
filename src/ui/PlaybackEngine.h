@@ -20,6 +20,8 @@
 
 #include <QElapsedTimer>
 
+#include "PreviewProfiler.h"
+
 class QTimer;
 class QPushButton;
 class Project;
@@ -36,6 +38,7 @@ public:
 
     // Contador de frames perdidos (skip automático). Reseta ao ler.
     qint64 consumeDroppedFrames();
+    qint64 totalDroppedMonotonic() const { return m_droppedMonotonic; }
 
     // Métodos de transporte (chamados pelos slots do widget).
     void seek(double t);
@@ -92,9 +95,33 @@ protected:
     QPushButton* m_playBtn = nullptr;
     qint64 m_droppedFrames = 0;
 
+    // Registro do tick em curso. O tick o zera, mede as etapas e o submete ao
+    // PreviewProfiler; o PreviewWidget (derivado) escreve nos mesmos campos
+    // nas suas próprias fases (worker, prefetch, paint, proxy) — assim as
+    // medições de pipeline landing em fases diferentes do tick acabar no mesmo
+    // registro, sem um segundo canal de comunicação.
+    PreviewProfiler::Frame m_prof;
+    qint64 m_lastTickStartNs = 0; // início do tick anterior (mede atraso do loop)
+    qint64 m_stallNs = 0;          // atraso do último tick sobre o agendamento
+    // Atraso acima do qual o bloqueio do event loop vale um qWarning. Baixo o
+    // bastante para pegar um travamento de meio segundo sem poluir o log.
+    static constexpr qint64 kStallReportNs = 100000000; // 100 ms
+    // m_droppedFrames é drenado por consumeDroppedFrames() (que o zera) para o
+    // overlay, então não serve como total: somar a série contaria o mesmo drop
+    // várias vezes. Estes dois são monotônicos e nunca zeram — a série passa a
+    // registrar o delta por tick e a soma da série bate com o total reportado.
+    qint64 m_droppedMonotonic = 0;
+    qint64 m_droppedProfSnapshot = 0;
+    qint64 m_profSeq = 0;
+
+protected:
+    // Slot do registro do tick atual, para o widget preenchê-lo.
+    PreviewProfiler::Frame& profFrame() { return m_prof; }
+
 private:
     void applySeekInternal(double t);
     void anchorAudioClock(double t);
     void stopPlaybackInternal();
     void setFrameInterval();
+    void tickImpl();
 };

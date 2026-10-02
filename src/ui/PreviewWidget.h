@@ -125,6 +125,11 @@ protected:
     void requestFrame(const QString& clipId, const QString& path, double t, int maxW);
     void requestLowerLayers(int decW);
     void kickFrameWorker();
+    // resolveVideo() com medição de custo (a chamada faz um QFile::exists sob
+    // o mutex do ProxyManager e roda várias vezes por tick).
+    QString resolvePreviewVideo(const QString& srcPath);
+    void renderFrame(QPainter& p);
+    void drawPlaybackBadges(QPainter& p);
     void drawPerfOverlay(QPainter& p);
     void onFrameReady(const QString& clipId, const QString& path, double t, int maxW, const QImage& img);
     void onPrefetchReady(const QString& path, double t, int maxW, const QImage& img);
@@ -184,6 +189,25 @@ protected:
     QString m_clipLainkaId;
     double m_lainkaQuantizedTime = -1.0; // tempo quantizado para efeitos LAINKA
     QImage m_lainkaPrevFrame; // para onion skin (ghosting)
+
+    // ── Memo de applyCrop() para LAINKA em stop motion ─────────────────
+    // Com skip>1 o tempo quantizado só muda a cada N quadros, mas a cadeia
+    // crop -> LAINKA -> MotiOn -> efeitos básicos roda todo quadro. Medido no
+    // bogaboga.Blanc (LAINKA warp 8x8 + MotiOn de 7 amostras, PNG 512x512
+    // esticado para 1920x1080): 9,9 ms por quadro numa janela de 0,68 s — 18x
+    // a linha de base — com saída idêntica em 6 de cada 7 quadros. Como o
+    // custo é determinístico no tempo quantizado, guardar o resultado derruba
+    // a janela para ~1/6. Só existe enquanto m_clipLainkaEnabled: fora disso o
+    // tempo não quantizado muda todo quadro e não haveria acerto, e o cache
+    // ficaria segurando uma imagem de 8 MB à toa.
+    QImage m_cropMemo;
+    QString m_cropMemoClipId;
+    double m_cropMemoTime = -1.0; // tempo quantizado (m_lainkaQuantizedTime)
+    double m_cropMemoSrcT = -1.0; // tempo fonte do quadro (m_lastSrcT)
+    int m_cropMemoSrcW = 0;       // largura de decodificação (m_lastDecodeW)
+    // O crop é avaliado nos keyframes com o tempo NÃO quantizado, então pode
+    // andar dentro da janela de stop motion: precisa entrar na chave.
+    int m_cropMemoCropL = 0, m_cropMemoCropR = 0, m_cropMemoCropT = 0, m_cropMemoCropB = 0;
 
     // ── MotiOn cached state ───────────────────────────────────────────
     bool m_clipMotionEnabled = false;
@@ -256,6 +280,7 @@ protected:
     QElapsedTimer m_perfT;
     qint64 m_perfWorkerStartNs = 0;
     qint64 m_perfPrefetchStartNs = 0;
+    QString m_profTopClipId;   // clipe do topo no tick anterior (detecta corte)
     struct PerfDbg {
         qint64 seekMs = 0;      // applySeek() dentro do tick
         qint64 prefetchMs = 0;  // updatePrefetch() dentro do tick
