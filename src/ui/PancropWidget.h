@@ -9,6 +9,7 @@
 #include <QImage>
 #include <QPoint>
 #include <QHash>
+#include <QShowEvent>
 #include "colombina/models/Project.h"
 #include "colombina/ffmpeg/FFmpegDecoder.h"
 
@@ -50,6 +51,9 @@ signals:
     // para o editor de curvas exibir a curva correspondente.
     void propertyEdited(int prop);
 protected:
+    // Chamado quando o dock é exibido: o frame não é decodificado enquanto o
+    // painel está escondido (ver loadFrame), então é aqui que ele é buscado.
+    void showEvent(QShowEvent* e) override;
     // O viewfinder é um QWidget aninhado (Viewport); o PancropWidget apenas
     // monta o layout lado a lado (viewfinder | controles) e delega o desenho
     // e os eventos de mouse/roda do viewfinder.

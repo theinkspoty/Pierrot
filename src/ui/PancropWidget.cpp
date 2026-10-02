@@ -237,6 +237,11 @@ private:
 };
 
 PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
+    // Este decoder roda SÍNCRONO no thread da UI, um quadro por chamada. O
+    // ganho do VAAPI é nulo nesse uso e o device é compartilhado por processo
+    // com os workers de preview — conflito que derrubava o app. Fica em
+    // software; a aceleração real acontece no preview/export.
+    m_decoder.setHardwareDecodeAllowed(false);
     setMinimumSize(360, 280);
 
     auto makeSlider = [this](int min, int max) {
@@ -652,6 +657,15 @@ void PancropWidget::sync() {
     m_view->update();
 }
 
+void PancropWidget::showEvent(QShowEvent* e) {
+    QWidget::showEvent(e);
+    // MainWindow chama setClipId() ANTES de m_pancropDock->show(), então o
+    // loadFrame() daquele momento foi descartado pela guarda de visibilidade.
+    loadFrame();
+    syncFromClip();
+    m_view->update();
+}
+
 Clip* PancropWidget::activeClip() {
     if (!m_project || m_clipId.isEmpty()) return nullptr;
     for (Track& t : m_project->videoTracks)
@@ -661,6 +675,17 @@ Clip* PancropWidget::activeClip() {
 }
 
 void PancropWidget::loadFrame() {
+    // O dock do pancrop nasce escondido (MainWindow), mas continua ligado ao
+    // playhead e à seleção da timeline. Sem esta guarda, TODO arasto do
+    // playhead disparava uma decodificação VAAPI SÍNCRONA no thread da UI,
+    // concorrente com os workers de preview — e derrubava o app com SIGSEGV
+    // dentro de avcodec_send_packet. Escondido, o painel não desenha nada,
+    // então não há nada a decodificar.
+    if (!isVisible()) {
+        m_frame = QImage();
+        m_framePath.clear();
+        return;
+    }
     Clip* c = activeClip();
     if (!c) { m_frame = QImage(); m_framePath.clear(); return; }
     if (c->isText) {

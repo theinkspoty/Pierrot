@@ -58,6 +58,13 @@ public:
     // true se o vídeo está sendo decodificado por hardware (VAAPI ativo).
     bool usesHardware() const;
 
+    // Permite/desabilita a decodificação por hardware NESTA instância.
+    // Usado por quem decodifica um único quadro sob demanda no thread da UI:
+    // o ganho do VAAPI é irrelevante para um frame, mas o device VAAPI é
+    // compartilhado por processo com os workers de preview, e o conflito de
+    // agendamento derrubava o app. Precisa ser chamado antes de open().
+    void setHardwareDecodeAllowed(bool allowed);
+
     QImage frameAt(double seconds, int maxWidth = 0);
 
     // Libera os buffers de quadros decodificados (DPB do codec e o último
@@ -130,6 +137,7 @@ private:
     // antes do sws (o hw frame mora na GPU e não pode ser lido cru).
     bool m_hw = false;
     int m_hwPixFmt = -1;
+    bool m_hwAllowed = true; // por instância; ver setHardwareDecodeAllowed()
     void* m_swFrame = nullptr; // AVFrame*
 
     // Buffers reutilizáveis para evitar alocação a cada decodificação.

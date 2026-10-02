@@ -489,7 +489,7 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
                 }
                 if (cc) {
                     cc->thread_type = FF_THREAD_FRAME;
-                    AVBufferRef* hwDev = hwDisabled() ? nullptr : vaapiDevice();
+                    AVBufferRef* hwDev = (hwDisabled() || !m_hwAllowed) ? nullptr : vaapiDevice();
                     if (hwDev) {
                         cc->hw_device_ctx = av_buffer_ref(hwDev);
                         cc->get_format = &hwVaapiGetFormat;
@@ -709,6 +709,16 @@ double FFmpegDecoder::fps() const {
 bool FFmpegDecoder::usesHardware() const {
     QMutexLocker vlock(&m_mutex);
     return m_hw;
+}
+
+void FFmpegDecoder::setHardwareDecodeAllowed(bool allowed) {
+    QMutexLocker vlock(&m_mutex);
+    if (m_hwAllowed == allowed) return;
+    m_hwAllowed = allowed;
+    // Já aberto com hardware? Fecha para que o próximo open() respeite a
+    // nova preferência — trocar o device no meio da vida do contexto não é
+    // seguro.
+    if (m_ctx) freeAllLocked();
 }
 
 // ── Frame cache LRU ────────────────────────────────────────────────────────
