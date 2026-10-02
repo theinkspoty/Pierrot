@@ -4,3 +4,4 @@ dist/
 packaging/.tools/
 *.AppImage
 *.AppImage.zsync
+target/
