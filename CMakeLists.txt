@@ -68,6 +68,7 @@ set(COLOMBINA_HEADERS
     src/colombina/frei0r/Frei0rPluginManager.h
     src/colombina/fx/ColorGrade.h
     src/colombina/render/MesaRenderer.h
+    src/colombina/render/Math3D.h
     src/colombina/generators.h
     src/colombina/util.h
     src/colombina/CrashReporter.h
@@ -264,6 +265,19 @@ target_link_libraries(tst_keyframes PRIVATE
     ${PIERROT_QT_GUI}
 )
 add_test(NAME tst_keyframes COMMAND tst_keyframes)
+
+# tst_math3d: Fase 0 da Mesa 3D — Vec3/Mat4 + campos mesa3d serializados.
+add_executable(tst_math3d
+    tests/tst_math3d.cpp
+    src/colombina/models/Project.cpp
+)
+target_include_directories(tst_math3d PRIVATE src src/colombina/ofx/sdk)
+target_link_libraries(tst_math3d PRIVATE
+    ${PIERROT_QT_TEST}
+    ${PIERROT_QT_CORE}
+    ${PIERROT_QT_GUI}
+)
+add_test(NAME tst_math3d COMMAND tst_math3d)
 
 add_executable(tst_serialization
     tests/tst_serialization.cpp

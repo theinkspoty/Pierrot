@@ -171,6 +171,23 @@ static QJsonObject mesaToJson(const MesaComposition& m) {
     o["kfCamY"] = kfToJson(m.kfCamY);
     o["kfCamZoom"] = kfToJson(m.kfCamZoom);
     o["kfCamRotation"] = kfToJson(m.kfCamRotation);
+    // Mesa 3D (AE Classic) — defaults preservam o visual 2D.
+    o["mesa3d"] = m.mesa3d;
+    o["camZ"] = m.camZ;
+    o["camFov"] = m.camFov;
+    o["camPitch"] = m.camPitch;
+    o["camYaw"] = m.camYaw;
+    o["camRoll"] = m.camRoll;
+    o["camPoiX"] = m.camPoiX;
+    o["camPoiY"] = m.camPoiY;
+    o["camPoiZ"] = m.camPoiZ;
+    o["kfCamZ"] = kfToJson(m.kfCamZ);
+    o["kfCamFov"] = kfToJson(m.kfCamFov);
+    o["kfCamPitch"] = kfToJson(m.kfCamPitch);
+    o["kfCamYaw"] = kfToJson(m.kfCamYaw);
+    o["kfCamPoiX"] = kfToJson(m.kfCamPoiX);
+    o["kfCamPoiY"] = kfToJson(m.kfCamPoiY);
+    o["kfCamPoiZ"] = kfToJson(m.kfCamPoiZ);
     o["motionBlur"] = m.motionBlur;
     o["motionBlurSamples"] = m.motionBlurSamples;
     o["motionBlurShutter"] = m.motionBlurShutter;
@@ -193,6 +210,23 @@ static MesaComposition mesaFromJson(const QJsonObject& o) {
     m.kfCamY = kfFromJson(o["kfCamY"]);
     m.kfCamZoom = kfFromJson(o["kfCamZoom"]);
     m.kfCamRotation = kfFromJson(o["kfCamRotation"]);
+    // Mesa 3D — ausente em projetos antigos = 2D (defaults).
+    m.mesa3d = o["mesa3d"].toBool(false);
+    m.camZ = o["camZ"].toDouble(0.0);
+    m.camFov = o["camFov"].toDouble(50.0);
+    m.camPitch = o["camPitch"].toDouble(0.0);
+    m.camYaw = o["camYaw"].toDouble(0.0);
+    m.camRoll = o["camRoll"].toDouble(0.0);
+    m.camPoiX = o["camPoiX"].toDouble(0.0);
+    m.camPoiY = o["camPoiY"].toDouble(0.0);
+    m.camPoiZ = o["camPoiZ"].toDouble(0.0);
+    m.kfCamZ = kfFromJson(o["kfCamZ"]);
+    m.kfCamFov = kfFromJson(o["kfCamFov"]);
+    m.kfCamPitch = kfFromJson(o["kfCamPitch"]);
+    m.kfCamYaw = kfFromJson(o["kfCamYaw"]);
+    m.kfCamPoiX = kfFromJson(o["kfCamPoiX"]);
+    m.kfCamPoiY = kfFromJson(o["kfCamPoiY"]);
+    m.kfCamPoiZ = kfFromJson(o["kfCamPoiZ"]);
     m.motionBlur = o["motionBlur"].toBool(false);
     m.motionBlurSamples = o["motionBlurSamples"].toInt(8);
     m.motionBlurShutter = o["motionBlurShutter"].toDouble(0.5);
@@ -672,6 +706,10 @@ static QJsonObject trackToJson(const Track& t) {
     // Props de canvas (Mesa)
     o["mesaX"] = t.mesaX;
     o["mesaY"] = t.mesaY;
+    o["mesaZ"] = t.mesaZ;
+    o["mesaRotX"] = t.mesaRotX;
+    o["mesaRotY"] = t.mesaRotY;
+    o["mesaAcceptsLights"] = t.mesaAcceptsLights;
     o["mesaScaleX"] = t.mesaScaleX;
     o["mesaScaleY"] = t.mesaScaleY;
     o["mesaRotation"] = t.mesaRotation;
@@ -689,6 +727,9 @@ static QJsonObject trackToJson(const Track& t) {
     o["kfMesaOpacity"] = kfToJson(t.kfMesaOpacity);
     o["kfMesaAnchorX"] = kfToJson(t.kfMesaAnchorX);
     o["kfMesaAnchorY"] = kfToJson(t.kfMesaAnchorY);
+    o["kfMesaZ"] = kfToJson(t.kfMesaZ);
+    o["kfMesaRotX"] = kfToJson(t.kfMesaRotX);
+    o["kfMesaRotY"] = kfToJson(t.kfMesaRotY);
     o["kfVolume"] = kfToJson(t.kfVolume);
     o["kfPan"] = kfToJson(t.kfPan);
     return o;
@@ -729,6 +770,10 @@ static Track trackFromJson(const QJsonObject& o, bool audio) {
     // Props de canvas (Mesa)
     t.mesaX = o["mesaX"].toDouble(0.0);
     t.mesaY = o["mesaY"].toDouble(0.0);
+    t.mesaZ = o["mesaZ"].toDouble(0.0);
+    t.mesaRotX = o["mesaRotX"].toDouble(0.0);
+    t.mesaRotY = o["mesaRotY"].toDouble(0.0);
+    t.mesaAcceptsLights = o["mesaAcceptsLights"].toBool(false);
     t.mesaScaleX = o["mesaScaleX"].toDouble(1.0);
     t.mesaScaleY = o["mesaScaleY"].toDouble(1.0);
     t.mesaRotation = o["mesaRotation"].toDouble(0.0);
@@ -746,6 +791,9 @@ static Track trackFromJson(const QJsonObject& o, bool audio) {
     t.kfMesaOpacity = kfFromJson(o["kfMesaOpacity"]);
     t.kfMesaAnchorX = kfFromJson(o["kfMesaAnchorX"]);
     t.kfMesaAnchorY = kfFromJson(o["kfMesaAnchorY"]);
+    t.kfMesaZ = kfFromJson(o["kfMesaZ"]);
+    t.kfMesaRotX = kfFromJson(o["kfMesaRotX"]);
+    t.kfMesaRotY = kfFromJson(o["kfMesaRotY"]);
     t.kfVolume = kfFromJson(o["kfVolume"]);
     t.kfPan = kfFromJson(o["kfPan"]);
     return t;

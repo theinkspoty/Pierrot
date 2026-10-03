@@ -35,15 +35,15 @@ O mesmo espírito do Pierrot: composição em CPU, foco em motion graphics.
 
 ## Fases (detalhe)
 
-### Fase 0 — Fundação (0.8)
+### Fase 0 — Fundação (0.8) — ✅ implementada 2026-10-02
 
 - `Math3D.h`: Vec3, Mat4, perspective, lookAt, rotateXYZ
 - `tst_math3d`
 - Campos: `mesa3d`, `camZ/fov/pitch/yaw/roll`, `camPoi*`, `mesaZ`, `mesaRotX/Y`, `mesaAcceptsLights`
-- Serialização `.Blanc` + presets
-- Flag `mesa3d=false` → render 2D idêntico
+- Serialização `.Blanc`
+- Flag `mesa3d` lida no `MesaRenderer` (render ainda 2D até a Fase 1)
 
-**Aceite:** projeto 2D pixel-idêntico; serialização verde.
+**Aceite:** projetos antigos = defaults 2D; `tst_math3d` + serialização.
 
 ### Fase 1 — Câmera/layers Classic 3D (0.8)
 

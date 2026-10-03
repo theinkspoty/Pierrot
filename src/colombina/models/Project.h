@@ -235,6 +235,26 @@ struct MesaComposition {
     // Cada track referencia suas props de canvas (mesaX/Y etc.) na própria Track.
     QVector<QString> trackIds;
 
+    // ── Modo 3D (AE Classic 2010–2018) ──────────────────────────────────
+    // Quando false (default), o renderer usa o caminho 2D atual — zero
+    // regressão. Quando true, a Fase 1 passa a usar FOV/Z/depth.
+    bool mesa3d = false;
+    double camZ = 0.0;          // distância da câmera (px no espaço da cena)
+    double camFov = 50.0;       // campo de visão em graus
+    double camPitch = 0.0;      // inclinação (graus)
+    double camYaw = 0.0;        // guinada (graus)
+    double camRoll = 0.0;       // roll extra (além de camRotation 2D)
+    double camPoiX = 0.0;       // point of interest (px no canvas; default centro)
+    double camPoiY = 0.0;
+    double camPoiZ = 0.0;
+    QVector<Keyframe> kfCamZ;
+    QVector<Keyframe> kfCamFov;
+    QVector<Keyframe> kfCamPitch;
+    QVector<Keyframe> kfCamYaw;
+    QVector<Keyframe> kfCamPoiX;
+    QVector<Keyframe> kfCamPoiY;
+    QVector<Keyframe> kfCamPoiZ;
+
     // Câmera (estilo After Effects: define o enquadramento pro output).
     // A posição (camX, camY) é ABSOLUTA em px da composição (origem topo-
     // esquerda); padrão = centro da comp (canvasW/2, canvasH/2).
@@ -673,9 +693,14 @@ struct Track {
     // âncora é um OFFSET do CENTRO NATURAL da layer em px da própria layer.
     double mesaX = 0.0;          // posição X da âncora no canvas (px absolutos)
     double mesaY = 0.0;          // posição Y da âncora no canvas
+    // ── Mesa 3D (AE Classic) — usados só quando MesaComposition::mesa3d ──
+    double mesaZ = 0.0;          // profundidade da camada (px no espaço da cena)
+    double mesaRotX = 0.0;       // rotação em X (graus)
+    double mesaRotY = 0.0;       // rotação em Y (graus)
+    bool mesaAcceptsLights = false; // se true, a camada reage às luzes (Fase 2)
     double mesaScaleX = 1.0;     // escala horizontal no canvas
     double mesaScaleY = 1.0;     // escala vertical no canvas
-    double mesaRotation = 0.0;   // rotação no canvas (graus)
+    double mesaRotation = 0.0;   // rotação no canvas (graus) — = rot Z
     double mesaOpacity = 1.0;    // opacidade no canvas (0..1)
     double mesaAnchorX = 0.0;    // anchor X: offset do centro natural (px da layer)
     double mesaAnchorY = 0.0;    // anchor Y: offset do centro natural (px da layer)
@@ -698,6 +723,10 @@ struct Track {
     QVector<Keyframe> kfMesaOpacity;
     QVector<Keyframe> kfMesaAnchorX;
     QVector<Keyframe> kfMesaAnchorY;
+    // Mesa 3D: keyframes de Z e rotações XYZ.
+    QVector<Keyframe> kfMesaZ;
+    QVector<Keyframe> kfMesaRotX;
+    QVector<Keyframe> kfMesaRotY;
 };
 
 inline QString newId() {

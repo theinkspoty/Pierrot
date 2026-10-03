@@ -165,6 +165,21 @@ QImage MesaRenderer::renderSample(const MesaComposition& mesa, const Project& pr
     p.setRenderHint(QPainter::SmoothPixmapTransform);
     p.setClipRect(0, 0, outW, outH);
 
+    // Fase 0 (Mesa 3D): flag `mesa3d` lida aqui; o caminho de RENDER continua
+    // 2D (matriz afim) até a Fase 1 implementar projeção/depth. Quando a flag
+    // estiver true, os campos 3D (camZ/fov/pitch/yaw) são avaliados mas ainda
+    // não alteram o enquadramento — evita regressão e destrava a UI/modelo.
+    const bool use3d = mesa.mesa3d;
+    double camZ = 0.0, camFov = 50.0, camPitch = 0.0, camYaw = 0.0;
+    if (use3d) {
+        camZ = kfValue(mesa.kfCamZ, mesa.camZ, time);
+        camFov = std::max(1.0, kfValue(mesa.kfCamFov, mesa.camFov, time));
+        camPitch = kfValue(mesa.kfCamPitch, mesa.camPitch, time);
+        camYaw = kfValue(mesa.kfCamYaw, mesa.camYaw, time);
+        Q_UNUSED(camZ); Q_UNUSED(camFov); Q_UNUSED(camPitch); Q_UNUSED(camYaw);
+        // Fase 1: view = lookAt(eye(poi+Z,pitch,yaw)) · projection(fov)
+    }
+
     const double camX = kfValue(mesa.kfCamX, mesa.camX, time);
     const double camY = kfValue(mesa.kfCamY, mesa.camY, time);
     const double zoom = qMax(0.001, kfValue(mesa.kfCamZoom, mesa.camZoom, time));

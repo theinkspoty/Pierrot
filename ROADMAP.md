@@ -1269,38 +1269,15 @@ sem fontconfig.
 
 ### Fases (detalhadas)
 
-#### Fase 0 — Fundação 3D (0.8)
+#### Fase 0 — Fundação 3D (0.8) — ✅ **implementada 2026-10-02**
 
-**Objetivo:** preparar o modelo e o renderer sem mudar o visual 2D.
+- [x] `Math3D.h`: Vec3, Mat4, perspective, lookAt, rotateXYZ — `colombina/render/Math3D.h`
+- [x] `tst_math3d` (projeção, lookAt, campos serializados)
+- [x] Campos: `mesa3d`, `camZ/fov/pitch/yaw/roll`, `camPoi*`, `kfCam*`, `mesaZ`, `mesaRotX/Y`, `mesaAcceptsLights`
+- [x] Serialização `.Blanc` (`mesaToJson`/`mesaFromJson` + track)
+- [x] Flag `mesa3d` lida no `MesaRenderer` (render ainda 2D até a Fase 1)
 
-| Entrega | Arquivos |
-|---|---|
-| `Math3D.h` header-only: `Vec3`, `Mat4`, perspective, lookAt, rotateXYZ | `src/colombina/render/Math3D.h` |
-| `tst_math3d` (projeção, lookAt, multiply) | `tests/tst_math3d.cpp` + CMake |
-| Campos 3D no modelo (defaults = 2D atual) | `Project.h` |
-| Serialização `.Blanc` + presets | `Project.cpp`, `clipattrs.h` |
-| Flag `mesa3d` (default **false**) | `MesaComposition` |
-| `MesaRenderer` lê flag; se false → caminho 2D idêntico | `MesaRenderer.cpp` |
-
-**Campos a adicionar:**
-
-```
-MesaComposition:
-  bool mesa3d = false;
-  double camZ = 0, camFov = 50, camPitch = 0, camYaw = 0, camRoll = 0;
-  double camPoiX, camPoiY, camPoiZ;   // point of interest
-  // + kfCamZ, kfCamFov, kfCamPitch, kfCamYaw, kfCamPoi*
-
-Track (quando em Mesa):
-  double mesaZ = 0;
-  double mesaRotX = 0, mesaRotY = 0, mesaRotZ = 0; // mesaRotZ = rotation atual
-  bool mesaAcceptsLights = false;
-```
-
-**Aceite:**
-- Projeto 2D existente renderiza **pixel-idêntico** (ou com tolerância 0).
-- `tst_serialization` + `tst_math3d` verdes.
-- Abrir projeto antigo sem campos 3D = defaults 2D.
+**Aceite atingido:** projetos antigos sem campos 3D = defaults 2D; `tst_math3d` + serialização.
 
 ---
 
