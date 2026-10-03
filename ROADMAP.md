@@ -1131,6 +1131,299 @@ atenção, **3 já estavam registrados** e **1 é novo**:
 
 ---
 
+## Texto e fontes — plano After Effects (2026-10-02)
+
+Objetivo: elevar o sistema de **texto/título** ao nível do painel **Character**
+do After Effects (fontes, tracking, leading, contorno, animação de texto).
+
+### Estado atual (fato)
+
+| Área | Hoje |
+|---|---|
+| `TextStyle` | text, fontFamily, textSize, bold, fill, outline, background, x/y, align |
+| UI | `TextEditorDialog` estático; sem preview ao vivo; sem animação |
+| Desenho | `QPainterPath` + fill/stroke; wrap 90%; multi-linha |
+| Animação | só opacity/fades/transform do **clipe** (não do texto) |
+| Fontes | families do sistema (`QFontDatabase`); export resolve TTF no disco |
+| Export | PNG gerado (clipe-texto) ou `drawtext` (texto anexado) |
+| TextResource | cópia unificada estilo Vegas ✅ |
+
+### O que falta vs AE (Character + Text Animator)
+
+| Recurso AE | Status |
+|---|---|
+| Tracking (letter-spacing) | ❌ |
+| Leading / line-height | ❌ |
+| Baseline shift | ❌ |
+| Italic / weight (beyond bold) | ❌ |
+| Fill vs stroke separados | parcial (fill + outline simples) |
+| Drop shadow | ❌ |
+| Preview ao vivo no dialog | ❌ |
+| **Text Animator** (typewriter, slide, fade por word) | ❌ |
+| Fontes do app (embutidas) | ❌ (só sistema) |
+| Estilo por caractere/palavra | ❌ |
+
+### Fases
+
+#### Fase 0 — Character panel (0.8)
+
+- [ ] **Novos campos em `TextStyle`** (defaults = visual atual):
+  - `tracking` (letter-spacing, unidade AE ~ em 1/1000 em)
+  - `leading` (multiplicador de line-height, default 1.0)
+  - `baselineShift` (fração da altura)
+  - `italic` (bool)
+  - `fontWeight` (100–900, mapeia QFont::Weight)
+  - `dropShadow` (bool) + `dropShadowColor` + `dropShadowBlur` + `dropShadowOffsetX/Y`
+- [ ] Serialização `.Blanc` + presets (`clipattrs`)
+- [ ] **Preview ao vivo** no `TextEditorDialog` (label QPainter atualizando)
+- [ ] **UI Character**: abas Texto / Aparência / Sombra; spin de tracking/leading/baseline
+- [ ] Draw no preview/export: tracking via `QPainterPath` letter-by-letter ou `QTextLayout`
+- [ ] Export: PNG do texto já aplica os novos campos (paridade)
+
+**Aceite:** tracking/leading/italic/sombra visíveis no preview e no export;
+projetos antigos sem os campos = visual atual.
+
+#### Fase 1 — Text Animator (0.8/0.9)
+
+- [ ] **Modelo de animator** no clipe de texto:
+  ```
+  TextAnimator {
+    QString type; // "typewriter" | "fadeWords" | "slideUp" | "slideLeft" | "fadeChars"
+    double duration;     // segundos da animação
+    double delayPerUnit; // s por caractere/palavra
+    int unit;            // 0=char, 1=word
+    bool reverse;
+  }
+  ```
+- [ ] `QVector<TextAnimator> textAnimators` no `Clip` (serialização)
+- [ ] Preview: avaliar animator no tempo relativo do clipe (paridade com export)
+- [ ] Export: rasterizar quadro-a-quadro do texto com o mesmo avaliador
+  (caminho PNG já existe — reaproveitar `renderTextImage` com tempo)
+- [ ] UI: painel “Animação de texto” no dialog (tipo, duração, delay, unit)
+- [ ] Presets: Typewriter, Fade Words, Slide Up, Fade Chars
+
+**Aceite:** typewriter e slide funcionam no preview e no export;
+keyframes de transform do clipe continuam valendo por cima.
+
+#### Fase 2 — Fontes e polish (0.9)
+
+- [ ] **Fontes embutidas** (opcional): 1–2 TTF no `resources.qrc` + fallback
+- [ ] Lista de fontes com **estilos por família** (QFontDatabase::styles)
+- [ ] **Justify** / word-wrap configurável (largura %)
+- [ ] Estilo por **palavra/seleção** (mínimo: whole-word highlight)
+- [ ] Export: sempre PNG do texto (unificar com drawtext para paridade)
+- [ ] Docs: FEATURES “Texto e fontes”
+
+**Aceite:** dialog com preview; export = preview; fontes do app funcionam
+sem fontconfig.
+
+### Versionamento
+
+| Versão | Entrega |
+|---|---|
+| **0.8** | Fase 0 (Character) + Fase 1 (animators) |
+| **0.9** | Fase 2 (fontes embutidas, justify, polish) |
+
+### Fora de escopo (por enquanto)
+
+- Editar por caractere dentro do preview (só dialog)
+- MOGRT / Essential Graphics
+- Speech-to-text / legendas automáticas
+- Renda de texto 3D / extrusão
+
+> Referência UX: painel **Character** + **Text Animator** do After Effects.
+> Identidade Vegas mantida: TextResource (cópia unificada) continua.
+
+> **Referência:** After Effects **Classic 3D (2010–2018)** — o renderer de
+> camadas 3D com luzes e malhas simples, **sem** Cinema 4D renderer, **sem**
+> ray-trace, **sem** simulação. Alvo realista e suficiente para motion
+> graphics e composição com profundidade.
+>
+> **Não** perseguir AE de hoje (C4D, ray-trace, PBR node, simulação) — muito
+> robusto / outro produto.
+
+### O que era o AE Classic 3D (2010–2018) — nosso alvo
+
+| Recurso AE Classic | No Pierrot v1 3D |
+|---|---|
+| 3D layer: posição XYZ, rotação XYZ, orientation | `mesaZ` + rot XYZ + keyframes |
+| 3D camera: posição, POI, zoom/FOV, orientation | `camZ/fov/pitch/yaw` + KFs |
+| Lights: parallel, spot, point (lambert) | Luz simples parallel/point |
+| Camada “Accepts Lights” | flag `acceptsLights` |
+| Depth sort / empilhamento por Z | ordenar por Z no paint |
+| Malha simples (OBJ/3D via plugin) | **glTF/OBJ estático** (sem skin) |
+| Renderer software CPU | QPainter + projeção (GPU opcional depois) |
+| Sem ray-trace / C4D / simulação | **fora de escopo** |
+
+### Escopo fechado (v1 3D)
+
+| Entra | Não entra |
+|---|---|
+| Z + rotação XYZ por camada | Cinema 4D renderer |
+| Câmera FOV + Z + pitch/yaw + POI | Ray-tracing |
+| Depth sort (Z) | Simulação (cloth/fluid) |
+| Luz parallel/point (lambert) | PBR / node materials |
+| `acceptsLights` por camada | Skinning / mocap |
+| glTF/OBJ estático (sem anim) | GPU obrigatória na v1 |
+| Export PNG sequence (atual) | Competir com AE em VFX |
+
+### Fases (detalhadas)
+
+#### Fase 0 — Fundação 3D (0.8)
+
+**Objetivo:** preparar o modelo e o renderer sem mudar o visual 2D.
+
+| Entrega | Arquivos |
+|---|---|
+| `Math3D.h` header-only: `Vec3`, `Mat4`, perspective, lookAt, rotateXYZ | `src/colombina/render/Math3D.h` |
+| `tst_math3d` (projeção, lookAt, multiply) | `tests/tst_math3d.cpp` + CMake |
+| Campos 3D no modelo (defaults = 2D atual) | `Project.h` |
+| Serialização `.Blanc` + presets | `Project.cpp`, `clipattrs.h` |
+| Flag `mesa3d` (default **false**) | `MesaComposition` |
+| `MesaRenderer` lê flag; se false → caminho 2D idêntico | `MesaRenderer.cpp` |
+
+**Campos a adicionar:**
+
+```
+MesaComposition:
+  bool mesa3d = false;
+  double camZ = 0, camFov = 50, camPitch = 0, camYaw = 0, camRoll = 0;
+  double camPoiX, camPoiY, camPoiZ;   // point of interest
+  // + kfCamZ, kfCamFov, kfCamPitch, kfCamYaw, kfCamPoi*
+
+Track (quando em Mesa):
+  double mesaZ = 0;
+  double mesaRotX = 0, mesaRotY = 0, mesaRotZ = 0; // mesaRotZ = rotation atual
+  bool mesaAcceptsLights = false;
+```
+
+**Aceite:**
+- Projeto 2D existente renderiza **pixel-idêntico** (ou com tolerância 0).
+- `tst_serialization` + `tst_math3d` verdes.
+- Abrir projeto antigo sem campos 3D = defaults 2D.
+
+---
+
+#### Fase 1 — Câmera e layers Classic 3D (0.8)
+
+**Objetivo:** parecer AE Classic — profundidade de verdade no preview.
+
+| Entrega | Detalhe |
+|---|---|
+| Projeção perspectiva | quando `mesa3d=true`: view + projection (FOV, camZ) |
+| Câmera POI | lookAt (poi) em vez de só pan/zoom |
+| Layer transform 3D | posição Z, rotX/Y; painter aplica matriz 3D→2D |
+| Depth sort | empilhar layers por Z (back-to-front) quando `mesa3d` |
+| UI MesaWidget/Props | sliders Z, rotX/Y, FOV, pitch/yaw, POI |
+| Graph Editor | `GPropMesaz`, `GPropCamZ`, `GPropCamFov`, `GPropCamPoi*` |
+| Preview + export | mesmo `MesaRenderer` (paridade) |
+
+**Aceite:**
+- 2–3 camadas com Z diferente → parallax ao mover a câmera.
+- FOV animado (zoom óptico ≠ só scale).
+- Export idêntico ao preview.
+- Projeto sem `mesa3d` continua 2D.
+
+---
+
+#### Fae 2 — Luzes Classic 3D (0.9)
+
+**Objetivo:** luz como no AE Classic (parallel + point).
+
+| Entrega | Detalhe |
+|---|---|
+| Modelo de luz | tipo (parallel/point), posição, cor, intensidade; keyframes |
+| UI de luzes | painel na Mesa (add light layer) |
+| `acceptsLights` | camada 2D só muda se flag true |
+| Shading CPU | lambert N·L em quadros (normal ≈ 0,0,1 para 2D flat) |
+| Export | mesma luz no `MesaRenderer` |
+
+**Aceite:**
+- Camada com luz: escurece/clareia conforme ângulo da luz.
+- Luz animada (posição/intensidade com KFs).
+- Sem luz ou flag false = look flat atual.
+
+---
+
+#### Fase 3 — Malhas estáticas (0.9)
+
+**Objetivo:** importar um modelo simples na Mesa (AE Classic com OBJ/3D via plugin).
+
+| Entrega | Detalhe |
+|---|---|
+| Loader glTF 2.0 estático | `colombina/mesh/GltfLoader.*` (sem skin/anim) |
+| Loader OBJ estático | mesmo módulo |
+| Camada Mesa `meshPath` | MediaItem tipo mesh ou campo na track |
+| Raster software | triângulos + textura + Z (CPU) |
+| Luz/câmera | já da fase 2 aplicam na malha |
+| Export | malha no `MesaRenderer` → PNG sequence |
+
+**Aceite:**
+- glTF/OBJ simples (cubo, cadeira low-poly) aparece na Mesa.
+- Câmera e luz afetam a malha.
+- Export usa o mesmo raster.
+
+**Fora:** skins, animações, materiais PBR, subdivisão.
+
+---
+
+#### Fase 4 — Polish 3D (1.0)
+
+**Objetivo:** UX e docs — não nova capacidade de render.
+
+| Entrega | Detalhe |
+|---|---|
+| Gizmos 3D | eixos XYZ na Mesa quando `mesa3d` |
+| Pré-comp 3D | Mesa 3D como clipe na timeline |
+| Docs | FEATURES “Mesa 3D” + guia rápido |
+| Benchmark | comp 3D no `Bench` |
+| Testes | `tst_math3d` + serialização 3D + paridade 2D |
+
+**Aceite:**
+- Usuário consegue montar cena 3D Classic sem ler código.
+- Documentação e FEATURES atualizados.
+
+---
+
+### Resumo de esforço por fase
+
+| Fase | Esforço | Risco | Depende de |
+|---|---|---|---|
+| 0 | baixo | baixo | — |
+| 1 | médio | médio | Fase 0 |
+| 2 | médio | médio | Fase 1 (Z) |
+| 3 | médio-alto | médio | Fase 1 |
+| 4 | baixo | baixo | Fases 1–3 |
+
+### Ordem de ataque
+
+```
+0 → 1 → 2 → 3 → 4
+```
+
+Fase 0 e 1 podem entrar juntas na **0.8**. Luz + glTF na **0.9**. Polish na **1.0**.
+
+### Por que parar por aqui
+
+- AE 2010–2018 era **Classic 3D em CPU** — mesmo espírito do Pierrot (QPainter).
+- Timeline Vegas + Mesa 2D já resolvem a maioria do público.
+- Classic 3D dá **parallax, câmera cinematográfica e luz** — o essencial.
+- C4D/ray-trace/PBR: **fora** — identidade e manutenção não pagam.
+- Se um dia precisar de AE “de verdade”: **OFX** ou **Blender → clipe**.
+
+### Versionamento
+
+| Versão | Entrega |
+|---|---|
+| **0.8** | Fase 0 + 1 (Z/FOV/câmera Classic 3D) |
+| **0.9** | Fase 2 + 3 (luz + glTF estático) |
+| **1.0** | Polish + docs |
+
+> 3D entra como **evolução da Mesa**, não como app separado. Timeline Vegas
+> **não muda**.
+
+---
+
 ## Cor — status vs Lumetri (Premiere) · 2026-10-02
 
 - [x] **LGG clássico** ✅ lift/gamma/gain por canal (preview + export + preset).

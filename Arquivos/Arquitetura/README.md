@@ -13,6 +13,8 @@ recursos), ver [`../Relatorios/`](../Relatorios/).
 | Documento | Assunto | Atualizado |
 |---|---|---|
 | [`KERNEL.md`](KERNEL.md) | Núcleo `src/colombina` (models, ffmpeg, render, export, ofx) — LOC por módulo, caches, thread-safety, estado da GPU, comparação com o Vegas Pro | 2026-10-02 (v0.7 alpha) |
+| [`Mesa-3D-Plano.md`](Mesa-3D-Plano.md) | Plano Mesa 3D estilo AE Classic 2010–2018 (fases 0–4) | 2026-10-02 |
+| [`Texto-Fontes-Plano.md`](Texto-Fontes-Plano.md) | Plano texto/fontes estilo AE (Character + Text Animator) | 2026-10-02 |
 
 ## Relatórios (fora de Arquitetura)
 
