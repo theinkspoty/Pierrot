@@ -763,7 +763,7 @@ bool PivotWidget::eventFilter(QObject* obj, QEvent* ev) {
         auto* me = static_cast<QMouseEvent*>(ev);
         if (me->button() == Qt::LeftButton) {
             int idx = -1;
-            const int ch = kfChannelAt(w, me->pos().toPoint(), &idx);
+            const int ch = kfChannelAt(w, me->pos(), &idx);
             w->setFocus(Qt::MouseFocusReason);
             if (ch == ChNone || idx < 0) {
                 m_selChannel = ChNone;
@@ -828,7 +828,7 @@ bool PivotWidget::eventFilter(QObject* obj, QEvent* ev) {
     if (ev->type() == QEvent::MouseButtonDblClick && c) {
         auto* me = static_cast<QMouseEvent*>(ev);
         int idx = -1;
-        const int ch = kfChannelAt(w, me->pos().toPoint(), &idx);
+        const int ch = kfChannelAt(w, me->pos(), &idx);
         if (ch != ChNone && idx >= 0) {
             m_selChannel = ch;
             m_selIndex = idx;

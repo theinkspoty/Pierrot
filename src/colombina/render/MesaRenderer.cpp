@@ -523,7 +523,7 @@ bool MesaRenderer::drawTrackLayer(QPainter& acc, const Track& track,
                 mz += vz[vi];
             }
             if (poly.size() >= 3)
-                faces.append({poly, mz / poly.size() + tZ});
+                faces.append(FaceP{poly, mz / poly.size() + tZ});
         }
         // Pintor algorítmico: longe primeiro. Estável para não tremer quando
         // duas faces empatam no mesmo Z.
