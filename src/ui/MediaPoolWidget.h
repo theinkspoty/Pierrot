@@ -97,12 +97,20 @@ protected:
 private:
     QStringList selectedIds() const;
     void cancelDrag();
+    void updateBand(const QPoint& globalPos);
+    void finalizeBand();
+    void cancelBand();
     void showDragIcon(const QPoint& globalPos);
     void moveDragIcon(const QPoint& globalPos);
     void hideDragIcon();
     QPoint m_pressPos;
     QTreeWidgetItem* m_pressItem = nullptr;
+    bool m_pressWasSelected = false;
+    bool m_pressCtrl = false;
     bool m_dragging = false;
+    QRubberBand* m_band = nullptr;
+    bool m_bandActive = false;
+    bool m_bandAdd = false;
     QLabel* m_dragIcon = nullptr;
     friend class MediaPoolWidget;
 };

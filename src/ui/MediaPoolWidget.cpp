@@ -294,57 +294,127 @@ void PoolTree::dropEvent(QDropEvent* e) {
 void PoolTree::mousePressEvent(QMouseEvent* e) {
     m_pressPos = e->position().toPoint();
     m_pressItem = itemAt(m_pressPos);
+    m_pressWasSelected = m_pressItem
+        ? selectionModel()->isSelected(indexFromItem(m_pressItem))
+        : false;
+    m_pressCtrl = (e->modifiers() & Qt::ControlModifier) != 0;
     m_dragging = false;
-    // A base cuida da seleção (Ctrl/Shift estendem a seleção de linhas).
+    m_bandActive = false;
+    m_bandAdd = m_pressCtrl;
+
+    setState(QAbstractItemView::NoState);
+
+    if (e->button() == Qt::LeftButton) {
+        e->accept();
+        if (m_pressItem) {
+            if (m_pressCtrl) {
+                selectionModel()->setCurrentIndex(indexFromItem(m_pressItem),
+                                                  QItemSelectionModel::NoUpdate);
+            } else {
+                selectionModel()->setCurrentIndex(indexFromItem(m_pressItem),
+                                                  QItemSelectionModel::NoUpdate);
+            }
+        } else {
+            if (!m_band)
+                m_band = new QRubberBand(QRubberBand::Rectangle, viewport());
+            m_band->setGeometry(QRect(m_pressPos, QSize(1, 1)));
+            m_band->hide();
+        }
+        return;
+    }
     QTreeWidget::mousePressEvent(e);
 }
 
 void PoolTree::mouseMoveEvent(QMouseEvent* e) {
     const QPoint p = e->position().toPoint();
-    if ((e->buttons() & Qt::LeftButton) && !m_dragging && m_pressItem
+    if ((e->buttons() & Qt::LeftButton) && !m_dragging && !m_bandActive
         && (p - m_pressPos).manhattanLength() >= QApplication::startDragDistance()) {
-        const QModelIndex idx = indexFromItem(m_pressItem);
-        if (!selectionModel()->isSelected(idx))
-            selectionModel()->select(idx, QItemSelectionModel::ClearAndSelect);
-        m_dragging = true;
-        qApp->installEventFilter(this);
-        showDragIcon(e->globalPosition().toPoint());
-        emit dragHover(e->globalPosition().toPoint());
+        if (m_pressItem) {
+            const QModelIndex idx = indexFromItem(m_pressItem);
+            const bool wasSelected = selectionModel()->isSelected(idx);
+            if (m_pressCtrl) {
+                if (!wasSelected)
+                    selectionModel()->select(idx, QItemSelectionModel::Select);
+            } else if (!wasSelected) {
+                selectionModel()->select(idx, QItemSelectionModel::ClearAndSelect);
+            }
+            m_dragging = true;
+            qApp->installEventFilter(this);
+            showDragIcon(e->globalPosition().toPoint());
+            emit dragHover(e->globalPosition().toPoint());
+        } else {
+            m_bandActive = true;
+            qApp->installEventFilter(this);
+            updateBand(e->globalPosition().toPoint());
+        }
         return;
     }
+    if ((e->buttons() & Qt::LeftButton))
+        return;
     QTreeWidget::mouseMoveEvent(e);
 }
 
 bool PoolTree::eventFilter(QObject* obj, QEvent* ev) {
-    if (!m_dragging) return QTreeWidget::eventFilter(obj, ev);
-    if (ev->type() == QEvent::MouseMove) {
-        const QPoint g = static_cast<QMouseEvent*>(ev)->globalPosition().toPoint();
-        moveDragIcon(g);
-        emit dragHover(g);
-        return false;
-    }
-    if (ev->type() == QEvent::MouseButtonRelease) {
-        const auto* me = static_cast<QMouseEvent*>(ev);
-        if (me->button() == Qt::LeftButton) {
-            const QPoint g = me->globalPosition().toPoint();
-            cancelDrag();
-            emit mediaDropped(selectedIds(), g);
-            return true; // não deixa a base "finalizar" e limpar a seleção
+    if (m_dragging) {
+        if (ev->type() == QEvent::MouseMove) {
+            const QPoint g = static_cast<QMouseEvent*>(ev)->globalPosition().toPoint();
+            moveDragIcon(g);
+            emit dragHover(g);
+            return false;
         }
-    }
-    if (ev->type() == QEvent::MouseButtonPress || ev->type() == QEvent::WindowDeactivate) {
-        cancelDrag();
-        return true;
+        if (ev->type() == QEvent::MouseButtonRelease) {
+            const auto* me = static_cast<QMouseEvent*>(ev);
+            if (me->button() == Qt::LeftButton) {
+                const QPoint g = me->globalPosition().toPoint();
+                cancelDrag();
+                emit mediaDropped(selectedIds(), g);
+                return true;
+            }
+        }
+        if (ev->type() == QEvent::MouseButtonPress || ev->type() == QEvent::WindowDeactivate) {
+            cancelDrag();
+            return true;
+        }
+    } else if (m_bandActive) {
+        if (ev->type() == QEvent::MouseMove) {
+            updateBand(static_cast<QMouseEvent*>(ev)->globalPosition().toPoint());
+            return true;
+        }
+        if (ev->type() == QEvent::MouseButtonRelease) {
+            const auto* me = static_cast<QMouseEvent*>(ev);
+            if (me->button() == Qt::LeftButton) {
+                finalizeBand();
+                return true;
+            }
+        }
+        if (ev->type() == QEvent::MouseButtonPress || ev->type() == QEvent::WindowDeactivate) {
+            cancelBand();
+            return true;
+        }
     }
     return QTreeWidget::eventFilter(obj, ev);
 }
 
 void PoolTree::mouseReleaseEvent(QMouseEvent* e) {
     hideDragIcon();
-    if (m_dragging) {
-        // O filtro global cuida do release (o cursor pode estar sobre a
-        // timeline); aqui só evita o comportamento padrão.
+    if (m_dragging || m_bandActive) {
         e->accept();
+        return;
+    }
+    if (e->button() == Qt::LeftButton) {
+        const bool shift = (e->modifiers() & Qt::ShiftModifier) != 0;
+        if (!m_pressItem) {
+            if (!(e->modifiers() & Qt::ControlModifier))
+                clearSelection();
+        } else if (m_pressCtrl) {
+            selectionModel()->select(indexFromItem(m_pressItem),
+                                     QItemSelectionModel::Toggle);
+        } else if (!shift && !m_pressWasSelected) {
+            selectionModel()->select(indexFromItem(m_pressItem),
+                                     QItemSelectionModel::ClearAndSelect);
+        }
+        e->accept();
+        m_pressItem = nullptr;
         return;
     }
     QTreeWidget::mouseReleaseEvent(e);
@@ -364,6 +434,50 @@ void PoolTree::cancelDrag() {
     m_dragging = false;
     m_pressItem = nullptr;
     emit dragHoverCleared();
+}
+
+void PoolTree::updateBand(const QPoint& globalPos) {
+    if (!m_band) return;
+    const QPoint vp = viewport()->mapFromGlobal(globalPos);
+    const QRect rect = QRect(m_pressPos, vp).normalized();
+    m_band->setGeometry(rect);
+    m_band->show();
+
+    const int edge = 24;
+    QScrollBar* sb = verticalScrollBar();
+    if (vp.y() < edge)
+        sb->setValue(sb->value() - 8);
+    else if (vp.y() > viewport()->height() - edge)
+        sb->setValue(sb->value() + 8);
+
+    QItemSelection sel;
+    for (int i = 0; i < topLevelItemCount(); ++i) {
+        QTreeWidgetItem* it = topLevelItem(i);
+        if (visualItemRect(it).intersects(rect)) {
+            const QModelIndex idx = indexFromItem(it);
+            sel.select(idx, idx);
+        }
+    }
+    const auto flags = m_bandAdd ? QItemSelectionModel::Select
+                                 : QItemSelectionModel::ClearAndSelect;
+    selectionModel()->select(sel, flags);
+}
+
+void PoolTree::finalizeBand() {
+    if (qApp) qApp->removeEventFilter(this);
+    if (m_band) m_band->hide();
+    const QRect r = m_band ? m_band->geometry() : QRect(m_pressPos, QSize(0, 0));
+    if (r.width() < 4 && r.height() < 4 && !m_bandAdd)
+        clearSelection();
+    m_bandActive = false;
+    m_pressItem = nullptr;
+}
+
+void PoolTree::cancelBand() {
+    if (qApp) qApp->removeEventFilter(this);
+    if (m_band) m_band->hide();
+    m_bandActive = false;
+    m_pressItem = nullptr;
 }
 
 void PoolTree::showDragIcon(const QPoint& globalPos) {
