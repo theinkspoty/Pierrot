@@ -92,9 +92,7 @@ public:
     explicit FrameWorker(QObject* parent = nullptr)
         : QObject(parent),
           m_mainDecoder(std::make_unique<FFmpegDecoder>()),
-          m_prefetchDecoder(std::make_unique<FFmpegDecoder>()) {
-        m_mainDecoder->setHardwareDecodeAllowed(false);
-        m_prefetchDecoder->setHardwareDecodeAllowed(false); }
+          m_prefetchDecoder(std::make_unique<FFmpegDecoder>()) {}
 
 public slots:
     void decodeOne(const QString& clipId, const QString& path, double t, int maxW, double dt) {
@@ -263,8 +261,7 @@ class BgPrefetchWorker : public QObject {
 public:
     explicit BgPrefetchWorker(QObject* parent = nullptr)
         : QObject(parent),
-          m_decoder(std::make_unique<FFmpegDecoder>()) {
-        m_decoder->setHardwareDecodeAllowed(false); }
+          m_decoder(std::make_unique<FFmpegDecoder>()) {}
 
 public slots:
     void decode(const QString& path, double t, int maxW, double step) {
