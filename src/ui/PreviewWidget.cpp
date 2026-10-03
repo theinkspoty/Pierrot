@@ -2681,23 +2681,29 @@ void PreviewWidget::setPreviewQuality(int width) {
 // cima do vídeo no paintEvent.
 const Clip* PreviewWidget::clipAt(double t) const {
     if (!m_project) return nullptr;
+    const Clip* best = nullptr;
     for (int tr = 0; tr < (int)m_project->videoTracks.size(); ++tr) {
         const Track& track = m_project->videoTracks[tr];
         if (!track.visible) continue;   // faixa oculta (olho)
         // Track de Mesa gera quadro mesmo sem mídia própria (a composição é a
         // fonte de vídeo).
         const bool mesaTrack = m_project->findMesaForTrack(track.id) != nullptr;
-        const Clip* best = nullptr;
+        const Clip* here = nullptr;
         for (const Clip& c : track.clips) {
             if (t >= c.pos && t < c.pos + c.dur && !c.isText) {
                 const MediaItem* m = m_project->findMedia(c.mediaIdAt(t - c.pos));
                 const bool hasVideo = mesaTrack || (m && m->hasVideo);
-                if (hasVideo && (!best || c.pos > best->pos)) best = &c;
+                if (hasVideo && (!here || c.pos > here->pos)) here = &c;
             }
         }
-        if (best) return best;
+        // Empilhamento: vence a track mais ALTA no índice — é a mesma ordem
+        // que o paintEvent usa ao compor o texto (size()-1 → 0). Antes isto
+        // fazia `return best` no PRIMEIRO match, então uma track de vídeo
+        // abaixo da Mesa roubava o clipe: tryRenderMesa nunca era chamado com
+        // a malha e o Preview mostrava o vídeo de baixo em vez da composição.
+        if (here) best = here;
     }
-    return nullptr;
+    return best;
 }
 
 bool PreviewWidget::tryRenderMesa(const Clip* clip) {
