@@ -162,6 +162,8 @@ public slots:
     // Painel Effects (Premiere): abrir diálogos de cor/texto do clipe.
     void openGradingForClip(const QString& clipId);
     void openTextEditorForClip(const QString& clipId);
+    // Abre o dock Pivot (edição 3D do clipe).
+    void openPivotForClip(const QString& clipId);
     // Cria um clipe independente de texto (animável) numa faixa de vídeo.
     void addTextClipAt(int row, double t);
     // Cria um clipe Mesa (composição 2D) numa faixa de vídeo.
@@ -174,6 +176,12 @@ public slots:
     // gera o MediaItem no pool e uma track nova com um clip cobrindo tudo.
     void addSolidToMesa(const QString& mesaId, const QString& generator,
                         const QColor& c1, const QColor& c2);
+    // Importa malha .obj como camada da Mesa (Mesa 3D).
+    void addMeshToMesa(const QString& mesaId, const QString& objPath);
+    // Converte .blend via Blender CLI e importa como malha 3D. Retorna
+    // QString() em caso de sucesso, ou a mensagem de erro — o caller precisa
+    // disso para não anunciar sucesso quando a conversão falhou.
+    QString importBlendAsMesh(const QString& mesaId, const QString& blendPath);
     // Duplica uma track que é camada de Mesa (cópia profunda com ids novos,
     // deslocada +20/+20 no canvas).
     void duplicateMesaTrack(const QString& mesaId, const QString& trackId);
@@ -205,6 +213,7 @@ signals:
     void mesaOpenRequested(const QString& mesaId);
     void mesaChanged(const QString& mesaId);
     void velocityRequested(const QString& clipId); // abre dock Editor de Velocidade
+    void pivotRequested(const QString& clipId); // abre dock Pivot (3D do clipe)
     void selectionChanged(const QString& id);
     void pancropRequested(const QString& id);
     void maskRequested(const QString& id);

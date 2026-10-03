@@ -1663,6 +1663,33 @@ void TimelineWidget::dropEvent(QDropEvent* e) {
     if (!m_project) return;
     const QMimeData* md = e->mimeData();
 
+    // .obj / .blend → malha da Mesa (não é mídia FFmpeg)
+    if (md->hasUrls()) {
+        QStringList objs;
+        QStringList blends;
+        for (const QUrl& u : md->urls()) {
+            if (!u.isLocalFile()) continue;
+            const QString path = u.toLocalFile();
+            if (path.endsWith(QLatin1String(".obj"), Qt::CaseInsensitive))
+                objs.append(path);
+            else if (path.endsWith(QLatin1String(".blend"), Qt::CaseInsensitive))
+                blends.append(path);
+        }
+        if (!objs.isEmpty() || !blends.isEmpty()) {
+            if (m_project->mesas.isEmpty()) criarMesa();
+            const QString mesaId = m_project->mesas.isEmpty()
+                                      ? QString()
+                                      : m_project->mesas.last().id;
+            if (!mesaId.isEmpty()) {
+                for (const QString& p : objs) addMeshToMesa(mesaId, p);
+                for (const QString& p : blends) Q_UNUSED(importBlendAsMesh(mesaId, p));
+                emit mesaOpenRequested(mesaId);
+            }
+            e->acceptProposedAction();
+            return;
+        }
+    }
+
     // ── Arrasto de efeito (do painel de efeitos) ─────────────────────────
     if (md->hasFormat(QLatin1String(kMimeEffect))) {
         const QByteArray effectData = md->data(QLatin1String(kMimeEffect));
@@ -1718,6 +1745,16 @@ void TimelineWidget::dropEvent(QDropEvent* e) {
             target->reverb = true;
             target->reverbMix = 0.35;
             target->reverbSize = 0.5;
+        } else if (effectId.startsWith(QStringLiteral("trans:"))) {
+            // Transição de vídeo do painel Effects — NÃO é plugin OFX.
+            const QString t = effectId.mid(QStringLiteral("trans:").size());
+            if (t != QStringLiteral("constantpower"))
+                target->transitionType = t;
+        } else if (effectId.startsWith(QStringLiteral("text:"))
+                   || effectId.startsWith(QStringLiteral("frei0r:"))
+                   || effectId == QStringLiteral("pierrot_lumetri")) {
+            // IDs especiais do painel Effects: não vão no stack OFX.
+            // Texto/fade e Lumetri o MainWindow/Express tratam; aqui só ignora.
         } else {
             // Efeito OFX: adiciona ao stack ofxFx do clipe.
             bool already = false;

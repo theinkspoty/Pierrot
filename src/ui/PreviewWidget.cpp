@@ -3409,6 +3409,10 @@ void PreviewWidget::requestLowerLayers(int decW) {
         if (!m || !m->hasVideo) continue;
         // Cor sólida não tem arquivo: é gerada na pintura, não pede decode.
         if (m->isSolid) continue;
+        // Malha 3D também não é mídia decodificável: um .obj não vai pelo
+        // FFmpeg. A camada é rasterizada por `MesaRenderer::prepareLayer`,
+        // no loop de tracks Mesa logo abaixo.
+        if (m->isMesh) continue;
         const double srcT = clipSrcTime(*c, m_playhead - c->pos);
         const QString vpath = resolvePreviewVideo(m->filePath);
         {

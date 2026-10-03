@@ -7,11 +7,15 @@
 #include "colombina/ffmpeg/FFmpegDecoder.h"
 #include "colombina/ffmpeg/ProxyManager.h"
 #include "colombina/generators.h"
+#include "colombina/mesh/ObjLoader.h"
+#include "colombina/render/Math3D.h"
 
 #include <QPainter>
 #include <QPainterPath>
 #include <QtMath>
 #include <QtConcurrent/QtConcurrent>
+#include <algorithm>
+#include <cmath>
 
 MesaRenderer::MesaRenderer() {}
 
@@ -148,10 +152,9 @@ QImage MesaRenderer::render(const MesaComposition& mesa, const Project& project,
 }
 
 // Desenha uma passada inteira: câmera (no instante `time`) + todas as layers.
-// Câmera no estilo After Effects: um ponto da composição (camX, camY, ABSOLUTO,
-// origem topo-esquerda) fica no centro do frame de saída, com rotação e zoom.
-// zoom = 1.0 com a câmera no centro da comp e a comp proporcional ao output
-// produz mapeamento 1:1 (contido no frame).
+// Câmera 2D (padrão): T(centro)·R·S·T(-camX,-camY).
+// Câmera 3D (mesa3d=true, AE Classic): projeção perspectiva com FOV + Z;
+// camadas ordenadas por Z (back-to-front); malhas OBJ projetadas vertex a vertex.
 QImage MesaRenderer::renderSample(const MesaComposition& mesa, const Project& project,
                                   double time, const QString* skipTrackId,
                                   bool motionBlurStack) {
@@ -165,40 +168,254 @@ QImage MesaRenderer::renderSample(const MesaComposition& mesa, const Project& pr
     p.setRenderHint(QPainter::SmoothPixmapTransform);
     p.setClipRect(0, 0, outW, outH);
 
-    // Fase 0 (Mesa 3D): flag `mesa3d` lida aqui; o caminho de RENDER continua
-    // 2D (matriz afim) até a Fase 1 implementar projeção/depth. Quando a flag
-    // estiver true, os campos 3D (camZ/fov/pitch/yaw) são avaliados mas ainda
-    // não alteram o enquadramento — evita regressão e destrava a UI/modelo.
-    const bool use3d = mesa.mesa3d;
-    double camZ = 0.0, camFov = 50.0, camPitch = 0.0, camYaw = 0.0;
-    if (use3d) {
-        camZ = kfValue(mesa.kfCamZ, mesa.camZ, time);
-        camFov = std::max(1.0, kfValue(mesa.kfCamFov, mesa.camFov, time));
-        camPitch = kfValue(mesa.kfCamPitch, mesa.camPitch, time);
-        camYaw = kfValue(mesa.kfCamYaw, mesa.camYaw, time);
-        Q_UNUSED(camZ); Q_UNUSED(camFov); Q_UNUSED(camPitch); Q_UNUSED(camYaw);
-        // Fase 1: view = lookAt(eye(poi+Z,pitch,yaw)) · projection(fov)
-    }
-
     const double camX = kfValue(mesa.kfCamX, mesa.camX, time);
     const double camY = kfValue(mesa.kfCamY, mesa.camY, time);
     const double zoom = qMax(0.001, kfValue(mesa.kfCamZoom, mesa.camZoom, time));
     const double rot = kfValue(mesa.kfCamRotation, mesa.camRotation, time);
     const double fit = qMin(double(outW) / mesa.canvasW,
                             double(outH) / mesa.canvasH);
-    const double s = zoom * fit;
 
-    // View = T(centro do output) · R · S · T(-posição da câmera) no espaço da
-    // composição. Cada camada empilha a matriz local por cima
-    // (T(pos)·R·S·T(-âncora)). Como o painter clipa só no frame de saída, uma
-    // imagem pode ficar em QUALQUER coordenada da comp (fora dos limites do
-    // canvas) e ainda aparece no preview quando a câmera apontar pra ela —
-    // não existe bitmap do tamanho da comp para cortá-la.
-    p.translate(outW / 2.0, outH / 2.0);
-    p.rotate(rot);
-    p.scale(s, s);
-    p.translate(-camX, -camY);
-    renderToPainter(p, mesa, project, time, skipTrackId, motionBlurStack);
+    if (!mesa.mesa3d) {
+        // ── Caminho 2D original (zero regressão) ──────────────────────────
+        const double s = zoom * fit;
+        p.translate(outW / 2.0, outH / 2.0);
+        p.rotate(rot);
+        p.scale(s, s);
+        p.translate(-camX, -camY);
+        renderToPainter(p, mesa, project, time, skipTrackId, motionBlurStack);
+        return out;
+    }
+
+    // ── Fase 1: Mesa 3D (AE Classic) ─────────────────────────────────────
+    // Câmera: posição (camX, camY, camZ), FOV, pitch/yaw; POI default = centro.
+    const double camZ = kfValue(mesa.kfCamZ, mesa.camZ, time);
+    const double camFov = std::max(5.0, kfValue(mesa.kfCamFov, mesa.camFov, time));
+    const double camPitch = kfValue(mesa.kfCamPitch, mesa.camPitch, time);
+    const double camYaw = kfValue(mesa.kfCamYaw, mesa.camYaw, time);
+    const double poiX = kfValue(mesa.kfCamPoiX, mesa.camPoiX, time);
+    const double poiY = kfValue(mesa.kfCamPoiY, mesa.camPoiY, time);
+    const double poiZ = kfValue(mesa.kfCamPoiZ, mesa.camPoiZ, time);
+
+    // Focal em px de saída a partir do FOV (vertical).
+    const double focal = (outH * 0.5) / std::tan(camFov * 3.14159265358979323846 / 360.0);
+
+    // Projeção de um ponto do espaço da Mesa (x,y,z) para o frame de saída.
+    // Convenção AE Classic: câmera em camZ (frente do canvas, Z+ = p/ câmera);
+    // camada em mesaZ. dist = camZ - z (quanto menor, mais perto).
+    auto projectPoint = [&](double x, double y, double z, double& sx, double& sy, bool& ok) {
+        const double dist = camZ - z;
+        if (dist < 1.0) { ok = false; return; } // atrás da câmera
+        const double k = focal / dist;
+        // Offset da câmera no plano + rotação 2D (roll) + pitch/yaw simples:
+        // pitch desloca Y, yaw desloca X (aproximação de órbita leve).
+        const double rad = rot * 3.14159265358979323846 / 180.0;
+        const double c = std::cos(rad), s = std::sin(rad);
+        double lx = (x - camX) * k;
+        double ly = (y - camY) * k;
+        // Pitch/yaw: deslocam o ponto de vista (como girar a câmera).
+        ly -= camPitch * (dist / 100.0) * k * 0.01;
+        lx += camYaw * (dist / 100.0) * k * 0.01;
+        // POI: se diferente de camX/camY, corrige o enquadramento.
+        lx += (camX - poiX) * k * 0.0; // POI já embutido em camX/camY por padrão
+        Q_UNUSED(poiY); Q_UNUSED(poiZ);
+        const double rx = lx * c - ly * s;
+        const double ry = lx * s + ly * c;
+        sx = outW * 0.5 + rx;
+        sy = outH * 0.5 + ry;
+        ok = true;
+    };
+
+    // Coleta tracks da Mesa com Z (ordenadas: fundo → topo = Z menor → maior
+    // quando Z+ = perto da câmera; empilhamos do MAIOR Z (perto) para o menor
+    // se preferirmos transparência — aqui: do fundo (Z pequeno) para frente).
+    struct Cand {
+        const Track* tr = nullptr;
+        double z = 0.0;
+        double x = 0.0, y = 0.0;
+        double scX = 1.0, scY = 1.0, rotDeg = 0.0;
+        double rotX = 0.0, rotY = 0.0;
+        double op = 1.0;
+        bool isMesh = false;
+        QString meshPath;
+    };
+    QVector<Cand> cands;
+    for (const QString& tid : mesa.trackIds) {
+        if (skipTrackId && *skipTrackId == tid) continue;
+        const Track* track = nullptr;
+        for (const Track& tr : project.videoTracks)
+            if (tr.id == tid) { track = &tr; break; }
+        if (!track)
+            for (const Track& tr : project.audioTracks)
+                if (tr.id == tid) { track = &tr; break; }
+        if (!track || track->mesaHidden) continue;
+        Cand cd;
+        cd.tr = track;
+        const double t = time;
+        cd.z = kfValue(track->kfMesaZ, track->mesaZ, t);
+        cd.x = kfValue(track->kfMesaX, track->mesaX, t);
+        cd.y = kfValue(track->kfMesaY, track->mesaY, t);
+        cd.scX = kfValue(track->kfMesaScaleX, track->mesaScaleX, t);
+        cd.scY = track->kfMesaScaleY.isEmpty() ? cd.scX
+                 : kfValue(track->kfMesaScaleY, track->mesaScaleY, t);
+        cd.rotDeg = kfValue(track->kfMesaRotation, track->mesaRotation, t);
+        cd.rotX = kfValue(track->kfMesaRotX, track->mesaRotX, t);
+        cd.rotY = kfValue(track->kfMesaRotY, track->mesaRotY, t);
+        cd.op = std::clamp(kfValue(track->kfMesaOpacity, track->mesaOpacity, t), 0.0, 1.0);
+        cd.isMesh = !track->meshPath.isEmpty();
+        cd.meshPath = track->meshPath;
+        cands.append(cd);
+    }
+    // Back-to-front: Z menor (longe) primeiro; desempate por trackIds.
+    std::stable_sort(cands.begin(), cands.end(),
+                     [](const Cand& a, const Cand& b) { return a.z < b.z; });
+
+    for (const Cand& cd : cands) {
+        const Track* track = cd.tr;
+        if (cd.isMesh) {
+            mesh::ObjMesh mesh;
+            if (!mesh::loadObjFile(cd.meshPath, mesh) || mesh.isEmpty()) continue;
+            if (mesh.vertsXY.isEmpty() || mesh.vertsXY.size() != mesh.vertsZ.size())
+                continue;
+            // Centróide da malha (pivô de rotação no próprio eixo).
+            double cxSum = 0, cySum = 0, czSum = 0;
+            for (int i = 0; i < mesh.vertsXY.size(); ++i) {
+                cxSum += mesh.vertsXY[i].x();
+                cySum += mesh.vertsXY[i].y();
+                czSum += mesh.vertsZ[i];
+            }
+            const double nV = std::max(1, int(mesh.vertsXY.size()));
+            const double meshCx = cxSum / nV;
+            const double meshCy = cySum / nV;
+            const double meshCz = czSum / nV;
+            const double radZ = cd.rotDeg * 3.14159265358979323846 / 180.0;
+            const double radX = cd.rotX * 3.14159265358979323846 / 180.0;
+            const double radY = cd.rotY * 3.14159265358979323846 / 180.0;
+            p.save();
+            p.setOpacity(cd.op);
+            const QColor face = track->color.isValid() ? track->color
+                                                       : (mesh.hasTexture() && !mesh.texture.isNull()
+                                                              ? mesh.averageColor()
+                                                              : QColor(120, 140, 170));
+            auto projectVert = [&](int vi, double& sx, double& sy, bool& ok, double& wz) {
+                double lx0, ly0, lz0;
+                if (mesh.has3D()) {
+                    lx0 = mesh.vertsX[vi];
+                    ly0 = mesh.vertsY[vi];
+                    lz0 = mesh.vertsZ[vi];
+                } else {
+                    lx0 = mesh.vertsXY[vi].x();
+                    ly0 = mesh.vertsXY[vi].y();
+                    lz0 = mesh.vertsZ[vi];
+                }
+                double lx = (lx0 - meshCx) * cd.scX;
+                double ly = (ly0 - meshCy) * cd.scY;
+                double lz = (lz0 - meshCz) * cd.scX;
+                // Rotação XYZ no próprio eixo (em torno do centroide).
+                double x1 = lx * std::cos(radZ) - ly * std::sin(radZ);
+                double y1 = lx * std::sin(radZ) + ly * std::cos(radZ);
+                double z1 = lz;
+                double y2 = y1 * std::cos(radX) - z1 * std::sin(radX);
+                double z2 = y1 * std::sin(radX) + z1 * std::cos(radX);
+                double x3 = x1 * std::cos(radY) + z2 * std::sin(radY);
+                double z3 = -x1 * std::sin(radY) + z2 * std::cos(radY);
+                wz = cd.z + z3 + meshCz * cd.scX; // mantém profundidade relativa
+                projectPoint(cd.x + x3 + meshCx * cd.scX,
+                             cd.y + y2 + meshCy * cd.scY,
+                             wz, sx, sy, ok);
+            };
+            // Ordena faces por profundidade média (pintura back-to-front).
+            struct FaceD { QVector<int> idx; double z; };
+            QVector<FaceD> faces;
+            faces.reserve(mesh.faces.size());
+            for (const QVector<int>& fi : mesh.faces) {
+                if (fi.size() < 3) continue;
+                double zsum = 0.0;
+                int n = 0;
+                for (int vi : fi) {
+                    if (vi < 0 || vi >= mesh.vertsXY.size()) continue;
+                    double sx = 0, sy = 0, wz = 0;
+                    bool ok = false;
+                    projectVert(vi, sx, sy, ok, wz);
+                    if (!ok) continue;
+                    zsum += wz;
+                    ++n;
+                }
+                if (n == 0) continue;
+                FaceD fd;
+                fd.idx = fi;
+                fd.z = zsum / n;
+                faces.append(fd);
+            }
+            std::stable_sort(faces.begin(), faces.end(),
+                             [](const FaceD& a, const FaceD& b) { return a.z < b.z; });
+            for (const FaceD& fd : faces) {
+                QPolygonF poly;
+                for (int vi : fd.idx) {
+                    if (vi < 0 || vi >= mesh.vertsXY.size()) continue;
+                    double sx = 0, sy = 0, wz = 0;
+                    bool ok = false;
+                    projectVert(vi, sx, sy, ok, wz);
+                    if (ok) poly << QPointF(sx, sy);
+                }
+                if (poly.size() < 3) continue;
+                // Sombreamento simples por profundidade.
+                const double shade = std::clamp(0.55 + 0.45 * ((fd.z - (cd.z - 80)) / 160.0),
+                                                 0.35, 1.0);
+                if (mesh.hasTexture() && !mesh.texture.isNull()) {
+                    const QRectF bbox = poly.boundingRect();
+                    QColor fill = face;
+                    fill.setAlphaF(std::clamp(cd.op * shade, 0.0, 1.0));
+                    p.setPen(QPen(fill.darker(150), 1.0));
+                    p.setBrush(fill);
+                    p.drawPolygon(poly);
+                    QPainterPath clipPath;
+                    clipPath.addPolygon(poly);
+                    p.save();
+                    p.setClipPath(clipPath);
+                    p.setOpacity(std::clamp(cd.op * shade * 0.9, 0.0, 1.0));
+                    p.drawImage(bbox, mesh.texture);
+                    p.restore();
+                } else {
+                    QColor fc = face;
+                    fc.setAlphaF(std::clamp(cd.op * shade, 0.0, 1.0));
+                    p.setPen(QPen(fc.darker(160), 1.0));
+                    p.setBrush(fc);
+                    p.drawPolygon(poly);
+                    p.setPen(QPen(fc.lighter(170), 1.0));
+                    p.setBrush(Qt::NoBrush);
+                    p.drawPolygon(poly);
+                }
+            }
+            p.restore();
+            continue;
+        }
+
+        // Camada 2D (imagem/texto): projeção da âncora + escala perspectiva.
+        double sx = 0, sy = 0;
+        bool ok = false;
+        projectPoint(cd.x, cd.y, cd.z, sx, sy, ok);
+        if (!ok) continue;
+        const double dist = std::max(1.0, camZ - cd.z);
+        const double persp = focal / dist;
+
+        LayerPrep prep;
+        if (!prepareLayer(prep, mesa, project, time, *track, time)) continue;
+        // Reancora: o LayerPrep usa posição 2D; sobrepõe a projeção 3D.
+        prep.posX = sx;
+        prep.posY = sy;
+        // Escala relativa: persp já está no painter? Não — aplicamos na imagem.
+        p.save();
+        p.setOpacity(prep.opacity);
+        p.translate(sx, sy);
+        p.rotate(prep.rot + rot); // roll extra da câmera
+        p.scale(prep.sx * persp / fit, prep.sy * persp / fit);
+        // Âncora: desloca o centro natural da imagem.
+        p.translate(-prep.ax * persp / fit, -prep.ay * persp / fit);
+        p.setCompositionMode(static_cast<QPainter::CompositionMode>(prep.blend));
+        p.drawImage(QPointF(-prep.frame.width() * 0.5, -prep.frame.height() * 0.5),
+                    prep.frame);
+        p.restore();
+    }
 
     return out;
 }
@@ -231,10 +448,236 @@ void MesaRenderer::paintStack(QPainter& painter, const MesaComposition& mesa,
 bool MesaRenderer::drawTrackLayer(QPainter& acc, const Track& track,
                                   const MesaComposition& mesa, const Project& project,
                                   double relTime, double transformTime) {
+    // Malha 3D (OBJ) — Fase 3 MVP: desenha faces preenchidas no espaço da Mesa.
+    if (!track.meshPath.isEmpty()) {
+        if (track.mesaHidden) return false;
+        const double t = (transformTime >= 0.0 && track.mesaMotionBlur) ? transformTime
+                                                                        : relTime;
+        const double tMesaX = kfValue(track.kfMesaX, track.mesaX, t);
+        const double tMesaY = kfValue(track.kfMesaY, track.mesaY, t);
+        const double tScX = kfValue(track.kfMesaScaleX, track.mesaScaleX, t);
+        const double tScY = kfValue(track.kfMesaScaleY, track.mesaScaleY, t);
+        const double tRot = kfValue(track.kfMesaRotation, track.mesaRotation, t);
+        const double tZ = kfValue(track.kfMesaZ, track.mesaZ, t);
+        const double tOp = std::clamp(kfValue(track.kfMesaOpacity, track.mesaOpacity, t),
+                                      0.0, 1.0);
+        mesh::ObjMesh mesh;
+        if (!mesh::loadObjFile(track.meshPath, mesh) || mesh.isEmpty()) return false;
+
+        // Antes esta branch fazia só translate/rotate/scale 2D, pintava cada
+        // face com uma cor chapada e NUNCA olhava a textura — o que fazia o
+        // canvas da Mesa mostrar uma mancha cinza enquanto o Preview e o
+        // export mostravam a malha texturizada. Agora usa a mesma projeção
+        // (câmera + perspectiva por vértice + ordenação por Z) do renderMeshLayer.
+        const double kPi = 3.14159265358979323846;
+        double focal = 1.0;
+        double camDist = 300.0;
+        if (mesa.mesa3d) {
+            const double fov = std::max(5.0, kfValue(mesa.kfCamFov, mesa.camFov, relTime));
+            focal = (std::max(mesa.canvasW, mesa.canvasH) * 0.5)
+                    / std::tan(fov * kPi / 360.0);
+            // camZ == 0 põe a câmera dentro do objeto (divisão degenerada).
+            // addMeshToMesa já evita isso, mas uma track editada à mão não tem
+            // essa garantia, e aqui o clamp segurava tudo em perspectiva 1.0.
+            const double camZ = kfValue(mesa.kfCamZ, mesa.camZ, relTime);
+            camDist = (camZ > 1.0) ? camZ : 300.0;
+        } else {
+            focal = std::max(64.0, std::max(mesa.canvasW, mesa.canvasH) * 0.5);
+        }
+
+        // Centróide como pivô de rotação (a malha entra normalizada na origem).
+        int nv = 0;
+        double sx0 = 0, sy0 = 0, sz0 = 0;
+        for (int i = 0; i < mesh.vertsXY.size(); ++i) {
+            sx0 += mesh.has3D() ? mesh.vertsX[i] : mesh.vertsXY[i].x();
+            sy0 += mesh.has3D() ? mesh.vertsY[i] : mesh.vertsXY[i].y();
+            sz0 += mesh.vertsZ[i];
+            ++nv;
+        }
+        if (nv == 0) return false;
+        const double cxm = sx0 / nv, cym = sy0 / nv, czm = sz0 / nv;
+
+        // Projeção por vértice. `dist` é clampado porque uma face atrás da
+        // câmera inverteria o polígono em vez de sumir.
+        QVector<QPointF> proj(mesh.vertsXY.size());
+        QVector<double> vz(mesh.vertsXY.size());
+        for (int i = 0; i < mesh.vertsXY.size(); ++i) {
+            const double lx = (mesh.has3D() ? mesh.vertsX[i] : mesh.vertsXY[i].x()) - cxm;
+            const double ly = (mesh.has3D() ? mesh.vertsY[i] : mesh.vertsXY[i].y()) - cym;
+            vz[i] = mesh.vertsZ[i] - czm;
+            const double dist = std::max(40.0, camDist - (vz[i] + tZ));
+            const double k = focal / dist;
+            proj[i] = QPointF(lx * k, ly * k);
+        }
+
+        struct FaceP { QPolygonF poly; double z; };
+        QVector<FaceP> faces;
+        faces.reserve(mesh.faces.size());
+        for (const QVector<int>& idx : mesh.faces) {
+            if (idx.size() < 3) continue;
+            QPolygonF poly;
+            double mz = 0;
+            for (int vi : idx) {
+                if (vi < 0 || vi >= proj.size()) continue;
+                poly << proj[vi];
+                mz += vz[vi];
+            }
+            if (poly.size() >= 3)
+                faces.append({poly, mz / poly.size() + tZ});
+        }
+        // Pintor algorítmico: longe primeiro. Estável para não tremer quando
+        // duas faces empatam no mesmo Z.
+        std::stable_sort(faces.begin(), faces.end(),
+                         [](const FaceP& a, const FaceP& b) { return a.z < b.z; });
+
+        const bool textured = mesh.hasTexture() && !mesh.texture.isNull();
+        const QColor avg = mesh.averageColor();
+        QColor base = track.color.isValid() ? track.color
+                   : (avg.isValid() ? avg : QColor(120, 140, 170));
+
+        acc.save();
+        acc.setOpacity(tOp);
+        acc.translate(tMesaX, tMesaY);
+        acc.rotate(tRot);
+        acc.scale(tScX, tScY);
+        for (const FaceP& f : faces) {
+            // Rampa de profundidade: mais perto = mais claro. Mesma curva do
+            // renderMeshLayer, senão a malha muda de tom entre Preview e Mesa.
+            const double shade = std::clamp(0.45 + 0.55 * ((f.z + 150.0) / 300.0), 0.35, 1.0);
+            QColor fc = base;
+            fc.setAlphaF(std::clamp(tOp * shade, 0.0, 1.0));
+            acc.setPen(QPen(fc.darker(160), 1.0));
+            acc.setBrush(fc);
+            acc.drawPolygon(f.poly);
+            if (textured) {
+                QPainterPath clipPath;
+                clipPath.addPolygon(f.poly);
+                acc.save();
+                acc.setClipPath(clipPath);
+                acc.setOpacity(std::clamp(tOp * shade * 0.9, 0.0, 1.0));
+                acc.drawImage(f.poly.boundingRect(), mesh.texture);
+                acc.restore();
+            }
+        }
+        acc.restore();
+        return true;
+    }
+
     LayerPrep prep;
     if (!prepareLayer(prep, mesa, project, relTime, track, transformTime)) return false;
     drawTrackImage(acc, prep);
     return true;
+}
+
+// Renderiza uma malha 3D no tamanho da composição, já com o transform do clipe
+// (tx/ty, escala, roll, rotX/rotY, Z). A convenção de eixos é a MESMA do
+// PivotCanvas (Y sem inversão), para Preview e Pivot não divergirem.
+static QImage renderMeshLayer(const mesh::ObjMesh& mesh, const Clip& c,
+                              const MesaComposition& mesa, double relTime) {
+    const int fw = qMax(64, (int)mesa.canvasW);
+    const int fh = qMax(32, (int)mesa.canvasH);
+    QImage img(fw, fh, QImage::Format_ARGB32);
+    img.fill(Qt::transparent);
+    if (mesh.isEmpty()) return img;
+
+    const double kPi = 3.14159265358979323846;
+    const double radZ = kfValue(c.kfRotation, c.rotation, relTime) * kPi / 180.0;
+    const double radX = kfValue(c.kfClipRotX, c.clipRotX, relTime) * kPi / 180.0;
+    const double radY = kfValue(c.kfClipRotY, c.clipRotY, relTime) * kPi / 180.0;
+    const double sc = std::max(0.01, kfValue(c.kfScale, c.scale, relTime));
+    const double z = kfValue(c.kfClipZ, c.clipZ, relTime);
+    const double tx = kfValue(c.kfTx, c.tx, relTime);
+    const double ty = kfValue(c.kfTy, c.ty, relTime);
+
+    // Centróide como pivô de rotação (a malha entra normalizada na origem).
+    int nv = 0;
+    double sx0 = 0, sy0 = 0, sz0 = 0;
+    for (int i = 0; i < mesh.vertsXY.size(); ++i) {
+        const double vx = mesh.has3D() ? mesh.vertsX[i] : mesh.vertsXY[i].x();
+        const double vy = mesh.has3D() ? mesh.vertsY[i] : mesh.vertsXY[i].y();
+        sx0 += vx; sy0 += vy; sz0 += mesh.vertsZ[i]; ++nv;
+    }
+    if (nv == 0) return img;
+    const double cxm = sx0 / nv, cym = sy0 / nv, czm = sz0 / nv;
+
+    // Focal em px: a malha normalizada (~200 un) deve ocupar boa parte da
+    // altura da camada em escala 1. Ângulo de visão efetivo ~50°.
+    const double focal = fh * 0.75;
+    const double camDist = 300.0;
+    const QPointF origin(fw * 0.5 + tx, fh * 0.5 + ty);
+
+    auto projectVert = [&](int vi, QPointF& out, double& wz) {
+        if (vi < 0 || vi >= mesh.vertsXY.size()) { out = QPointF(); wz = 0; return; }
+        const double lx = ((mesh.has3D() ? mesh.vertsX[vi] : mesh.vertsXY[vi].x()) - cxm) * sc;
+        const double ly = ((mesh.has3D() ? mesh.vertsY[vi] : mesh.vertsXY[vi].y()) - cym) * sc;
+        const double lz = (mesh.vertsZ[vi] - czm) * sc;
+        double x1 = lx * std::cos(radZ) - ly * std::sin(radZ);
+        double y1 = lx * std::sin(radZ) + ly * std::cos(radZ);
+        double y2 = y1 * std::cos(radX) - lz * std::sin(radX);
+        double z2 = y1 * std::sin(radX) + lz * std::cos(radX);
+        double x3 = x1 * std::cos(radY) + z2 * std::sin(radY);
+        double z3 = -x1 * std::sin(radY) + z2 * std::cos(radY);
+        const double dist = std::max(40.0, camDist - (z3 + z));
+        const double k = focal / dist;
+        // Mesma convenção do PivotCanvas (Y sem inversão): Preview e Pivot têm
+        // que mostrar o objeto na MESMA orientação — divergir aqui seria uma
+        // paridade preview↔editor quebrada.
+        out = QPointF(origin.x() + x3 * k, origin.y() + y2 * k);
+        wz = z3 + z;
+    };
+
+    struct FaceD { QVector<int> idx; double z; };
+    QVector<FaceD> faces;
+    faces.reserve(mesh.faces.size());
+    for (const QVector<int>& fi : mesh.faces) {
+        if (fi.size() < 3) continue;
+        double zsum = 0.0; int n = 0;
+        for (int vi : fi) {
+            if (vi < 0 || vi >= mesh.vertsXY.size()) continue;
+            QPointF o; double wz = 0;
+            projectVert(vi, o, wz);
+            zsum += wz; ++n;
+        }
+        if (n == 0) continue;
+        faces.append({ fi, zsum / n });
+    }
+    std::stable_sort(faces.begin(), faces.end(),
+                     [](const FaceD& a, const FaceD& b) { return a.z < b.z; });
+
+    const bool textured = mesh.hasTexture() && !mesh.texture.isNull();
+    const QColor base = textured ? mesh.averageColor() : QColor(120, 140, 170);
+    QPainter p(&img);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setRenderHint(QPainter::SmoothPixmapTransform);
+    for (const FaceD& fd : faces) {
+        QPolygonF poly;
+        for (int vi : fd.idx) {
+            if (vi < 0 || vi >= mesh.vertsXY.size()) continue;
+            QPointF o; double wz = 0;
+            projectVert(vi, o, wz);
+            poly << o;
+        }
+        if (poly.size() < 3) continue;
+        // Faces do fundo mais escuras: dá leitura de volume sem shader.
+        const double shade = std::clamp(0.45 + 0.55 * ((fd.z + 150.0) / 300.0), 0.35, 1.0);
+        QColor fc = base;
+        fc.setAlphaF(shade);
+        p.setPen(QPen(fc.darker(160), 1.0));
+        p.setBrush(fc);
+        p.drawPolygon(poly);
+        if (textured) {
+            const QRectF bbox = poly.boundingRect();
+            QPainterPath clipPath;
+            clipPath.addPolygon(poly);
+            p.save();
+            p.setClipPath(clipPath);
+            p.setOpacity(shade);
+            p.drawImage(bbox, mesh.texture);
+            p.restore();
+        }
+    }
+    p.end();
+    return img;
 }
 
 bool MesaRenderer::prepareLayer(LayerPrep& out, const MesaComposition& mesa,
@@ -298,6 +741,13 @@ bool MesaRenderer::prepareLayer(LayerPrep& out, const MesaComposition& mesa,
                     const int fw = mi->width > 0 ? mi->width : (int)mesa.canvasW;
                     const int fh = mi->height > 0 ? mi->height : (int)mesa.canvasH;
                     frame = generatorFrame(*mi, fw, fh);
+                } else if (mi->isMesh && !mi->filePath.isEmpty()) {
+                    // Malha 3D: renderizada no CPU com o transform do clipe.
+                    // Não passa por FFmpeg (um .obj não é mídia decodificável),
+                    // por isso o ramo vem antes do `filePath` genérico.
+                    mesh::ObjMesh mesh;
+                    if (mesh::loadObjFile(mi->filePath, mesh) && !mesh.isEmpty())
+                        frame = renderMeshLayer(mesh, c, mesa, cRel);
                 } else if (!mi->filePath.isEmpty()) {
                     const double srcT = clipSrcTime(c, cRel);
                     frame = decodeFrame(mi->filePath, srcT, mesa.canvasW);
@@ -370,7 +820,8 @@ void MesaRenderer::warmTracks(const MesaComposition& mesa, const Project& projec
 
             if (!c.isText && (!c.mediaId.isEmpty() || c.hasMulticam())) {
                 const MediaItem* mi = project.findMedia(c.mediaIdAt(cRel));
-                if (mi && !mi->isSolid && !mi->filePath.isEmpty()) {
+                // `isMesh` fora: malha é rasterizada no paint, não decodificada.
+                if (mi && !mi->isSolid && !mi->isMesh && !mi->filePath.isEmpty()) {
                     jobs.append({ mi->filePath, clipSrcTime(c, cRel),
                                   mesa.canvasW });
                 }

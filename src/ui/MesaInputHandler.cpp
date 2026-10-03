@@ -14,6 +14,27 @@
 #include <QtMath>
 #include <QCursor>
 
+// lcMesa é definido em MesaWidget.cpp (Q_DECLARE no header).
+
+QString MesaWidget::axisName(int mode) {
+    switch (mode) {
+    case RotX: return QStringLiteral("X");
+    case RotY: return QStringLiteral("Y");
+    case RotZ: return QStringLiteral("Z");
+    case RotTrackball: return QStringLiteral("Trackball");
+    case RotView: return QStringLiteral("View");
+    default: return QStringLiteral("—");
+    }
+}
+
+QString MesaWidget::rotateHud() const {
+    QString s = QStringLiteral("Rotate: %1").arg(axisName(m_rotateMode));
+    if (!m_rotateDigits.isEmpty())
+        s += QStringLiteral("  %1°").arg(m_rotateDigits);
+    s += QStringLiteral("  [X/Y/Z eixo · R trackball · Enter ok · Esc cancela]");
+    return s;
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Mouse
 // ═══════════════════════════════════════════════════════════════════════
@@ -266,13 +287,16 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
         return;
     }
 
-    // Hit test geral
+    // ── Hit test geral
     int hitIdx = -1;
     HitZone hz = hitTest(e->position(), hitIdx);
 
-    // ── Câmera selecionada = ELEMENTO ATIVO: arrastar em QUALQUER lugar do
-    // canvas move a câmera (cantos redimensionam). É o jeito fácil de enquadrar:
-    // escolha a câmera uma vez e arraste por cima da imagem sem roubar o alvo.
+    // Se a câmera estava selecionada e o clique foi na camada, o bloco acima
+    // já desmarcou a câmera e NÃO retornou — continua aqui para selecionar
+    // a camada normalmente.
+
+    // ── Câmera selecionada: só cantos redimensionam; corpo move APENAS em
+    // área vazia (sem camada por baixo). Assim dá para mexer no modelo.
     if (m_cameraSelected) {
         const double relC = qMax(0.0, m_playheadTime);
         if (hz == HitCameraCorner) {
@@ -282,17 +306,37 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
             m_resizeStartPos = e->position();
             setCursor(Qt::SizeFDiagCursor);
             qCInfo(lcMesa).noquote() << "[MESA] canvas: RESIZING camera (cantos)";
-        } else {
+        } else if (hz == HitBody || hz == HitCornerTL || hz == HitCornerTR
+                   || hz == HitCornerBL || hz == HitCornerBR
+                   || hz == HitEdgeT || hz == HitEdgeB
+                   || hz == HitEdgeL || hz == HitEdgeR || hz == HitRotate) {
+            // Clicou numa camada: desseleciona a câmera e deixa a camada ativa.
+            m_cameraSelected = false;
+            emit mesaCameraSelected(nullptr);
+            // Continua para o handler de camada abaixo (não retorna).
+        } else if (hz == HitCamera) {
+            // Corpo da câmera em área sem camada: move a câmera.
             m_draggingCamera = true;
             m_cameraDragStart = e->position();
             m_camDragStartX = kfValue(mc->kfCamX, mc->camX, relC);
             m_camDragStartY = kfValue(mc->kfCamY, mc->camY, relC);
             setCursor(Qt::SizeAllCursor);
             qCInfo(lcMesa).noquote()
-                << "[MESA] canvas: MOVING camera (elemento ativo — arraste em qualquer lugar)";
+                << "[MESA] canvas: MOVING camera (área vazia)";
+        } else {
+            // Vazio: move a câmera (comportamento AE com câmera ativa).
+            m_draggingCamera = true;
+            m_cameraDragStart = e->position();
+            m_camDragStartX = kfValue(mc->kfCamX, mc->camX, relC);
+            m_camDragStartY = kfValue(mc->kfCamY, mc->camY, relC);
+            setCursor(Qt::SizeAllCursor);
+            qCInfo(lcMesa).noquote() << "[MESA] canvas: MOVING camera (vazio)";
         }
-        update();
-        return;
+        if (m_draggingCamera || m_resizingCamera) {
+            update();
+            return;
+        }
+        // Caiu no handler de camada (câmera desmarcada acima).
     }
 
     // ── Câmera desmarcada: clique no gizmo só SELECIONA (1º clique) ──
@@ -354,6 +398,7 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
         // rotaciona junto (escala e rotação relativas ao próprio âncora).
         m_multiStartX.clear(); m_multiStartY.clear();
         m_multiStartSX.clear(); m_multiStartSY.clear(); m_multiStartRot.clear();
+        m_multiStartRotX.clear(); m_multiStartRotY.clear();
         for (int i : m_selectedIdxs) {
             if (i < 0 || i >= tracks.size()) continue;
             const Track* ti = tracks[i];
@@ -362,24 +407,50 @@ void MesaWidget::mousePressEvent(QMouseEvent* e) {
             m_multiStartSX.insert(i, ti->mesaScaleX);
             m_multiStartSY.insert(i, ti->mesaScaleY);
             m_multiStartRot.insert(i, ti->mesaRotation);
+            m_multiStartRotX.insert(i, ti->mesaRotX);
+            m_multiStartRotY.insert(i, ti->mesaRotY);
         }
 
-        if (hz == HitBody) {
-            m_transformOp = TMove;
-            setCursor(Qt::SizeAllCursor);
-        } else if (hz == HitRotate) {
+if (hz == HitBody) {
+            // Ferramenta ativa pode forçar scale/rotate no corpo (estilo AE
+            // com W/R selecionados). Senão: mover.
+            if (m_tool == ToolScale) {
+                m_transformOp = TScale;
+                m_scaleUniform = !(e->modifiers() & Qt::ShiftModifier);
+                m_transformFromCenter = (e->modifiers() & Qt::ControlModifier) != 0;
+                const LayerBounds lb = layerBounds(t, hitIdx);
+                const QPointF anchor = canvasToScreen(QPointF(lb.x, lb.y));
+                m_transformStartDist = QLineF(anchor, e->position()).length();
+                setCursor(Qt::SizeFDiagCursor);
+            } else if (m_tool == ToolRotate) {
+                m_transformOp = TRotate;
+                const LayerBounds lb = layerBounds(t, hitIdx);
+                const QPointF anchor = canvasToScreen(QPointF(lb.x, lb.y));
+                m_transformStartAngle = qAtan2(e->position().y() - anchor.y(),
+                                                e->position().x() - anchor.x());
+                setCursor(Qt::CrossCursor);
+            } else {
+                m_transformOp = TMove;
+                setCursor(Qt::SizeAllCursor);
+            }
+        } else if (hz == HitRotate || (m_tool == ToolRotate && m_rotateMode != RotNone)) {
             m_transformOp = TRotate;
+            m_multiStartRotX.insert(hitIdx, t->mesaRotX);
+            m_multiStartRotY.insert(hitIdx, t->mesaRotY);
             const LayerBounds lb = layerBounds(t, hitIdx);
-            // O ponto da âncora NA COMPOSIÇÃO é a própria posição (lb.x/lb.y).
             const QPointF anchor = canvasToScreen(QPointF(lb.x, lb.y));
             m_transformStartAngle = qAtan2(e->position().y() - anchor.y(),
                                             e->position().x() - anchor.x());
+            m_transformStartRot = t->mesaRotation;
             setCursor(Qt::CrossCursor);
         } else {
             m_transformOp = TScale;
             const LayerBounds lb = layerBounds(t, hitIdx);
             const QPointF anchor = canvasToScreen(QPointF(lb.x, lb.y));
             m_transformStartDist = QLineF(anchor, e->position()).length();
+            // AE: Shift = escala livre por eixo; Ctrl = a partir do centro.
+            m_scaleUniform = !(e->modifiers() & Qt::ShiftModifier);
+            m_transformFromCenter = (e->modifiers() & Qt::ControlModifier) != 0;
             setCursor(Qt::SizeFDiagCursor);
         }
 
@@ -580,41 +651,49 @@ void MesaWidget::mouseMoveEvent(QMouseEvent* e) {
                     ti->mesaX = m_multiStartX.value(i, ti->mesaX) + dxc;
                     ti->mesaY = m_multiStartY.value(i, ti->mesaY) + dyc;
                 }
+                m_transformHud = QStringLiteral("X %1  Y %2")
+                    .arg(int(std::lround(nx))).arg(int(std::lround(ny)));
+                m_transformHudPos = e->position();
 
             } else if (m_transformOp == TScale) {
                 const LayerBounds lb = layerBounds(t, m_transformTrackIdx);
                 // O ponto da âncora NA COMPOSIÇÃO é a posição (lb.x/lb.y);
                 // escala é em torno dela, como no AE.
                 const QPointF anchor = canvasToScreen(QPointF(lb.x, lb.y));
-                const double dist = QLineF(anchor, e->position()).length();
 
                 const bool corner = (m_transformZone == HitCornerTL || m_transformZone == HitCornerTR
                                   || m_transformZone == HitCornerBL || m_transformZone == HitCornerBR);
                 const bool edgeY  = (m_transformZone == HitEdgeT || m_transformZone == HitEdgeB);
                 const bool edgeX  = (m_transformZone == HitEdgeL || m_transformZone == HitEdgeR);
 
-                // Fator de escala do grupo: calculado na PRIMÁRIA e aplicado a
-                // cada selecionada em relação ao PRÓPRIO âncora (estilo AE).
+                // Ctrl = escala a partir do centro (meio do quad, não o âncora).
+                const QPointF centerPt = canvasToScreen(
+                    QPointF(lb.x + lb.w * lb.sx * 0.5, lb.y + lb.h * lb.sy * 0.5));
+                const QPointF scaleOrigin = m_transformFromCenter ? centerPt : anchor;
+
                 double fx = 1.0, fy = 1.0;
                 auto clamp = [](double v) { return qMax(0.01, v); };
 
+                const double dNow = QLineF(scaleOrigin, e->position()).length();
+                const double dRef = m_transformFromCenter
+                    ? qMax(1.0, QLineF(scaleOrigin, m_transformStart).length())
+                    : qMax(1.0, m_transformStartDist);
+                const double fDist = dNow / dRef;
+
                 if (corner) {
-                    if (m_scaleUniform && m_transformStartDist > 1.0) {
-                        // Padrão: proporcional, mantendo a proporção original.
-                        const double f = dist / m_transformStartDist;
-                        fx = clamp(f);
-                        fy = clamp(f);
-                    } else if (!m_scaleUniform) {
-                        // Shift: escala livre ao longo dos EIXOS do mundo.
-                        const QPointF d = e->position() - anchor;
-                        const QPointF d0 = m_transformStart - anchor;
+                    if (m_scaleUniform) {
+                        fx = clamp(fDist);
+                        fy = clamp(fDist);
+                    } else {
+                        const QPointF d = e->position() - scaleOrigin;
+                        const QPointF d0 = m_transformStart - scaleOrigin;
                         if (qAbs(d0.x()) > 1.0) fx = clamp(d.x() / d0.x());
                         if (qAbs(d0.y()) > 1.0) fy = clamp(d.y() / d0.y());
                     }
-                } else if (edgeY && m_transformStartDist > 1.0) {
-                    fy = clamp(dist / m_transformStartDist);
-                } else if (edgeX && m_transformStartDist > 1.0) {
-                    fx = clamp(dist / m_transformStartDist);
+                } else if (edgeY) {
+                    fy = clamp(fDist);
+                } else if (edgeX) {
+                    fx = clamp(fDist);
                 }
 
                 for (int i : m_selectedIdxs) {
@@ -624,6 +703,9 @@ void MesaWidget::mouseMoveEvent(QMouseEvent* e) {
                     ti->mesaScaleX = qMax(0.01, m_multiStartSX.value(i, ti->mesaScaleX) * fx);
                     ti->mesaScaleY = qMax(0.01, m_multiStartSY.value(i, ti->mesaScaleY) * fy);
                 }
+                const int pct = int(std::lround(fx * 100.0));
+                m_transformHud = QStringLiteral("Scale %1%").arg(pct);
+                m_transformHudPos = e->position();
 
             } else if (m_transformOp == TRotate) {
                 const LayerBounds lb = layerBounds(t, m_transformTrackIdx);
@@ -632,14 +714,36 @@ void MesaWidget::mouseMoveEvent(QMouseEvent* e) {
                                             e->position().x() - anchor.x());
                 double delta = qRadiansToDegrees(angle - m_transformStartAngle);
                 if (e->modifiers() & Qt::ControlModifier) {
-                    delta = qRound(delta / 15.0) * 15.0;
+                    delta = qRound(delta / 15.0) * 15.0; // snap 15°
                 }
+                // Eixo ativo (Blender): View/Trackball ≈ Z; X/Y mudam rotX/rotY.
+                const int axis = (m_rotateMode == RotX) ? 1
+                               : (m_rotateMode == RotY) ? 2
+                               : 3; // Z ou view/trackball
                 for (int i : m_selectedIdxs) {
                     if (i < 0 || i >= tracks.size()) continue;
                     Track* ti = tracks[i];
                     if (ti->mesaLocked) continue;
-                    ti->mesaRotation = m_multiStartRot.value(i, ti->mesaRotation) + delta;
+                    if (axis == 1)
+                        ti->mesaRotX = m_multiStartRotX.value(i, ti->mesaRotX) + delta;
+                    else if (axis == 2)
+                        ti->mesaRotY = m_multiStartRotY.value(i, ti->mesaRotY) + delta;
+                    else
+                        ti->mesaRotation = m_multiStartRot.value(i, ti->mesaRotation) + delta;
                 }
+                double absDeg = m_multiStartRot.value(m_transformTrackIdx, 0.0) + delta;
+                if (axis != 3) {
+                    absDeg = (axis == 1
+                                  ? m_multiStartRotX.value(m_transformTrackIdx, 0.0)
+                                  : m_multiStartRotY.value(m_transformTrackIdx, 0.0))
+                             + delta;
+                }
+                absDeg = std::fmod(absDeg, 360.0);
+                if (absDeg < 0) absDeg += 360.0;
+                m_transformHud = QStringLiteral("Rot %1 %2°")
+                    .arg(axisName(m_rotateMode))
+                    .arg(int(std::lround(absDeg)));
+                m_transformHudPos = e->position();
             }
 
             throttledUpdate();
@@ -675,6 +779,15 @@ void MesaWidget::mouseMoveEvent(QMouseEvent* e) {
 }
 
 void MesaWidget::mouseReleaseEvent(QMouseEvent* e) {
+    // Fim do transform: limpa o HUD e commita.
+    if (m_transformOp != TNone) {
+        m_transformOp = TNone;
+        m_transformHud.clear();
+        emit changesCommitted();
+        emit modified();
+        throttledUpdate();
+        return;
+    }
     // Marquee de seleção no canvas (Shift+arrasto no vazio)
     if (m_canvasMarquee) {
         MesaComposition* mcm = currentMesa();
@@ -840,6 +953,129 @@ void MesaWidget::wheelEvent(QWheelEvent* e) {
 // ═══════════════════════════════════════════════════════════════════════
 
 void MesaWidget::keyPressEvent(QKeyEvent* e) {
+    // Ferramentas estilo After Effects: V=selecionar/mover, W=escalar, R=rotacionar.
+    if (e->key() == Qt::Key_V && !(e->modifiers() & (Qt::ControlModifier | Qt::AltModifier))) {
+        m_tool = ToolSelect;
+        m_rotateMode = RotNone;
+        m_rotateDigits.clear();
+        qCInfo(lcMesa).noquote() << "[MESA] ferramenta: Selecionar (V)";
+        update();
+        e->accept();
+        return;
+    }
+    if (e->key() == Qt::Key_W && !(e->modifiers() & (Qt::ControlModifier | Qt::AltModifier))) {
+        m_tool = ToolScale;
+        m_rotateMode = RotNone;
+        m_rotateDigits.clear();
+        qCInfo(lcMesa).noquote() << "[MESA] ferramenta: Escalar (W)";
+        update();
+        e->accept();
+        return;
+    }
+
+    // ── Rotação estilo Blender ──────────────────────────────────────────
+    if (m_tool == ToolRotate || m_rotateMode != RotNone) {
+        // Dígitos enquanto digita graus (R → Z → 45 → Enter).
+        if (e->key() >= Qt::Key_0 && e->key() <= Qt::Key_9 && m_rotateMode != RotNone
+            && m_rotateMode != RotView && m_rotateMode != RotTrackball) {
+            m_rotateDigits += QChar('0' + (e->key() - Qt::Key_0));
+            m_transformHud = QStringLiteral("Rot %1 %2°")
+                .arg(axisName(m_rotateMode))
+                .arg(m_rotateDigits.isEmpty() ? QStringLiteral("…")
+                                               : m_rotateDigits);
+            m_transformHudPos = QPointF(width() * 0.5, 80);
+            qCInfo(lcMesa).noquote() << "[MESA] rotate digits:" << m_rotateDigits;
+            update();
+            e->accept();
+            return;
+        }
+        if (e->key() == Qt::Key_Backspace && !m_rotateDigits.isEmpty()) {
+            m_rotateDigits.chop(1);
+            update();
+            e->accept();
+            return;
+        }
+        if (e->key() == Qt::Key_Enter || e->key() == Qt::Key_Return) {
+            if (!m_rotateDigits.isEmpty() && m_rotateMode != RotNone
+                && m_rotateMode != RotView && m_rotateMode != RotTrackball) {
+                bool ok = false;
+                const double deg = m_rotateDigits.toDouble(&ok);
+                if (ok) {
+                    emit changesCommitted();
+                    for (int i : m_selectedIdxs) {
+                        const QVector<Track*> tracks = mesaTracks();
+                        if (i < 0 || i >= tracks.size()) continue;
+                        Track* ti = tracks[i];
+                        if (ti->mesaLocked) continue;
+                        if (m_rotateMode == RotX)
+                            ti->mesaRotX += deg;
+                        else if (m_rotateMode == RotY)
+                            ti->mesaRotY += deg;
+                        else
+                            ti->mesaRotation += deg;
+                    }
+                    emit modified();
+                    qCInfo(lcMesa).noquote() << "[MESA] rotate numeric:" << deg
+                                              << "axis" << int(m_rotateMode);
+                }
+            }
+            m_rotateDigits.clear();
+            m_rotateMode = RotNone;
+            m_transformOp = TNone;
+            m_transformHud.clear();
+            update();
+            e->accept();
+            return;
+        }
+        if (e->key() == Qt::Key_Escape || e->key() == Qt::Key_X
+            || e->key() == Qt::Key_Y || e->key() == Qt::Key_Z
+            || e->key() == Qt::Key_R) {
+            // X/Y/Z trava eixo; R de novo = trackball; Esc cancela.
+            if (e->key() == Qt::Key_X) {
+                m_rotateMode = RotX;
+                qCInfo(lcMesa).noquote() << "[MESA] rotate: eixo X (arraste ou digite graus)";
+            } else if (e->key() == Qt::Key_Y) {
+                m_rotateMode = RotY;
+                qCInfo(lcMesa).noquote() << "[MESA] rotate: eixo Y";
+            } else if (e->key() == Qt::Key_Z) {
+                m_rotateMode = RotZ;
+                qCInfo(lcMesa).noquote() << "[MESA] rotate: eixo Z";
+            } else if (e->key() == Qt::Key_R) {
+                m_rotateMode = (m_rotateMode == RotTrackball) ? RotView : RotTrackball;
+                qCInfo(lcMesa).noquote() << "[MESA] rotate mode:"
+                                          << (m_rotateMode == RotTrackball
+                                                  ? "TRACKBALL" : "VIEW");
+            } else {
+                m_rotateMode = RotNone;
+                m_rotateDigits.clear();
+                m_transformOp = TNone;
+                qCInfo(lcMesa).noquote() << "[MESA] rotate cancelado";
+            }
+            m_tool = ToolRotate;
+            m_transformHud = rotateHud();
+            m_transformHudPos = QPointF(width() * 0.5, 40);
+            update();
+            e->accept();
+            return;
+        }
+    }
+
+    if (e->key() == Qt::Key_R && !(e->modifiers() & (Qt::ControlModifier | Qt::AltModifier))) {
+        m_tool = ToolRotate;
+        // Primeiro R: modo livre (view). Segundo R (já em Rotate): trackball.
+        if (m_rotateMode == RotNone)
+            m_rotateMode = RotView;
+        else if (m_rotateMode == RotView)
+            m_rotateMode = RotTrackball;
+        m_rotateDigits.clear();
+        m_transformHud = rotateHud();
+        m_transformHudPos = QPointF(width() * 0.5, 40);
+        qCInfo(lcMesa).noquote() << "[MESA] rotate:" << rotateHud()
+                                  << "— X/Y/Z trava eixo; dígitos+Enter = graus";
+        update();
+        e->accept();
+        return;
+    }
     if (e->key() == Qt::Key_L) {
         m_showLayerList = !m_showLayerList;
         qCInfo(lcMesa).noquote() << "[MESA] tecla L: painel"

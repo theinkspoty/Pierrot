@@ -10,6 +10,7 @@
 
 #include "colombina/ffmpeg/MediaCache.h"
 #include "colombina/ffmpeg/FFmpegDecoder.h"
+#include "colombina/mesh/BlenderBridge.h"
 #include "ui/TransformDialog.h"
 #include "ui/AudioEffectsDialog.h"
 #include "ui/TrackAudioFxDialog.h"
@@ -694,6 +695,11 @@ void TimelineWidget::openTextEditorForClip(const QString& clipId) {
     showTextEditorDialog(c);
 }
 
+void TimelineWidget::openPivotForClip(const QString& clipId) {
+    // Sinal para o MainWindow abrir o dock Pivot com este clipe.
+    emit pivotRequested(clipId);
+}
+
 // ── Multicâmera ──────────────────────────────────────────────────────────
 
 void TimelineWidget::createMulticamFromSelection() {
@@ -1024,6 +1030,93 @@ void TimelineWidget::addSolidToMesa(const QString& mesaId, const QString& genera
     invalidateScene();
     updateScrollRanges();
     update();
+}
+
+void TimelineWidget::addMeshToMesa(const QString& mesaId, const QString& objPath) {
+    if (!m_project || mesaId.isEmpty() || objPath.isEmpty()) return;
+    MesaComposition* mc = m_project->findMesa(mesaId);
+    if (!mc) return;
+
+    emit editStart();
+
+    const QString base = QFileInfo(objPath).completeBaseName();
+
+    // Mídia 3D: vira item na pool + clipe na timeline (tamanho comum, ~5s).
+    MediaItem m;
+    m.id = newId();
+    m.filePath = objPath;
+    m.name = base;
+    m.isMesh = true;
+    m.hasVideo = true;
+    m.width = 512;
+    m.height = 512;
+    // Duração de clipe comum (não a timeline inteira).
+    m.duration = 5.0;
+    m_project->media.append(m);
+
+    // Track da Mesa com a malha.
+    m_project->addTrack(false);
+    Track& nt = m_project->videoTracks.last();
+    nt.name = tr("Mesa %1 · 3D %2").arg(mc->name.isEmpty() ? tr("Mesa") : mc->name)
+                                    .arg(base);
+    TrackGroup* grp = m_project->findGroup(mesaId);
+    if (grp) nt.groupId = grp->id;
+    mc->trackIds.append(nt.id);
+    nt.meshPath = objPath;
+    nt.mesaX = mc->canvasW / 2.0;
+    nt.mesaY = mc->canvasH / 2.0;
+    nt.mesaScaleX = 1.0;
+    nt.mesaScaleY = 1.0;
+    // Liga o modo 3D da composição se ainda estiver off.
+    if (!mc->mesa3d) mc->mesa3d = true;
+
+    // A projeção 3D é `dist = camZ - z`, com corte em `dist < 1.0`. Como
+    // `camZ` e `mesaZ` nascem em 0, a distância daria 0 e TODOS os vértices
+    // seriam descartados — a malha não apareceria nem no Preview nem na Mesa.
+    // Por isso a câmera é posicionada ao criar a faixa, e a escala escolhida
+    // para a malha normalizada (~200 un) ocupar ~metade da altura da composição.
+    if (mc->camZ <= 0.0) {
+        const double camZ = mc->canvasH * 1.2;
+        mc->camZ = camZ;
+        const double focal =
+            (mc->canvasH * 0.5) / std::tan(25.0 * 3.14159265358979323846 / 180.0);
+        const double sc = (mc->canvasH * 0.5) * camZ / (200.0 * focal);
+        nt.mesaScaleX = sc;
+        nt.mesaScaleY = sc;
+    }
+
+    // Clipe na timeline apontando para a mídia 3D (duração cheia).
+    Clip c;
+    c.id = newId();
+    c.mediaId = m.id;
+    c.pos = 0.0;
+    c.in = 0.0;
+    c.dur = m.duration;
+    c.speed = 1.0;
+    c.name = tr("3D %1").arg(base);
+    nt.clips.append(c);
+
+    emit modified();
+    emit mesaChanged(mesaId);
+    invalidateScene();
+    updateScrollRanges();
+    update();
+}
+
+QString TimelineWidget::importBlendAsMesh(const QString& mesaId, const QString& blendPath) {
+    if (!m_project || mesaId.isEmpty() || blendPath.isEmpty())
+        return tr("Nada para importar.");
+    // Sem outDir: a ponte grava o .obj derivado ao lado do .blend de origem
+    // (com fallback pro AppData). Project não guarda o próprio path, e usar
+    // /tmp — como era antes — sumia com o mesh no próximo reboot.
+    QString err;
+    const QString objPath = mesh::blendToObj(blendPath, &err);
+    if (objPath.isEmpty()) {
+        qWarning() << "[BLEND]" << err;
+        return err;
+    }
+    addMeshToMesa(mesaId, objPath);
+    return QString();
 }
 
 void TimelineWidget::duplicateMesaTrack(const QString& mesaId, const QString& trackId) {
@@ -2051,9 +2144,12 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         QAction* props = menu.addAction(tr("Propriedades…"));
         QAction* speedAct = menu.addAction(tr("Velocidade…"));
         QAction* velAct = nullptr;
+        QAction* pivotAct = nullptr;
         if (!audio) {
             velAct = menu.addAction(tr("Editor de velocidade"));
             velAct->setToolTip(tr("Envelope de velocidade (time remapping) no dock Velocidade"));
+            pivotAct = menu.addAction(tr("Pivot (3D do clipe)"));
+            pivotAct->setToolTip(tr("Gizmo 3D + keyframes de transform no dock Pivot"));
         }
         QAction* unlink = nullptr;
         if (!clip->groupId.isEmpty())
@@ -2180,6 +2276,7 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         else if (act == props) emit propertiesRequested(clip->id);
         else if (act == speedAct) showSpeedDialog(clip);
         else if (act == velAct) emit velocityRequested(clip->id);
+        else if (act == pivotAct) emit pivotRequested(clip->id);
         else if (act == unlink) {
             emit editStart();
             for (Clip* m : groupMembers(clip->groupId))

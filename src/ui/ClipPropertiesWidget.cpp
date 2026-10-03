@@ -737,6 +737,31 @@ void ClipPropertiesWidget::rebuild() {
             [this, mc]() { return &mc->kfCamRotation; });
 
         addSectionTitle(tr("COMPOSIÇÃO (BLUR GLOBAL)"));
+        addCheckRow(tr("Modo 3D (AE Classic)"),
+            tr("Ativa campos 3D da Mesa (Z, FOV, rotações). O render 3D "
+               "completo entra na Fase 1; hoje o visual continua 2D."),
+            [mc]() { return mc->mesa3d; },
+            [this, mc](bool on) {
+                beginEdit();
+                mc->mesa3d = on;
+                emitEdited();
+            });
+        addSpinRow(tr("FOV (°):"), 10, 120, 1, 0, 50, 1.0,
+            [this, mc]() { return kfValue(mc->kfCamFov, mc->camFov, m_playhead); },
+            [this, mc](double v) {
+                if (!mc->kfCamFov.isEmpty())
+                    upsertKeyframe(mc->kfCamFov, m_playhead, v);
+                else mc->camFov = v;
+            },
+            [this, mc]() { return &mc->kfCamFov; });
+        addSpinRow(tr("Cam Z:"), -5000, 5000, 1, 0, 0, 1.0,
+            [this, mc]() { return kfValue(mc->kfCamZ, mc->camZ, m_playhead); },
+            [this, mc](double v) {
+                if (!mc->kfCamZ.isEmpty())
+                    upsertKeyframe(mc->kfCamZ, m_playhead, v);
+                else mc->camZ = v;
+            },
+            [this, mc]() { return &mc->kfCamZ; });
         addCheckRow(tr("Motion blur global"),
             tr("Borra o quadro inteiro por amostragem temporal. Cada camada "
                "precisa do flag 'Motion blur (allow)'."),

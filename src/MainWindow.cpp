@@ -20,6 +20,7 @@
 #include "ui/MesaWidget.h"
 #include "ui/SourceMonitorWidget.h"
 #include "ui/VelocityEditorWidget.h"
+#include "ui/PivotWidget.h"
 #include "colombina/frei0r/Frei0rPluginManager.h"
 #include "ui/ExportDialog.h"
 #include "ui/RenderQueueDialog.h"
@@ -116,7 +117,7 @@ namespace {
 //    estava errada: QMainWindow aceita docks em volta do central), e o dock
 //    previewDock deixou de existir. Bump para descartar layouts da v5 que
 //    ainda referenciam o dock fantasma.
-constexpr int kLayoutVersion = 6;
+constexpr int kLayoutVersion = 7;
 
 // Número máximo de cópias do backup rotativo (~/Pierrot/backups/).
 constexpr int kBackupCopies = 10;
@@ -233,6 +234,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // Editor de Velocidade (dock, estilo Time Remapping do Premiere).
     m_velocity = new VelocityEditorWidget(this);
     m_velocity->setProject(&m_project);
+
+    // Pivot — edição 3D do clipe (gizmo + keyframes), mais simples que a Mesa.
+    m_pivot = new PivotWidget(this);
+    m_pivot->setProject(&m_project);
 
     m_effects = new EffectsWidget(this);
     m_express = new ExpressWidget(this);
@@ -514,6 +519,49 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             this, [this](const QString& gen, const QColor& c1, const QColor& c2) {
         m_timeline->addSolidToMesa(m_mesa->mesaId(), gen, c1, c2);
     });
+    // Malha 3D (.obj ou .blend via Blender CLI) como camada da Mesa.
+    connect(m_mesa, &MesaWidget::mesaAddMeshRequested,
+            this, [this](const QString& path) {
+        if (path.endsWith(QLatin1String(".blend"), Qt::CaseInsensitive)) {
+            if (m_project.mesas.isEmpty() || (m_mesa && m_mesa->mesaId().isEmpty()))
+                m_timeline->criarMesa();
+            const QString mesaId = m_mesa && !m_mesa->mesaId().isEmpty()
+                                      ? m_mesa->mesaId()
+                                      : (m_project.mesas.isEmpty()
+                                             ? QString()
+                                             : m_project.mesas.last().id);
+            if (mesaId.isEmpty()) {
+                statusBar()->showMessage(tr("Crie uma Mesa para importar .blend."), 3000);
+                return;
+            }
+            statusBar()->showMessage(tr("Convertendo .blend com o Blender…"), 0);
+            const QString err = m_timeline->importBlendAsMesh(mesaId, path);
+            // Antes isto rodava incondicionalmente e anunciava sucesso mesmo
+            // com a conversão falha — o erro só ia para o log.
+            if (!err.isEmpty())
+                statusBar()->showMessage(tr("Falha no .blend — %1").arg(err), 8000);
+            else
+                statusBar()->showMessage(tr("Importação .blend concluída."), 3500);
+            return;
+        }
+        // Drop em Mesa sem composição: cria uma e usa o path pendente.
+        if (m_project.mesas.isEmpty() || (m_mesa && m_mesa->mesaId().isEmpty())) {
+            m_timeline->criarMesa();
+            const QString mesaId = m_project.mesas.isEmpty()
+                                      ? QString()
+                                      : m_project.mesas.last().id;
+            if (!mesaId.isEmpty()) {
+                m_timeline->addMeshToMesa(mesaId, path);
+                return;
+            }
+        }
+        const QString mesaId = m_mesa ? m_mesa->mesaId() : QString();
+        if (mesaId.isEmpty()) {
+            statusBar()->showMessage(tr("Crie uma Mesa para importar .obj."), 3000);
+            return;
+        }
+        m_timeline->addMeshToMesa(mesaId, path);
+    });
     // Duplicar camada da Mesa (menu de contexto do canvas).
     connect(m_mesa, &MesaWidget::mesaDuplicateLayerRequested,
             this, [this](const QString& mesaId, const QString& trackId) {
@@ -536,6 +584,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         m_velocityDock->show();
         m_velocityDock->raise();
     });
+    connect(m_timeline, &TimelineWidget::pivotRequested, this, [this](const QString& id) {
+        if (!m_pivot || !m_pivotDock) return;
+        m_pivot->setClipId(id);
+        m_pivotDock->show();
+        m_pivotDock->raise();
+    });
     connect(m_timeline, &TimelineWidget::mediaImported, this, [this]() {
         m_pool->refreshFromProject();
         setModified();
@@ -557,6 +611,64 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         m_sourceDock->show();
         m_sourceDock->raise();
         m_source->setFocus(Qt::OtherFocusReason);
+    });
+    // .obj na pool/timeline → malha da Mesa (não é mídia FFmpeg).
+    connect(m_pool, &MediaPoolWidget::objImportRequested, this,
+            [this](const QStringList& paths) {
+        if (paths.isEmpty()) return;
+        // Precisa de uma Mesa: cria se não houver; senão usa a corrente.
+        if (m_project.mesas.isEmpty()) {
+            m_timeline->criarMesa();
+        }
+        const QString mesaId = m_mesa ? m_mesa->mesaId()
+                                      : (m_project.mesas.isEmpty()
+                                             ? QString()
+                                             : m_project.mesas.last().id);
+        if (mesaId.isEmpty()) {
+            statusBar()->showMessage(tr("Crie uma Mesa antes de importar .obj."), 3500);
+            return;
+        }
+        if (!m_mesaDock->isVisible()) {
+            m_mesaDock->show();
+            m_mesaDock->raise();
+        }
+        for (const QString& p : paths)
+            m_timeline->addMeshToMesa(mesaId, p);
+        statusBar()->showMessage(
+            tr("Malha 3D importada na Mesa (%1).").arg(paths.size()), 3000);
+    });
+    // .blend → Blender CLI → malha 3D.
+    connect(m_pool, &MediaPoolWidget::blendImportRequested, this,
+            [this](const QStringList& paths) {
+        if (paths.isEmpty()) return;
+        if (m_project.mesas.isEmpty()) m_timeline->criarMesa();
+        const QString mesaId = m_mesa ? m_mesa->mesaId()
+                                      : (m_project.mesas.isEmpty()
+                                             ? QString()
+                                             : m_project.mesas.last().id);
+        if (mesaId.isEmpty()) {
+            statusBar()->showMessage(tr("Crie uma Mesa antes de importar .blend."), 3500);
+            return;
+        }
+        if (!m_mesaDock->isVisible()) {
+            m_mesaDock->show();
+            m_mesaDock->raise();
+        }
+        statusBar()->showMessage(tr("Convertendo .blend com o Blender…"), 0);
+        int ok = 0;
+        QStringList failed;
+        for (const QString& p : paths) {
+            if (m_timeline->importBlendAsMesh(mesaId, p).isEmpty()) ++ok;
+            else failed.append(QFileInfo(p).fileName());
+        }
+        if (!failed.isEmpty())
+            statusBar()->showMessage(
+                tr("Importação .blend: %1 de %2 ok. Falhou: %3")
+                    .arg(ok).arg(paths.size()).arg(failed.join(QStringLiteral(", "))),
+                8000);
+        else
+            statusBar()->showMessage(
+                tr("Importação .blend concluída (%1 arquivo(s)).").arg(ok), 4000);
     });
     // Explorador de arquivos: importar direto para o Media Pool (duplo clique /
     // botão "Importar pasta"); arraste do explorador também funciona, pois o
@@ -596,6 +708,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_timeline, &TimelineWidget::playheadChanged, m_graph, &GraphEditorWidget::setPlayhead);
     connect(m_timeline, &TimelineWidget::selectionChanged, m_velocity, &VelocityEditorWidget::setClipId);
     connect(m_timeline, &TimelineWidget::playheadChanged, m_velocity, &VelocityEditorWidget::setPlayhead);
+    connect(m_timeline, &TimelineWidget::selectionChanged, m_pivot, &PivotWidget::setClipId);
+    connect(m_timeline, &TimelineWidget::playheadChanged, m_pivot, &PivotWidget::setPlayhead);
+    connect(m_pivot, &PivotWidget::editStart, this, &MainWindow::pushUndo);
+    connect(m_pivot, &PivotWidget::modified, this, [this]() {
+        m_timeline->update();
+        m_preview->refreshView();
+        setModified();
+    });
     connect(m_velocity, &VelocityEditorWidget::editStart, this, &MainWindow::pushUndo);
     connect(m_velocity, &VelocityEditorWidget::modified, this, [this]() {
         m_timeline->update();
@@ -774,6 +894,7 @@ void MainWindow::applyWorkspacePreset(const QString& name) {
     show(m_sourceDock, false);
     show(m_graphDock, false);
     show(m_velocityDock, false);
+    show(m_pivotDock, false);
     show(m_poolDock, true);
     show(m_timelineDock, true);
     if (m_toolsDock) m_toolsDock->show();
@@ -789,7 +910,12 @@ void MainWindow::applyWorkspacePreset(const QString& name) {
         show(m_mesaDock, true);
         show(m_pancropDock, true);
         show(m_scopesDock, true);
+        // O Pivot é ferramenta 3D do clipe: fica junto da Mesa e do Pancrop.
+        // Sem isto ele só aparecia pelo menu de contexto do clipe, o que na
+        // prática significava "não existe".
+        show(m_pivotDock, true);
         if (m_mesaDock) m_mesaDock->raise();
+        if (m_pivotDock) m_pivotDock->raise();
         resizeDocks({m_poolDock}, {280}, Qt::Horizontal);
         if (m_mesaDock) resizeDocks({m_mesaDock}, {360}, Qt::Horizontal);
     } else if (name == QStringLiteral("Efeitos")) {
@@ -1215,6 +1341,13 @@ void MainWindow::createDocks() {
                               m_velocity, Qt::BottomDockWidgetArea);
     tabifyDockWidget(m_graphDock, m_velocityDock);
     m_velocityDock->hide();
+
+    // Pivot — aba do Editor de Curvas/Velocidade (edição 3D do clipe).
+    m_pivotDock = makeDock(QStringLiteral("pivotDock"), tr("Pivot"),
+                           m_pivot, Qt::BottomDockWidgetArea);
+    tabifyDockWidget(m_graphDock, m_pivotDock);
+    tabifyDockWidget(m_velocityDock, m_pivotDock);
+    m_pivotDock->hide();
 
     m_effectsDock = makeDock(QStringLiteral("effectsDock"), tr("Effects"),
                              m_effects, Qt::RightDockWidgetArea);

@@ -77,10 +77,12 @@ void TestMath3d::lookAtFacesCenter() {
     const Vec3 up(0, 1, 0);
     const Mat4 view = Mat4::lookAt(eye, center, up);
     const Vec3 c = view.transformPoint(center);
-    // Centro da cena deve cair na origem do eye-space (olhando para ele).
+    // Eye-space OpenGL: olhando para o centro, ele cai no eixo -Z
+    // (à frente da câmera); x e y devem ser ~0.
     QVERIFY(qAbs(c.x) < 1e-6);
     QVERIFY(qAbs(c.y) < 1e-6);
-    QVERIFY(qAbs(c.z) < 1e-6);
+    QVERIFY(c.z < 0.0); // 10 unidades à frente (eye em z=+10)
+    QVERIFY(qAbs(c.z + 10.0) < 1e-6);
 }
 
 void TestMath3d::mesa3dDefaultsAre2D() {

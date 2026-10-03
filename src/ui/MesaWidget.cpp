@@ -9,6 +9,10 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QShortcut>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QMimeData>
+#include <QUrl>
 #include <QtMath>
 #include <algorithm>
 
@@ -41,12 +45,58 @@ MesaWidget::MesaWidget(QWidget* parent)
     setFocusPolicy(Qt::StrongFocus);
     setMinimumSize(200, 150);
     setStyleSheet("background: #2D2D2D;");
+    setAcceptDrops(true);
     // Atalho do motion blur IGUAL ao Vegas (Ctrl+Shift+B). Usa contexto de
     // janela: funciona mesmo quando o foco está noutro widget (timeline,
     // preview, árvore de mídia) — só precisa de uma mesa aberta no ativo.
     auto* mbShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+B")), this);
     mbShortcut->setContext(Qt::WindowShortcut);
     connect(mbShortcut, &QShortcut::activated, this, &MesaWidget::toggleMotionBlur);
+}
+
+static bool isObjUrl(const QMimeData* md) {
+    if (!md || !md->hasUrls()) return false;
+    for (const QUrl& u : md->urls()) {
+        if (!u.isLocalFile()) continue;
+        const QString path = u.toLocalFile();
+        if (path.endsWith(QLatin1String(".obj"), Qt::CaseInsensitive)
+            || path.endsWith(QLatin1String(".blend"), Qt::CaseInsensitive))
+            return true;
+    }
+    return false;
+}
+
+void MesaWidget::dragEnterEvent(QDragEnterEvent* e) {
+    if (isObjUrl(e->mimeData())) {
+        e->acceptProposedAction();
+        e->accept();
+    }
+}
+
+void MesaWidget::dragMoveEvent(QDragMoveEvent* e) {
+    if (isObjUrl(e->mimeData())) {
+        e->acceptProposedAction();
+        e->accept();
+    }
+}
+
+void MesaWidget::dropEvent(QDropEvent* e) {
+    if (!isObjUrl(e->mimeData())) { e->ignore(); return; }
+    for (const QUrl& u : e->mimeData()->urls()) {
+        if (!u.isLocalFile()) continue;
+        const QString path = u.toLocalFile();
+        const bool isObj = path.endsWith(QLatin1String(".obj"), Qt::CaseInsensitive);
+        const bool isBlend = path.endsWith(QLatin1String(".blend"), Qt::CaseInsensitive);
+        if (!isObj && !isBlend) continue;
+        if (m_mesaId.isEmpty() || !currentMesa()) {
+            emit mesaCreateRequested();
+            emit mesaAddMeshRequested(path); // MainWindow trata .blend vs .obj
+            e->acceptProposedAction();
+            return;
+        }
+        emit mesaAddMeshRequested(path);
+    }
+    e->acceptProposedAction();
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -778,6 +828,49 @@ void MesaWidget::paintEvent(QPaintEvent*) {
     if (m_showLayerList) drawLayerList(p);
     drawMiniTimeline(p);
 
+    // HUD de transform ao vivo (estilo AE/Blender): "Rot Z 245°" / "Scale 150%".
+    if (!m_transformHud.isEmpty()) {
+        QFont hf = p.font();
+        hf.setPointSizeF(9);
+        hf.setBold(true);
+        p.setFont(hf);
+        const QSize ts = p.fontMetrics().size(Qt::TextSingleLine, m_transformHud);
+        const QRectF box(m_transformHudPos.x() + 12, m_transformHudPos.y() - 28,
+                         ts.width() + 14, 20);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(20, 20, 20, 210));
+        p.drawRoundedRect(box, 4, 4);
+        p.setPen(QColor(120, 200, 255));
+        p.drawText(box, Qt::AlignCenter, m_transformHud);
+    }
+
+    // Gizmo de eixos (Blender) quando a ferramenta de rotação está ativa.
+    if (m_tool == ToolRotate && m_selectedIdx >= 0 && !m_selectedIdxs.isEmpty()) {
+        const QVector<Track*> tracks = mesaTracks();
+        if (m_selectedIdx < tracks.size() && tracks[m_selectedIdx]) {
+            const LayerBounds lb = layerBounds(tracks[m_selectedIdx], m_selectedIdx);
+            QPointF center, corners[4], rotH;
+            layerScreenRect(lb, center, corners, rotH);
+            const double arm = 48.0;
+            // Eixos: X vermelho, Y verde, Z azul (convenção Blender).
+            auto drawAxis = [&](const QPointF& dir, const QColor& col, const QString& name) {
+                const QPointF tip = center + dir * arm;
+                p.setPen(QPen(col, 2.0));
+                p.drawLine(center, tip);
+                p.setBrush(col);
+                p.drawEllipse(tip, 3, 3);
+                p.setFont(QFont(p.font().family(), 7, QFont::Bold));
+                p.drawText(tip + QPointF(6, -4), name);
+            };
+            drawAxis(QPointF(1, 0), QColor(220, 70, 70), QStringLiteral("X"));
+            drawAxis(QPointF(0, -1), QColor(70, 200, 90), QStringLiteral("Y"));
+            drawAxis(QPointF(0.55, -0.8), QColor(80, 130, 255), QStringLiteral("Z"));
+            p.setPen(QPen(QColor(255, 255, 255, 120), 1, Qt::DotLine));
+            p.setBrush(Qt::NoBrush);
+            p.drawEllipse(center, 6, 6);
+        }
+    }
+
     // ── Header bar ──
     {
         const int hh = 22;
@@ -818,12 +911,19 @@ void MesaWidget::paintEvent(QPaintEvent*) {
     p.setPen(QColor(100, 100, 100));
     const int x0 = panelWidth();
     const bool mbOn = currentMesa() && currentMesa()->motionBlur;
+    const bool m3d = currentMesa() && currentMesa()->mesa3d;
     p.drawText(QRect(x0 + 6, height() - miniTimelineHeight() - 14, artRect().width() - 12, 14),
                Qt::AlignLeft | Qt::AlignVCenter,
-               QStringLiteral("Zoom %1%  |  G: snap %2  |  L: layers  |  Ctrl+Shift+B: MB %3  |  Shift+arrastar: multi")
+               QStringLiteral("Zoom %1%  |  G: snap %2  |  L: layers  |  Ctrl+Shift+B: MB %3  |  3D: %4  |  Shift+arrastar: multi")
                    .arg((int)(m_zoom * 100))
                    .arg(m_snapToGrid ? "ON" : "OFF")
-                   .arg(mbOn ? "ON" : "OFF"));
+                   .arg(mbOn ? "ON" : "OFF")
+                   .arg(m3d ? "ON" : "OFF")
+                   + (m_tool == ToolRotate
+                          ? QStringLiteral("  |  R: rot (X/Y/Z eixo · R trackball · dígitos+Enter)")
+                          : m_tool == ToolScale
+                                ? QStringLiteral("  |  W: escalar")
+                                : QStringLiteral("  |  V: mover  W: escalar  R: girar")));
 
     // Se o MB está ligado mas nada tem keyframes, o blur não aparece (só
     // borra o que se move por kfs). Avisa em vez de deixar o user achando

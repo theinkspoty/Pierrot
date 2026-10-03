@@ -41,10 +41,14 @@
 - Layout persistido entre sessões; **Travar layout** (Ctrl+L) evita arrastar
   painéis sem querer.
 
-## Mesa (composição 2D)
+## Mesa (composição 2D / 3D leve)
 
 - **Mesa**: canvas de composição estilo After Effects — camadas de faixa com
   posição, escala, rotação, opacidade e blend; câmera animável; keyframes.
+- **Modo 3D (AE Classic)**: toggle na Mesa (menu / Propriedades); campos
+  `mesaZ`, `camZ`, `camFov`, rotações XYZ. Render 3D completo entra na Fase 1.
+- **Malha 3D (.obj)**: Mesa ▸ Nova camada ▸ Malha 3D — importa OBJ como
+  camada (faces preenchidas; perspectiva simples com modo 3D ON).
 - Criada pelo menu da timeline (**Criar Mesa**); faixas podem ser enviadas
   como camadas.
 - Preview e exportação usam o mesmo `MesaRenderer` (paridade).

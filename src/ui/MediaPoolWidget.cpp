@@ -985,8 +985,30 @@ void MediaPoolWidget::addFiles() {
 }
 
 // Importa uma lista de arquivos (botão Adicionar ou arrastar do sistema).
+// .obj NÃO é mídia: vai para a Mesa como malha 3D (sinal objImportRequested).
 void MediaPoolWidget::importPaths(const QStringList& files) {
     if (!m_project || files.isEmpty()) return;
+
+    QStringList mediaFiles;
+    QStringList objFiles;
+    QStringList blendFiles;
+    for (const QString& f : files) {
+        if (f.endsWith(QLatin1String(".obj"), Qt::CaseInsensitive))
+            objFiles.append(f);
+        else if (f.endsWith(QLatin1String(".blend"), Qt::CaseInsensitive))
+            blendFiles.append(f);
+        else
+            mediaFiles.append(f);
+    }
+    if (!objFiles.isEmpty())
+        emit objImportRequested(objFiles);
+    if (!blendFiles.isEmpty())
+        emit blendImportRequested(blendFiles);
+    if (mediaFiles.isEmpty()) {
+        emit importFinished(0, 0);
+        return;
+    }
+
     emit editStart();
 
     auto* watcher = new QFutureWatcher<ProbeResult>(this);
@@ -1000,6 +1022,7 @@ void MediaPoolWidget::importPaths(const QStringList& files) {
             const FFmpegMediaInfo& info = r.info;
             if (!info.hasVideo && !info.hasAudio) {
                 ++invalid;
+                // .obj já é tratado à parte; aqui só mídia de verdade.
                 QMessageBox::warning(this, tr("Mídia inválida"),
                                      tr("Não foi possível ler o arquivo:\n%1").arg(r.path));
                 continue;
@@ -1040,16 +1063,16 @@ void MediaPoolWidget::importPaths(const QStringList& files) {
         watcher->deleteLater();
     });
     connect(watcher, &QFutureWatcher<ProbeResult>::progressValueChanged, this,
-            [this, files](int v) {
-                m_importBar->setValue(v);
-                emit importProgress(v);
-            });
+            [this, mediaFiles](int v) {
+        m_importBar->setValue(v);
+        emit importProgress(v);
+    });
 
     emit importStarted();
-    m_importBar->setRange(0, files.size());
+    m_importBar->setRange(0, mediaFiles.size());
     m_importBar->setValue(0);
     m_importBar->show();
-    watcher->setFuture(QtConcurrent::mapped(files, probeFile));
+    watcher->setFuture(QtConcurrent::mapped(mediaFiles, probeFile));
 }
 
 // Geradores de mídia (estilo Vegas): cria mídia virtual sem arquivo que pode

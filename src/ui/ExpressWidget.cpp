@@ -216,6 +216,11 @@ void ExpressWidget::addEffect(const QString& effectId)
         m_currentClip->reverbMix = 0.35;
         m_currentClip->reverbSize = 0.5;
         emit modified();
+    } else if (effectId.startsWith(QStringLiteral("trans:"))
+               || effectId.startsWith(QStringLiteral("text:"))
+               || effectId == QStringLiteral("pierrot_lumetri")) {
+        // IDs do painel Effects tratados no MainWindow — não são OFX.
+        return;
     } else if (!effectId.startsWith("pierrot_")) {
         // frei0r: id "frei0r:<pluginName>".
         if (effectId.startsWith(QStringLiteral("frei0r:"))) {

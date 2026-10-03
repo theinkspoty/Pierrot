@@ -299,6 +299,9 @@ void TimelineCommands::deleteSelected(TimelineWidget* tl) {
     tl->invalidateScene();
     tl->updateScrollRanges();
     emit tl->modified();
+    // Docks (Pivot/Velocity) podem segurar o id do clipe apagado — o paint
+    // revalida por id; aqui só garante repaint imediato.
+    tl->update();
 }
 
 void TimelineCommands::deleteSelectedLeaveGap(TimelineWidget* tl) {
