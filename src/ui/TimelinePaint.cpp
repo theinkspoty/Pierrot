@@ -1075,19 +1075,6 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
         p.fillRect(QRect(obar.x(), obar.y(), w, obar.height()), QColor(255, 255, 255, 190));
     }
 
-    if (!audio && c.id == m_hoverGripClip) {
-        const int cx = r.center().x();
-        QPainterPath tab;
-        const int tw = 28;
-        tab.moveTo(cx - tw / 2, r.top() + 1);
-        tab.lineTo(cx + tw / 2, r.top() + 1);
-        tab.lineTo(cx, r.top() + 14);
-        tab.closeSubpath();
-        p.setPen(QPen(QColor(255, 255, 255), 2));
-        p.setBrush(QColor(180, 215, 255, 230));
-        p.drawPath(tab);
-    }
-
     if (c.id == m_hoverCornerClip && m_hoverCornerSide != 0) {
         const int s = 17;
         QPainterPath tab;

@@ -236,7 +236,7 @@ protected:
     void dragLeaveEvent(QDragLeaveEvent*) override;
     void dropEvent(QDropEvent*) override;
 private:
-    enum DragMode { None, MoveClip, TrimLeft, TrimRight, ResizeSpeed, FadeIn, FadeOut, ClipOpacity, ClipSpeed, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, RulerLoopEdge, ResizeTrack, TrackVol, ClipVol, TrackDrag, TrackEnvVol,
+    enum DragMode { None, MoveClip, TrimLeft, TrimRight, ResizeSpeed, FadeIn, FadeOut, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, RulerLoopEdge, ResizeTrack, TrackVol, ClipVol, TrackDrag, TrackEnvVol,
         RippleEdit,    // Trim com ripple (desloca subsequentes)
         RollingEdit,   // Ajusta fronteira entre 2 clipes
         SlipEdit,      // Mudar in/out sem mudar posição
@@ -440,9 +440,6 @@ private:
     double m_dragOrigIn = 0.0;
     double m_dragOrigDur = 0.0;
     double m_dragOrigFade = 0.0; // valor original de fadeIn/fadeOut ao arrastar
-    double m_dragOrigOpacity = 1.0; // opacidade original do clipe ao arrastar no topo
-    double m_dragOrigSpeed = 1.0;  // speed base ao arrastar a banda de velocidade
-    double m_speedRel = 0.0;       // tempo relativo do clipe no início do drag de speed
     // Estado para Rolling Edit
     QString m_rollClipA;  // clipe da esquerda
     QString m_rollClipB;  // clipe da direita
@@ -471,7 +468,6 @@ private:
     double m_zoomT1 = 0.0;
     QRect m_marqueeRect;
     QPoint m_mousePos{-1, -1}; // posição atual do mouse (destaque das alças)
-    QString m_hoverGripClip; // clipe cuja alça de opacidade está sob o mouse
     QString m_hoverCornerClip; // clipe cujo canto de fade está sob o mouse
     int m_hoverCornerSide = 0; // -1 esquerdo, +1 direito, 0 nenhum
     QString m_lastVolTip; // texto do último tooltip dB mostrado

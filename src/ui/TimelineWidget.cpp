@@ -172,7 +172,7 @@ TimelineWidget::TimelineWidget(QWidget* parent) : QWidget(parent) {
         if (m_dragMode == MoveClip || m_dragMode == TrimLeft
             || m_dragMode == TrimRight || m_dragMode == ResizeTrack)
             refreshView();
-        else if (m_dragMode == FadeIn || m_dragMode == ClipOpacity)
+        else if (m_dragMode == FadeIn)
             // Fade/opacidade não mudam o conteúdo cacheado dos clipes (onda,
             // thumb) nem o conjunto de clipes — só o alpha de composição.
             // invalidateScene() aqui refazia o rebuildClipIndex() por mousemove
@@ -1794,8 +1794,7 @@ void TimelineWidget::groupSelected() {
 
 // Ao sair do widget, limpa os destaques de alças.
 void TimelineWidget::leaveEvent(QEvent*) {
-    if (!m_hoverGripClip.isEmpty() || !m_hoverCornerClip.isEmpty() || m_hoverCornerSide != 0) {
-        m_hoverGripClip.clear();
+    if (!m_hoverCornerClip.isEmpty() || m_hoverCornerSide != 0) {
         m_hoverCornerClip.clear();
         m_hoverCornerSide = 0;
         m_mousePos = QPoint(-1, -1);
