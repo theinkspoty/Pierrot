@@ -415,17 +415,11 @@ void ClipPropertiesWidget::rebuild() {
                 },
                 [this, clip]() { return &clip->kfVolume; });
         } else {
-            addSpinRow(tr("Velocidade (×):"), 0.1, 4.0, 0.05, 2, 60, 1.0,
-                [clip]() { return clip->speed; },
-                [clip](double v) { clip->speed = v; });
-            addSpinRow(tr("Opacidade (%):"), 0, 300, 1, 1, 60, 100.0,
-                [this, clip]() { return kfValue(clip->kfOpacity, clip->opacity, m_playhead); },
-                [this, clip](double v) {
-                    if (!clip->kfOpacity.isEmpty())
-                        upsertKeyframe(clip->kfOpacity, m_playhead, v);
-                    else clip->opacity = v;
-                },
-                [this, clip]() { return &clip->kfOpacity; });
+            // Opacidade geral e velocidade saíram daqui: opacidade geral é
+            // controlada no Pancrop e a velocidade no dock Velocidade. Ficar
+            // nos dois lugares dava dois valores concorrentes para a mesma
+            // propriedade. O fade (opacidade das pontas) continua no clipe,
+            // porque é do clipe e não tem casa melhor.
             addSpinRow(tr("Volume (%):"), 0, 400, 1, 0, 60, 100.0,
                 [this, clip]() { return kfValue(clip->kfVolume, clip->volume, m_playhead); },
                 [this, clip](double v) {

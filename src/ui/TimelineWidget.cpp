@@ -2142,7 +2142,6 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         QAction* applyPreset = menu.addAction(tr("Aplicar Preset…"));
         menu.addSeparator();
         QAction* props = menu.addAction(tr("Propriedades…"));
-        QAction* speedAct = menu.addAction(tr("Velocidade…"));
         QAction* velAct = nullptr;
         QAction* pivotAct = nullptr;
         if (!audio) {
@@ -2274,7 +2273,6 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         else if (act == savePreset) saveClipPreset();
         else if (act == applyPreset) applyClipPreset();
         else if (act == props) emit propertiesRequested(clip->id);
-        else if (act == speedAct) showSpeedDialog(clip);
         else if (act == velAct) emit velocityRequested(clip->id);
         else if (act == pivotAct) emit pivotRequested(clip->id);
         else if (act == unlink) {
@@ -2651,36 +2649,6 @@ void TimelineWidget::duplicateClip(Clip* c) {
 // Diálogo de velocidade: digita o fator (0.1x-4x). Aplica ao clipe e, se
 // vinculado, aos membros do grupo (vídeo + faixas de áudio) mantendo a posição
 // da borda DIREITA (a duração do clipe é retida no timeline).
-void TimelineWidget::showSpeedDialog(Clip* c) {
-    if (!c) return;
-    QStringList ids = c->groupId.isEmpty() ? QStringList{c->id} : QStringList();
-    if (ids.isEmpty())
-        for (Clip* m : groupMembers(c->groupId)) ids.append(m->id);
-
-    bool ok = false;
-    const double v = QInputDialog::getDouble(
-        this, tr("Velocidade do clipe"),
-        tr("Velocidade: (0,1×–4×)\n\nO vídeo fica mais rápido (valor > 1) ou "
-           "mais lento (< 1). A duração na timeline é preservada; o conteúdo "
-           "da mídia que sobra é descartado ou repetido conforme a direção."),
-        c->speed, 0.1, 4.0, 1, &ok);
-    if (!ok) return;
-
-    emit editStart();
-    for (const QString& id : ids) {
-        Clip* sc = findClipById(id);
-        if (!sc) continue;
-        sc->speed = v;
-        // Mantém a borda DIREITA: duração no timeline preservada, mas o ponto
-        // de entrada na mídia e o quanto é consumido mudam conforme a
-        // velocidade, como no Vegas. `in` é ajustado para a nova velocidade.
-        const double consumed = c->dur * v; // segundos de mídia consumidos
-        sc->in = std::max(0.0, sc->in - (consumed - c->dur));
-    }
-    invalidateScene();
-    update();
-    emit modified();
-}
 
 void TimelineWidget::showEffectsDialog(Clip* c) {
     if (!c) return;

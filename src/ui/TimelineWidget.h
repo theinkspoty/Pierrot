@@ -327,7 +327,6 @@ private:
     void trackEnvelopePress(int row, bool audio, double t);
     void applyZoomRect(double t0, double t1);
     void removeClipsByIds(const QStringList& ids);
-    void showSpeedDialog(Clip* c);
     void showEffectsDialog(Clip* c);
     void showGradingDialog(Clip* c);
     void showTextEditorDialog(Clip* c);
