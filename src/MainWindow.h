@@ -34,7 +34,10 @@ class ClipPropertiesWidget;
 class FileBrowserWidget;
 class MixerWidget;
 class MesaWidget;
+class SourceMonitorWidget;
+class VelocityEditorWidget;
 class OfxPluginManager;
+class Frei0rPluginManager;
 class QListWidget;
 class QAction;
 class QColor;
@@ -103,6 +106,11 @@ private:
     void applyWorkspace(const QString& name);
     void captureCurrentWorkspace();
     void saveWorkspaceAs(const QString& name);
+    // Presets fixos estilo Premiere (Edição/Áudio/Composição/Efeitos):
+    // mostram/escondem docks e definem larguras — sem restoreState, para
+    // não depender de kLayoutVersion.
+    void applyWorkspacePreset(const QString& name);
+    void seedWorkspacePresets();
     QStringList workspaceNames() const;
     void createActions();
     void saveSettings();
@@ -219,6 +227,8 @@ private:
     FileBrowserWidget* m_fileBrowser = nullptr;
     MixerWidget* m_mixer = nullptr;
     MesaWidget* m_mesa = nullptr;
+    SourceMonitorWidget* m_source = nullptr; // Source Monitor (dock, Premiere)
+    VelocityEditorWidget* m_velocity = nullptr; // Editor de Velocidade (dock)
     QPointer<MaskEditorDialog> m_maskDialog;  // janela de máscara (única)
     QString m_maskDialogClipId;               // clipe que está sendo editado no momento
     QDockWidget* m_poolDock = nullptr;
@@ -235,6 +245,8 @@ private:
     QComboBox* m_scopeMode = nullptr;
     QDockWidget* m_scopesDock = nullptr;
     QDockWidget* m_propsDock = nullptr;     // Inspector (passo 3, ROADMAP 7.1)
+    QDockWidget* m_sourceDock = nullptr;    // Source Monitor (Insert/Overwrite)
+    QDockWidget* m_velocityDock = nullptr;  // Editor de Velocidade do clipe
     // Registro de todos os docks criados por makeDock(), na ordem de criação.
     // O menu Exibir e o salvamento do layout percorrem esta lista em vez de
     // repetir os nomes à mão.
@@ -265,5 +277,6 @@ private:
     QTimer* m_monitorTimer = nullptr;
     QProgressBar* m_busyBar = nullptr;
     OfxPluginManager* m_ofxManager = nullptr;
+    Frei0rPluginManager* m_frei0rManager = nullptr;
     PreviewMonitor* m_monitor = nullptr; // preview externo (janela própria/2º monitor)
 };

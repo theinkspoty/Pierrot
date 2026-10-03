@@ -12,7 +12,13 @@ recursos), ver [`../Relatorios/`](../Relatorios/).
 
 | Documento | Assunto | Atualizado |
 |---|---|---|
-| [`KERNEL.md`](KERNEL.md) | Núcleo `src/colombina` (models, ffmpeg, render, export, ofx) — LOC por módulo, caches, thread-safety, estado da GPU, comparação com o Vegas Pro | 2026-09-22 (v0.6 alpha) |
+| [`KERNEL.md`](KERNEL.md) | Núcleo `src/colombina` (models, ffmpeg, render, export, ofx) — LOC por módulo, caches, thread-safety, estado da GPU, comparação com o Vegas Pro | 2026-10-02 (v0.7 alpha) |
+
+## Relatórios (fora de Arquitetura)
+
+Ver também `../Relatorios/`:
+- `Relatorio-Bibliotecas-Efeitos-Video.md` — OFX/frei0r (hosts open source)
+- `Relatorio-Efeitos-Nativos.md` — inventário nativo vs Premiere + fila P0–P2
 
 ## Convenção
 

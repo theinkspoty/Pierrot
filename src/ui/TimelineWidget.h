@@ -149,6 +149,16 @@ public slots:
     void setLoopOutAtPlayhead();
     void clearLoop();
     void addMediaAtPlayhead(const QString& mediaId);
+    // Insert/Overwrite do Source Monitor (fluxo Premiere): `srcIn`/`srcOut`
+    // são pontos na mídia; o clipe entra no playhead com in=srcIn e dur=out-in.
+    void insertSourceAtPlayhead(const QString& mediaId, double srcIn, double srcOut);
+    void overwriteSourceAtPlayhead(const QString& mediaId, double srcIn, double srcOut);
+    // Multicâmera: cria um clipe multicam a partir de ≥2 clipes de vídeo
+    // selecionados (fontes = mediaIds; cortes via teclas 1..N no playhead).
+    void createMulticamFromSelection();
+    // Grava keyframe de ângulo multicam no playhead do clipe multicam
+    // selecionado (ou sob a agulha). `angle` é 0-based.
+    void setMulticamAngleAtPlayhead(int angle);
     // Cria um clipe independente de texto (animável) numa faixa de vídeo.
     void addTextClipAt(int row, double t);
     // Cria um clipe Mesa (composição 2D) numa faixa de vídeo.
@@ -191,6 +201,7 @@ signals:
     void loopEnabledChanged(bool enabled); // "Q" liga/desliga o loop de reprodução
     void mesaOpenRequested(const QString& mesaId);
     void mesaChanged(const QString& mesaId);
+    void velocityRequested(const QString& clipId); // abre dock Editor de Velocidade
     void selectionChanged(const QString& id);
     void pancropRequested(const QString& id);
     void maskRequested(const QString& id);
@@ -213,7 +224,7 @@ protected:
     void dragLeaveEvent(QDragLeaveEvent*) override;
     void dropEvent(QDropEvent*) override;
 private:
-    enum DragMode { None, MoveClip, TrimLeft, TrimRight, ResizeSpeed, FadeIn, FadeOut, ClipOpacity, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, RulerLoopEdge, ResizeTrack, TrackVol, ClipVol, TrackDrag, TrackEnvVol,
+    enum DragMode { None, MoveClip, TrimLeft, TrimRight, ResizeSpeed, FadeIn, FadeOut, ClipOpacity, ClipSpeed, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, RulerLoopEdge, ResizeTrack, TrackVol, ClipVol, TrackDrag, TrackEnvVol,
         RippleEdit,    // Trim com ripple (desloca subsequentes)
         RollingEdit,   // Ajusta fronteira entre 2 clipes
         SlipEdit,      // Mudar in/out sem mudar posição
@@ -280,6 +291,9 @@ private:
     void drawVideoThumbs(QPainter& p, const QRect& r, const Clip& c, const QString& path);
     void drawFadeCorners(QPainter& p, const QRect& r, const Clip& c);
     void drawOpacityHandle(QPainter& p, const QRect& r, const Clip& c);
+    // Banda de velocidade no clipe (Time Remapping do Premiere): curva,
+    // keyframes e rótulos rápido/baixo.
+    void drawSpeedEnvelope(QPainter& p, const QRect& r, const Clip& c);
     void drawTransitionIndicator(QPainter& p, const QRect& r, const QString& type);
     void drawKeyframeDiamonds(QPainter& p, const QRect& r, const Clip& c, bool audio);
     void drawEnvelope(QPainter& p, const QRect& r, const Clip& c, bool audio);
@@ -416,6 +430,8 @@ private:
     double m_dragOrigDur = 0.0;
     double m_dragOrigFade = 0.0; // valor original de fadeIn/fadeOut ao arrastar
     double m_dragOrigOpacity = 1.0; // opacidade original do clipe ao arrastar no topo
+    double m_dragOrigSpeed = 1.0;  // speed base ao arrastar a banda de velocidade
+    double m_speedRel = 0.0;       // tempo relativo do clipe no início do drag de speed
     // Estado para Rolling Edit
     QString m_rollClipA;  // clipe da esquerda
     QString m_rollClipB;  // clipe da direita

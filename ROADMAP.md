@@ -95,9 +95,16 @@ Sem isso, nenhuma feature nova sobrevive.
   - Pendências: UI para editar a curva (desenhar keyframes no clipe), áudio com
     velocidade variável (hoje o áudio segue o `speed` base), e LAINKA/OFX/Bench
     com envelope (usam o `speed` base).
-- [ ] **Multicâmera** — sincronizar N clipes e cortar entre ângulos com teclas 1..N.
-  - Model: `Clip::isMulticam` + `Clip::multicamSource` (qual ângulo ativo por tempo).
-  - Preview: troca de fonte em tempo real; export: recortes de cada ângulo.
+- [x] **Multicâmera** — sincronizar N clipes e cortar entre ângulos com teclas 1..N.
+  - Model: `Clip::isMulticam` + `multicamSources`/`multicamIns`/`kfAngle`/`defaultAngle`
+    (`src/colombina/models/Project.h`); serialização no `.Blanc`.
+  - UI: menu de contexto **Criar multicam** (≥2 clipes de vídeo selecionados);
+    teclas `1..N` gravam keyframe de ângulo (KfStep) no playhead.
+  - Preview/Mesa/export usam `mediaIdAt(rel)`/`multicamInAt(rel)`/`clipSrcTime`;
+    a exportação expande o multicam em segmentos por ângulo
+    (`expandMulticamClip` em `ProjectExporter.cpp`).
+  - Pendências: sync por áudio/timecode, UI de grade de ângulos, áudio do
+    ângulo “programa” automático.
 - [ ] **Timeline aninhada** — abrir um projeto como mídia dentro de outro
   (base para groups/sequências). Reusa a composição da `Mesa`.
 
@@ -121,6 +128,14 @@ Sem isso, nenhuma feature nova sobrevive.
   `acompressor`, `alimiter`; espelhar no preview via DSP simples).
 - [ ] **VST/CLAP (adiado, alto custo)** — só depois da Fase 2/3 estáveis;
   caminho realista é host via JACK/PipeWire, não plugar direto.
+- [ ] **Catálogo de efeitos open source (OFX/frei0r)** — ✅ **host frei0r
+  implementado** em 2026-10-02 (`src/colombina/frei0r/Frei0rPluginManager.*`):
+  scan de `/usr/lib/frei0r-1` + `PIERROT_FREI0R_PATH`, pilha `Clip::frei0rFx`,
+  preview via `applyEffects`, export via ffmpeg `frei0r=`, painel Efeitos +
+  aba Express. Host OFX já existia. Inventário de bibliotecas:
+  [`Arquivos/Relatorios/Relatorio-Bibliotecas-Efeitos-Video.md`](Arquivos/Relatorios/Relatorio-Bibliotecas-Efeitos-Video.md).
+  Pendências: empacotar `openfx-misc`/`frei0r-plugins` no AppImage, UI de
+  caminhos em Configurações, teste de paridade preview↔export com ffmpeg real.
 
 ## Fase 4 — Fluxo profissional e ecossistema
 
@@ -461,25 +476,32 @@ em ordem de impacto:
    Premiere o Program Monitor é um dock comum, o que permite Source ao lado
    e Inspector encostando. Com o preview central, docks funcionam nos lados;
    a réplica total do fluxo Source/Program ainda depende do passo 2.
-2. **Não há Source monitor.** O Premiere tem Source/Program lado a lado; o
-   Pierrot só oferece preview em janela separada (2º monitor).
+   *(Passo 2 já entregue: Source Monitor dockado; Source/Program ainda não
+   dividem a mesma pilha de abas — Program continua central.)*
+2. **Source monitor.** ✅ Implementado como dock `sourceMonitorDock`
+   (`SourceMonitorWidget`): abre por duplo-clique na Central de Mídias, In/Out
+   com I/O, transporte básico, botões Insert/Overwrite + atalhos `,`/`.`
+   (`TimelineWidget::insertSourceAtPlayhead` / `overwriteSourceAtPlayhead`).
+   Menu de contexto da pool também oferece "Inserir no playhead" (caminho
+   antigo do duplo clique).
 3. **Inspector é janela flutuante** (`ClipPropertiesWidget`), não painel ao
-   lado do preview.
+   lado do preview. → ✅ virou dock `propsDock`.
 4. **Timeline sem header no padrão Premiere** — não há coluna fixa com nome da
-   faixa + toggle de visibilidade + controles.
+   faixa + toggle de visibilidade + controles. → ✅ refetido em 7.3.
 5. **Mixer à parte**, em vez de controles inline nas faixas de áudio.
+   → ⚠️ parcial (header M/S/R + VU; mixer continua dock).
 
 ### Ordem de implementação
 
 O passo 1 destrava todos os outros; nada mais funciona direito antes dele.
 
-| # | Passo | Risco | Reaproveita |
-|---|-------|-------|-------------|
-| 1 | Preview sai do centro e vira dock | **Alto** | `PreviewWidget` |
-| 2 | Source monitor ao lado do Program | Médio | `PreviewWidget` + seek/playback |
-| 3 | Inspector vira dock (sai da janela) | Baixo | `ClipPropertiesWidget` |
-| 4 | Header de faixa estilo Premiere | Baixo | `TimelinePaint` + `TimelineDrag` |
-| 5 | Controles inline de áudio na timeline | Médio | `MixerWidget` |
+| # | Passo | Risco | Reaproveita | Status |
+|---|-------|-------|-------------|--------|
+| 1 | Preview sai do centro e vira dock | **Alto** | `PreviewWidget` | **Revertido** — preview continua `setCentralWidget` (decisão; destrava 2–5) |
+| 2 | Source monitor ao lado do Program | Médio | `PreviewWidget` + seek/playback | ✅ **Feito** — dock `Source` (`SourceMonitorWidget`), In/Out I/O, Insert `,` / Overwrite `.` |
+| 3 | Inspector vira dock (sai da janela) | Baixo | `ClipPropertiesWidget` | ✅ Feito (`propsDock`) |
+| 4 | Header de faixa estilo Premiere | Baixo | `TimelinePaint` + `TimelineDrag` | ✅ Feito (7.3) |
+| 5 | Controles inline de áudio na timeline | Médio | `MixerWidget` | ⚠️ Parcial (M/S/R + VU no header; mixer segue dock) |
 
 > **Risco do passo 1, anotado:** hoje o preview escala junto com a janela
 > (ancorado no layout central). Ao virar dock, o cálculo de escala/posição muda
@@ -774,6 +796,10 @@ mas é a camada mais rasa. **Restante: código.**
   principal, e não existe um "clipe Mesa" que possa ser movido, cortado ou
   colocado em outra faixa. O agrupamento em sub-timeline renderizável continua
   não implementado.
+- [x] **Multicâmera** ✅ (migrou de Fase 2 para cá na entrega de 2026-10-02):
+  modelo `Clip::isMulticam` + `kfAngle`, UI Criar multicam + teclas 1..N,
+  preview/export com expansão por ângulo. Sync por áudio e grade de ângulos
+  ficam para depois.
 
 ### v0.8.1 (áudio/efeitos)
 
@@ -1019,6 +1045,20 @@ para roubar" continuam não feitos, e 1 está melhor do que o documento registra
   resolução só são definidos **manualmente** (`ProjectSettingsDialog.cpp:119`,
   `WelcomeWindow.cpp:706-707`); nada ajusta o projeto ao primeiro clipe, e nada
   marca um clipe como "mestre" de resolução/fps.
+- [ ] **Gaps restantes do fluxo Premiere** (após Source + Insert/Overwrite):
+  - Three-point editing completo (marcadores de in/out na timeline + atalhos).
+  - Expanded Edit / Trim no Program.
+  - Multicam.
+  - Nesting de sequences (a Mesa não é nested sequence).
+  - Adjustment layers.
+  - Master clips / efeitos em nível de mídia/projeto.
+  - Lumetri simplificado (wheels + curves) além do Lift/Gamma/Gain atual.
+  - Essential Sound / ducking.
+  - MOGRT / captions / speech-to-text.
+  - Project Manager / auto-reframe / scene detection.
+  - VR/360, color management ACES, GPU de efeitos (Mercury).
+  Detalhamento e status: ver resposta da auditoria Premiere (2026-10-02) e
+  `Arquivos/Relatorios/Relatorio-Features-Vegas-FCE.md`.
 - [ ] **Expanded Edit Mode / Trim Start–End** ❌ busca por `ExpandedEdit`,
   `TrimStart`, `TrimEnd`, `L-cut`, `JCut`, `LCut` retorna **zero**. O único
   diálogo é `TrimmerDialog`, que é in/out de **mídia**, não emenda na timeline.
@@ -1088,3 +1128,87 @@ atenção, **3 já estavam registrados** e **1 é novo**:
 > Pior feature é a que **perde trabalho**; segunda pior é a que **trava a UI**.
 > Toda decisão no Pierrot passa por "isso aumenta ou diminui a chance de perder
 > o projeto do usuário?" — se aumenta, o item vai para o fim da fila.
+
+---
+
+## Cor — status vs Lumetri (Premiere) · 2026-10-02
+
+- [x] **LGG clássico** ✅ lift/gamma/gain por canal (preview + export + preset).
+- [x] **Lumetri Basic** ✅ exposure, contrast, highlights/shadows, whites/blacks,
+  saturation, vibrance, temperature/tint, faded film, sharpen
+  (`Clip::cg*` + `colorgrade::applyToImage` em `src/colombina/fx/ColorGrade.h`).
+- [x] **Curvas RGB** ✅ master + R/G/B (pontos 0..1) no preview e `curves=` no export.
+- [x] **Vinheta nativa** ✅ `cgVignette`/`cgVignetteFeather` (preview + `vignette=`).
+- [x] **LUT 3D `.cube`** ✅ parser + interpolação trilinear no preview; `lut3d=` no export.
+- [x] **Mix/blend do grade** ✅ `cgBlend` 0..1.
+- [x] **UI Lumetri** ✅ abas Básico / Rodas / Curvas / Vinheta-LUT
+  (`TimelineWidget::showGradingDialog`).
+- [x] **Scopes** ✅ waveform (luma), histograma RGB, vectorscope (dock Analisadores).
+- [ ] **RGB parade** no waveform (só luma hoje).
+- [ ] **HSL Secondary** (key por hue/sat/lum + correção secundária).
+- [ ] **Color match** entre clipes.
+- [ ] **Keyframes de grade** (exposição/curvas animadas).
+- [ ] **Curvas desenháveis** (canvas com arraste; hoje é lista de pontos X/Y).
+- [ ] **Scopes embutidos no diálogo** de cor.
+
+> “100% cor vs Premiere” no sentido de uso diário = Basic + Rodas + Curves +
+> Vinheta + LUT. HSL Secondary, Color Match e keyframes são o restante
+> profissional — registrados acima.
+
+---
+
+## UI — status vs Premiere (painéis/layout) · 2026-10-02
+
+- [x] **Docks + workspaces nomeados** ✅ (saveState por workspace).
+- [x] **Header de faixa estilo Premiere** ✅ (7.3).
+- [x] **Program Monitor** ✅ transporte no monitor, rótulo Program, mini-waveform.
+- [x] **Source Monitor dock** ✅ In/Out + Insert/Overwrite.
+- [x] **Inspector dock** ✅ Propriedades ao lado do Program.
+- [x] **Tools dockável** ✅ paleta vertical na timeline.
+- [x] **Menu Exibir agrupado por região** ✅ esquerda/direita/embaixo.
+- [x] **Presets de workspace** ✅ Edição / Áudio / Composição / Efeitos.
+- [x] **Densidade** ✅ paddings mais justos no QSS (dock title, botões).
+- [x] **Escuro em 3 níveis** ✅ `canvasBg` < `timelineBg` < painéis/monitor.
+- [x] **Mesa documentada no FEATURES** ✅.
+- [ ] **Source/Program no mesmo central** (Program segue central; Source é dock).
+- [ ] **Registry `PanelDef`** (manutenção; menu já agrupado sem a tabela).
+- [ ] **Curvas desenháveis / scopes no diálogo de cor** (janela de cor, não layout).
+
+> “100% UI” no sentido de painéis/layout Premiere: workspaces, agrupamento,
+> densidade, escuro, header, Source/Inspector/Tools. Resta polish de janela de
+> cor e o dual-monitor hard (Program vira dock) — risco alto, já revertido.
+
+---
+
+## Efeitos nativos — inventário (2026-10-02)
+
+Detalhamento completo:
+[`Arquivos/Relatorios/Relatorio-Efeitos-Nativos.md`](Arquivos/Relatorios/Relatorio-Efeitos-Nativos.md).
+
+- [x] **Nativos que já funcionam** ✅ brilho/contraste/sat, blur, grayscale,
+  chroma key, masks, LGG + Lumetri (`ColorGrade.h`), LAINKA (`LainkaFx.h`),
+  motion blur, EQ/Reverb/Denoise (C++/Rust).
+- [x] **Plugins** ✅ host frei0r + host OFX.
+- [ ] **Extrair `NativeFx.h`** — chroma/blur/eq/grayscale/masks no kernel
+  (paridade preview↔export por construção; hoje inline em `PreviewWidget.cpp`).
+- [ ] **`tst_audiofx_parity`** — Rust vs fallback C++ no mesmo buffer.
+- [ ] **Efeitos de look** (Posterize, Find Edges, Vertical Hold, Tint, Replace
+  Color) — via nativos novos ou catálogo frei0r curado.
+- [ ] **Warp Stabilizer / compressor por clipe** — P2 (caros).
+
+> Anotado para fazer depois — não entra no fechamento da 0.7.
+
+---
+
+## Editor de Velocidade (dock) · 2026-10-02
+
+- [x] **UI de envelope de velocidade** ✅ dock `velocityDock` (aba do Editor de
+  Curvas): canvas velocidade×tempo, keyframes arrastáveis, base 0,1–4×, add/del/reset.
+  `src/ui/VelocityEditorWidget.*`. Menu do clipe ▸ “Editor de velocidade”.
+- [x] **Banda de velocidade na timeline** ✅ `drawSpeedEnvelope` no clipe
+  (curva azul, 1×, losangos, Rápido/Baixo); arraste no corpo = speed;
+  duplo clique = keyframe (`TimelineDrag` `ClipSpeed`).
+- [x] **Modelo/export já prontos** ✅ `kfSpeed` + `clipSrcTime` + `renderVelocitySequence`.
+- [ ] **Diamantes de kfSpeed na lista de keyframes do GraphEditor** (GPropSpeed).
+- [ ] **Áudio com envelope** (preview/export de áudio ainda usam `speed` base).
+- [ ] **LAINKA/OFX com envelope** (usam `speed` base).

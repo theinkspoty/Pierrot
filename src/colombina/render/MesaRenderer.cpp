@@ -274,8 +274,8 @@ bool MesaRenderer::prepareLayer(LayerPrep& out, const MesaComposition& mesa,
                 fp.strokePath(path, QPen(ts->textOutlineColor,
                                          qMax(1.0, ts->textOutline * fh)));
             fp.fillPath(path, ts->textColor);
-        } else if (!c.mediaId.isEmpty()) {
-            const MediaItem* mi = project.findMedia(c.mediaId);
+        } else if (!c.mediaId.isEmpty() || c.hasMulticam()) {
+            const MediaItem* mi = project.findMedia(c.mediaIdAt(cRel));
             if (mi) {
                 if (mi->isSolid) {
                     // Mídia virtual (sólido/gradiente/checkerboard/noise):
@@ -353,8 +353,8 @@ void MesaRenderer::warmTracks(const MesaComposition& mesa, const Project& projec
             const double cRel = relTime - c.pos;
             if (cRel < 0 || cRel >= c.dur) continue;
 
-            if (!c.isText && !c.mediaId.isEmpty()) {
-                const MediaItem* mi = project.findMedia(c.mediaId);
+            if (!c.isText && (!c.mediaId.isEmpty() || c.hasMulticam())) {
+                const MediaItem* mi = project.findMedia(c.mediaIdAt(cRel));
                 if (mi && !mi->isSolid && !mi->filePath.isEmpty()) {
                     jobs.append({ mi->filePath, clipSrcTime(c, cRel),
                                   mesa.canvasW });

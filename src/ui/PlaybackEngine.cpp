@@ -497,7 +497,7 @@ const Clip* PlaybackEngine::clipAt(double t) const {
         const Clip* best = nullptr;
         for (const Clip& c : track.clips) {
             if (t >= c.pos && t < c.pos + c.dur && !c.isText) {
-                const MediaItem* m = m_project->findMedia(c.mediaId);
+                const MediaItem* m = m_project->findMedia(c.mediaIdAt(t - c.pos));
                 const bool hasVideo = mesaTrack || (m && m->hasVideo);
                 if (hasVideo && (!best || c.pos > best->pos)) best = &c;
             }

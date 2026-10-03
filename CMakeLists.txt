@@ -47,6 +47,7 @@ set(COLOMBINA_SOURCES
     src/colombina/ofx/OfxPluginManager.cpp
     src/colombina/ofx/OfxHost.cpp
     src/colombina/ofx/OfxRenderer.cpp
+    src/colombina/frei0r/Frei0rPluginManager.cpp
     src/colombina/render/MesaRenderer.cpp
     src/colombina/CrashReporter.cpp
 )
@@ -64,6 +65,8 @@ set(COLOMBINA_HEADERS
     src/colombina/ofx/OfxPluginManager.h
     src/colombina/ofx/OfxHost.h
     src/colombina/ofx/OfxRenderer.h
+    src/colombina/frei0r/Frei0rPluginManager.h
+    src/colombina/fx/ColorGrade.h
     src/colombina/render/MesaRenderer.h
     src/colombina/generators.h
     src/colombina/util.h
@@ -102,6 +105,8 @@ set(PIERROT_APP_SOURCES
     src/ui/EffectsWidget.cpp
     src/ui/ExpressWidget.cpp
     src/ui/TrimmerDialog.cpp
+    src/ui/SourceMonitorWidget.cpp
+    src/ui/VelocityEditorWidget.cpp
     src/ui/RenderQueueDialog.cpp
     src/ui/ScopeWidget.cpp
     src/ui/PreviewMonitor.cpp
@@ -122,6 +127,8 @@ set(PIERROT_APP_HEADERS
     src/clipattrs.h
     src/version.h
     src/ui/TrimmerDialog.h
+    src/ui/SourceMonitorWidget.h
+    src/ui/VelocityEditorWidget.h
     src/ui/RenderQueueDialog.h
     src/ui/ScopeWidget.h
     src/ui/MediaPoolWidget.h
@@ -293,6 +300,7 @@ add_executable(tst_exporter
     src/colombina/render/MesaRenderer.cpp
     src/colombina/export/ProjectExporter.cpp
     src/colombina/ffmpeg/ProxyManager.cpp
+    src/colombina/frei0r/Frei0rPluginManager.cpp
 )
 target_include_directories(tst_exporter PRIVATE src src/colombina/ofx/sdk)
 target_link_libraries(tst_exporter PRIVATE
@@ -397,6 +405,7 @@ add_executable(tst_export_pipeline
     src/colombina/render/MesaRenderer.cpp
     src/colombina/export/ProjectExporter.cpp
     src/colombina/ffmpeg/ProxyManager.cpp
+    src/colombina/frei0r/Frei0rPluginManager.cpp
 )
 target_include_directories(tst_export_pipeline PRIVATE src src/colombina/ofx/sdk)
 target_link_libraries(tst_export_pipeline PRIVATE

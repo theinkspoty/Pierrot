@@ -6,6 +6,7 @@
 #include "ui/RenderQueueDialog.h"
 #include "ui/ExportDialog.h"
 #include "colombina/CrashReporter.h"
+#include "colombina/frei0r/Frei0rPluginManager.h"
 
 #include <QListWidget>
 #include <QProgressBar>
@@ -42,8 +43,10 @@ const char* formatLabel(int fmt) {
 class ExportBuildWorker : public QObject {
     Q_OBJECT
 public:
-    ExportBuildWorker(Project project, ExportSettings settings)
-        : m_project(std::move(project)), m_settings(std::move(settings)) {}
+    ExportBuildWorker(Project project, ExportSettings settings,
+                      const Frei0rPluginManager* frei0r = nullptr)
+        : m_project(std::move(project)), m_settings(std::move(settings)),
+          m_frei0rManager(frei0r) {}
 public slots:
     void run() {
         QString err;
@@ -52,7 +55,8 @@ public slots:
             [this](int pct) {
                 emit progress(pct);
                 return !m_cancel.load();
-            });
+            },
+            m_frei0rManager);
         if (args.isEmpty())
             emit failed(err.isEmpty() ? QStringLiteral("Falha ao montar o comando.") : err);
         else
@@ -66,6 +70,7 @@ signals:
 private:
     Project m_project;
     ExportSettings m_settings;
+    const Frei0rPluginManager* m_frei0rManager = nullptr;
     std::atomic<bool> m_cancel{false};
 };
 
@@ -239,7 +244,7 @@ void RenderQueueDialog::startNextJob() {
     // em CPU e roda fora da UI; a cópia evita corrida com edições na timeline.
     m_projectSnap = *m_project;
     m_buildThread = new CrashReporter::TrackedThread("export-build", this);
-    m_buildWorker = new ExportBuildWorker(m_projectSnap, s);
+    m_buildWorker = new ExportBuildWorker(m_projectSnap, s, m_frei0rManager);
     m_buildWorker->moveToThread(m_buildThread);
     connect(m_buildThread, &QThread::started, m_buildWorker, &ExportBuildWorker::run);
     connect(m_buildWorker, &ExportBuildWorker::ready,

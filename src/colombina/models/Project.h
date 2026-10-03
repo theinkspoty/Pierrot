@@ -6,12 +6,14 @@
 #pragma once
 
 #include <QString>
+#include <QStringList>
 #include <QVector>
 #include <QUuid>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QColor>
 #include <QPointF>
+#include <QVariant>
 #include <algorithm>
 #include <cmath>
 
@@ -40,6 +42,17 @@ struct OfxPluginInstance {
     QString pluginId;           // referência a OfxPluginInfo::id
     bool enabled = true;
     QVector<OfxParam> params;
+};
+
+// ── frei0r (padrão Kdenlive/Shotcut/MLT) ─────────────────────────────────
+// Efeito frei0r serializado no clipe. `values` paralelo aos parâmetros do
+// plugin (BOOL/DOUBLE = 1 slot; POSITION = 2 slots x,y). `colors` paralelo
+// aos COLOR params. `pluginName` = nome oficial f0r (ex.: "vignette").
+struct Frei0rEffect {
+    QString pluginName;
+    bool enabled = true;
+    QVector<double> values;
+    QVector<QColor> colors;
 };
 
 struct MediaItem {
@@ -340,10 +353,51 @@ struct Clip {
     double gainR = 0.0;
     double gainG = 0.0;
     double gainB = 0.0;
+
+    // ── Color grade estilo Lumetri (Premiere) ──────────────────────────
+    // Campos numéricos na mesma escala do Lumetri (0 = neutro / default).
+    double cgExposure = 0.0;       // -5..+5 EV
+    double cgContrast = 0.0;       // -100..100
+    double cgHighlights = 0.0;     // -100..100
+    double cgShadows = 0.0;        // -100..100
+    double cgWhites = 0.0;         // -100..100
+    double cgBlacks = 0.0;         // -100..100
+    double cgSaturation = 0.0;     // -100..100 (0 = neutro)
+    double cgVibrance = 0.0;       // -100..100
+    double cgTemperature = 0.0;    // -100..100 (azul↔laranja)
+    double cgTint = 0.0;           // -100..100 (verde↔magenta)
+    double cgFadedFilm = 0.0;      // 0..100
+    double cgSharpen = 0.0;        // 0..100
+    double cgVignette = 0.0;       // -100..100 (<0 escurece bordas)
+    double cgVignetteFeather = 50.0; // 0..100
+    double cgBlend = 1.0;          // 0..1 mix com o original
+    double cgLutStrength = 1.0;    // 0..1
+    QString cgLutPath;             // caminho do .cube (vazio = sem LUT)
+    // Curvas RGB: pontos 0..1 ordenados por x (vazio = reta).
+    QVector<QPointF> cgMasterCurve;
+    QVector<QPointF> cgRCurve;
+    QVector<QPointF> cgGCurve;
+    QVector<QPointF> cgBCurve;
+
     bool hasColorGrade() const {
         return liftR != 0.0 || liftG != 0.0 || liftB != 0.0
             || gammaR != 1.0 || gammaG != 1.0 || gammaB != 1.0
-            || gainR != 0.0 || gainG != 0.0 || gainB != 0.0;
+            || gainR != 0.0 || gainG != 0.0 || gainB != 0.0
+            || cgExposure != 0.0 || cgContrast != 0.0
+            || cgHighlights != 0.0 || cgShadows != 0.0
+            || cgWhites != 0.0 || cgBlacks != 0.0
+            || cgSaturation != 0.0 || cgVibrance != 0.0
+            || cgTemperature != 0.0 || cgTint != 0.0
+            || cgFadedFilm != 0.0 || cgSharpen != 0.0
+            || cgVignette != 0.0 || cgBlend != 1.0
+            || !cgLutPath.isEmpty()
+            || !cgMasterCurve.isEmpty() || !cgRCurve.isEmpty()
+            || !cgGCurve.isEmpty() || !cgBCurve.isEmpty();
+    }
+    bool cgHasVignette() const { return cgVignette != 0.0; }
+    bool cgHasCurves() const {
+        return !cgMasterCurve.isEmpty() || !cgRCurve.isEmpty()
+            || !cgGCurve.isEmpty() || !cgBCurve.isEmpty();
     }
 
     // ── Efeito Pierrot: LAINKA (stop motion) ─────────────────────────────
@@ -406,6 +460,9 @@ struct Clip {
     // ── Efeitos OFX (plugins de terceiros) ──────────────────────────────
     QVector<OfxPluginInstance> ofxFx;  // stack de efeitos OFX (ordem = ordem de aplicação)
 
+    // ── Efeitos frei0r (plugins FOSS: Kdenlive/Shotcut/MLT) ─────────────
+    QVector<Frei0rEffect> frei0rFx; // stack frei0r (ordem = aplicação)
+
     // ── Máscaras (recorte de forma animável) ────────────────────────────
     // Uma ou mais máscaras em união (aditivo). Aplicadas após o crop e antes
     // do transform, sobre o quadro do clipe. Serializadas no .Blanc.
@@ -460,6 +517,47 @@ struct Clip {
             || std::fabs(eqHigh) > 0.01 || denoise || normalize || invertPhase
             || reverb;
     }
+
+    // ── Multicâmera ──────────────────────────────────────────────────────
+    // Clipe com N fontes (ângulos) sincronizadas. O ângulo ativo muda no
+    // tempo via `kfAngle` (value = índice 0-based, KfStep) ou `defaultAngle`.
+    // `mediaId` mantém o ângulo 0 como fallback (compat / export legado).
+    // `multicamIns[i]` é o ponto de entrada na mídia do ângulo i (paralelo a
+    // `multicamSources`). Teclas 1..N na timeline gravam keyframes de ângulo.
+    bool isMulticam = false;
+    QStringList multicamSources; // mediaIds dos ângulos (ordem = teclas 1..N)
+    QVector<double> multicamIns; // in-point de cada ângulo (paralelo)
+    int defaultAngle = 0;        // ângulo sem keyframe em `rel`
+    QVector<Keyframe> kfAngle;   // cortes de ângulo (KfStep; value = índice)
+
+    bool hasMulticam() const {
+        return isMulticam && multicamSources.size() > 1;
+    }
+    // Índice do ângulo ativo no tempo RELATIVO do clipe (0-based, clampado).
+    int angleAt(double rel) const {
+        if (!hasMulticam()) return 0;
+        const int n = int(multicamSources.size());
+        if (kfAngle.isEmpty())
+            return std::clamp(defaultAngle, 0, n - 1);
+        int ang = defaultAngle;
+        for (const Keyframe& k : kfAngle) {
+            if (k.time <= rel + 1e-9) ang = (int)std::lround(k.value);
+            else break;
+        }
+        return std::clamp(ang, 0, n - 1);
+    }
+    // mediaId efetivo no rel (ângulo ativo).
+    QString mediaIdAt(double rel) const {
+        if (!hasMulticam()) return mediaId;
+        return multicamSources.value(angleAt(rel), mediaId);
+    }
+    // Ponto de entrada efetivo no rel (in do ângulo ativo).
+    double multicamInAt(double rel) const {
+        if (!hasMulticam()) return in;
+        const int a = angleAt(rel);
+        if (a >= 0 && a < multicamIns.size()) return multicamIns[a];
+        return in;
+    }
 };
 
 // ── Velocity envelope (velocidade variável / rampas) ────────────────────
@@ -481,18 +579,20 @@ inline bool hasVelocityEnvelope(const Clip& c) {
 
 // Posição na mídia (segundos da fonte) correspondente ao tempo relativo `rel`.
 // Integra clipSpeedAt por trapézios — exato para rampas lineares e consistente
-// com a pré-renderização de velocidade da exportação.
+// com a pré-renderização de velocidade da exportação. Em clipes multicam, o
+// ponto de entrada é o do ângulo ativo em `rel` (`multicamInAt`).
 inline double clipSrcTime(const Clip& c, double rel) {
-    if (rel <= 0.0) return c.in;
+    const double baseIn = c.multicamInAt(rel);
+    if (rel <= 0.0) return baseIn;
     if (c.kfSpeed.isEmpty())
-        return c.in + rel * std::max(0.01, c.speed);
+        return baseIn + rel * std::max(0.01, c.speed);
     const double upper = std::min(rel, c.dur > 0.0 ? c.dur : rel);
     const int N = std::clamp((int)std::ceil(upper * 60.0), 8, 256);
     const double h = upper / N;
     double sum = 0.5 * (clipSpeedAt(c, 0.0) + clipSpeedAt(c, upper));
     for (int i = 1; i < N; ++i)
         sum += clipSpeedAt(c, i * h);
-    return c.in + sum * h;
+    return baseIn + sum * h;
 }
 
 struct TrackGroup {

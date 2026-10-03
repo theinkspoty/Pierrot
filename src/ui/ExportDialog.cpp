@@ -9,6 +9,7 @@
 #include "colombina/export/OfxExportRenderer.h"
 #include "colombina/ofx/OfxPluginManager.h"
 #include "colombina/ofx/OfxHost.h"
+#include "colombina/frei0r/Frei0rPluginManager.h"
 
 #include <QLineEdit>
 #include <QComboBox>
@@ -386,7 +387,8 @@ void ExportDialog::startExport() {
     }
 
     QString err;
-    const QStringList args = ProjectExporter::buildCommand(work, s, &err);
+    const QStringList args = ProjectExporter::buildCommand(work, s, &err,
+                                                           nullptr, m_frei0rManager);
     if (args.isEmpty() && err.isEmpty())
         err = tr("Falha ao montar o comando de exportação.");
     if (!err.isEmpty()) { log(tr("Erro: %1").arg(err)); deleteTempFiles(); return; }

@@ -17,8 +17,10 @@ class QDropEvent;
 class Project;
 struct Clip;
 struct OfxPluginInfo;
+class Frei0rPluginManager;
 
 #include "colombina/ofx/OfxPluginManager.h"
+#include "colombina/frei0r/Frei0rPluginManager.h" // Frei0rPluginInfo
 
 // Janela docável "Express" — editor de parâmetros de efeitos do clipe.
 // Cada efeito aplicado ao clipe vira uma aba nesta janela.
@@ -29,6 +31,8 @@ public:
 
     void setProject(Project* p) { m_project = p; }
     void setOfxPlugins(const QVector<OfxPluginInfo>& plugins);
+    void setFrei0rPlugins(const QVector<Frei0rPluginInfo>& plugins);
+    void setFrei0rManager(Frei0rPluginManager* m) { m_frei0rManager = m; }
 
     // Registra parâmetros descobertos pelo describe (chamado pelo manager).
     void setOfxParamDefs(const QString& pluginId,
@@ -54,6 +58,7 @@ private:
     void rebuildTabs();
     void createBuiltInTab(const QString& effectId);
     void createOfxTab(const QString& pluginId);
+    void createFrei0rTab(const QString& pluginName);
     void removeEffectFromClip(const QString& effectId);
 
     void applyBuiltInValue(const QString& key, double value);
@@ -65,6 +70,8 @@ private:
     QLabel* m_emptyLabel = nullptr;
 
     QVector<OfxPluginInfo> m_ofxPlugins;
+    QVector<Frei0rPluginInfo> m_frei0rPlugins;
+    Frei0rPluginManager* m_frei0rManager = nullptr;
 
     // Efeitos atualmente abertos como abas (effectId -> tab index).
     QHash<QString, int> m_tabMap;

@@ -33,12 +33,12 @@ static ThemeColors makeDarkPalette() {
     c.disabledText      = QColor(0x5C, 0x5C, 0x5C);
     c.disabledWindowText= QColor(0x5C, 0x5C, 0x5C);
 
-    c.monitorBg         = QColor(0x16, 0x16, 0x16);
-    c.canvasBg          = QColor(0x00, 0x00, 0x00);
-    c.canvasBorder      = QColor(0x0F, 0x0F, 0x0F);
+    c.monitorBg         = QColor(0x0E, 0x0E, 0x0E); // nível 1: letterbox do monitor
+    c.canvasBg          = QColor(0x00, 0x00, 0x00); // nível 2: o vídeo em si
+    c.canvasBorder      = QColor(0x0A, 0x0A, 0x0A);
     c.monitorLabel      = QColor(0x9A, 0x9A, 0x9A);
 
-    c.timelineBg        = QColor(0x12, 0x12, 0x12);
+    c.timelineBg        = QColor(0x18, 0x18, 0x18); // nível 3: timeline (entre monitor e painéis)
     c.timelineGrid      = QColor(0x23, 0x23, 0x23);
     c.rulerBg           = QColor(0x1A, 0x1A, 0x1A);
     c.rulerText         = QColor(0x9A, 0x9A, 0x9A);
@@ -279,8 +279,8 @@ QString globalStyleSheet(AppTheme theme) {
         QDockWidget::title {
             background-color: %2;
             border-bottom: 1px solid %3;
-            padding: 3px 5px 3px 10px;
-            spacing: 5px;
+            padding: 2px 4px 2px 8px;
+            spacing: 4px;
         }
         QDockWidget::title:hover {
             background-color: %5;
@@ -378,7 +378,7 @@ QString flatControlStyleSheet(AppTheme theme) {
         QPushButton {
             background: %7; color: %8;
             border: 1px solid %10; border-radius: 2px;
-            padding: 4px 14px;
+            padding: 3px 10px;
         }
         QPushButton:hover { background: %5; }
         QPushButton:pressed { background: %14; }
@@ -396,7 +396,7 @@ QString flatControlStyleSheet(AppTheme theme) {
         QToolButton {
             background: transparent; color: %2;
             border: 1px solid transparent; border-radius: 2px;
-            padding: 3px;
+            padding: 2px;
         }
         QToolButton:hover { background: %5; border-color: %6; }
         QToolButton:pressed,

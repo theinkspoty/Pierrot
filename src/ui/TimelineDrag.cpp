@@ -588,6 +588,16 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
                 // para baixo reduz a opacidade do clipe; para cima aumenta.
                 m_dragMode = ClipOpacity;
                 m_dragOrigOpacity = clip->opacity;
+            } else if (!audio && dx > 10 && cw - dx > 10
+                       && (y - topY) > 14 && (y - topY) < trackH(row, false) - 6) {
+                // Time Remapping: banda de velocidade no corpo do clipe.
+                // Arrastar para cima = mais rápido; para baixo = mais lento.
+                m_dragMode = ClipSpeed;
+                m_dragOrigSpeed = clip->speed;
+                m_speedRel = std::clamp(t - clip->pos, 0.0, clip->dur);
+                m_dragOrigSpeed = clipSpeedAt(*clip, m_speedRel);
+                emit undoLabel(tr("Velocidade do clipe"));
+                emit editStart();
             } else if (m_tool == ToolMove) {
                 m_dragMode = MoveClip;
             } else if (m_tool == ToolRipple) {
@@ -1289,6 +1299,25 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                             invalidateSceneContent();
                         }
                     }
+                } else if (m_dragMode == ClipSpeed) {
+                    // Time Remapping: dy negativo (para cima) = mais rápido.
+                    Clip* sc = findClipById(m_dragClip);
+                    int crow;
+                    bool caudio;
+                    if (sc && clipTrackIndex(sc->id, crow, caudio) && !caudio) {
+                        const int rowH = trackH(crow, false);
+                        if (rowH > 0) {
+                            const double dy = (double)(e->pos().y() - m_dragStart.y())
+                                              / (double)rowH;
+                            double nv = std::clamp(m_dragOrigSpeed - dy * 2.0, 0.05, 8.0);
+                            if (sc->kfSpeed.isEmpty()) {
+                                sc->speed = std::clamp(nv, 0.1, 4.0);
+                            } else {
+                                upsertKeyframe(sc->kfSpeed, m_speedRel, nv, KfLinear);
+                            }
+                            invalidateSceneContent();
+                        }
+                    }
                 }
                 // A duração do projeto MUDA ao mover/trimar (é o máx de pos+dur),
                 // então a barra horizontal precisa acompanhar o mouse. Só a
@@ -1471,6 +1500,43 @@ void TimelineWidget::mouseDoubleClickEvent(QMouseEvent* e) {
             || (e->pos().y() < kRulerH && t >= m_loopIn && t <= m_loopOut)) {
             clearLoop();
             return;
+        }
+    }
+    // Duplo clique na banda de velocidade do clipe de vídeo:
+    // alterna keyframe de time remapping (Premiere).
+    {
+        int srow;
+        bool saudio;
+        const double st = xToTime(e->pos().x());
+        if (e->pos().x() >= kHeaderW && rowFromY(e->pos().y(), srow, saudio) && !saudio) {
+            Clip* sc = clipAt(srow, saudio, st);
+            const int topY = rowY(srow, -1);
+            const int dy = e->pos().y() - topY;
+            if (sc && !sc->isText && dy > 14 && dy < trackH(srow, false) - 6) {
+                const double rel = std::clamp(st - sc->pos, 0.0, sc->dur);
+                emit undoLabel(tr("Keyframe de velocidade"));
+                emit editStart();
+                bool found = false;
+                for (int i = 0; i < sc->kfSpeed.size(); ++i) {
+                    if (std::fabs(sc->kfSpeed[i].time - rel) < 0.08) {
+                        if (sc->kfSpeed.size() > 2) sc->kfSpeed.removeAt(i);
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    if (sc->kfSpeed.isEmpty()) {
+                        upsertKeyframe(sc->kfSpeed, 0.0, sc->speed, KfLinear);
+                        upsertKeyframe(sc->kfSpeed, std::max(0.05, sc->dur),
+                                       sc->speed, KfLinear);
+                    }
+                    upsertKeyframe(sc->kfSpeed, rel, clipSpeedAt(*sc, rel), KfLinear);
+                }
+                invalidateSceneContent();
+                update();
+                emit modified();
+                return;
+            }
         }
     }
     int row;

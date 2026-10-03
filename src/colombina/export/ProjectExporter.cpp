@@ -8,6 +8,8 @@
 #include "colombina/generators.h"
 #include "colombina/render/MesaRenderer.h"
 #include "colombina/ffmpeg/FFmpegDecoder.h"
+#include "colombina/frei0r/Frei0rPluginManager.h"
+#include "colombina/fx/ColorGrade.h"
 
 #include <QColor>
 #include <QFile>
@@ -30,6 +32,7 @@
 #include <algorithm>
 #include <climits>
 #include <cmath>
+#include <deque>
 #include <limits>
 
 namespace {
@@ -67,6 +70,71 @@ struct MesaBandRef {
 // Posição do clipe (ou banda Mesa) na timeline, para o sort por pos.
 static double vclipPos(const VideoClipRef& v) {
     return v.c ? v.c->pos : v.bandPos;
+}
+
+// Expande um clipe multicam em segmentos por ângulo (cada segmento vira um
+// clipe normal com mediaId/in do ângulo ativo). Cortes vêm de kfAngle
+// (KfStep) + defaultAngle. O kfSpeed é deslocado para o tempo relativo do
+// segmento, para o caminho de velocity da exportação continuar válido.
+static QVector<Clip> expandMulticamClip(const Clip& c) {
+    QVector<Clip> out;
+    if (!c.hasMulticam()) return out;
+
+    struct Seg { double t0 = 0.0, t1 = 0.0; int angle = 0; };
+    QVector<Seg> segs;
+    int ang = c.angleAt(0.0);
+    double t0 = 0.0;
+    for (const Keyframe& k : c.kfAngle) {
+        if (k.time <= 1e-9) continue;
+        if (k.time >= c.dur - 1e-9) break;
+        const int na = (int)std::lround(k.value);
+        if (na != ang) {
+            segs.push_back({t0, k.time, ang});
+            t0 = k.time;
+            ang = na;
+        }
+    }
+    segs.push_back({t0, c.dur, ang});
+
+    for (const Seg& s : segs) {
+        if (s.t1 - s.t0 <= 1e-6) continue;
+        Clip sc = c; // mantém efeitos/transform/fades do clipe pai
+        sc.isMulticam = false;
+        sc.multicamSources.clear();
+        sc.multicamIns.clear();
+        sc.kfAngle.clear();
+        sc.defaultAngle = 0;
+        sc.mediaId = c.multicamSources.value(s.angle, c.mediaId);
+        const double angIn = (s.angle < c.multicamIns.size())
+                                 ? c.multicamIns[s.angle] : c.in;
+        if (c.kfSpeed.isEmpty()) {
+            sc.in = angIn + s.t0 * std::max(0.01, c.speed);
+        } else {
+            sc.in = angIn;
+            sc.kfSpeed.clear();
+            for (const Keyframe& k : c.kfSpeed) {
+                if (k.time >= s.t0 - 1e-9 && k.time <= s.t1 + 1e-9) {
+                    Keyframe nk = k;
+                    nk.time = k.time - s.t0;
+                    sc.kfSpeed.append(nk);
+                }
+            }
+            // Garante que a velocidade em rel=0 do segmento seja a de t0.
+            if (sc.kfSpeed.isEmpty() || sc.kfSpeed.first().time > 1e-9) {
+                Keyframe head;
+                head.time = 0.0;
+                head.value = clipSpeedAt(c, s.t0);
+                head.interp = KfStep;
+                sc.kfSpeed.prepend(head);
+            }
+        }
+        sc.pos = c.pos + s.t0;
+        sc.dur = s.t1 - s.t0;
+        sc.fadeIn = (s.t0 < 1e-9) ? c.fadeIn : 0.0;
+        sc.fadeOut = (s.t1 >= c.dur - 1e-9) ? c.fadeOut : 0.0;
+        out.push_back(sc);
+    }
+    return out;
 }
 
 // Pré-renderiza a composição Mesa de `start` a `end` (segundos absolutos da
@@ -634,7 +702,8 @@ QString drawColor(const QColor& c) {
 
 QStringList ProjectExporter::buildCommand(const Project& project,
                                           const ExportSettings& s, QString* error,
-                                          const Progress& progress) {
+                                          const Progress& progress,
+                                          const Frei0rPluginManager* frei0rManager) {
     QStringList args;
     const auto fail = [&](const QString& msg) {
         if (error) *error = msg;
@@ -729,6 +798,10 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     }
 
     QVector<VideoClipRef> vclips;
+    // Segmentos expandidos de clipes multicam. std::deque: push_back não
+    // invalida ponteiros para elementos já inseridos (VideoClipRef guarda
+    // const Clip*).
+    std::deque<Clip> mcOwned;
     // Caminho temporário do PNG gerado para cada clipe de texto (índice = mesmo
     // de vclips); vazio para clipes de mídia. Preenchido no loop de inputs.
     QVector<QString> textPngs;
@@ -749,6 +822,22 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                     textPngs.push_back(QString());
                     mesaBands.push_back(MesaBandRef());
                     velocityPatterns.push_back(QString());
+                    continue;
+                }
+                if (c.hasMulticam()) {
+                    // Multicam: expande em segmentos por ângulo; cada um vira
+                    // um input ffmpeg com o arquivo do ângulo ativo.
+                    for (const Clip& sc : expandMulticamClip(c)) {
+                        mcOwned.push_back(sc);
+                        const MediaItem* sm = project.findMedia(mcOwned.back().mediaId);
+                        if (sm && sm->hasVideo) {
+                            vclips.push_back({&mcOwned.back(), sm,
+                                              track.blendMode, trOp});
+                            textPngs.push_back(QString());
+                            mesaBands.push_back(MesaBandRef());
+                            velocityPatterns.push_back(QString());
+                        }
+                    }
                     continue;
                 }
                 const MediaItem* m = project.findMedia(c.mediaId);
@@ -1304,30 +1393,31 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                                      .arg(num(std::clamp(v.c->brightness, -1.0, 1.0)))
                                      .arg(num(std::clamp(v.c->contrast, 0.0, 2.0)))
                                      .arg(num(std::clamp(v.c->saturation, 0.0, 2.0))));
-            // ── Correção de cor Lift/Gamma/Gain ─────────────────────────────
-            // O colorbalance espelha o modelo do preview: lift nas sombras
-            // (rs/gs/bs) e gain nos realces (rh/gh/bh); o eq aplica a curva
-            // gama nos meios (mesma semântica de pow(v/255, 1/gamma)).
+            // ── Color grade Lumetri (LGG + exposure/curves/LUT/vignette…) ──
+            // Espelha colorgrade::applyToImage do preview. Inclui o
+            // Lift/Gamma/Gain clássico (compat com projetos antigos).
             if (v.c->hasColorGrade()) {
-                fc.last().append(QStringLiteral(",colorbalance=rs=%1:gs=%2:bs=%3"
-                                                ":rm=0:gm=0:bm=0"
-                                                ":rh=%4:gh=%5:bh=%6")
-                                     .arg(num(std::clamp(v.c->liftR, -1.0, 1.0)))
-                                     .arg(num(std::clamp(v.c->liftG, -1.0, 1.0)))
-                                     .arg(num(std::clamp(v.c->liftB, -1.0, 1.0)))
-                                     .arg(num(std::clamp(v.c->gainR, -1.0, 1.0)))
-                                     .arg(num(std::clamp(v.c->gainG, -1.0, 1.0)))
-                                     .arg(num(std::clamp(v.c->gainB, -1.0, 1.0))));
-                fc.last().append(QStringLiteral(",eq=gamma_r=%1:gamma_g=%2:gamma_b=%3")
-                                     .arg(num(std::clamp(v.c->gammaR, 0.1, 4.0)))
-                                     .arg(num(std::clamp(v.c->gammaG, 0.1, 4.0)))
-                                     .arg(num(std::clamp(v.c->gammaB, 0.1, 4.0))));
+                for (const QString& f : colorgrade::ffmpegFilters(*v.c))
+                    fc.last().append(QLatin1Char(',') + f);
             }
             if (v.c->grayscale)
                 fc.last().append(QStringLiteral(
                     ",colorchannelmixer=rr=0.299:rg=0.587:rb=0.114"
                     ":gr=0.299:gg=0.587:gb=0.114"
                     ":br=0.299:bg=0.587:bb=0.114"));
+            // ── frei0r (padrão Kdenlive/Shotcut) ──────────────────────────
+            // Mesma pilha do preview; cada filtro vira `frei0r=nome:p=v`.
+            // O CLI ffmpeg usa o loader padrão do sistema (.so em
+            // /usr/lib/frei0r-1 etc.); o manager local só fornece metadados
+            // (nomes de parâmetros) para montar a string.
+            if (!v.c->frei0rFx.isEmpty() && frei0rManager) {
+                for (const Frei0rEffect& f0r : v.c->frei0rFx) {
+                    const QString f =
+                        Frei0rPluginManager::ffmpegFilterFor(f0r, frei0rManager);
+                    if (!f.isEmpty())
+                        fc.last().append(QLatin1Char(',') + f);
+                }
+            }
             if (v.c->blur > 0.0)
                 fc.last().append(QStringLiteral(",boxblur=luma_radius=%1:luma_power=2")
                                      .arg(num(std::clamp(v.c->blur, 0.0, 40.0))));

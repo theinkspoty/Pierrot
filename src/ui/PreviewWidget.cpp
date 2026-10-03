@@ -12,6 +12,9 @@
 #include "colombina/ffmpeg/AudioConformCache.h"
 #include "colombina/ofx/OfxRenderer.h"
 #include "colombina/ofx/OfxPluginManager.h"
+#include "colombina/frei0r/Frei0rPluginManager.h"
+#include "colombina/fx/ColorGrade.h"
+#include "ui/ScopeWidget.h"
 #include "colombina/export/LainkaFx.h"
 #include "ui/Theme.h"
 #include "colombina/generators.h"
@@ -1692,6 +1695,14 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
         "QToolButton:checked,QPushButton:checked{background:%4;}")
         .arg(themeColors().base.name(), themeColors().trackBorder.name(),
              hoverBg.name(QColor::HexArgb), checkBg.name(QColor::HexArgb)));
+    // Atualiza o mini-scope a ~15 fps quando o monitor está visível.
+    auto* miniTimer = new QTimer(this);
+    miniTimer->setInterval(70);
+    connect(miniTimer, &QTimer::timeout, this, [this]() {
+        if (!m_miniScope || !isVisible()) return;
+        m_miniScope->refreshFrom(scopesFrame());
+    });
+    miniTimer->start();
     // Transporte do Program Monitor: à esquerda, como no Premiere.
     bar->addWidget(m_stepBackBtn);
     bar->addWidget(m_playBtn);
@@ -1700,6 +1711,12 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     bar->addSpacing(12);
     // Timecode: entre o transporte e o cluster da direita.
     bar->addWidget(m_timeLabel);
+    // Mini-scopes no Program Monitor (Lumetri Premiere): waveform compacto.
+    m_miniScope = new ScopeWidget(this);
+    m_miniScope->setMode(ScopeWidget::Waveform);
+    m_miniScope->setFixedSize(96, 24);
+    m_miniScope->setToolTip(tr("Waveform (mini) — dock Analisadores para o full"));
+    bar->addWidget(m_miniScope);
     bar->addStretch(1);
 
     // Margens de segurança do Premiere (Action 90% + Title 80%, Ctrl+G
@@ -2673,7 +2690,7 @@ const Clip* PreviewWidget::clipAt(double t) const {
         const Clip* best = nullptr;
         for (const Clip& c : track.clips) {
             if (t >= c.pos && t < c.pos + c.dur && !c.isText) {
-                const MediaItem* m = m_project->findMedia(c.mediaId);
+                const MediaItem* m = m_project->findMedia(c.mediaIdAt(t - c.pos));
                 const bool hasVideo = mesaTrack || (m && m->hasVideo);
                 if (hasVideo && (!best || c.pos > best->pos)) best = &c;
             }
@@ -2777,7 +2794,7 @@ QVector<AudioMixer::SourceInfo> buildMixSources(const Project* p, double t) {
                               .arg(reps.keys().join(QLatin1Char(',')));
                     continue;
                 }
-                const MediaItem* m = p->findMedia(c.mediaId);
+                const MediaItem* m = p->findMedia(c.mediaIdAt(t - c.pos));
                 if (!m || !m->hasAudio) continue;
                 const double rel = t - c.pos;
                 double vol = c.volume * kfValue(c.kfVolume, 1.0, rel)
@@ -2812,7 +2829,7 @@ QVector<AudioMixer::SourceInfo> buildMixSources(const Project* p, double t) {
 
     for (auto it = reps.cbegin(); it != reps.cend(); ++it) {
         const Clip* c = it.value().clip;
-        const MediaItem* m = p->findMedia(c->mediaId);
+        const MediaItem* m = p->findMedia(c->mediaIdAt(t - c->pos));
         if (!m || !m->hasAudio) continue;
         if (audioDbg())
             qDebug().noquote() << QStringLiteral("[audio] ativo t=%1 faixa='%2' isAudio=%3 base=%4 vol=%5")
@@ -3099,7 +3116,7 @@ void PreviewWidget::updateFrame() {
         return;
     }
 
-    const MediaItem* m = m_project->findMedia(clip->mediaId);
+    const MediaItem* m = m_project->findMedia(clip->mediaIdAt(m_playhead - clip->pos));
     if (!m || !m->hasVideo) {
         m_frame = QImage();
         m_transAlpha = -1.0;
@@ -3145,6 +3162,7 @@ void PreviewWidget::updateFrame() {
     m_clipChromaKeySoftness = clip->chromaKeySoftness;
     m_clipChromaKeySpillSuppress = clip->chromaKeySpillSuppress;
     m_clipOfxFx = clip->ofxFx;
+    m_clipFrei0rFx = clip->frei0rFx;
     m_clipMasks = clip->masks;
 
     double srcT = clipSrcTime(*clip, m_playhead - clip->pos);
@@ -3382,12 +3400,12 @@ void PreviewWidget::requestLowerLayers(int decW) {
         const Clip* c = nullptr;
         for (const Clip& cl : tr.clips) {
             if (m_playhead >= cl.pos && m_playhead < cl.pos + cl.dur && !cl.isText) {
-                const MediaItem* mm = m_project->findMedia(cl.mediaId);
+                const MediaItem* mm = m_project->findMedia(cl.mediaIdAt(m_playhead - cl.pos));
                 if (mm && mm->hasVideo && (!c || cl.pos > c->pos)) c = &cl;
             }
         }
         if (!c || (top && c->id == top->id)) continue;
-        const MediaItem* m = m_project->findMedia(c->mediaId);
+        const MediaItem* m = m_project->findMedia(c->mediaIdAt(m_playhead - c->pos));
         if (!m || !m->hasVideo) continue;
         // Cor sólida não tem arquivo: é gerada na pintura, não pede decode.
         if (m->isSolid) continue;
@@ -4144,37 +4162,13 @@ void PreviewWidget::applyBasicEffectsOn(QImage& img, const Clip& c, double rel) 
             }
         }
     }
-// Correção de cor Lift/Gamma/Gain (aplicada DEPOIS do brilho/contraste).
+// Color grade estilo Lumetri (LGG + exposure/curves/LUT/vignette…).
+    // Ordem alinhada ao ProjectExporter (colorgrade::ffmpegFilters).
     if (c.hasColorGrade()) {
-        const double liftR = std::clamp(c.liftR, -1.0, 1.0);
-        const double liftG = std::clamp(c.liftG, -1.0, 1.0);
-        const double liftB = std::clamp(c.liftB, -1.0, 1.0);
-        const double ginR = std::clamp(c.gammaR, 0.1, 4.0);
-        const double ginG = std::clamp(c.gammaG, 0.1, 4.0);
-        const double ginB = std::clamp(c.gammaB, 0.1, 4.0);
-        const double gaiR = std::clamp(c.gainR, -1.0, 1.0);
-        const double gaiG = std::clamp(c.gainG, -1.0, 1.0);
-        const double gaiB = std::clamp(c.gainB, -1.0, 1.0);
-        for (int y = 0; y < img.height(); ++y) {
-            uchar* line = img.scanLine(y);
-            for (int x = 0; x < img.width(); ++x) {
-                const int si = x * 4;
-                int ch[3] = { line[si + 2], line[si + 1], line[si + 0] };
-                const double li[3] = { liftR, liftG, liftB };
-                const double gi[3] = { ginR, ginG, ginB };
-                const double ga[3] = { gaiR, gaiG, gaiB };
-                for (int chI = 0; chI < 3; ++chI) {
-                    double v = ch[chI];
-                    v += li[chI] * (255.0 - v);                                  // lift (sombras)
-                    v = 255.0 * std::pow(std::max(v, 0.0) / 255.0, 1.0 / gi[chI]); // gamma (meios)
-                    v += ga[chI] * v;                                            // gain (realces)
-                    ch[chI] = (int)std::lround(std::clamp(v, 0.0, 255.0));
-                }
-                line[si + 2] = (uchar)ch[0];
-                line[si + 1] = (uchar)ch[1];
-                line[si + 0] = (uchar)ch[2];
-            }
-        }
+        colorgrade::CubeLut lut;
+        const bool hasLut = !c.cgLutPath.isEmpty()
+            && colorgrade::loadCubeFile(c.cgLutPath, lut);
+        colorgrade::applyToImage(img, c, hasLut ? &lut : nullptr);
     }
 }
 
@@ -4262,6 +4256,23 @@ void PreviewWidget::applyCrop() {
                 }();
         m_frame = OfxRenderer::applyOfxEffects(m_frame, m_clipOfxFx, m_ofxManager,
                                                 m_playhead);
+    }
+    // Efeitos frei0r (padrão Kdenlive/Shotcut) — depois dos OFX; export usa
+    // o mesmo filtro ffmpeg `frei0r=` (paridade preview↔export).
+    if (!m_clipFrei0rFx.isEmpty() && m_frei0rManager && !m_frame.isNull()) {
+        double f0rTime = m_playhead;
+        if (m_project && !m_clipLainkaId.isEmpty()) {
+            for (const Track& tr : m_project->videoTracks) {
+                for (const Clip& c : tr.clips) {
+                    if (c.id == m_clipLainkaId) {
+                        f0rTime = m_playhead - c.pos;
+                        break;
+                    }
+                }
+            }
+        }
+        m_frame = Frei0rPluginManager::applyEffects(m_frame, m_clipFrei0rFx,
+                                                    m_frei0rManager, f0rTime);
     }
 
     if (memoOk) {

@@ -16,6 +16,7 @@ class QPlainTextEdit;
 class QPushButton;
 class QThread;
 class ExportBuildWorker;
+class Frei0rPluginManager;
 
 // Fila de render: várias exportações (formatos/resoluções/fps diferentes)
 // executadas em SEQUÊNCIA por um único ffmpeg por vez. Cada item é adicionado
@@ -28,6 +29,7 @@ class RenderQueueDialog : public QDialog {
 public:
     explicit RenderQueueDialog(Project* project, QWidget* parent = nullptr);
     ~RenderQueueDialog() override;
+    void setFrei0rManager(Frei0rPluginManager* m) { m_frei0rManager = m; }
 private slots:
     void addJob();
     void removeSelected();
@@ -44,6 +46,7 @@ private:
     void setBusy(bool busy);
     void finishBuildThread();
     Project* m_project = nullptr;
+    Frei0rPluginManager* m_frei0rManager = nullptr;
     Project m_projectSnap;               // cópia isolada para a thread de build
     QVector<ExportSettings> m_jobs;
     int m_current = -1;

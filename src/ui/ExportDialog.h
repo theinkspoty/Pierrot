@@ -18,6 +18,7 @@ class QPlainTextEdit;
 class QPushButton;
 class QProcess;
 class OfxPluginManager;
+class Frei0rPluginManager;
 
 class ExportDialog : public QDialog {
     Q_OBJECT
@@ -31,6 +32,7 @@ public:
     static ExportSettings askSettings(Project* project, QWidget* parent);
     // Define o gerenciador de plugins OFX para pré-renderização.
     void setOfxManager(OfxPluginManager* mgr) { m_ofxManager = mgr; }
+    void setFrei0rManager(Frei0rPluginManager* mgr) { m_frei0rManager = mgr; }
 private slots:
     void browseOutput();
     void startExport();
@@ -61,4 +63,5 @@ private:
     QStringList m_tempFiles;
     // Gerenciador de plugins OFX (opcional, para pré-renderização).
     OfxPluginManager* m_ofxManager = nullptr;
+    Frei0rPluginManager* m_frei0rManager = nullptr;
 };

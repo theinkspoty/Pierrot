@@ -976,6 +976,8 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
             drawVideoThumbs(cp, cr, c, path);
         if (!audio)
             drawOpacityHandle(cp, cr, c);
+        if (!audio && !c.isText)
+            drawSpeedEnvelope(cp, cr, c);
         drawFadeCorners(cp, cr, c);
         if (m_tool == ToolEnvelope && (m_showVolLines || !audio))
             drawEnvelope(cp, cr, c, audio);
@@ -1006,6 +1008,13 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
         drawKeyframeDiamonds(p, r, c, audio);
 
     QString label = c.name.isEmpty() ? tr.name : c.name;
+    if (c.hasMulticam()) {
+        // Badge do ângulo ativo no playhead (ou no início do clipe, se fora).
+        const double rel = std::max(0.0, m_playhead - c.pos);
+        const int ang = (m_playhead >= c.pos && m_playhead < c.pos + c.dur)
+                            ? c.angleAt(rel) : c.angleAt(0.0);
+        label += QString("  \u00b7  MC %1/%2").arg(ang + 1).arg(c.multicamSources.size());
+    }
     if (audio && c.hasAudioFx())
         label += QString("  \u00b7  FX");
     if (std::fabs(c.speed - 1.0) > 1e-4)
@@ -1325,6 +1334,97 @@ void TimelineWidget::drawEnvelope(QPainter& p, const QRect& r, const Clip& c, bo
         p.setPen(Qt::NoPen);
         p.setBrush(themeColors().accentGold);
         p.drawEllipse(QPoint(x, y), 3, 3);
+    }
+}
+
+void TimelineWidget::drawSpeedEnvelope(QPainter& p, const QRect& r, const Clip& c) {
+    // Time Remapping Premiere: banda de velocidade no corpo do clipe.
+    // Y: 0..4× (4× no topo, 0 embaixo); 1× é a linha de referência.
+    // Mostra sempre em vídeo (sutil); destaque quando há envelope ou speed≠1.
+    const double maxV = 4.0;
+    const bool envelope = !c.kfSpeed.isEmpty();
+    const bool active = envelope || std::fabs(c.speed - 1.0) > 1e-3;
+
+    // Faixa vertical no terço inferior do clipe (não conflita com o handle
+    // de opacidade no topo).
+    const int bandTop = r.top() + (r.height() * 2) / 5;
+    const int bandBot = r.bottom() - 8;
+    if (bandBot - bandTop < 12) return;
+    const QRect band(r.left() + 2, bandTop, r.width() - 4, bandBot - bandTop);
+
+    auto speedToY = [&](double v) {
+        const double cl = std::clamp(v, 0.0, maxV) / maxV;
+        return band.bottom() - int(cl * (band.height() - 2)) - 1;
+    };
+
+    // Fundo semi-transparente da banda.
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(0, 0, 0, active ? 70 : 35));
+    p.drawRect(band);
+
+    // Linha de referência 1×.
+    {
+        const int y1 = speedToY(1.0);
+        p.setPen(QPen(QColor(255, 255, 255, 70), 1, Qt::DashLine));
+        p.drawLine(band.left(), y1, band.right(), y1);
+    }
+
+    // Curva de velocidade.
+    QPainterPath path;
+    const int steps = std::max(2, band.width());
+    for (int i = 0; i <= steps; ++i) {
+        const double rel = (double)i / steps * c.dur;
+        const double v = clipSpeedAt(c, rel);
+        const int x = band.left() + int((double)i / steps * band.width());
+        const int y = speedToY(v);
+        if (i == 0) path.moveTo(x, y);
+        else path.lineTo(x, y);
+    }
+    // Preenchimento sob a curva.
+    QPainterPath fill = path;
+    fill.lineTo(band.right(), band.bottom());
+    fill.lineTo(band.left(), band.bottom());
+    fill.closeSubpath();
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(38, 128, 235, active ? 55 : 28)); // azul Adobe
+    p.drawPath(fill);
+    p.setPen(QPen(QColor(38, 128, 235, active ? 220 : 120), 1.6));
+    p.setBrush(Qt::NoBrush);
+    p.drawPath(path);
+
+    // Keyframes (losangos) + rótulos rápido/baixo.
+    QFont f = p.font();
+    f.setPointSizeF(7.5);
+    f.setBold(true);
+    p.setFont(f);
+    for (const Keyframe& k : c.kfSpeed) {
+        if (k.time < -1e-6 || k.time > c.dur + 1e-6) continue;
+        const int x = band.left() + int(k.time / std::max(c.dur, 1e-6) * band.width());
+        const int y = speedToY(k.value);
+        p.setPen(QPen(QColor(255, 255, 255, 200), 1));
+        p.setBrush(QColor(38, 128, 235));
+        const int rr = 4;
+        QPolygon diamond;
+        diamond << QPoint(x, y - rr) << QPoint(x + rr, y)
+                << QPoint(x, y + rr) << QPoint(x - rr, y);
+        p.drawPolygon(diamond);
+
+        const QString pct = QString::number(int(std::lround(k.value * 100))) + QStringLiteral("%");
+        const QString tag = k.value > 1.05 ? tr("Rápido")
+                            : k.value < 0.95 ? tr("Baixo")
+                            : QString();
+        QString txt = pct;
+        if (!tag.isEmpty()) txt += QStringLiteral(" · ") + tag;
+        p.setPen(QColor(255, 255, 255, 210));
+        p.drawText(QRect(x - 28, y - 16, 56, 12), Qt::AlignCenter, txt);
+    }
+
+    // Rótulo da velocidade base se não há envelope (uma vez, no centro).
+    if (!envelope && std::fabs(c.speed - 1.0) > 1e-3) {
+        const QString tag = c.speed > 1.0 ? tr("Rápido") : tr("Baixo");
+        p.setPen(QColor(255, 255, 255, 180));
+        p.drawText(band, Qt::AlignCenter,
+                   QString("%1× · %2").arg(c.speed, 0, 'g', 3).arg(tag));
     }
 }
 

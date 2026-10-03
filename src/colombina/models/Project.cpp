@@ -204,6 +204,15 @@ static QJsonObject clipToJson(const Clip& c) {
     o["id"] = c.id;
     o["mediaId"] = c.mediaId;
     o["groupId"] = c.groupId;
+    o["isMulticam"] = c.isMulticam;
+    o["multicamSources"] = QJsonArray::fromStringList(c.multicamSources);
+    {
+        QJsonArray ins;
+        for (double v : c.multicamIns) ins.append(v);
+        o["multicamIns"] = ins;
+    }
+    o["defaultAngle"] = c.defaultAngle;
+    o["kfAngle"] = kfToJson(c.kfAngle);
     o["pos"] = c.pos;
     o["in"] = c.in;
     o["dur"] = c.dur;
@@ -231,6 +240,47 @@ static QJsonObject clipToJson(const Clip& c) {
     o["liftR"] = c.liftR; o["liftG"] = c.liftG; o["liftB"] = c.liftB;
     o["gammaR"] = c.gammaR; o["gammaG"] = c.gammaG; o["gammaB"] = c.gammaB;
     o["gainR"] = c.gainR; o["gainG"] = c.gainG; o["gainB"] = c.gainB;
+    o["cgExposure"] = c.cgExposure;
+    o["cgContrast"] = c.cgContrast;
+    o["cgHighlights"] = c.cgHighlights;
+    o["cgShadows"] = c.cgShadows;
+    o["cgWhites"] = c.cgWhites;
+    o["cgBlacks"] = c.cgBlacks;
+    o["cgSaturation"] = c.cgSaturation;
+    o["cgVibrance"] = c.cgVibrance;
+    o["cgTemperature"] = c.cgTemperature;
+    o["cgTint"] = c.cgTint;
+    o["cgFadedFilm"] = c.cgFadedFilm;
+    o["cgSharpen"] = c.cgSharpen;
+    o["cgVignette"] = c.cgVignette;
+    o["cgVignetteFeather"] = c.cgVignetteFeather;
+    o["cgBlend"] = c.cgBlend;
+    o["cgLutStrength"] = c.cgLutStrength;
+    o["cgLutPath"] = c.cgLutPath;
+    o["cgMasterCurve"] = QJsonArray::fromStringList([&]() {
+        QStringList s;
+        for (const QPointF& p : c.cgMasterCurve)
+            s << QStringLiteral("%1,%2").arg(p.x()).arg(p.y());
+        return s;
+    }());
+    o["cgRCurve"] = QJsonArray::fromStringList([&]() {
+        QStringList s;
+        for (const QPointF& p : c.cgRCurve)
+            s << QStringLiteral("%1,%2").arg(p.x()).arg(p.y());
+        return s;
+    }());
+    o["cgGCurve"] = QJsonArray::fromStringList([&]() {
+        QStringList s;
+        for (const QPointF& p : c.cgGCurve)
+            s << QStringLiteral("%1,%2").arg(p.x()).arg(p.y());
+        return s;
+    }());
+    o["cgBCurve"] = QJsonArray::fromStringList([&]() {
+        QStringList s;
+        for (const QPointF& p : c.cgBCurve)
+            s << QStringLiteral("%1,%2").arg(p.x()).arg(p.y());
+        return s;
+    }());
     o["lainkaEnabled"] = c.lainkaEnabled;
     o["lainkaSkip"] = c.lainkaSkip;
     o["lainkaJitterPos"] = c.lainkaJitterPos;
@@ -309,6 +359,21 @@ static QJsonObject clipToJson(const Clip& c) {
         ofxArr.append(fxo);
     }
     o["ofxFx"] = ofxArr;
+    // ── Efeitos frei0r ───────────────────────────────────────────────────
+    QJsonArray f0rArr;
+    for (const Frei0rEffect& fx : c.frei0rFx) {
+        QJsonObject fxo;
+        fxo["pluginName"] = fx.pluginName;
+        fxo["enabled"] = fx.enabled;
+        QJsonArray vArr;
+        for (double v : fx.values) vArr.append(v);
+        fxo["values"] = vArr;
+        QJsonArray cArr;
+        for (const QColor& col : fx.colors) cArr.append(col.name(QColor::HexArgb));
+        fxo["colors"] = cArr;
+        f0rArr.append(fxo);
+    }
+    o["frei0rFx"] = f0rArr;
     // ── Máscaras ─────────────────────────────────────────────────────────
     QJsonArray maskArr;
     for (const Mask& m : c.masks) {
@@ -347,6 +412,13 @@ static Clip clipFromJson(const QJsonObject& o) {
     c.id = o["id"].toString();
     c.mediaId = o["mediaId"].toString();
     c.groupId = o["groupId"].toString();
+    c.isMulticam = o["isMulticam"].toBool(false);
+    c.multicamSources = o["multicamSources"].toVariant().toStringList();
+    c.multicamIns.clear();
+    for (const QJsonValue& v : o["multicamIns"].toArray())
+        c.multicamIns.append(v.toDouble(0.0));
+    c.defaultAngle = o["defaultAngle"].toInt(0);
+    c.kfAngle = kfFromJson(o["kfAngle"]);
     c.pos = o["pos"].toDouble();
     c.in = o["in"].toDouble();
     c.dur = o["dur"].toDouble();
@@ -387,6 +459,36 @@ static Clip clipFromJson(const QJsonObject& o) {
     c.gainR = o["gainR"].toDouble(0.0);
     c.gainG = o["gainG"].toDouble(0.0);
     c.gainB = o["gainB"].toDouble(0.0);
+    c.cgExposure = o["cgExposure"].toDouble(0.0);
+    c.cgContrast = o["cgContrast"].toDouble(0.0);
+    c.cgHighlights = o["cgHighlights"].toDouble(0.0);
+    c.cgShadows = o["cgShadows"].toDouble(0.0);
+    c.cgWhites = o["cgWhites"].toDouble(0.0);
+    c.cgBlacks = o["cgBlacks"].toDouble(0.0);
+    c.cgSaturation = o["cgSaturation"].toDouble(0.0);
+    c.cgVibrance = o["cgVibrance"].toDouble(0.0);
+    c.cgTemperature = o["cgTemperature"].toDouble(0.0);
+    c.cgTint = o["cgTint"].toDouble(0.0);
+    c.cgFadedFilm = o["cgFadedFilm"].toDouble(0.0);
+    c.cgSharpen = o["cgSharpen"].toDouble(0.0);
+    c.cgVignette = o["cgVignette"].toDouble(0.0);
+    c.cgVignetteFeather = o["cgVignetteFeather"].toDouble(50.0);
+    c.cgBlend = o["cgBlend"].toDouble(1.0);
+    c.cgLutStrength = o["cgLutStrength"].toDouble(1.0);
+    c.cgLutPath = o["cgLutPath"].toString();
+    auto curveFrom = [](const QJsonValue& v) {
+        QVector<QPointF> pts;
+        for (const QJsonValue& sv : v.toArray()) {
+            const QStringList xy = sv.toString().split(QLatin1Char(','));
+            if (xy.size() >= 2)
+                pts.append(QPointF(xy[0].toDouble(), xy[1].toDouble()));
+        }
+        return pts;
+    };
+    c.cgMasterCurve = curveFrom(o["cgMasterCurve"]);
+    c.cgRCurve = curveFrom(o["cgRCurve"]);
+    c.cgGCurve = curveFrom(o["cgGCurve"]);
+    c.cgBCurve = curveFrom(o["cgBCurve"]);
     c.lainkaEnabled = o["lainkaEnabled"].toBool(false);
     c.lainkaSkip = o["lainkaSkip"].toInt(2);
     c.lainkaJitterPos = o["lainkaJitterPos"].toDouble(0.0);
@@ -472,6 +574,21 @@ static Clip clipFromJson(const QJsonObject& o) {
             fx.params.append(p);
         }
         c.ofxFx.append(fx);
+    }
+    // ── Efeitos frei0r ───────────────────────────────────────────────────
+    const QJsonArray f0rArr = o["frei0rFx"].toArray();
+    for (const QJsonValue& v : f0rArr) {
+        const QJsonObject fxo = v.toObject();
+        Frei0rEffect fx;
+        fx.pluginName = fxo["pluginName"].toString();
+        fx.enabled = fxo["enabled"].toBool(true);
+        for (const QJsonValue& vv : fxo["values"].toArray())
+            fx.values.append(vv.toDouble(0.0));
+        for (const QJsonValue& cv : fxo["colors"].toArray()) {
+            const QString s = cv.toString();
+            fx.colors.append(QColor::isValidColorName(s) ? QColor(s) : QColor());
+        }
+        c.frei0rFx.append(fx);
     }
     // ── Máscaras ─────────────────────────────────────────────────────────
     const QJsonArray maskArr = o["masks"].toArray();

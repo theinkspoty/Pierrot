@@ -36,6 +36,8 @@ class QToolButton;
 class QMenu;
 
 class OfxPluginManager;
+class Frei0rPluginManager;
+class ScopeWidget;
 
 class PreviewWidget : public QWidget, public PlaybackEngine {
     Q_OBJECT
@@ -44,6 +46,7 @@ public:
     ~PreviewWidget() override;
     void setProject(Project* p);
     void setOfxManager(OfxPluginManager* m) { m_ofxManager = m; }
+    void setFrei0rManager(Frei0rPluginManager* m) { m_frei0rManager = m; }
     void refreshView();
 
     // Retorna uma cópia REDUZIDA (160×90) do quadro composto atual, para os
@@ -146,6 +149,7 @@ protected:
     QImage m_frame;
     QImage m_frameFull;
     QLabel* m_timeLabel = nullptr;
+    ScopeWidget* m_miniScope = nullptr; // waveform compacto no Program Monitor
     QComboBox* m_zoomCombo = nullptr;
     QWidget* m_topBar = nullptr;    // aba "Program: <nome>" (topo, como no Premiere)
     QWidget* m_bottomBar = nullptr; // transporte + quality/zoom (rodapé, como no Premiere)
@@ -326,7 +330,9 @@ protected:
 
     // ── OFX plugin manager ────────────────────────────────────────────
     OfxPluginManager* m_ofxManager = nullptr;
+    Frei0rPluginManager* m_frei0rManager = nullptr;
     QVector<OfxPluginInstance> m_clipOfxFx; // efeitos OFX do clipe ativo
+    QVector<Frei0rEffect> m_clipFrei0rFx;   // efeitos frei0r do clipe ativo
 
     // ── Margens de segurança do monitor (Action 90% + Title 80%) ─────────
     bool m_showGrid = false;

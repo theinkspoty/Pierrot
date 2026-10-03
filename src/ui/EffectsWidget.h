@@ -16,6 +16,8 @@ class Project;
 struct Clip;
 struct OfxPluginInfo;
 
+#include "colombina/frei0r/Frei0rPluginManager.h" // Frei0rPluginInfo
+
 static inline const char* const kMimeEffect = "application/x-pierrot-effect";
 
 class EffectTree : public QTreeWidget {
@@ -34,6 +36,7 @@ public:
     void setProject(Project* p) { m_project = p; }
     void setSelectedClip(Clip* clip);
     void setOfxPlugins(const QVector<OfxPluginInfo>& plugins);
+    void setFrei0rPlugins(const QVector<Frei0rPluginInfo>& plugins);
 
 signals:
     void effectSelected(const QString& effectId);
@@ -59,6 +62,7 @@ private:
     EffectTree* m_audioTree = nullptr;
     QLineEdit* m_searchBox = nullptr;
     QVector<OfxPluginInfo> m_ofxPlugins;
+    QVector<Frei0rPluginInfo> m_frei0rPlugins;
 
     // Preview panel
     QWidget* m_previewPanel = nullptr;

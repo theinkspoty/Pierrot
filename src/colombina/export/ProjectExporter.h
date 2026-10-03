@@ -9,6 +9,8 @@
 #include <functional>
 #include "colombina/models/Project.h"
 
+class Frei0rPluginManager;
+
 struct ExportSettings {
     QString outputPath;
     int width = 1920;
@@ -26,6 +28,9 @@ namespace ProjectExporter {
 // bandas Mesa). Recebe o percentual 0..100 e retorna true para continuar,
 // false para cancelar. Opcional (null = sem progresso/cancelamento).
 using Progress = std::function<bool(int pct)>;
+// `frei0rManager` (opcional) fornece metadados dos plugins para gerar
+// filtros `frei0r=` no filter_complex (paridade com o preview).
 QStringList buildCommand(const Project& project, const ExportSettings& settings,
-                         QString* error = nullptr, const Progress& progress = nullptr);
+                         QString* error = nullptr, const Progress& progress = nullptr,
+                         const Frei0rPluginManager* frei0rManager = nullptr);
 }

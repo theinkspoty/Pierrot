@@ -18,6 +18,9 @@
 #include "ui/FileBrowserWidget.h"
 #include "ui/MixerWidget.h"
 #include "ui/MesaWidget.h"
+#include "ui/SourceMonitorWidget.h"
+#include "ui/VelocityEditorWidget.h"
+#include "colombina/frei0r/Frei0rPluginManager.h"
 #include "ui/ExportDialog.h"
 #include "ui/RenderQueueDialog.h"
 #include "colombina/export/NleInterchange.h"
@@ -31,6 +34,7 @@
 
 #include <QInputDialog>
 #include <QLineEdit>
+#include <QSet>
 #include <QSettings>
 // Devolve o atalho salvo pelo usuário (Configurações → Atalhos) ou o padrão.
 static QKeySequence appKey(const char* id, const QKeySequence& fallback) {
@@ -226,6 +230,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // Altura mínima é do dock (o usuário a controla), não do widget: fixar
     // aqui impedia recolher o Editor de Curvas a uma tira fina.
 
+    // Editor de Velocidade (dock, estilo Time Remapping do Premiere).
+    m_velocity = new VelocityEditorWidget(this);
+    m_velocity->setProject(&m_project);
+
     m_effects = new EffectsWidget(this);
     m_express = new ExpressWidget(this);
     m_fileBrowser = new FileBrowserWidget(this);
@@ -257,13 +265,23 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     m_ofxManager->scanPlugins();
     m_preview->setOfxManager(m_ofxManager);
 
+    // Host frei0r (padrão Kdenlive/Shotcut/MLT): escaneia /usr/lib/frei0r-1
+    // e PIERROT_FREI0R_PATH. Plugins entram no painel Efeitos e no export
+    // via filtro ffmpeg `frei0r=`.
+    m_frei0rManager = new Frei0rPluginManager(this);
+    m_frei0rManager->scanPlugins();
+    m_preview->setFrei0rManager(m_frei0rManager);
+
     // Inicializa o painel de efeitos.
     m_effects->setProject(&m_project);
     m_effects->setOfxPlugins(m_ofxManager->plugins());
+    m_effects->setFrei0rPlugins(m_frei0rManager->plugins());
 
     // Inicializa o Express (editor de efeitos do clipe).
     m_express->setProject(&m_project);
     m_express->setOfxPlugins(m_ofxManager->plugins());
+    m_express->setFrei0rPlugins(m_frei0rManager->plugins());
+    m_express->setFrei0rManager(m_frei0rManager);
     connect(m_express, &ExpressWidget::modified, this, &MainWindow::setModified);
     connect(m_express, &ExpressWidget::modified, this, [this]() { m_preview->refreshView(); });
 
@@ -435,6 +453,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         if (m_mesa && m_mesa->mesaId() == mesaId)
             m_mesa->refresh();
     });
+    connect(m_timeline, &TimelineWidget::velocityRequested, this, [this](const QString& id) {
+        if (!m_velocity || !m_velocityDock) return;
+        m_velocity->setClipId(id);
+        m_velocityDock->show();
+        m_velocityDock->raise();
+    });
     connect(m_timeline, &TimelineWidget::mediaImported, this, [this]() {
         m_pool->refreshFromProject();
         setModified();
@@ -448,6 +472,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     connect(m_pool, &MediaPoolWidget::mediaToTimeline, m_timeline,
             &TimelineWidget::addMediaAtPlayhead);
+    // Duplo clique na pool → Source Monitor (fluxo Premiere).
+    connect(m_pool, &MediaPoolWidget::mediaToSource, this,
+            [this](const QString& id) {
+        if (!m_source || !m_sourceDock) return;
+        m_source->openMedia(id);
+        m_sourceDock->show();
+        m_sourceDock->raise();
+        m_source->setFocus(Qt::OtherFocusReason);
+    });
     // Explorador de arquivos: importar direto para o Media Pool (duplo clique /
     // botão "Importar pasta"); arraste do explorador também funciona, pois o
     // pool aceita arquivos locais soltos sobre ele.
@@ -484,6 +517,19 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_timeline, &TimelineWidget::playheadChanged, m_pancrop, &PancropWidget::setPlayhead);
     connect(m_timeline, &TimelineWidget::selectionChanged, m_graph, &GraphEditorWidget::setClipId);
     connect(m_timeline, &TimelineWidget::playheadChanged, m_graph, &GraphEditorWidget::setPlayhead);
+    connect(m_timeline, &TimelineWidget::selectionChanged, m_velocity, &VelocityEditorWidget::setClipId);
+    connect(m_timeline, &TimelineWidget::playheadChanged, m_velocity, &VelocityEditorWidget::setPlayhead);
+    connect(m_velocity, &VelocityEditorWidget::editStart, this, &MainWindow::pushUndo);
+    connect(m_velocity, &VelocityEditorWidget::modified, this, [this]() {
+        m_timeline->update();
+        m_preview->refreshView();
+        setModified();
+    });
+    connect(m_timeline, &TimelineWidget::modified, m_velocity, [this]() {
+        // Rele o clipe ativo após edições da timeline (split/move).
+        if (m_velocity && m_timeline)
+            m_velocity->setClipId(m_timeline->lastSelectedId());
+    });
     connect(m_timeline, &TimelineWidget::playheadChanged, m_props, &ClipPropertiesWidget::setPlayhead);
     connect(m_timeline, &TimelineWidget::playheadChanged, this, [this](double t) {
         if (m_mesa) { m_mesa->setPlayheadPosition(t); m_mesa->refresh(); }
@@ -628,8 +674,93 @@ void MainWindow::captureCurrentWorkspace() {
                       kLayoutVersion);
 }
 
+// ── Presets de workspace (estilo Premiere) ──────────────────────────────
+// Não usam restoreState: show/hide + resizeDocks. Assim funcionam mesmo com
+// layouts salvos de outras versões de kLayoutVersion.
+
+void MainWindow::applyWorkspacePreset(const QString& name) {
+    auto show = [](QDockWidget* d, bool on) {
+        if (!d) return;
+        if (on) d->show();
+        else d->hide();
+    };
+    // Base: tudo que não é essencial escondido; o usuário reabre se quiser.
+    show(m_fileBrowserDock, false);
+    show(m_effectsDock, false);
+    show(m_expressDock, false);
+    show(m_histDock, false);
+    show(m_pancropDock, false);
+    show(m_mesaDock, false);
+    show(m_scopesDock, false);
+    show(m_mixerDock, false);
+    show(m_propsDock, false);
+    show(m_sourceDock, false);
+    show(m_graphDock, false);
+    show(m_velocityDock, false);
+    show(m_poolDock, true);
+    show(m_timelineDock, true);
+    if (m_toolsDock) m_toolsDock->show();
+
+    if (name == QStringLiteral("Áudio")) {
+        show(m_mixerDock, true);
+        show(m_scopesDock, true);
+        if (m_mixerDock && m_timelineDock)
+            splitDockWidget(m_timelineDock, m_mixerDock, Qt::Vertical);
+        resizeDocks({m_timelineDock, m_mixerDock}, {70, 30}, Qt::Vertical);
+        show(m_poolDock, true);
+    } else if (name == QStringLiteral("Composição")) {
+        show(m_mesaDock, true);
+        show(m_pancropDock, true);
+        show(m_scopesDock, true);
+        if (m_mesaDock) m_mesaDock->raise();
+        resizeDocks({m_poolDock}, {280}, Qt::Horizontal);
+        if (m_mesaDock) resizeDocks({m_mesaDock}, {360}, Qt::Horizontal);
+    } else if (name == QStringLiteral("Efeitos")) {
+        show(m_effectsDock, true);
+        show(m_expressDock, true);
+        show(m_propsDock, true);
+        if (m_effectsDock) m_effectsDock->raise();
+        resizeDocks({m_effectsDock, m_expressDock, m_propsDock}, {280}, Qt::Horizontal);
+    } else {
+        // Edição / default: timeline grande, pool à esquerda, resto fechado.
+        resizeDocks({m_poolDock}, {420}, Qt::Horizontal);
+        resizeDocks({m_timelineDock}, {220}, Qt::Vertical);
+        if (m_graphDock) show(m_graphDock, true);
+    }
+}
+
+void MainWindow::seedWorkspacePresets() {
+    QSettings settings;
+    QStringList names = settings.value("workspaces/names").toStringList();
+    bool changed = false;
+    for (const QString& p : {QStringLiteral("Edição"), QStringLiteral("Áudio"),
+                             QStringLiteral("Composição"), QStringLiteral("Efeitos")}) {
+        if (!names.contains(p)) {
+            names.append(p);
+            changed = true;
+        }
+    }
+    if (changed) settings.setValue("workspaces/names", names);
+}
+
 void MainWindow::applyWorkspace(const QString& name) {
     if (name == m_currentWorkspace) return;
+    // Presets fixos: rearranjo por show/hide (independente de kLayoutVersion).
+    static const QSet<QString> presets = {
+        QStringLiteral("Edição"), QStringLiteral("Áudio"),
+        QStringLiteral("Composição"), QStringLiteral("Efeitos")};
+    if (presets.contains(name)) {
+        captureCurrentWorkspace();
+        m_restoringSettings = true;
+        applyWorkspacePreset(name);
+        m_currentWorkspace = name;
+        m_restoringSettings = false;
+        m_mesa->autoSelectMesa();
+        statusBar()->showMessage(tr("Workspace: %1").arg(name), 2500);
+        scheduleLayoutSave();
+        rebuildWorkspaceMenu();
+        return;
+    }
     // Grava o layout de onde se está saindo antes de trocar, senão as
     // alterações feitas no workspace anterior se perdem.
     captureCurrentWorkspace();
@@ -688,6 +819,17 @@ void MainWindow::rebuildWorkspaceMenu() {
         act->setChecked(name == m_currentWorkspace);
         connect(act, &QAction::triggered, this, [this, name]() { applyWorkspace(name); });
         m_workspaceGroup->addAction(act);
+    }
+
+    // Presets fixos (se ainda não listados como workspaces salvos).
+    m_workspaceMenu->addSeparator();
+    QMenu* presetMenu = m_workspaceMenu->addMenu(tr("Presets"));
+    const QStringList presetNames = {
+        QStringLiteral("Edição"), QStringLiteral("Áudio"),
+        QStringLiteral("Composição"), QStringLiteral("Efeitos")};
+    for (const QString& p : presetNames) {
+        QAction* act = presetMenu->addAction(p);
+        connect(act, &QAction::triggered, this, [this, p]() { applyWorkspace(p); });
     }
 
     m_workspaceMenu->addSeparator();
@@ -991,6 +1133,12 @@ void MainWindow::createDocks() {
                            m_graph, Qt::BottomDockWidgetArea);
     splitDockWidget(m_timelineDock, m_graphDock, Qt::Vertical);
 
+    // Editor de Velocidade — aba do Editor de Curvas (mesma família de UI).
+    m_velocityDock = makeDock(QStringLiteral("velocityDock"), tr("Velocidade"),
+                              m_velocity, Qt::BottomDockWidgetArea);
+    tabifyDockWidget(m_graphDock, m_velocityDock);
+    m_velocityDock->hide();
+
     m_effectsDock = makeDock(QStringLiteral("effectsDock"), tr("Efeitos"),
                              m_effects, Qt::RightDockWidgetArea);
     m_effectsDock->hide();
@@ -1011,6 +1159,33 @@ void MainWindow::createDocks() {
     m_propsDock = makeDock(QStringLiteral("propsDock"), tr("Propriedades"),
                            m_props, Qt::RightDockWidgetArea);
     m_propsDock->hide();
+
+    // Source Monitor (dock): In/Out + Insert/Overwrite do fluxo Premiere.
+    // Fica na pilha do Inspector, ao lado do Program Monitor central.
+    m_source = new SourceMonitorWidget(this);
+    m_source->setProject(&m_project);
+    m_sourceDock = makeDock(QStringLiteral("sourceMonitorDock"), tr("Source"),
+                            m_source, Qt::RightDockWidgetArea);
+    tabifyDockWidget(m_propsDock, m_sourceDock);
+    m_sourceDock->hide();
+    connect(m_source, &SourceMonitorWidget::insertSource, m_timeline,
+            &TimelineWidget::insertSourceAtPlayhead);
+    connect(m_source, &SourceMonitorWidget::overwriteSource, m_timeline,
+            &TimelineWidget::overwriteSourceAtPlayhead);
+    connect(m_source, &SourceMonitorWidget::statusMessage, this,
+            [this](const QString& msg) { statusBar()->showMessage(msg, 2500); });
+    connect(m_source, &SourceMonitorWidget::insertSource, this, [this]() {
+        if (m_sourceDock && !m_sourceDock->isVisible()) {
+            m_sourceDock->show();
+            m_sourceDock->raise();
+        }
+    });
+    connect(m_source, &SourceMonitorWidget::overwriteSource, this, [this]() {
+        if (m_sourceDock && !m_sourceDock->isVisible()) {
+            m_sourceDock->show();
+            m_sourceDock->raise();
+        }
+    });
 
     // Mixer — dock na parte inferior, ao lado da timeline.
     m_mixer = new MixerWidget(this);
@@ -1093,6 +1268,8 @@ void MainWindow::createDocks() {
 
     // Arr default do app: base de qualquer workspace ainda não salvo.
     m_defaultLayoutState = saveState();
+    seedWorkspacePresets();
+    rebuildWorkspaceMenu();
 }
 
 void MainWindow::applyInitialDockWidths() {
@@ -1131,6 +1308,7 @@ void MainWindow::createActions() {
     queueAct->setToolTip(tr("Várias exportações em sequência (formatos/resoluções diferentes)"));
     connect(queueAct, &QAction::triggered, this, [this]() {
         RenderQueueDialog dlg(&m_project, this);
+        dlg.setFrei0rManager(m_frei0rManager);
         dlg.exec();
     });
 
@@ -1300,6 +1478,33 @@ void MainWindow::createActions() {
     editMenu->addAction(cutAction);
     editMenu->addAction(deleteAction);
     editMenu->addSeparator();
+    QAction* insertAction = new QAction(tr("Inserir no playhead (Source)"), this);
+    insertAction->setShortcut(QKeySequence(QStringLiteral(",")));
+    insertAction->setToolTip(tr("Insere o trecho In→Out do Source Monitor no playhead "
+                                "da timeline, empurrando os clipes seguintes"));
+    connect(insertAction, &QAction::triggered, this, [this]() {
+        if (!m_source || !m_source->hasMedia()) {
+            statusBar()->showMessage(tr("Abra uma mídia no Source Monitor primeiro "
+                                        "(duplo-clique na Central de Mídias)."), 3000);
+            return;
+        }
+        m_source->insertRequested();
+    });
+    editMenu->addAction(insertAction);
+    QAction* overwriteAction = new QAction(tr("Sobrescrever no playhead (Source)"), this);
+    overwriteAction->setShortcut(QKeySequence(QStringLiteral(".")));
+    overwriteAction->setToolTip(tr("Sobrescreve a timeline no playhead com o trecho "
+                                   "In→Out do Source Monitor"));
+    connect(overwriteAction, &QAction::triggered, this, [this]() {
+        if (!m_source || !m_source->hasMedia()) {
+            statusBar()->showMessage(tr("Abra uma mídia no Source Monitor primeiro "
+                                        "(duplo-clique na Central de Mídias)."), 3000);
+            return;
+        }
+        m_source->overwriteRequested();
+    });
+    editMenu->addAction(overwriteAction);
+    editMenu->addSeparator();
     QAction* delFrontAction = new QAction(tr("Excluir clipe anterior (D)"), this);
     delFrontAction->setShortcut(QKeySequence(Qt::Key_D));
     connect(delFrontAction, &QAction::triggered, m_timeline, &TimelineWidget::deleteClipBeforePlayhead);
@@ -1345,8 +1550,30 @@ void MainWindow::createActions() {
     });
 
     QMenu* viewMenu = menuBar()->addMenu(tr("&Exibir"));
-    for (QDockWidget* dock : m_allDocks)
-        viewMenu->addAction(dock->toggleViewAction());
+    // Menu agrupado por região (estilo Premiere): Esquerda / Direita / Inferior.
+    auto addDockGroup = [&](const QString& title, QList<QDockWidget*> docks) {
+        if (docks.isEmpty()) return;
+        QMenu* sub = viewMenu->addMenu(title);
+        for (QDockWidget* d : docks)
+            sub->addAction(d->toggleViewAction());
+    };
+    QList<QDockWidget*> leftDocks, rightDocks, bottomDocks, otherDocks;
+    for (QDockWidget* dock : m_allDocks) {
+        switch (dockWidgetArea(dock)) {
+        case Qt::LeftDockWidgetArea: leftDocks.append(dock); break;
+        case Qt::RightDockWidgetArea: rightDocks.append(dock); break;
+        case Qt::BottomDockWidgetArea: bottomDocks.append(dock); break;
+        default: otherDocks.append(dock); break;
+        }
+    }
+    addDockGroup(tr("Painéis à esquerda"), leftDocks);
+    addDockGroup(tr("Painéis à direita"), rightDocks);
+    addDockGroup(tr("Painéis embaixo"), bottomDocks);
+    if (!otherDocks.isEmpty()) {
+        viewMenu->addSeparator();
+        for (QDockWidget* d : otherDocks)
+            viewMenu->addAction(d->toggleViewAction());
+    }
     viewMenu->addSeparator();
 
     // Workspaces (roadmap 0.7): arranjos nomeados de painéis, à Premiere.
@@ -2550,6 +2777,7 @@ void MainWindow::projectSettings() {
 void MainWindow::exportVideo() {
     ExportDialog dlg(&m_project, this);
     dlg.setOfxManager(m_ofxManager);
+    dlg.setFrei0rManager(m_frei0rManager);
     dlg.exec();
 }
 

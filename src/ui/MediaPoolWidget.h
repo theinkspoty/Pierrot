@@ -127,6 +127,8 @@ signals:
     void importProgress(int processed);
     void importFinished(int added, int invalid);
     void mediaToTimeline(const QString& mediaId);
+    // Duplo clique: abre no Source Monitor (fluxo Premiere).
+    void mediaToSource(const QString& mediaId);
     // Arrasto manual da pool para a timeline.
     void dragHover(const QPoint& globalPos);
     void dragHoverCleared();
@@ -135,6 +137,8 @@ protected:
     void dragEnterEvent(QDragEnterEvent* e) override;
     void dragMoveEvent(QDragMoveEvent* e) override;
     void dropEvent(QDropEvent* e) override;
+private slots:
+    void showPoolContextMenu(const QPoint& globalPos);
 private:
     void refresh();
     void setThumb(const QString& mediaId, const QImage& img);

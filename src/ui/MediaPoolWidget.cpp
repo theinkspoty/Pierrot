@@ -50,6 +50,7 @@
 #include <QColorDialog>
 #include <QInputDialog>
 #include <QCursor>
+#include <QMenu>
 #include <cmath>
 #include <algorithm>
 
@@ -692,13 +693,21 @@ MediaPoolWidget::MediaPoolWidget(QWidget* parent) : QWidget(parent) {
     m_stack->addWidget(m_list);
     m_stack->setCurrentWidget(m_tree);
 
-    // Duplo clique em qualquer visualização: mídia para a timeline no playhead.
+    // Duplo clique em qualquer visualização: abre no Source Monitor (fluxo
+    // Premiere — In/Out + Insert/Overwrite). Inserir direto no playhead
+    // continua no menu de contexto e no arrasto para a timeline.
     connect(m_list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* it) {
-        if (it) emit mediaToTimeline(it->data(Qt::UserRole).toString());
+        if (it) emit mediaToSource(it->data(Qt::UserRole).toString());
     });
     connect(m_tree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* it, int) {
-        if (it) emit mediaToTimeline(it->data(0, Qt::UserRole).toString());
+        if (it) emit mediaToSource(it->data(0, Qt::UserRole).toString());
     });
+    m_list->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_tree->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_list, &QWidget::customContextMenuRequested, this,
+            &MediaPoolWidget::showPoolContextMenu);
+    connect(m_tree, &QWidget::customContextMenuRequested, this,
+            &MediaPoolWidget::showPoolContextMenu);
     connect(&MediaCache::instance(), &MediaCache::thumbnailReady,
             this, &MediaPoolWidget::onThumbReady);
 
@@ -1193,4 +1202,45 @@ void MediaPoolWidget::removeSelected() {
     }
     refresh();
     emit mediaChanged();
+}
+
+// Menu de contexto da pool: inserir no playhead (comportamento antigo do
+// duplo clique) ou abrir no Source Monitor.
+void MediaPoolWidget::showPoolContextMenu(const QPoint& globalPos) {
+    QWidget* view = qobject_cast<QWidget*>(sender());
+    if (!view) return;
+    QStringList ids;
+    if (auto* list = qobject_cast<QListWidget*>(view)) {
+        const QList<QListWidgetItem*> items = list->selectedItems();
+        for (const QListWidgetItem* it : items)
+            ids << it->data(Qt::UserRole).toString();
+        if (ids.isEmpty()) {
+            if (auto* hit = list->itemAt(globalPos))
+                ids << hit->data(Qt::UserRole).toString();
+        }
+    } else if (auto* tree = qobject_cast<QTreeWidget*>(view)) {
+        const QList<QTreeWidgetItem*> items = tree->selectedItems();
+        for (const QTreeWidgetItem* it : items)
+            ids << it->data(0, Qt::UserRole).toString();
+        if (ids.isEmpty()) {
+            if (auto* hit = tree->itemAt(globalPos))
+                ids << hit->data(0, Qt::UserRole).toString();
+        }
+    }
+    ids.removeDuplicates();
+    if (ids.isEmpty()) return;
+
+    QMenu menu(view);
+    if (ids.size() == 1) {
+        QAction* srcAct = menu.addAction(tr("Abrir no Source"));
+        srcAct->setToolTip(tr("Carrega no Source Monitor para marcar In/Out e inserir"));
+        connect(srcAct, &QAction::triggered, this, [this, ids]() {
+            emit mediaToSource(ids.first());
+        });
+    }
+    QAction* insAct = menu.addAction(tr("Inserir no playhead"));
+    connect(insAct, &QAction::triggered, this, [this, ids]() {
+        for (const QString& id : ids) emit mediaToTimeline(id);
+    });
+    menu.exec(view->mapToGlobal(globalPos));
 }

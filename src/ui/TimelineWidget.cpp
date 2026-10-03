@@ -64,6 +64,10 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QColorDialog>
+#include <QTabWidget>
+#include <QGroupBox>
+#include <QListWidget>
+#include <QFileDialog>
 #include <QActionGroup>
 #include <QPair>
 #include <QVariantAnimation>
@@ -352,6 +356,450 @@ void TimelineWidget::addMediaAtPlayhead(const QString& mediaId) {
     }
     if (!lastPlaced.isEmpty()) setSelection(lastPlaced);
     updateScrollRanges();
+    update();
+    emit modified();
+}
+
+// ── Insert / Overwrite do Source Monitor (Premiere) ──────────────────────
+// Alvo: faixa de vídeo selecionada (ou a primeira desbloqueada) e, se a
+// mídia tiver áudio, a faixa de áudio selecionada (ou a primeira livre).
+// Insert: divide o que cruza o playhead, desloca tudo a partir dele e coloca
+// o trecho do Source. Overwrite: recorta/clipes sobrepostos no intervalo e
+// coloca o trecho sem deslocar o resto.
+
+namespace {
+struct SourceTarget {
+    int vRow = -1;
+    int aRow = -1;
+};
+} // namespace
+
+void TimelineWidget::insertSourceAtPlayhead(const QString& mediaId, double srcIn, double srcOut) {
+    if (!m_project) return;
+    const MediaItem* m = m_project->findMedia(mediaId);
+    if (!m) return;
+    const double t = snapTime(std::max(0.0, m_playhead));
+    double dur = srcOut - srcIn;
+    if (dur <= kMinDur) {
+        if (isImageFile(m->filePath)) dur = kDefaultImageDur;
+        else dur = m->duration > 0 ? m->duration : 1.0;
+        srcIn = 0.0;
+    }
+    if (dur <= 0.0) return;
+
+    emit undoLabel(tr("Inserir do Source"));
+    emit editStart();
+
+    SourceTarget tgt;
+    for (const TrackSel& s : m_selTracks) {
+        if (s.rec) continue;
+        if (!s.audio && tgt.vRow < 0 && s.row >= 0
+            && s.row < (int)m_project->videoTracks.size()
+            && !m_project->videoTracks[s.row].locked)
+            tgt.vRow = s.row;
+        if (s.audio && tgt.aRow < 0 && s.row >= 0
+            && s.row < (int)m_project->audioTracks.size()
+            && !m_project->audioTracks[s.row].locked)
+            tgt.aRow = s.row;
+    }
+    if (tgt.vRow < 0) {
+        for (int i = 0; i < (int)m_project->videoTracks.size(); ++i)
+            if (!m_project->videoTracks[i].locked) { tgt.vRow = i; break; }
+    }
+    if (tgt.vRow < 0 && m->hasVideo) {
+        m_project->addTrack(false);
+        tgt.vRow = (int)m_project->videoTracks.size() - 1;
+    }
+    if (tgt.aRow < 0) {
+        for (int i = 0; i < (int)m_project->audioTracks.size(); ++i)
+            if (!m_project->audioTracks[i].locked) { tgt.aRow = i; break; }
+    }
+
+    // 1) Divide o que cruza `t` em todas as faixas desbloqueadas.
+    // Coleta IDs antes: splitClipAt insere no vetor e invalidaria referências.
+    auto splitStraddling = [&](QVector<Track>& tracks) {
+        for (Track& tr : tracks) {
+            if (tr.locked) continue;
+            QStringList ids;
+            for (const Clip& c : tr.clips)
+                if (c.pos < t - 1e-6 && c.pos + c.dur > t + 1e-6)
+                    ids.append(c.id);
+            for (const QString& id : ids) {
+                Clip* c = findClipById(id);
+                if (c) splitClipAt(c, t, nullptr);
+            }
+        }
+    };
+    splitStraddling(m_project->videoTracks);
+    splitStraddling(m_project->audioTracks);
+
+    // 2) Desloca tudo com pos >= t (insert ripple). Coleta ids antes: o push
+    // posterior pode realocar os vetores de clipes.
+    auto shiftFrom = [t, dur](QVector<Track>& tracks) {
+        for (Track& tr : tracks) {
+            if (tr.locked) continue;
+            QStringList ids;
+            for (const Clip& c : tr.clips)
+                if (c.pos >= t - 1e-9) ids.append(c.id);
+            for (const QString& id : ids) {
+                for (Clip& c : tr.clips)
+                    if (c.id == id) { c.pos += dur; break; }
+            }
+        }
+    };
+    shiftFrom(m_project->videoTracks);
+    shiftFrom(m_project->audioTracks);
+
+    // 3) Coloca o trecho do Source.
+    const bool both = m->hasVideo && m->hasAudio;
+    const int aStreams = m->hasAudio ? qMax(1, m->audioStreams) : 0;
+    const QString gid = (both || aStreams > 1) ? newId() : QString();
+    auto push = [](QVector<Clip>& clips, const Clip& c) {
+        auto it = clips.begin();
+        while (it != clips.end() && it->pos <= c.pos) ++it;
+        clips.insert(it, c);
+    };
+    QString lastPlaced;
+    if (m->hasVideo && tgt.vRow >= 0) {
+        Clip c;
+        c.id = newId();
+        c.groupId = aStreams > 0 ? gid : QString();
+        c.mediaId = mediaId;
+        c.pos = t;
+        c.in = srcIn;
+        c.dur = dur;
+        c.name = m->name;
+        push(m_project->videoTracks[tgt.vRow].clips, c);
+        lastPlaced = c.id;
+        for (int k = 0; k < aStreams; ++k) {
+            int aRow = (k == 0) ? tgt.aRow : -1;
+            if (aRow < 0) {
+                for (int i = 0; i < (int)m_project->audioTracks.size(); ++i)
+                    if (!m_project->audioTracks[i].locked) { aRow = i; break; }
+            }
+            if (aRow < 0) {
+                m_project->addTrack(true);
+                aRow = (int)m_project->audioTracks.size() - 1;
+            }
+            Clip ac = c;
+            ac.id = newId();
+            ac.audioStreamIndex = k;
+            if (aStreams > 1) ac.name = QString("%1 (faixa %2)").arg(m->name).arg(k + 1);
+            push(m_project->audioTracks[aRow].clips, ac);
+            lastPlaced = ac.id;
+        }
+    } else if (m->hasAudio) {
+        const QString g = aStreams > 1 ? gid : QString();
+        for (int k = 0; k < aStreams; ++k) {
+            int aRow = (k == 0) ? tgt.aRow : -1;
+            if (aRow < 0) {
+                for (int i = 0; i < (int)m_project->audioTracks.size(); ++i)
+                    if (!m_project->audioTracks[i].locked) { aRow = i; break; }
+            }
+            if (aRow < 0) {
+                m_project->addTrack(true);
+                aRow = (int)m_project->audioTracks.size() - 1;
+            }
+            Clip c;
+            c.id = newId();
+            c.groupId = g;
+            c.mediaId = mediaId;
+            c.audioStreamIndex = k;
+            c.pos = t;
+            c.in = srcIn;
+            c.dur = dur;
+            c.name = aStreams > 1 ? QString("%1 (faixa %2)").arg(m->name).arg(k + 1)
+                                  : m->name;
+            push(m_project->audioTracks[aRow].clips, c);
+            lastPlaced = c.id;
+        }
+    }
+
+    if (!lastPlaced.isEmpty()) setSelection(lastPlaced);
+    ensurePlayheadVisible();
+    updateScrollRanges();
+    invalidateScene();
+    update();
+    emit modified();
+}
+
+void TimelineWidget::overwriteSourceAtPlayhead(const QString& mediaId, double srcIn, double srcOut) {
+    if (!m_project) return;
+    const MediaItem* m = m_project->findMedia(mediaId);
+    if (!m) return;
+    const double t = snapTime(std::max(0.0, m_playhead));
+    double dur = srcOut - srcIn;
+    if (dur <= kMinDur) {
+        if (isImageFile(m->filePath)) dur = kDefaultImageDur;
+        else dur = m->duration > 0 ? m->duration : 1.0;
+        srcIn = 0.0;
+    }
+    if (dur <= 0.0) return;
+
+    emit undoLabel(tr("Overwrite do Source"));
+    emit editStart();
+
+    SourceTarget tgt;
+    for (const TrackSel& s : m_selTracks) {
+        if (s.rec) continue;
+        if (!s.audio && tgt.vRow < 0 && s.row >= 0
+            && s.row < (int)m_project->videoTracks.size()
+            && !m_project->videoTracks[s.row].locked)
+            tgt.vRow = s.row;
+        if (s.audio && tgt.aRow < 0 && s.row >= 0
+            && s.row < (int)m_project->audioTracks.size()
+            && !m_project->audioTracks[s.row].locked)
+            tgt.aRow = s.row;
+    }
+    if (tgt.vRow < 0) {
+        for (int i = 0; i < (int)m_project->videoTracks.size(); ++i)
+            if (!m_project->videoTracks[i].locked) { tgt.vRow = i; break; }
+    }
+    if (tgt.vRow < 0 && m->hasVideo) {
+        m_project->addTrack(false);
+        tgt.vRow = (int)m_project->videoTracks.size() - 1;
+    }
+    if (tgt.aRow < 0) {
+        for (int i = 0; i < (int)m_project->audioTracks.size(); ++i)
+            if (!m_project->audioTracks[i].locked) { tgt.aRow = i; break; }
+    }
+
+    // Recorta/clipes no intervalo [t, t+dur) da faixa alvo, sem deslocar o resto.
+    auto carveRange = [t, dur](QVector<Clip>& clips) {
+        QVector<Clip> keep;
+        for (Clip c : clips) {
+            const double cEnd = c.pos + c.dur;
+            if (cEnd <= t + 1e-9 || c.pos >= t + dur - 1e-9) {
+                keep.append(c);
+                continue;
+            }
+            if (c.pos < t - 1e-9 && cEnd > t + dur + 1e-9) {
+                Clip left = c;
+                left.dur = t - c.pos;
+                Clip right = c;
+                right.id = newId();
+                right.pos = t + dur;
+                right.in = c.in + (t + dur - c.pos);
+                right.dur = cEnd - (t + dur);
+                keep.append(left);
+                keep.append(right);
+            } else if (c.pos < t - 1e-9) {
+                Clip left = c;
+                left.dur = t - c.pos;
+                keep.append(left);
+            } else if (cEnd > t + dur + 1e-9) {
+                Clip right = c;
+                right.pos = t + dur;
+                right.in = c.in + (t + dur - c.pos);
+                right.dur = cEnd - (t + dur);
+                keep.append(right);
+            }
+            // Fully inside the overwrite range: drop.
+        }
+        clips = keep;
+    };
+    if (tgt.vRow >= 0 && tgt.vRow < (int)m_project->videoTracks.size())
+        carveRange(m_project->videoTracks[tgt.vRow].clips);
+    if (tgt.aRow >= 0 && tgt.aRow < (int)m_project->audioTracks.size())
+        carveRange(m_project->audioTracks[tgt.aRow].clips);
+
+    const bool both = m->hasVideo && m->hasAudio;
+    const int aStreams = m->hasAudio ? qMax(1, m->audioStreams) : 0;
+    const QString gid = (both || aStreams > 1) ? newId() : QString();
+    auto push = [](QVector<Clip>& clips, const Clip& c) {
+        auto it = clips.begin();
+        while (it != clips.end() && it->pos <= c.pos) ++it;
+        clips.insert(it, c);
+    };
+    QString lastPlaced;
+    if (m->hasVideo && tgt.vRow >= 0) {
+        Clip c;
+        c.id = newId();
+        c.groupId = aStreams > 0 ? gid : QString();
+        c.mediaId = mediaId;
+        c.pos = t;
+        c.in = srcIn;
+        c.dur = dur;
+        c.name = m->name;
+        push(m_project->videoTracks[tgt.vRow].clips, c);
+        lastPlaced = c.id;
+        for (int k = 0; k < aStreams; ++k) {
+            int aRow = (k == 0) ? tgt.aRow : -1;
+            if (aRow < 0) {
+                for (int i = 0; i < (int)m_project->audioTracks.size(); ++i)
+                    if (!m_project->audioTracks[i].locked) { aRow = i; break; }
+            }
+            if (aRow < 0) {
+                m_project->addTrack(true);
+                aRow = (int)m_project->audioTracks.size() - 1;
+            }
+            if (k > 0 || aRow != tgt.aRow) {
+                if (aRow >= 0 && aRow < (int)m_project->audioTracks.size())
+                    carveRange(m_project->audioTracks[aRow].clips);
+            }
+            Clip ac = c;
+            ac.id = newId();
+            ac.audioStreamIndex = k;
+            if (aStreams > 1) ac.name = QString("%1 (faixa %2)").arg(m->name).arg(k + 1);
+            push(m_project->audioTracks[aRow].clips, ac);
+            lastPlaced = ac.id;
+        }
+    } else if (m->hasAudio) {
+        const QString g = aStreams > 1 ? gid : QString();
+        for (int k = 0; k < aStreams; ++k) {
+            int aRow = (k == 0) ? tgt.aRow : -1;
+            if (aRow < 0) {
+                for (int i = 0; i < (int)m_project->audioTracks.size(); ++i)
+                    if (!m_project->audioTracks[i].locked) { aRow = i; break; }
+            }
+            if (aRow < 0) {
+                m_project->addTrack(true);
+                aRow = (int)m_project->audioTracks.size() - 1;
+            }
+            if (k > 0) {
+                if (aRow >= 0 && aRow < (int)m_project->audioTracks.size())
+                    carveRange(m_project->audioTracks[aRow].clips);
+            }
+            Clip c;
+            c.id = newId();
+            c.groupId = g;
+            c.mediaId = mediaId;
+            c.audioStreamIndex = k;
+            c.pos = t;
+            c.in = srcIn;
+            c.dur = dur;
+            c.name = aStreams > 1 ? QString("%1 (faixa %2)").arg(m->name).arg(k + 1)
+                                  : m->name;
+            push(m_project->audioTracks[aRow].clips, c);
+            lastPlaced = c.id;
+        }
+    }
+
+    if (!lastPlaced.isEmpty()) setSelection(lastPlaced);
+    updateScrollRanges();
+    invalidateScene();
+    update();
+    emit modified();
+}
+
+// ── Multicâmera ──────────────────────────────────────────────────────────
+
+void TimelineWidget::createMulticamFromSelection() {
+    if (!m_project || m_selected.size() < 2) return;
+
+    struct Src {
+        QString clipId;
+        QString mediaId;
+        double in = 0.0;
+        double pos = 0.0;
+        double dur = 0.0;
+        int track = -1;
+    };
+    QVector<Src> srcs;
+    for (const QString& id : m_selected) {
+        Clip* c = findClipById(id);
+        if (!c || c->isText || c->hasMulticam()) continue;
+        const MediaItem* m = m_project->findMedia(c->mediaId);
+        if (!m || !m->hasVideo) continue;
+        int row = -1;
+        for (int i = 0; i < (int)m_project->videoTracks.size(); ++i) {
+            for (const Clip& cl : m_project->videoTracks[i].clips) {
+                if (cl.id == id) { row = i; break; }
+            }
+            if (row >= 0) break;
+        }
+        if (row < 0) continue; // vídeo-only no MVP
+        srcs.push_back({id, c->mediaId, c->in, c->pos, c->dur, row});
+    }
+    if (srcs.size() < 2) return;
+
+    std::sort(srcs.begin(), srcs.end(),
+              [](const Src& a, const Src& b) { return a.pos < b.pos; });
+
+    QStringList sources;
+    QVector<double> ins;
+    for (const Src& s : srcs) {
+        if (sources.contains(s.mediaId)) continue;
+        sources.append(s.mediaId);
+        ins.append(s.in);
+    }
+    if (sources.size() < 2) return;
+
+    const double minPos = srcs.first().pos;
+    double dur = srcs.first().pos + srcs.first().dur - minPos;
+    for (const Src& s : srcs)
+        dur = std::min(dur, (s.pos + s.dur) - minPos);
+    if (dur < kMinDur) return;
+
+    emit undoLabel(tr("Criar multicam"));
+    emit editStart();
+
+    QStringList toRemove;
+    for (const Src& s : srcs) toRemove.append(s.clipId);
+    for (Track& tr : m_project->videoTracks) {
+        QVector<Clip> keep;
+        for (Clip& cl : tr.clips) {
+            if (toRemove.contains(cl.id)) continue;
+            keep.append(cl);
+        }
+        tr.clips = keep;
+    }
+
+    Clip mc;
+    mc.id = newId();
+    mc.isMulticam = true;
+    mc.multicamSources = sources;
+    mc.multicamIns = ins;
+    mc.defaultAngle = 0;
+    mc.mediaId = sources.first();
+    mc.pos = minPos;
+    mc.in = ins.first();
+    mc.dur = dur;
+    mc.name = tr("Multicam (%1 ângulos)").arg(sources.size());
+
+    const int vRow = srcs.first().track;
+    auto& clips = m_project->videoTracks[vRow].clips;
+    auto it = clips.begin();
+    while (it != clips.end() && it->pos <= mc.pos) ++it;
+    clips.insert(it, mc);
+
+    setSelection(mc.id);
+    ensurePlayheadVisible();
+    updateScrollRanges();
+    invalidateScene();
+    update();
+    emit modified();
+}
+
+void TimelineWidget::setMulticamAngleAtPlayhead(int angle) {
+    if (!m_project) return;
+
+    Clip* c = nullptr;
+    for (const QString& id : m_selected) {
+        Clip* cc = findClipById(id);
+        if (cc && cc->hasMulticam()) { c = cc; break; }
+    }
+    if (!c) {
+        for (Track& tr : m_project->videoTracks) {
+            for (Clip& cl : tr.clips) {
+                if (cl.hasMulticam() && m_playhead >= cl.pos - 1e-9
+                    && m_playhead < cl.pos + cl.dur - 1e-9) {
+                    c = &cl;
+                    break;
+                }
+            }
+            if (c) break;
+        }
+    }
+    if (!c || !c->hasMulticam()) return;
+
+    angle = std::clamp(angle, 0, int(c->multicamSources.size()) - 1);
+    emit undoLabel(tr("Ângulo multicam %1").arg(angle + 1));
+    emit editStart();
+    const double rel = std::max(0.0, m_playhead - c->pos);
+    upsertKeyframe(c->kfAngle, rel, (double)angle, KfStep);
+    if (c->kfAngle.size() == 1) c->defaultAngle = angle;
+    invalidateScene();
     update();
     emit modified();
 }
@@ -1290,6 +1738,12 @@ static Qt::Key razorHoldKey() {
 void TimelineWidget::keyPressEvent(QKeyEvent* e) {
     const bool ctrl = e->modifiers() & Qt::ControlModifier;
     const bool shift = e->modifiers() & Qt::ShiftModifier;
+    // Multicam: teclas 1..N trocam o ângulo ativo no playhead (Premiere).
+    if (!ctrl && !shift && e->key() >= Qt::Key_1 && e->key() <= Qt::Key_9) {
+        setMulticamAngleAtPlayhead(e->key() - Qt::Key_1);
+        e->accept();
+        return;
+    }
     switch (e->key()) {
     case Qt::Key_Space:
         emit playPauseRequested();
@@ -1584,9 +2038,34 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         menu.addSeparator();
         QAction* props = menu.addAction(tr("Propriedades…"));
         QAction* speedAct = menu.addAction(tr("Velocidade…"));
+        QAction* velAct = nullptr;
+        if (!audio) {
+            velAct = menu.addAction(tr("Editor de velocidade"));
+            velAct->setToolTip(tr("Envelope de velocidade (time remapping) no dock Velocidade"));
+        }
         QAction* unlink = nullptr;
         if (!clip->groupId.isEmpty())
             unlink = menu.addAction(tr("Desvincular grupo"));
+        QAction* mcAct = nullptr;
+        {
+            int videoSel = 0;
+            for (const QString& id : m_selected) {
+                Clip* cc = findClipById(id);
+                if (!cc || cc->isText || cc->hasMulticam()) continue;
+                const MediaItem* mi = m_project ? m_project->findMedia(cc->mediaId) : nullptr;
+                if (mi && mi->hasVideo) ++videoSel;
+            }
+            if (videoSel >= 2) {
+                mcAct = menu.addAction(tr("Criar multicam (%1 ângulos)…")
+                                           .arg(videoSel));
+                mcAct->setToolTip(tr("Junta os clipes de vídeo selecionados num "
+                                     "clipe multicam; teclas 1..N cortam o ângulo"));
+            } else if (clip->hasMulticam()) {
+                QAction* info = menu.addAction(
+                    tr("Multicam: %1 ângulos (teclas 1..N)").arg(clip->multicamSources.size()));
+                info->setEnabled(false);
+            }
+        }
         QAction* fx = nullptr;
         QAction* grade = nullptr;
         QAction* audioFx = nullptr;
@@ -1688,6 +2167,7 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         else if (act == applyPreset) applyClipPreset();
         else if (act == props) emit propertiesRequested(clip->id);
         else if (act == speedAct) showSpeedDialog(clip);
+        else if (act == velAct) emit velocityRequested(clip->id);
         else if (act == unlink) {
             emit editStart();
             for (Clip* m : groupMembers(clip->groupId))
@@ -1695,6 +2175,7 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
             update();
             emit modified();
         }
+        else if (act == mcAct) createMulticamFromSelection();
         else if (act == fx) showEffectsDialog(clip);
         else if (act == grade) showGradingDialog(clip);
         else if (act == audioFx) showAudioEffectsDialog(clip);
@@ -2204,75 +2685,216 @@ void TimelineWidget::showGradingDialog(Clip* c) {
     if (!c) return;
 
     QDialog dlg(this);
-    dlg.setWindowTitle(tr("Correção de cor (Lift / Gamma / Gain)"));
+    dlg.setWindowTitle(tr("Correção de cor (Lumetri)"));
+    dlg.setMinimumSize(540, 580);
 
-    struct Row { QSlider* r = nullptr; QSlider* g = nullptr; QSlider* b = nullptr; };
-    QVector<Row> rows(3);
-    const struct { int min; int max; int def; } cfg[3] = {
-        { -100, 100, 0 },    // Lift (neutro 0, exibido em -100..100)
-        {   10, 400, 100 },  // Gamma (neutro 100%)
-        { -100, 100, 0 },    // Gain (neutro 0)
+    Clip work = *c;
+    auto* tabs = new QTabWidget(&dlg);
+
+    auto makeSlider = [&](const QString& name, double* field, double lo, double hi,
+                          const QString& tip = QString()) {
+        auto* row = new QWidget(tabs);
+        auto* lay = new QHBoxLayout(row);
+        lay->setContentsMargins(0, 0, 0, 0);
+        auto* lab = new QLabel(name, row);
+        lab->setMinimumWidth(120);
+        lay->addWidget(lab);
+        auto* spin = new QDoubleSpinBox(row);
+        spin->setRange(lo, hi);
+        spin->setDecimals(2);
+        spin->setSingleStep((hi - lo) / 100.0);
+        spin->setValue(*field);
+        if (!tip.isEmpty()) spin->setToolTip(tip);
+        auto* slider = new QSlider(Qt::Horizontal, row);
+        slider->setRange(int(lo * 100), int(hi * 100));
+        slider->setValue(int(std::lround(*field * 100.0)));
+        connect(slider, &QSlider::valueChanged, &dlg, [field, spin](int v) {
+            *field = v / 100.0;
+            spin->blockSignals(true);
+            spin->setValue(*field);
+            spin->blockSignals(false);
+        });
+        connect(spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), &dlg,
+                [field, slider](double v) {
+                    *field = v;
+                    slider->blockSignals(true);
+                    slider->setValue(int(std::lround(v * 100.0)));
+                    slider->blockSignals(false);
+                });
+        lay->addWidget(spin);
+        lay->addWidget(slider, 2);
+        return row;
     };
-    const QString names[3] = { tr("Lift (sombras)"), tr("Gamma (meios)"), tr("Gain (realces)") };
 
-    auto* grid = new QGridLayout;
-    grid->addWidget(new QLabel(tr("R"), &dlg), 0, 1, Qt::AlignCenter);
-    grid->addWidget(new QLabel(tr("G"), &dlg), 0, 2, Qt::AlignCenter);
-    grid->addWidget(new QLabel(tr("B"), &dlg), 0, 3, Qt::AlignCenter);
-    for (int i = 0; i < 3; ++i) {
-        Row& row = rows[i];
-        row.r = new QSlider(Qt::Horizontal, &dlg);
-        row.g = new QSlider(Qt::Horizontal, &dlg);
-        row.b = new QSlider(Qt::Horizontal, &dlg);
-        for (QSlider* s : { row.r, row.g, row.b }) {
-            s->setRange(cfg[i].min, cfg[i].max);
-            s->setValue(cfg[i].def);
-        }
-        grid->addWidget(new QLabel(names[i], &dlg), i + 1, 0);
-        grid->addWidget(row.r, i + 1, 1);
-        grid->addWidget(row.g, i + 1, 2);
-        grid->addWidget(row.b, i + 1, 3);
+    // Básico (Lumetri Basic Correction)
+    {
+        auto* w = new QWidget;
+        auto* form = new QVBoxLayout(w);
+        form->addWidget(makeSlider(tr("Exposição"), &work.cgExposure, -5, 5, tr("EV")));
+        form->addWidget(makeSlider(tr("Contraste"), &work.cgContrast, -100, 100));
+        form->addWidget(makeSlider(tr("Realces"), &work.cgHighlights, -100, 100));
+        form->addWidget(makeSlider(tr("Sombras"), &work.cgShadows, -100, 100));
+        form->addWidget(makeSlider(tr("Brancos"), &work.cgWhites, -100, 100));
+        form->addWidget(makeSlider(tr("Pretos"), &work.cgBlacks, -100, 100));
+        form->addWidget(makeSlider(tr("Saturação"), &work.cgSaturation, -100, 100));
+        form->addWidget(makeSlider(tr("Vibrance"), &work.cgVibrance, -100, 100));
+        form->addWidget(makeSlider(tr("Temperatura"), &work.cgTemperature, -100, 100,
+                                    tr("Azul ↔ Laranja")));
+        form->addWidget(makeSlider(tr("Matiz"), &work.cgTint, -100, 100,
+                                    tr("Verde ↔ Magenta")));
+        form->addWidget(makeSlider(tr("Filme desbotado"), &work.cgFadedFilm, 0, 100));
+        form->addWidget(makeSlider(tr("Nitidez"), &work.cgSharpen, 0, 100));
+        form->addStretch();
+        tabs->addTab(w, tr("Básico"));
     }
 
-    // Valores atuais do clipe (gamma em %, lift/gain em -100..100).
-    rows[0].r->setValue((int)llround(c->liftR * 100.0));
-    rows[0].g->setValue((int)llround(c->liftG * 100.0));
-    rows[0].b->setValue((int)llround(c->liftB * 100.0));
-    rows[1].r->setValue((int)llround(c->gammaR * 100.0));
-    rows[1].g->setValue((int)llround(c->gammaG * 100.0));
-    rows[1].b->setValue((int)llround(c->gammaB * 100.0));
-    rows[2].r->setValue((int)llround(c->gainR * 100.0));
-    rows[2].g->setValue((int)llround(c->gainG * 100.0));
-    rows[2].b->setValue((int)llround(c->gainB * 100.0));
+    // Rodas Lift/Gamma/Gain
+    {
+        auto* w = new QWidget;
+        auto* form = new QVBoxLayout(w);
+        form->addWidget(new QLabel(
+            tr("Lift = sombras · Gamma = meios · Gain = realces"), w));
+        auto* grid = new QGridLayout;
+        const QString names[3] = {tr("Lift"), tr("Gamma"), tr("Gain")};
+        const int mins[3] = {-100, 10, -100};
+        const int maxs[3] = {100, 400, 100};
+        double* fields[3][3] = {
+            {&work.liftR, &work.liftG, &work.liftB},
+            {&work.gammaR, &work.gammaG, &work.gammaB},
+            {&work.gainR, &work.gainG, &work.gainB},
+        };
+        for (int r = 0; r < 3; ++r) {
+            grid->addWidget(new QLabel(names[r], w), r + 1, 0);
+            for (int ch = 0; ch < 3; ++ch) {
+                auto* s = new QSlider(Qt::Horizontal, w);
+                s->setRange(mins[r], maxs[r]);
+                s->setValue(int(std::lround(*fields[r][ch] * 100.0)));
+                double* f = fields[r][ch];
+                connect(s, &QSlider::valueChanged, &dlg, [f](int v) { *f = v / 100.0; });
+                grid->addWidget(s, r + 1, ch + 1);
+            }
+        }
+        grid->addWidget(new QLabel(tr("R"), w), 0, 1, Qt::AlignCenter);
+        grid->addWidget(new QLabel(tr("G"), w), 0, 2, Qt::AlignCenter);
+        grid->addWidget(new QLabel(tr("B"), w), 0, 3, Qt::AlignCenter);
+        form->addLayout(grid);
+        form->addStretch();
+        tabs->addTab(w, tr("Rodas"));
+    }
 
-    auto* reset = new QPushButton(tr("Resetar"), &dlg);
-    connect(reset, &QPushButton::clicked, &dlg, [&rows]() {
-        for (int i = 0; i < 3; ++i)
-            for (QSlider* s : { rows[i].r, rows[i].g, rows[i].b })
-                s->setValue((i == 1) ? 100 : 0);
+    // Curvas RGB
+    {
+        auto* w = new QWidget;
+        auto* form = new QVBoxLayout(w);
+        form->addWidget(new QLabel(
+            tr("Curvas: adicione pontos X/Y em 0..1. Master afeta R, G e B."), w));
+        auto addCurveBox = [&](const QString& title, QVector<QPointF>& pts) {
+            auto* box = new QGroupBox(title, w);
+            auto* bl = new QVBoxLayout(box);
+            auto* list = new QListWidget(box);
+            auto refresh = [&list, &pts]() {
+                list->clear();
+                for (const QPointF& p : pts)
+                    list->addItem(QStringLiteral("%1 , %2")
+                                      .arg(p.x(), 0, 'f', 3)
+                                      .arg(p.y(), 0, 'f', 3));
+            };
+            refresh();
+            auto* btns = new QHBoxLayout;
+            auto* add = new QPushButton(tr("Adicionar"), box);
+            auto* del = new QPushButton(tr("Remover último"), box);
+            auto* lin = new QPushButton(tr("Reta"), box);
+            QObject::connect(add, &QPushButton::clicked, &dlg, [&pts, &dlg, refresh]() {
+                bool ok = false;
+                const double x = QInputDialog::getDouble(&dlg, tr("Ponto"), tr("X:"),
+                                                         0.5, 0.0, 1.0, 3, &ok);
+                if (!ok) return;
+                const double y = QInputDialog::getDouble(&dlg, tr("Ponto"), tr("Y:"),
+                                                         x, 0.0, 1.0, 3, &ok);
+                if (!ok) return;
+                pts.append(QPointF(x, y));
+                std::sort(pts.begin(), pts.end(),
+                          [](const QPointF& a, const QPointF& b) { return a.x() < b.x(); });
+                refresh();
+            });
+            QObject::connect(del, &QPushButton::clicked, &dlg, [&pts, refresh]() {
+                if (!pts.isEmpty()) pts.removeLast();
+                refresh();
+            });
+            QObject::connect(lin, &QPushButton::clicked, &dlg, [&pts, refresh]() {
+                pts.clear();
+                refresh();
+            });
+            btns->addWidget(add);
+            btns->addWidget(del);
+            btns->addWidget(lin);
+            bl->addWidget(list);
+            bl->addLayout(btns);
+            form->addWidget(box);
+        };
+        addCurveBox(tr("Master"), work.cgMasterCurve);
+        addCurveBox(tr("Vermelho"), work.cgRCurve);
+        addCurveBox(tr("Verde"), work.cgGCurve);
+        addCurveBox(tr("Azul"), work.cgBCurve);
+        form->addStretch();
+        tabs->addTab(w, tr("Curvas"));
+    }
+
+    // Vinheta / LUT / Mix
+    QLineEdit* lutEdit = nullptr;
+    {
+        auto* w = new QWidget;
+        auto* form = new QVBoxLayout(w);
+        form->addWidget(makeSlider(tr("Vinheta"), &work.cgVignette, -100, 100,
+                                    tr("Negativo escurece as bordas")));
+        form->addWidget(makeSlider(tr("Pena da vinheta"), &work.cgVignetteFeather, 0, 100));
+        form->addWidget(makeSlider(tr("Intensidade do grade"), &work.cgBlend, 0, 1));
+        form->addWidget(makeSlider(tr("Força da LUT"), &work.cgLutStrength, 0, 1));
+        auto* lutRow = new QHBoxLayout;
+        lutEdit = new QLineEdit(work.cgLutPath, w);
+        lutEdit->setPlaceholderText(tr("caminho/do/arquivo.cube"));
+        auto* lutBtn = new QPushButton(tr("Procurar .cube…"), w);
+        QObject::connect(lutBtn, &QPushButton::clicked, &dlg, [lutEdit, &dlg]() {
+            const QString path = QFileDialog::getOpenFileName(
+                &dlg, tr("Abrir LUT 3D"), QString(), tr("LUTs (*.cube);;Todos (*)"));
+            if (!path.isEmpty()) lutEdit->setText(path);
+        });
+        lutRow->addWidget(lutEdit, 1);
+        lutRow->addWidget(lutBtn);
+        form->addLayout(lutRow);
+        auto* info = new QLabel(w);
+        info->setWordWrap(true);
+        info->setStyleSheet(QStringLiteral("color:#888;"));
+        info->setText(work.cgLutPath.isEmpty()
+                          ? tr("Sem LUT. Aceita .cube 3D (IRIDAS/Resolve).")
+                          : tr("LUT: %1").arg(work.cgLutPath));
+        form->addWidget(info);
+        form->addStretch();
+        tabs->addTab(w, tr("Vinheta / LUT"));
+    }
+
+    auto* reset = new QPushButton(tr("Resetar grade"), &dlg);
+    QObject::connect(reset, &QPushButton::clicked, &dlg, [&work]() {
+        const QString lut = work.cgLutPath;
+        work = Clip{};
+        work.cgLutPath = lut; // preserva o caminho da LUT
     });
 
-    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
-    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
 
     auto* lay = new QVBoxLayout(&dlg);
-    lay->addLayout(grid);
+    lay->addWidget(tabs);
     lay->addWidget(reset);
     lay->addWidget(buttons);
 
     if (dlg.exec() != QDialog::Accepted) return;
 
+    if (lutEdit) work.cgLutPath = lutEdit->text().trimmed();
     emit editStart();
-    c->liftR = rows[0].r->value() / 100.0;
-    c->liftG = rows[0].g->value() / 100.0;
-    c->liftB = rows[0].b->value() / 100.0;
-    c->gammaR = rows[1].r->value() / 100.0;
-    c->gammaG = rows[1].g->value() / 100.0;
-    c->gammaB = rows[1].b->value() / 100.0;
-    c->gainR = rows[2].r->value() / 100.0;
-    c->gainG = rows[2].g->value() / 100.0;
-    c->gainB = rows[2].b->value() / 100.0;
+    *c = work;
     update();
     emit modified();
 }

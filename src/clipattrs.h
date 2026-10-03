@@ -71,6 +71,23 @@ inline QJsonObject toJson(const Clip& c) {
     o["liftR"] = c.liftR; o["liftG"] = c.liftG; o["liftB"] = c.liftB;
     o["gammaR"] = c.gammaR; o["gammaG"] = c.gammaG; o["gammaB"] = c.gammaB;
     o["gainR"] = c.gainR; o["gainG"] = c.gainG; o["gainB"] = c.gainB;
+    o["cgExposure"] = c.cgExposure;
+    o["cgContrast"] = c.cgContrast;
+    o["cgHighlights"] = c.cgHighlights;
+    o["cgShadows"] = c.cgShadows;
+    o["cgWhites"] = c.cgWhites;
+    o["cgBlacks"] = c.cgBlacks;
+    o["cgSaturation"] = c.cgSaturation;
+    o["cgVibrance"] = c.cgVibrance;
+    o["cgTemperature"] = c.cgTemperature;
+    o["cgTint"] = c.cgTint;
+    o["cgFadedFilm"] = c.cgFadedFilm;
+    o["cgSharpen"] = c.cgSharpen;
+    o["cgVignette"] = c.cgVignette;
+    o["cgVignetteFeather"] = c.cgVignetteFeather;
+    o["cgBlend"] = c.cgBlend;
+    o["cgLutStrength"] = c.cgLutStrength;
+    o["cgLutPath"] = c.cgLutPath;
 
     o["lainkaEnabled"] = c.lainkaEnabled;
     o["lainkaSkip"] = c.lainkaSkip;
@@ -137,6 +154,21 @@ inline QJsonObject toJson(const Clip& c) {
     }
     o["ofxFx"] = ofxArr;
 
+    QJsonArray f0rArr;
+    for (const Frei0rEffect& fx : c.frei0rFx) {
+        QJsonObject fxo;
+        fxo["pluginName"] = fx.pluginName;
+        fxo["enabled"] = fx.enabled;
+        QJsonArray vArr;
+        for (double v : fx.values) vArr.append(v);
+        fxo["values"] = vArr;
+        QJsonArray cArr;
+        for (const QColor& col : fx.colors) cArr.append(col.name(QColor::HexArgb));
+        fxo["colors"] = cArr;
+        f0rArr.append(fxo);
+    }
+    o["frei0rFx"] = f0rArr;
+
     o["kfOpacity"] = kfArr(c.kfOpacity);
     o["kfVolume"] = kfArr(c.kfVolume);
     o["kfTx"] = kfArr(c.kfTx);
@@ -191,6 +223,23 @@ inline void applyJson(Clip& c, const QJsonObject& o) {
     if (key("gainR")) c.gainR = d("gainR", c.gainR);
     if (key("gainG")) c.gainG = d("gainG", c.gainG);
     if (key("gainB")) c.gainB = d("gainB", c.gainB);
+    if (key("cgExposure")) c.cgExposure = d("cgExposure", c.cgExposure);
+    if (key("cgContrast")) c.cgContrast = d("cgContrast", c.cgContrast);
+    if (key("cgHighlights")) c.cgHighlights = d("cgHighlights", c.cgHighlights);
+    if (key("cgShadows")) c.cgShadows = d("cgShadows", c.cgShadows);
+    if (key("cgWhites")) c.cgWhites = d("cgWhites", c.cgWhites);
+    if (key("cgBlacks")) c.cgBlacks = d("cgBlacks", c.cgBlacks);
+    if (key("cgSaturation")) c.cgSaturation = d("cgSaturation", c.cgSaturation);
+    if (key("cgVibrance")) c.cgVibrance = d("cgVibrance", c.cgVibrance);
+    if (key("cgTemperature")) c.cgTemperature = d("cgTemperature", c.cgTemperature);
+    if (key("cgTint")) c.cgTint = d("cgTint", c.cgTint);
+    if (key("cgFadedFilm")) c.cgFadedFilm = d("cgFadedFilm", c.cgFadedFilm);
+    if (key("cgSharpen")) c.cgSharpen = d("cgSharpen", c.cgSharpen);
+    if (key("cgVignette")) c.cgVignette = d("cgVignette", c.cgVignette);
+    if (key("cgVignetteFeather")) c.cgVignetteFeather = d("cgVignetteFeather", c.cgVignetteFeather);
+    if (key("cgBlend")) c.cgBlend = d("cgBlend", c.cgBlend);
+    if (key("cgLutStrength")) c.cgLutStrength = d("cgLutStrength", c.cgLutStrength);
+    if (key("cgLutPath")) c.cgLutPath = o["cgLutPath"].toString(c.cgLutPath);
 
     if (key("lainkaEnabled")) c.lainkaEnabled = b("lainkaEnabled", c.lainkaEnabled);
     if (key("lainkaSkip")) c.lainkaSkip = qMax(1, o["lainkaSkip"].toInt(c.lainkaSkip));
@@ -264,6 +313,24 @@ inline void applyJson(Clip& c, const QJsonObject& o) {
                 fx.params.append(p);
             }
             c.ofxFx.append(fx);
+        }
+    }
+
+    if (key("frei0rFx")) {
+        c.frei0rFx.clear();
+        const QJsonArray f0rArr = o["frei0rFx"].toArray();
+        for (const QJsonValue& jv : f0rArr) {
+            const QJsonObject fxo = jv.toObject();
+            Frei0rEffect fx;
+            fx.pluginName = fxo["pluginName"].toString();
+            fx.enabled = fxo["enabled"].toBool(true);
+            for (const QJsonValue& vv : fxo["values"].toArray())
+                fx.values.append(vv.toDouble(0.0));
+            for (const QJsonValue& cv : fxo["colors"].toArray()) {
+                const QString s = cv.toString();
+                fx.colors.append(QColor::isValidColorName(s) ? QColor(s) : QColor());
+            }
+            c.frei0rFx.append(fx);
         }
     }
 

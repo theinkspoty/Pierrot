@@ -20,6 +20,8 @@ class QScrollArea;
 class QSplitter;
 class QTimer;
 class QVBoxLayout;
+class QToolButton;
+class QToolButton;
 
 // Ferramenta ativa do gráfico (como na barra de ferramentas do Premiere).
 enum class CanvasTool {
@@ -94,6 +96,10 @@ public slots:
     void resetZoom();
     void setSnap(bool on);
     bool snapEnabled() const;
+    // Easy Ease (varinha do After Effects/Premiere): converte os keyframes
+    // selecionados para Bezier com handles horizontais (suaviza entrada e/ou
+    // saída). mode: 0=ambos, 1=só easy in, 2=só easy out.
+    void applyEasyEase(int mode = 0);
 signals:
     void editStart();
     void modified();
@@ -300,6 +306,7 @@ private:
     QToolButton* m_toolSel = nullptr;
     QToolButton* m_toolAdd = nullptr;
     QToolButton* m_toolCurve = nullptr;
+    QToolButton* m_easyEaseBtn = nullptr; // varinha Easy Ease (F9)
     QVector<GraphProp> m_props;
     QHash<int, GraphPropRow*> m_rows;
 };

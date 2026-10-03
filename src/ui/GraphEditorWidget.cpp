@@ -1476,6 +1476,13 @@ void GraphCanvas::keyPressEvent(QKeyEvent* e) {
     if (e->key() == Qt::Key_V) { setTool(CanvasTool::Select); e->accept(); return; }
     if (e->key() == Qt::Key_P) { setTool(CanvasTool::Add); e->accept(); return; }
     if (e->key() == Qt::Key_B) { setTool(CanvasTool::Curve); e->accept(); return; }
+    // F9 = Easy Ease (varinha) nos keyframes selecionados.
+    if (e->key() == Qt::Key_F9 && ks && !m_selKeys.isEmpty()) {
+        applyEasyEase(e->modifiers() & Qt::ShiftModifier ? 2
+                      : (e->modifiers() & Qt::ControlModifier ? 1 : 0));
+        e->accept();
+        return;
+    }
     if (!ks || m_selKeys.isEmpty()) { QWidget::keyPressEvent(e); return; }
 
     if (e->key() == Qt::Key_Delete || e->key() == Qt::Key_Backspace) {
@@ -1540,6 +1547,35 @@ void GraphCanvas::resetZoom() {
     update();
 }
 
+// Easy Ease: handles horizontais (oy=iy=0) com extensão ~1/3 do span até o
+// vizinho — o mesmo que o F9 do Premiere/After Effects. Suaviza a entrada
+// e/ou a saída do keyframe sem inventar overshoot.
+void GraphCanvas::applyEasyEase(int mode) {
+    QVector<Keyframe>* ks = keys();
+    if (!ks || m_selKeys.isEmpty()) return;
+    emit editStart();
+    for (int i : m_selKeys) {
+        if (i < 0 || i >= ks->size()) continue;
+        Keyframe& k = (*ks)[i];
+        k.interp = KfBezier;
+        // Span até o vizinho mais próximo (para dimensionar o handle).
+        double spanL = 0.25, spanR = 0.25;
+        if (i > 0) spanL = std::max(0.02, k.time - (*ks)[i - 1].time);
+        if (i + 1 < ks->size()) spanR = std::max(0.02, (*ks)[i + 1].time - k.time);
+        const double hL = spanL / 3.0;
+        const double hR = spanR / 3.0;
+        // mode 0 = ambos; 1 = easy in (só entrada); 2 = easy out (só saída).
+        if (mode == 0 || mode == 2) { k.ox = hR; k.oy = 0.0; }
+        if (mode == 0 || mode == 1) { k.ix = hL; k.iy = 0.0; }
+        if (mode == 2) { k.ix = 0.0; k.iy = 0.0; } // easy out: sem suavizar entrada
+        if (mode == 1) { k.ox = 0.0; k.oy = 0.0; } // easy in: sem suavizar saída
+    }
+    commitChange();
+    emit statusMessage(mode == 1 ? tr("Easy Ease In aplicado")
+                       : mode == 2 ? tr("Easy Ease Out aplicado")
+                                   : tr("Easy Ease aplicado (F9)"));
+}
+
 void GraphCanvas::setSnap(bool on) {
     if (m_snap == on) return;
     m_snap = on;
@@ -1600,12 +1636,20 @@ void GraphCanvas::contextMenuEvent(QContextMenuEvent* e) {
     QAction* bez = menu.addAction(tr("Bezier"));
     QAction* autoBez = menu.addAction(tr("Auto Bezier"));
     QAction* hold = menu.addAction(tr("Hold"));
+    QAction* ease = menu.addAction(tr("Easy Ease (varinha)"));
+    QAction* easeIn = menu.addAction(tr("Easy Ease In"));
+    QAction* easeOut = menu.addAction(tr("Easy Ease Out"));
     menu.addSeparator();
     QAction* del = menu.addAction(m_selKeys.size() > 1
                                       ? tr("Excluir %1 keyframes").arg(m_selKeys.size())
                                       : tr("Excluir keyframe"));
     QAction* act = menu.exec(e->globalPos());
     if (!act) return;
+    if (act == ease || act == easeIn || act == easeOut) {
+        // applyEasyEase faz o próprio editStart/commitChange (um undo só).
+        applyEasyEase(act == easeIn ? 1 : act == easeOut ? 2 : 0);
+        return;
+    }
     emit editStart();
     m_undoPushed = true;
     if (act == lin || act == bez || act == autoBez || act == hold) {
@@ -2033,6 +2077,17 @@ GraphEditorWidget::GraphEditorWidget(QWidget* parent) : QWidget(parent) {
     m_toolCurve->setText(tr("Curva"));
     m_toolCurve->setToolTip(tr("Clicar cria um ponto suave; arrastar define a curva (B)"));
 
+    // Varinha Easy Ease (F9): suaviza os keyframes selecionados — o
+    // equivalente ao Keyframe Assistant do After Effects / Premiere.
+    m_easyEaseBtn = new QToolButton(this);
+    m_easyEaseBtn->setText(tr("Varinha"));
+    m_easyEaseBtn->setToolTip(tr("Easy Ease nos keyframes selecionados (F9) — "
+                                 "suaviza a animação com handles horizontais"));
+    m_easyEaseBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_easyEaseBtn, &QToolButton::clicked, this, [this]() {
+        m_canvas->applyEasyEase(0);
+    });
+
     auto* tools = new QButtonGroup(this);
     tools->setExclusive(true);
     tools->addButton(m_toolSel, static_cast<int>(CanvasTool::Select));
@@ -2041,6 +2096,7 @@ GraphEditorWidget::GraphEditorWidget(QWidget* parent) : QWidget(parent) {
     topBar->addWidget(m_toolSel);
     topBar->addWidget(m_toolAdd);
     topBar->addWidget(m_toolCurve);
+    topBar->addWidget(m_easyEaseBtn);
     topBar->addStretch(1);
 
     m_canvas = new GraphCanvas(this);

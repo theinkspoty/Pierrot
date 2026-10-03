@@ -6,6 +6,7 @@
 #include "ExpressWidget.h"
 #include "EffectsWidget.h"
 #include "colombina/models/Project.h"
+#include "colombina/frei0r/Frei0rPluginManager.h"
 #include "ui/Theme.h"
 
 #include <ofxParam.h>
@@ -85,6 +86,11 @@ void ExpressWidget::setOfxPlugins(const QVector<OfxPluginInfo>& plugins)
     m_ofxPlugins = plugins;
 }
 
+void ExpressWidget::setFrei0rPlugins(const QVector<Frei0rPluginInfo>& plugins)
+{
+    m_frei0rPlugins = plugins;
+}
+
 void ExpressWidget::setOfxParamDefs(const QString& pluginId,
                                      const QVector<OfxParamDefInfo>& params)
 {
@@ -133,6 +139,10 @@ void ExpressWidget::rebuildTabs()
     // Abas de plugins OFX.
     for (const OfxPluginInstance& fx : m_currentClip->ofxFx)
         createOfxTab(fx.pluginId);
+
+    // Abas de plugins frei0r.
+    for (const Frei0rEffect& fx : m_currentClip->frei0rFx)
+        createFrei0rTab(fx.pluginName);
 
     if (m_tabs->count() > 0) {
         m_emptyLabel->hide();
@@ -207,6 +217,55 @@ void ExpressWidget::addEffect(const QString& effectId)
         m_currentClip->reverbSize = 0.5;
         emit modified();
     } else if (!effectId.startsWith("pierrot_")) {
+        // frei0r: id "frei0r:<pluginName>".
+        if (effectId.startsWith(QStringLiteral("frei0r:"))) {
+            const QString name = effectId.mid(QStringLiteral("frei0r:").size());
+            bool found = false;
+            for (const Frei0rEffect& fx : m_currentClip->frei0rFx)
+                if (fx.pluginName == name) { found = true; break; }
+            if (!found) {
+                Frei0rEffect fx;
+                fx.pluginName = name;
+                fx.enabled = true;
+                if (m_frei0rManager) {
+                    if (const Frei0rPluginInfo* info = m_frei0rManager->findPlugin(name)) {
+                        const auto L = [info]() {
+                            QVector<int> slot; int cur = 0;
+                            for (int t : info->paramTypes) {
+                                slot.append(cur);
+                                cur += (t == 3) ? 2 : 1; // 3 = POSITION
+                            }
+                            return qMakePair(slot, cur);
+                        }();
+                        fx.values = QVector<double>(L.second, 0.0);
+                        for (int p = 0; p < info->paramDefaults.size(); ++p)
+                            if (p < info->paramTypes.size()
+                                && info->paramTypes[p] != 3 && p < fx.values.size())
+                                fx.values[p] = info->paramDefaults[p];
+                        // POSITION defaults (0.5 centro) — slot correto:
+                        int vi = 0;
+                        for (int p = 0; p < info->paramTypes.size(); ++p) {
+                            if (info->paramTypes[p] == 3) {
+                                if (vi + 1 < fx.values.size()) {
+                                    fx.values[vi] = 0.5;
+                                    fx.values[vi + 1] = 0.5;
+                                }
+                                vi += 2;
+                            } else {
+                                ++vi;
+                            }
+                        }
+                        fx.colors = info->paramDefaultColors;
+                    }
+                }
+                m_currentClip->frei0rFx.append(fx);
+                qInfo() << "[frei0r] Efeito" << name << "aplicado ao clipe"
+                        << m_currentClip->id;
+                emit modified();
+            }
+            createFrei0rTab(name);
+            return;
+        }
         // OFX: adiciona ao clipe se não existe.
         bool found = false;
         for (const OfxPluginInstance& fx : m_currentClip->ofxFx)
@@ -248,6 +307,15 @@ void ExpressWidget::removeEffectFromClip(const QString& effectId)
     else if (effectId == "pierrot_blur")       m_currentClip->blur = 0.0;
     else if (effectId == "pierrot_audio_eq")   m_currentClip->eqLow = m_currentClip->eqMid = m_currentClip->eqHigh = 0.0;
     else if (effectId == "pierrot_audio_reverb") m_currentClip->reverb = false;
+    else if (effectId.startsWith(QStringLiteral("frei0r:"))) {
+        const QString name = effectId.mid(QStringLiteral("frei0r:").size());
+        for (int i = 0; i < m_currentClip->frei0rFx.size(); ++i) {
+            if (m_currentClip->frei0rFx[i].pluginName == name) {
+                m_currentClip->frei0rFx.removeAt(i);
+                break;
+            }
+        }
+    }
     else {
         // OFX: remove do clipe.
         for (int i = 0; i < m_currentClip->ofxFx.size(); ++i) {
@@ -1141,4 +1209,190 @@ void ExpressWidget::dropEvent(QDropEvent* e)
     addEffect(effectId);
     e->acceptProposedAction();
     e->accept();
+}
+
+// ── Aba de plugin frei0r ─────────────────────────────────────────────────
+// Formulário simples: um slider/spin por parâmetro DOUBLE/BOOL; POSITION e
+// COLOR ficam com os defaults editáveis quando fáceis (cor via QColorDialog).
+
+void ExpressWidget::createFrei0rTab(const QString& pluginName)
+{
+    const QString effectId = QStringLiteral("frei0r:") + pluginName;
+    if (m_tabMap.contains(effectId)) {
+        m_tabs->setCurrentIndex(m_tabMap[effectId]);
+        return;
+    }
+
+    Frei0rPluginInfo info;
+    info.name = pluginName;
+    info.label = pluginName;
+    for (const Frei0rPluginInfo& p : m_frei0rPlugins)
+        if (p.name == pluginName) { info = p; break; }
+    if (m_frei0rManager) {
+        if (const Frei0rPluginInfo* p = m_frei0rManager->findPlugin(pluginName))
+            info = *p;
+    }
+
+    Frei0rEffect* fxPtr = nullptr;
+    if (m_currentClip) {
+        for (Frei0rEffect& fx : m_currentClip->frei0rFx)
+            if (fx.pluginName == pluginName) { fxPtr = &fx; break; }
+    }
+
+    auto* page = new QWidget;
+    auto* pageLay = new QVBoxLayout(page);
+    pageLay->setContentsMargins(8, 8, 8, 8);
+
+    auto* header = new QWidget;
+    auto* headerLay = new QHBoxLayout(header);
+    headerLay->setContentsMargins(0, 0, 0, 4);
+    auto* eyeBtn = new QPushButton;
+    eyeBtn->setFixedSize(28, 28);
+    eyeBtn->setToolTip(tr("Ativar/Desativar"));
+    const bool en = fxPtr ? fxPtr->enabled : true;
+    eyeBtn->setText(en ? QStringLiteral("\xE2\x97\x89") : QStringLiteral("\xE2\x97\x8B"));
+    connect(eyeBtn, &QPushButton::clicked, this, [this, pluginName, eyeBtn]() {
+        if (!m_currentClip) return;
+        for (auto& fx : m_currentClip->frei0rFx) {
+            if (fx.pluginName == pluginName) {
+                fx.enabled = !fx.enabled;
+                eyeBtn->setText(fx.enabled ? QStringLiteral("\xE2\x97\x89")
+                                           : QStringLiteral("\xE2\x97\x8B"));
+                emit modified();
+                break;
+            }
+        }
+    });
+    auto* title = new QLabel(QStringLiteral("<b>%1</b>").arg(info.label));
+    auto* closeBtn = new QPushButton(QStringLiteral("\xC3\x97"));
+    closeBtn->setFixedSize(28, 28);
+    closeBtn->setToolTip(tr("Remover efeito"));
+    connect(closeBtn, &QPushButton::clicked, this, [this, effectId]() {
+        removeEffectFromClip(effectId);
+        if (m_tabMap.contains(effectId)) {
+            const int idx = m_tabMap[effectId];
+            m_tabMap.remove(effectId);
+            m_tabPages.remove(effectId);
+            m_tabs->removeTab(idx);
+        }
+    });
+    headerLay->addWidget(eyeBtn);
+    headerLay->addWidget(title, 1);
+    headerLay->addWidget(closeBtn);
+    pageLay->addWidget(header);
+
+    auto* form = new QFormLayout;
+    form->setContentsMargins(0, 0, 0, 0);
+    int vi = 0;
+    int ci = 0;
+    for (int p = 0; p < info.paramTypes.size(); ++p) {
+        const int type = info.paramTypes.value(p, F0R_PARAM_DOUBLE);
+        const QString pname = info.paramNames.value(p, QString::number(p));
+        const QString hint = info.paramHints.value(p);
+        if (type == 3 /* POSITION */) {
+            auto* row = new QWidget;
+            auto* rowLay = new QHBoxLayout(row);
+            rowLay->setContentsMargins(0, 0, 0, 0);
+            auto* sx = new QDoubleSpinBox;
+            auto* sy = new QDoubleSpinBox;
+            for (auto* s : {sx, sy}) {
+                s->setRange(0.0, 1.0);
+                s->setSingleStep(0.01);
+                s->setDecimals(3);
+                rowLay->addWidget(s);
+            }
+            if (fxPtr && vi + 1 < fxPtr->values.size()) {
+                sx->setValue(fxPtr->values[vi]);
+                sy->setValue(fxPtr->values[vi + 1]);
+            } else {
+                sx->setValue(0.5); sy->setValue(0.5);
+            }
+            const int slot = vi;
+            connect(sx, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
+                    [this, pluginName, slot](double v) {
+                if (!m_currentClip) return;
+                for (auto& fx : m_currentClip->frei0rFx)
+                    if (fx.pluginName == pluginName && slot < fx.values.size()) {
+                        fx.values[slot] = v; emit modified(); break;
+                    }
+            });
+            connect(sy, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
+                    [this, pluginName, slot](double v) {
+                if (!m_currentClip) return;
+                for (auto& fx : m_currentClip->frei0rFx)
+                    if (fx.pluginName == pluginName && slot + 1 < fx.values.size()) {
+                        fx.values[slot + 1] = v; emit modified(); break;
+                    }
+            });
+            form->addRow(pname, row);
+            vi += 2;
+        } else if (type == 2 /* COLOR */) {
+            auto* btn = new QPushButton;
+            QColor col = fxPtr ? fxPtr->colors.value(ci, info.paramDefaultColors.value(p))
+                               : info.paramDefaultColors.value(p, QColor(255, 255, 255));
+            if (!col.isValid()) col = QColor(255, 255, 255);
+            btn->setStyleSheet(
+                QStringLiteral("background:%1; min-height:22px; border:1px solid #555;")
+                    .arg(col.name()));
+            const int cslot = ci;
+            connect(btn, &QPushButton::clicked, this, [this, pluginName, cslot, btn]() {
+                if (!m_currentClip) return;
+                QColor cur(255, 255, 255);
+                for (const auto& fx : m_currentClip->frei0rFx)
+                    if (fx.pluginName == pluginName) { cur = fx.colors.value(cslot, cur); break; }
+                const QColor nc = QColorDialog::getColor(cur, this, tr("Cor do parâmetro"));
+                if (!nc.isValid()) return;
+                for (auto& fx : m_currentClip->frei0rFx)
+                    if (fx.pluginName == pluginName) {
+                        if (fx.colors.size() <= cslot) fx.colors.resize(cslot + 1);
+                        fx.colors[cslot] = nc;
+                        btn->setStyleSheet(QStringLiteral(
+                            "background:%1; min-height:22px; border:1px solid #555;")
+                                               .arg(nc.name()));
+                        emit modified();
+                        break;
+                    }
+            });
+            form->addRow(pname, btn);
+            ++ci;
+        } else {
+            auto* spin = new QDoubleSpinBox;
+            if (type == 0 /* BOOL */) {
+                spin->setRange(0.0, 1.0);
+                spin->setSingleStep(1.0);
+                spin->setDecimals(0);
+            } else {
+                const double def = info.paramDefaults.value(p, 0.0);
+                const double lo = std::min(0.0, def * 2.0 - 1.0);
+                const double hi = std::max(1.0, def * 2.0 + 1.0);
+                spin->setRange(lo, hi);
+                spin->setSingleStep(0.01);
+                spin->setDecimals(3);
+            }
+            spin->setValue(fxPtr && vi < fxPtr->values.size()
+                               ? fxPtr->values[vi]
+                               : info.paramDefaults.value(p, 0.0));
+            if (!hint.isEmpty()) spin->setToolTip(hint);
+            const int slot = vi;
+            connect(spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
+                    [this, pluginName, slot](double v) {
+                if (!m_currentClip) return;
+                for (auto& fx : m_currentClip->frei0rFx)
+                    if (fx.pluginName == pluginName && slot < fx.values.size()) {
+                        fx.values[slot] = v; emit modified(); break;
+                    }
+            });
+            form->addRow(pname, spin);
+            ++vi;
+        }
+    }
+    if (info.paramNames.isEmpty()) {
+        pageLay->addWidget(new QLabel(tr("(sem parâmetros editáveis)")));
+    }
+    pageLay->addLayout(form);
+    pageLay->addStretch();
+
+    m_tabMap[effectId] = m_tabs->addTab(page, info.label.isEmpty() ? pluginName : info.label);
+    m_tabPages[effectId] = page;
+    m_tabs->setCurrentIndex(m_tabMap[effectId]);
 }

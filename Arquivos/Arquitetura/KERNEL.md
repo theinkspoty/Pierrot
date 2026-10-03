@@ -2,7 +2,8 @@
 
 Relatório do núcleo de render/decodificação/exportação do Pierrot, separado da
 UI, e comparação com o Sony Vegas Pro (a referência de fluxo do editor).
-Atualizado em 2026-09-22 (v0.6 alpha).
+Atualizado em 2026-09-22 (v0.6 alpha). Código em 2026-10-02: v0.7 alpha
+(Source, multicam, frei0r, Lumetri, UI Premiere — ver CHANGELOG.md).
 
 ## Números
 
@@ -74,7 +75,7 @@ GPU existe apenas em duas pontas, **não** na composição:
 | Áudio | motor próprio + VST + automação profunda | DSP Rust básico (EQ/reverb), sem VST, sem LUFS |
 | Fluxo | media bins, relink, conform, proxy por faixa, multicam, timeline aninhada | sem multicam/nested; relink em pauta |
 | Ecossistema | scripting .NET, device capture, titler avançado, Blu-ray | não previsto no curto prazo |
-| Maturidade | ~25+ anos de código | ~6 semanas (v0.6 alpha) |
+| Maturidade | ~25+ anos de código | ~6 semanas (v0.7 alpha) |
 
 ### Pontos a favor do Pierrot
 

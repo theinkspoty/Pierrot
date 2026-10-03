@@ -5,6 +5,7 @@
 
 #include "EffectsWidget.h"
 #include "colombina/models/Project.h"
+#include "colombina/frei0r/Frei0rPluginManager.h"
 #include "ui/Theme.h"
 
 #include <QVBoxLayout>
@@ -302,6 +303,29 @@ void EffectsWidget::buildTree()
     }
     ofxCat->setExpanded(true);
 
+    // ── frei0r (FOSS: Kdenlive / Shotcut / MLT) ─────────────────────────
+    auto* f0rCat = new QTreeWidgetItem(m_tree);
+    f0rCat->setText(0, tr("frei0r (FOSS)"));
+    f0rCat->setFlags(f0rCat->flags() & ~Qt::ItemIsSelectable);
+    f0rCat->setFont(0, bold);
+    if (m_frei0rPlugins.isEmpty()) {
+        auto* noPlugins = new QTreeWidgetItem(f0rCat);
+        noPlugins->setText(0, tr("(nenhum plugin — instale frei0r-plugins)"));
+        noPlugins->setFlags(noPlugins->flags() & ~Qt::ItemIsSelectable);
+        noPlugins->setForeground(0, QColor(120, 120, 120));
+        noPlugins->setToolTip(0, tr("Ex.: pacote frei0r-plugins do Debian/Ubuntu; "
+                                    "ou PIERROT_FREI0R_PATH=/pasta/com/.so"));
+    } else {
+        for (const Frei0rPluginInfo& p : m_frei0rPlugins) {
+            if (!p.isFilter) continue;
+            auto* item = new QTreeWidgetItem(f0rCat);
+            item->setText(0, p.label.isEmpty() ? p.name : p.label);
+            item->setData(0, Qt::UserRole, QStringLiteral("frei0r:") + p.name);
+            item->setToolTip(0, p.description.isEmpty() ? p.name : p.description);
+        }
+    }
+    f0rCat->setExpanded(true);
+
     // ── Áudio ───────────────────────────────────────────────────────────
     m_audioTree->clear();
     auto* audioCat = new QTreeWidgetItem(m_audioTree);
@@ -506,6 +530,12 @@ void EffectsWidget::filterOneTree(EffectTree* tree, const QString& text)
 void EffectsWidget::setOfxPlugins(const QVector<OfxPluginInfo>& plugins)
 {
     m_ofxPlugins = plugins;
+    buildTree();
+}
+
+void EffectsWidget::setFrei0rPlugins(const QVector<Frei0rPluginInfo>& plugins)
+{
+    m_frei0rPlugins = plugins;
     buildTree();
 }
 
