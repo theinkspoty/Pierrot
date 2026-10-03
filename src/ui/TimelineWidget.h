@@ -159,6 +159,9 @@ public slots:
     // Grava keyframe de ângulo multicam no playhead do clipe multicam
     // selecionado (ou sob a agulha). `angle` é 0-based.
     void setMulticamAngleAtPlayhead(int angle);
+    // Painel Effects (Premiere): abrir diálogos de cor/texto do clipe.
+    void openGradingForClip(const QString& clipId);
+    void openTextEditorForClip(const QString& clipId);
     // Cria um clipe independente de texto (animável) numa faixa de vídeo.
     void addTextClipAt(int row, double t);
     // Cria um clipe Mesa (composição 2D) numa faixa de vídeo.
@@ -318,10 +321,10 @@ private:
     void showSpeedDialog(Clip* c);
     void showEffectsDialog(Clip* c);
     void showGradingDialog(Clip* c);
+    void showTextEditorDialog(Clip* c);
     void showTransformDialog(Clip* c);
     void showAudioEffectsDialog(Clip* c);
     void trackFxMenu(Track* tr, const QPoint& at);
-    void showTextEditorDialog(Clip* c);
     void drawTrackHeader(QPainter& p, int y, int rowH, const Track& tr, int index, bool selected);
     void drawOutputToggleIcon(QPainter& p, const QRect& r, const Track& tr,
                               const QColor& active, bool hidden);

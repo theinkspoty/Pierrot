@@ -99,7 +99,11 @@
 - **Recorte**: crop L/R/T/B.
 - **Efeitos de vídeo**: brilho, contraste, saturação, desfoque, preto e branco, chroma key.
 - **Efeitos de áudio**: **EQ Express** (graves/médios/agudos, −12 a +12 dB) e **Reverb EX** (mix e tamanho) por clipe — com DSP em tempo real no preview (reverb Schroeder) e reproduzidos na exportação (cadeia dry/wet via `asplit`/`aecho`/`amix`).
-- **Painel Efeitos com abas** Vídeo / Áudio (com busca em ambas).
+- **Painel Effects (réplica Premiere)**: árvore única com busca — Presets,
+  Audio Effects, Audio Transitions, Video Effects (Adjust/Blur/Key/Stylize +
+  Third-Party OFX + frei0r), Video Transitions (Dissolve/Wipes) e
+  Text/Animation. Duplo clique aplica no clipe; transições gravam
+  `transitionType`; texto cria/edita clipe de texto.
 - **LAINKA** (stop motion): skip, jitter, flicker, warp, onion skin, dust, scratch.
 - **Motion blur**.
 - **Plugins OFX** (OpenFX): efeitos de terceiros.

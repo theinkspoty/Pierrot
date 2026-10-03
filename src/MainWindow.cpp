@@ -285,8 +285,85 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_express, &ExpressWidget::modified, this, &MainWindow::setModified);
     connect(m_express, &ExpressWidget::modified, this, [this]() { m_preview->refreshView(); });
 
-    // Clique/arrasto de efeito no painel → Express.
-    connect(m_effects, &EffectsWidget::effectSelected, m_express, &ExpressWidget::addEffect);
+    // Painel Effects (réplica Premiere): IDs especiais tratados aqui;
+    // o resto vai para o Express (nativos/frei0r/OFX).
+    connect(m_effects, &EffectsWidget::effectSelected, this,
+            [this](const QString& id) {
+        if (id.startsWith(QStringLiteral("trans:"))) {
+            const QString t = id.mid(QStringLiteral("trans:").size());
+            if (t == QStringLiteral("constantpower")) {
+                // Crossfade de áudio: vale quando há sobreposição; só registra
+                // o tipo no clipe se for transição de VÍDEO — aqui é áudio.
+                statusBar()->showMessage(
+                    tr("Constant Power: o crossfade de áudio já acompanha a "
+                       "sobreposição na mesma faixa."), 3500);
+                return;
+            }
+            // Transição de vídeo no clipe selecionado.
+            if (!m_timeline->lastSelectedId().isEmpty()) {
+                Clip* c = m_timeline->findClipById(m_timeline->lastSelectedId());
+                if (c && !c->isText) {
+                    emit m_timeline->editStart();
+                    c->transitionType = t;
+                    m_timeline->update();
+                    setModified();
+                    statusBar()->showMessage(
+                        tr("Transição: %1 no clipe selecionado").arg(t), 2500);
+                    return;
+                }
+            }
+            statusBar()->showMessage(
+                tr("Selecione um clipe de vídeo para aplicar a transição."), 3000);
+            return;
+        }
+        if (id == QStringLiteral("pierrot_lumetri")) {
+            if (!m_timeline->lastSelectedId().isEmpty())
+                m_timeline->openGradingForClip(m_timeline->lastSelectedId());
+            else
+                statusBar()->showMessage(tr("Selecione um clipe para o Lumetri."), 3000);
+            return;
+        }
+        if (id.startsWith(QStringLiteral("text:"))) {
+            const QString act = id.mid(QStringLiteral("text:").size());
+            if (act == QStringLiteral("create")) {
+                m_timeline->addTextClipAt(0, m_timeline->playhead());
+                setModified();
+                statusBar()->showMessage(tr("Clipe de texto criado no playhead."), 2500);
+                return;
+            }
+            if (act == QStringLiteral("edit")) {
+                if (!m_timeline->lastSelectedId().isEmpty())
+                    m_timeline->openTextEditorForClip(m_timeline->lastSelectedId());
+                else
+                    statusBar()->showMessage(
+                        tr("Selecione um clipe de texto para editar."), 3000);
+                return;
+            }
+            if (act == QStringLiteral("fadeIn") || act == QStringLiteral("fadeOut")) {
+                Clip* c = m_timeline->findClipById(m_timeline->lastSelectedId());
+                if (!c) {
+                    statusBar()->showMessage(tr("Selecione um clipe."), 3000);
+                    return;
+                }
+                emit m_timeline->editStart();
+                const double dur = std::max(0.1, c->dur);
+                if (act == QStringLiteral("fadeIn"))
+                    c->fadeIn = std::min(1.0, dur * 0.25);
+                else
+                    c->fadeOut = std::min(1.0, dur * 0.25);
+                m_timeline->update();
+                setModified();
+                statusBar()->showMessage(
+                    act == QStringLiteral("fadeIn") ? tr("Fade In aplicado.")
+                                                    : tr("Fade Out aplicado."),
+                    2000);
+                return;
+            }
+            return;
+        }
+        // Efeitos de vídeo/áudio/frei0r/OFX → Express.
+        m_express->addEffect(id);
+    });
 
     // Conecta seleção de clipes na timeline ao painel de efeitos, ao Express
     // e ao painel de Propriedades (Effect Controls).
@@ -1139,7 +1216,7 @@ void MainWindow::createDocks() {
     tabifyDockWidget(m_graphDock, m_velocityDock);
     m_velocityDock->hide();
 
-    m_effectsDock = makeDock(QStringLiteral("effectsDock"), tr("Efeitos"),
+    m_effectsDock = makeDock(QStringLiteral("effectsDock"), tr("Effects"),
                              m_effects, Qt::RightDockWidgetArea);
     m_effectsDock->hide();
 

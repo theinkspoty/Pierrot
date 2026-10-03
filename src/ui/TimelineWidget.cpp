@@ -682,6 +682,18 @@ void TimelineWidget::overwriteSourceAtPlayhead(const QString& mediaId, double sr
     emit modified();
 }
 
+void TimelineWidget::openGradingForClip(const QString& clipId) {
+    Clip* c = findClipById(clipId);
+    if (!c) return;
+    showGradingDialog(c);
+}
+
+void TimelineWidget::openTextEditorForClip(const QString& clipId) {
+    Clip* c = findClipById(clipId);
+    if (!c) return;
+    showTextEditorDialog(c);
+}
+
 // ── Multicâmera ──────────────────────────────────────────────────────────
 
 void TimelineWidget::createMulticamFromSelection() {

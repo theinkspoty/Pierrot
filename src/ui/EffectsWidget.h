@@ -2,6 +2,12 @@
 // Copyright (C) 2026 theinkspoty
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
+//
+// Painel Effects — réplica da estrutura do Adobe Premiere Pro:
+// busca no topo + uma árvore única com Presets, Audio Effects,
+// Audio Transitions, Video Effects (por categoria), Video Transitions
+// e Text/Animation. IDs: pierrot_* | frei0r:<nome> | <ofxId> |
+// trans:<tipo> | text:<ação>.
 
 #pragma once
 
@@ -10,13 +16,11 @@
 #include <QHash>
 
 class QLineEdit;
-class QLabel;
-class QTabWidget;
 class Project;
 struct Clip;
 struct OfxPluginInfo;
 
-#include "colombina/frei0r/Frei0rPluginManager.h" // Frei0rPluginInfo
+#include "colombina/frei0r/Frei0rPluginManager.h"
 
 static inline const char* const kMimeEffect = "application/x-pierrot-effect";
 
@@ -39,34 +43,25 @@ public:
     void setFrei0rPlugins(const QVector<Frei0rPluginInfo>& plugins);
 
 signals:
+    // effectId: pierrot_* | frei0r:* | <ofxId> | trans:* | text:*
     void effectSelected(const QString& effectId);
 
 private slots:
-    void onTreeItemClicked();
-    void onTreeItemDoubleClicked();
+    void onItemActivated();
     void onSearchChanged(const QString& text);
-    void onSelectionChanged();
 
 private:
     void buildTree();
     void filterTree(const QString& text);
-    static void filterOneTree(EffectTree* tree, const QString& text);
-    void updatePreview(const QString& effectId);
-    void updateCategoryPreview(QTreeWidgetItem* category);
-    static QHash<QString, QString> effectDescriptions();
+    static QTreeWidgetItem* addFolder(QTreeWidget* tree, QTreeWidgetItem* parent,
+                                      const QString& title);
+    static void addEffectItem(QTreeWidgetItem* parent, const QString& title,
+                              const QString& id, const QString& tip = QString());
 
     Project* m_project = nullptr;
     Clip* m_currentClip = nullptr;
-    QTabWidget* m_tabs = nullptr;
     EffectTree* m_tree = nullptr;
-    EffectTree* m_audioTree = nullptr;
     QLineEdit* m_searchBox = nullptr;
     QVector<OfxPluginInfo> m_ofxPlugins;
     QVector<Frei0rPluginInfo> m_frei0rPlugins;
-
-    // Preview panel
-    QWidget* m_previewPanel = nullptr;
-    QLabel* m_previewIcon = nullptr;
-    QLabel* m_previewName = nullptr;
-    QLabel* m_previewDesc = nullptr;
 };
