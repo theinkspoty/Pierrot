@@ -129,6 +129,10 @@ signals:
     void mediaToTimeline(const QString& mediaId);
     // Duplo clique: abre no Source Monitor (fluxo Premiere).
     void mediaToSource(const QString& mediaId);
+    // Arrastar/soltar .obj na pool: importa como malha da Mesa (não como mídia).
+    void objImportRequested(const QStringList& objPaths);
+    // Arrastar/soltar .blend: converte via Blender CLI → malha 3D.
+    void blendImportRequested(const QStringList& blendPaths);
     // Arrasto manual da pool para a timeline.
     void dragHover(const QPoint& globalPos);
     void dragHoverCleared();

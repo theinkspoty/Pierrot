@@ -8,6 +8,7 @@
 #include <QMenu>
 #include <QAction>
 #include <QColorDialog>
+#include <QFileDialog>
 #include <QtMath>
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -46,26 +47,70 @@ void MesaWidget::toggleMotionBlur() {
     update();
 }
 
+void MesaWidget::toggleMesa3d() {
+    MesaComposition* mc = currentMesa();
+    if (!mc) return;
+    mc->mesa3d = !mc->mesa3d;
+    qCInfo(lcMesa).noquote() << "[MESA] modo 3D" << (mc->mesa3d ? "ON (Fase 0: campos ativos, render ainda 2D)"
+                                                                  : "OFF (2D)");
+    emit changesCommitted();
+    emit modified();
+    update();
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Operações de composição (remover, reset, ordem)
 // ═══════════════════════════════════════════════════════════════════════
 
 void MesaWidget::removeLayersFromMesa() {
     MesaComposition* mc = currentMesa();
-    if (!mc || m_selectedIdxs.isEmpty()) return;
+    if (!mc || !m_project) return;
 
-    // Índices em ordem decrescente para remover sem deslocar os demais.
     QList<int> idxs = m_selectedIdxs.values();
+    if (idxs.isEmpty() && m_selectedIdx >= 0) idxs.append(m_selectedIdx);
+    if (idxs.isEmpty()) return;
     std::sort(idxs.begin(), idxs.end(), std::greater<int>());
+
     for (int i : idxs) {
-        if (i >= 0 && i < mc->trackIds.size()) {
-            qCInfo(lcMesa).noquote() << "[MESA] remover da Mesa: '"
-                                     << mc->trackIds[i] << "'";
-            mc->trackIds.remove(i);
+        if (i < 0 || i >= mc->trackIds.size()) continue;
+        const QString tid = mc->trackIds[i];
+        qCInfo(lcMesa).noquote() << "[MESA] remover da Mesa: '" << tid << "'";
+        mc->trackIds.remove(i);
+
+        // Apaga a track do projeto (clips + mídia 3D órfã) — não só desanexa.
+        for (int ti = 0; ti < m_project->videoTracks.size(); ++ti) {
+            if (m_project->videoTracks[ti].id != tid) continue;
+            Track& tr = m_project->videoTracks[ti];
+            const QStringList mediaIds = [&]() {
+                QStringList ids;
+                for (const Clip& c : tr.clips) ids << c.mediaId;
+                return ids;
+            }();
+            m_project->videoTracks.remove(ti);
+            // Remove mídias mesh órfãs (nenhum outro clipe usa).
+            for (const QString& mid : mediaIds) {
+                bool used = false;
+                for (const Track& t2 : m_project->videoTracks)
+                    for (const Clip& c : t2.clips)
+                        if (c.mediaId == mid) { used = true; break; }
+                if (used) continue;
+                for (int mi = 0; mi < m_project->media.size(); ++mi) {
+                    if (m_project->media[mi].id == mid && m_project->media[mi].isMesh) {
+                        m_project->media.removeAt(mi);
+                        break;
+                    }
+                }
+            }
+            break;
         }
+        // Áudio vinculado à mesma track? (não aplicável — tracks de vídeo)
     }
+
     m_selectedIdxs.clear();
     m_selectedIdx = -1;
+    // Invalida o cache de tracks da Mesa (trackIds mudou).
+    m_cachedTracks.clear();
+    m_cachedTracksVersion = 0;
     emit changesCommitted();
     emit modified();
     update();
@@ -228,7 +273,7 @@ void MesaWidget::showCanvasContextMenu(const QPoint& globalPos, int hitIdx) {
         ActToFront, ActToBack, ActFwd, ActBwd,
         ActAlignL, ActAlignCH, ActAlignR, ActAlignT, ActAlignCV, ActAlignB,
         ActDistH, ActDistV,
-        ActSolid, ActGradient
+        ActSolid, ActGradient, ActMesh
     };
 
     QMenu menu(this);
@@ -293,11 +338,19 @@ void MesaWidget::showCanvasContextMenu(const QPoint& globalPos, int hitIdx) {
     solidAct->setData(ActSolid);
     QAction* gradAct = newMenu->addAction(tr("Gradiente…"));
     gradAct->setData(ActGradient);
+    QAction* meshAct = newMenu->addAction(tr("Malha 3D (.obj / .blend)…"));
+    meshAct->setData(ActMesh);
+    meshAct->setToolTip(tr("Importa .obj ou .blend (via Blender CLI) como camada 3D"));
 
     menu.addSeparator();
     QAction* mbAct = menu.addAction(tr("Motion blur (Ctrl+Shift+B)"));
     mbAct->setCheckable(true);
     mbAct->setChecked(mc->motionBlur);
+    QAction* mc3d = menu.addAction(tr("Modo 3D (AE Classic)"));
+    mc3d->setCheckable(true);
+    mc3d->setChecked(mc->mesa3d);
+    mc3d->setToolTip(tr("Ativa os campos 3D da Mesa (Z, FOV, rotações XYZ). "
+                        "O render 3D completo entra na Fase 1."));
 
     QAction* chosen = menu.exec(globalPos);
     if (!chosen) return;
@@ -305,6 +358,10 @@ void MesaWidget::showCanvasContextMenu(const QPoint& globalPos, int hitIdx) {
     // Motion blur da composição inteira (câmera + camadas no preview/export).
     if (chosen == mbAct) {
         toggleMotionBlur();
+        return;
+    }
+    if (chosen == mc3d) {
+        toggleMesa3d();
         return;
     }
 
@@ -363,6 +420,15 @@ void MesaWidget::showCanvasContextMenu(const QPoint& globalPos, int hitIdx) {
             QColor b = QColorDialog::getColor(Qt::black, this, tr("Cor final do gradiente"));
             if (!b.isValid()) return;
             emit mesaAddSolidRequested(QStringLiteral("gradient"), a, b);
+            break;
+        }
+        case ActMesh: {
+            const QString path = QFileDialog::getOpenFileName(
+                this, tr("Importar malha 3D"), QString(),
+                tr("Modelos 3D (*.obj *.blend);;Wavefront OBJ (*.obj);;"
+                   "Blender (*.blend);;Todos (*)"));
+            if (path.isEmpty()) return;
+            emit mesaAddMeshRequested(path);
             break;
         }
         default: break;

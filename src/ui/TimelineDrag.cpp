@@ -583,21 +583,6 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
             } else if (nearTop && cw - dx <= 10) {
                 m_dragMode = FadeOut;
                 m_dragOrigFade = clip->fadeOut;
-            } else if (nearTop && !audio) {
-                // Vegas: segurar no TOPO do clipe de vídeo (centro) e arrastar
-                // para baixo reduz a opacidade do clipe; para cima aumenta.
-                m_dragMode = ClipOpacity;
-                m_dragOrigOpacity = clip->opacity;
-            } else if (!audio && dx > 10 && cw - dx > 10
-                       && (y - topY) > 14 && (y - topY) < trackH(row, false) - 6) {
-                // Time Remapping: banda de velocidade no corpo do clipe.
-                // Arrastar para cima = mais rápido; para baixo = mais lento.
-                m_dragMode = ClipSpeed;
-                m_dragOrigSpeed = clip->speed;
-                m_speedRel = std::clamp(t - clip->pos, 0.0, clip->dur);
-                m_dragOrigSpeed = clipSpeedAt(*clip, m_speedRel);
-                emit undoLabel(tr("Velocidade do clipe"));
-                emit editStart();
             } else if (m_tool == ToolMove) {
                 m_dragMode = MoveClip;
             } else if (m_tool == ToolRipple) {
@@ -765,14 +750,14 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
     // Destaque das alças (opacidade no centro, fades nos cantos) ao passar o
     // mouse sobre o topo de um clipe de vídeo. Repinta só quando o alvo muda.
     // Ignorado durante arrastos. Throttle: só recalcula a cada 4px de movimento.
-    QString newGrip, newCorner;
+    QString newCorner;
     int newSide = 0;
     if (m_dragMode == None && !(e->buttons() & Qt::LeftButton)
         && e->pos().y() >= kRulerH) {
         const int hoverDx = e->pos().x() - m_lastHoverPos.x();
         const int hoverDy = e->pos().y() - m_lastHoverPos.y();
         if (std::abs(hoverDx) >= 4 || std::abs(hoverDy) >= 4
-            || m_hoverGripClip.isEmpty() != m_lastHoverClipId.isEmpty()) {
+            || m_hoverCornerClip.isEmpty() != m_lastHoverClipId.isEmpty()) {
             m_lastHoverPos = e->pos();
             bool hAudio = false;
             int hrow = -1;
@@ -786,13 +771,11 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                         const int hdx = e->pos().x() - hcx;
                         if (hdx <= 12) { newCorner = hc->id; newSide = -1; }
                         else if (hcw - hdx <= 12) { newCorner = hc->id; newSide = 1; }
-                        else if (!hAudio) newGrip = hc->id;
                     }
                 }
             }
-            if (newGrip != m_hoverGripClip || newCorner != m_hoverCornerClip
+            if (newCorner != m_hoverCornerClip
                 || newSide != m_hoverCornerSide) {
-                m_hoverGripClip = newGrip;
                 m_hoverCornerClip = newCorner;
                 m_hoverCornerSide = newSide;
                 update();
@@ -1101,15 +1084,9 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
             Clip* clip = findClipById(m_dragClip);
             if (clip) {
                 const double dt = (e->pos().x() - m_dragStart.x()) / m_pps;
-                if (!m_dragUndoPushed) {
-                    // Arrasto de opacidade é vertical: usa o dy (não o dt que
-                    // depende do eixo do tempo) para disparar o undo.
-                    const double dy = e->pos().y() - m_dragStart.y();
-                    if ((m_dragMode == ClipOpacity && std::fabs(dy) > 0.5)
-                        || std::fabs(dt) > 1e-9) {
-                        emit editStart();
-                        m_dragUndoPushed = true;
-                    }
+                if (!m_dragUndoPushed && std::fabs(dt) > 1e-9) {
+                    emit editStart();
+                    m_dragUndoPushed = true;
                 }
                 if (m_dragMode == MoveClip) {
                     // Troca de faixa durante o arraste: cada clipe segue a
@@ -1284,40 +1261,6 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                         else sc->fadeOut = nf;
                         invalidateSceneContent();
                     }
-                } else if (m_dragMode == ClipOpacity) {
-                    // Vegas: arrastar o topo do clipe de vídeo para baixo reduz
-                    // a opacidade (0–100%), para cima aumenta.
-                    Clip* sc = findClipById(m_dragClip);
-                    int crow;
-                    bool caudio;
-                    if (sc && clipTrackIndex(sc->id, crow, caudio) && !caudio) {
-                        const int rowH = trackH(crow, false);
-                        if (rowH > 0) {
-                            const double dy = (double)(e->pos().y() - m_dragStart.y())
-                                              / (double)rowH;
-                            sc->opacity = std::clamp(m_dragOrigOpacity - dy, 0.0, 1.0);
-                            invalidateSceneContent();
-                        }
-                    }
-                } else if (m_dragMode == ClipSpeed) {
-                    // Time Remapping: dy negativo (para cima) = mais rápido.
-                    Clip* sc = findClipById(m_dragClip);
-                    int crow;
-                    bool caudio;
-                    if (sc && clipTrackIndex(sc->id, crow, caudio) && !caudio) {
-                        const int rowH = trackH(crow, false);
-                        if (rowH > 0) {
-                            const double dy = (double)(e->pos().y() - m_dragStart.y())
-                                              / (double)rowH;
-                            double nv = std::clamp(m_dragOrigSpeed - dy * 2.0, 0.05, 8.0);
-                            if (sc->kfSpeed.isEmpty()) {
-                                sc->speed = std::clamp(nv, 0.1, 4.0);
-                            } else {
-                                upsertKeyframe(sc->kfSpeed, m_speedRel, nv, KfLinear);
-                            }
-                            invalidateSceneContent();
-                        }
-                    }
                 }
                 // A duração do projeto MUDA ao mover/trimar (é o máx de pos+dur),
                 // então a barra horizontal precisa acompanhar o mouse. Só a
@@ -1358,8 +1301,6 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
             const bool nearTop = (e->pos().y() - rowY(row, audio)) <= 12;
             if (nearTop && (dx <= 10 || cw - dx <= 10)) {
                 setCursor(Qt::SizeVerCursor); // alças de fade (cantos superiores)
-            } else if (nearTop && !audio) {
-                setCursor(Qt::SizeVerCursor); // alça de opacidade (topo do vídeo)
             } else if (m_tool == ToolMove) {
                 setCursor(Qt::OpenHandCursor);
             } else if (dx <= 8 || cw - dx <= 8) {
@@ -1502,43 +1443,6 @@ void TimelineWidget::mouseDoubleClickEvent(QMouseEvent* e) {
             return;
         }
     }
-    // Duplo clique na banda de velocidade do clipe de vídeo:
-    // alterna keyframe de time remapping (Premiere).
-    {
-        int srow;
-        bool saudio;
-        const double st = xToTime(e->pos().x());
-        if (e->pos().x() >= kHeaderW && rowFromY(e->pos().y(), srow, saudio) && !saudio) {
-            Clip* sc = clipAt(srow, saudio, st);
-            const int topY = rowY(srow, -1);
-            const int dy = e->pos().y() - topY;
-            if (sc && !sc->isText && dy > 14 && dy < trackH(srow, false) - 6) {
-                const double rel = std::clamp(st - sc->pos, 0.0, sc->dur);
-                emit undoLabel(tr("Keyframe de velocidade"));
-                emit editStart();
-                bool found = false;
-                for (int i = 0; i < sc->kfSpeed.size(); ++i) {
-                    if (std::fabs(sc->kfSpeed[i].time - rel) < 0.08) {
-                        if (sc->kfSpeed.size() > 2) sc->kfSpeed.removeAt(i);
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    if (sc->kfSpeed.isEmpty()) {
-                        upsertKeyframe(sc->kfSpeed, 0.0, sc->speed, KfLinear);
-                        upsertKeyframe(sc->kfSpeed, std::max(0.05, sc->dur),
-                                       sc->speed, KfLinear);
-                    }
-                    upsertKeyframe(sc->kfSpeed, rel, clipSpeedAt(*sc, rel), KfLinear);
-                }
-                invalidateSceneContent();
-                update();
-                emit modified();
-                return;
-            }
-        }
-    }
     int row;
     bool audio;
     // Duplo clique no nome da faixa (linha inferior do cabeçalho): renomeia
@@ -1663,6 +1567,33 @@ void TimelineWidget::dropEvent(QDropEvent* e) {
     if (!m_project) return;
     const QMimeData* md = e->mimeData();
 
+    // .obj / .blend → malha da Mesa (não é mídia FFmpeg)
+    if (md->hasUrls()) {
+        QStringList objs;
+        QStringList blends;
+        for (const QUrl& u : md->urls()) {
+            if (!u.isLocalFile()) continue;
+            const QString path = u.toLocalFile();
+            if (path.endsWith(QLatin1String(".obj"), Qt::CaseInsensitive))
+                objs.append(path);
+            else if (path.endsWith(QLatin1String(".blend"), Qt::CaseInsensitive))
+                blends.append(path);
+        }
+        if (!objs.isEmpty() || !blends.isEmpty()) {
+            if (m_project->mesas.isEmpty()) criarMesa();
+            const QString mesaId = m_project->mesas.isEmpty()
+                                      ? QString()
+                                      : m_project->mesas.last().id;
+            if (!mesaId.isEmpty()) {
+                for (const QString& p : objs) addMeshToMesa(mesaId, p);
+                for (const QString& p : blends) Q_UNUSED(importBlendAsMesh(mesaId, p));
+                emit mesaOpenRequested(mesaId);
+            }
+            e->acceptProposedAction();
+            return;
+        }
+    }
+
     // ── Arrasto de efeito (do painel de efeitos) ─────────────────────────
     if (md->hasFormat(QLatin1String(kMimeEffect))) {
         const QByteArray effectData = md->data(QLatin1String(kMimeEffect));
@@ -1718,6 +1649,16 @@ void TimelineWidget::dropEvent(QDropEvent* e) {
             target->reverb = true;
             target->reverbMix = 0.35;
             target->reverbSize = 0.5;
+        } else if (effectId.startsWith(QStringLiteral("trans:"))) {
+            // Transição de vídeo do painel Effects — NÃO é plugin OFX.
+            const QString t = effectId.mid(QStringLiteral("trans:").size());
+            if (t != QStringLiteral("constantpower"))
+                target->transitionType = t;
+        } else if (effectId.startsWith(QStringLiteral("text:"))
+                   || effectId.startsWith(QStringLiteral("frei0r:"))
+                   || effectId == QStringLiteral("pierrot_lumetri")) {
+            // IDs especiais do painel Effects: não vão no stack OFX.
+            // Texto/fade e Lumetri o MainWindow/Express tratam; aqui só ignora.
         } else {
             // Efeito OFX: adiciona ao stack ofxFx do clipe.
             bool already = false;

@@ -33,6 +33,7 @@ public:
     explicit VelocityCanvas(QWidget* parent = nullptr);
 
     void setClip(Clip* clip, double playhead, double fps);
+    void setClipId(Project* project, const QString& clipId, double playhead);
     void setPlayhead(double t);
     void commitChange(); // emite changed() depois de mutação
     void setTool(VelTool t) { m_tool = t; update(); }
@@ -65,8 +66,12 @@ private:
     int hitHandle(const QPoint& p, int* idx, int* side) const;
     void ensureDefaults();
     void drawCurve(QPainter& p, const QRect& plot);
+    // Resolve o clipe por id (evita SIGSEGV ao apagar o clipe).
+    Clip* resolveClip() const;
 
-    Clip* m_clip = nullptr;
+    Project* m_project = nullptr;
+    QString m_clipId;
+    Clip* m_clip = nullptr; // cache; revalidado via resolveClip()
     double m_playhead = 0.0;
     double m_fps = 30.0;
     double m_valLo = 0.0, m_valHi = 2.0;

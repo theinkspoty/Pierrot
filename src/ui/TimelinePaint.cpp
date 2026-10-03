@@ -970,14 +970,22 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
             drawAudioWaveform(cp, cr, c, path, tint);
         else if (c.isText)
             drawTextClipBody(cp, cr, c);
-        else if (mi && mi->isSolid)
+        else if (mi && mi->isMesh) {
+            // Clipe 3D (.obj): corpo sólido + rótulo (sem thumbs de vídeo).
+            cp.fillRect(cr, QColor(50, 70, 100));
+            cp.setPen(QColor(140, 180, 220));
+            cp.setFont(QFont(cp.font().family(), 8, QFont::Bold));
+            cp.drawText(cr.adjusted(4, 4, -4, -4),
+                        Qt::AlignLeft | Qt::AlignTop,
+                        QStringLiteral("3D"));
+        } else if (mi && mi->isSolid)
             cp.fillRect(cr, mi->solidColor);
         else
             drawVideoThumbs(cp, cr, c, path);
         if (!audio)
             drawOpacityHandle(cp, cr, c);
-        if (!audio && !c.isText)
-            drawSpeedEnvelope(cp, cr, c);
+        // Banda de velocidade removida do clip body (atrapalhava o arraste).
+        // Edição de velocidade fica no dock Velocidade / menu do clipe.
         drawFadeCorners(cp, cr, c);
         if (m_tool == ToolEnvelope && (m_showVolLines || !audio))
             drawEnvelope(cp, cr, c, audio);
@@ -1015,6 +1023,8 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
                             ? c.angleAt(rel) : c.angleAt(0.0);
         label += QString("  \u00b7  MC %1/%2").arg(ang + 1).arg(c.multicamSources.size());
     }
+    if (mi && mi->isMesh)
+        label += QStringLiteral("  \u00b7  3D");
     if (audio && c.hasAudioFx())
         label += QString("  \u00b7  FX");
     if (std::fabs(c.speed - 1.0) > 1e-4)
@@ -1063,19 +1073,6 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
         const int w = (int)(obar.width() * c.opacity);
         p.fillRect(obar, QColor(0, 0, 0, 110));
         p.fillRect(QRect(obar.x(), obar.y(), w, obar.height()), QColor(255, 255, 255, 190));
-    }
-
-    if (!audio && c.id == m_hoverGripClip) {
-        const int cx = r.center().x();
-        QPainterPath tab;
-        const int tw = 28;
-        tab.moveTo(cx - tw / 2, r.top() + 1);
-        tab.lineTo(cx + tw / 2, r.top() + 1);
-        tab.lineTo(cx, r.top() + 14);
-        tab.closeSubpath();
-        p.setPen(QPen(QColor(255, 255, 255), 2));
-        p.setBrush(QColor(180, 215, 255, 230));
-        p.drawPath(tab);
     }
 
     if (c.id == m_hoverCornerClip && m_hoverCornerSide != 0) {

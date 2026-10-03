@@ -71,6 +71,14 @@ MesaWidget::LayerBounds MesaWidget::layerBounds(const Track* t, int trackIdx) co
         break;
     }
 
+    // Malha 3D (.obj): sem clip de mídia — bounds no tamanho normalizado do
+    // loader (~200px) para a caixa de seleção bater com o desenho.
+    if (!t->meshPath.isEmpty()) {
+        frameW = 200.0;
+        frameH = 200.0;
+        lb.hasContent = true;
+    }
+
     lb.w = frameW;
     lb.h = frameH;
     return lb;
@@ -155,13 +163,15 @@ MesaWidget::HitZone MesaWidget::hitTest(const QPointF& sp, int& outTrackIdx) con
     if (!mc) return HitNone;
 
     const QVector<Track*> tracks = mesaTracks();
-    const double handleRadius = 6.0;
+    // Alças maiores (estilo AE): mais fácil agarrar cantos/handle de rotação.
+    const double handleRadius = 10.0;
+    const double rotateRadius = 12.0;
 
     auto layerHit = [&](const LayerBounds& lb) -> HitZone {
         QPointF center, corners[4], rotateHandle;
         layerScreenRect(lb, center, corners, rotateHandle);
 
-        if (QLineF(rotateHandle, sp).length() <= handleRadius + 2)
+        if (QLineF(rotateHandle, sp).length() <= rotateRadius)
             return HitRotate;
 
         const struct { const QPointF* corner; HitZone zone; } handleMap[] = {
@@ -220,16 +230,11 @@ MesaWidget::HitZone MesaWidget::hitTest(const QPointF& sp, int& outTrackIdx) con
         return HitNone;
     };
 
-    // 1) A câmera TEM prioridade quando é a "escolha" ativa: com ela
-    // selecionada, o gizmo (e os cantos) ficam por cima de qualquer camada —
-    // nunca fica impossível agarrar o frame mesmo com uma imagem cobrindo.
-    if (m_cameraSelected) {
-        const HitZone z = camHit();
-        if (z != HitNone) return z;
-    }
-
-    // 2) Camadas com conteúdo (topo → fundo)
-    // Oculta (olho off) ou trancada (cadeado) não participa do hit test.
+    // Prioridade (não deixa a câmera se intrometer nos testes do modelo):
+    //   1. Camadas com conteúdo — SEMPRE clicáveis (mesmo com câmera sel.).
+    //   2. Cantos da câmera — resize (pequenos; não cobrem o modelo).
+    //   3. Corpo da câmera — só onde não há camada por baixo.
+    //   4. Placeholders de camadas sem conteúdo.
     for (int i = tracks.size() - 1; i >= 0; --i) {
         const Track* tr = tracks[i];
         if (tr->mesaHidden || tr->mesaLocked) continue;
@@ -240,13 +245,20 @@ MesaWidget::HitZone MesaWidget::hitTest(const QPointF& sp, int& outTrackIdx) con
         }
     }
 
-    // 3) Câmera (não selecionada): logo depois das camadas com conteúdo.
+    // Cantos da câmera (resize) — após as camadas, antes do corpo.
     {
         const HitZone z = camHit();
-        if (z != HitNone) return z;
+        if (z == HitCameraCorner) return z;
     }
 
-    // 4) Placeholders (camadas sem conteúdo ativo no playhead)
+    // Corpo da câmera: só se o cursor NÃO estiver sobre uma camada
+    // (as camadas já foram testadas acima e retornaram se baterem).
+    {
+        const HitZone z = camHit();
+        if (z == HitCamera) return z;
+    }
+
+    // Placeholders (camadas sem conteúdo ativo no playhead)
     for (int i = tracks.size() - 1; i >= 0; --i) {
         const Track* tr = tracks[i];
         if (tr->mesaHidden || tr->mesaLocked) continue;

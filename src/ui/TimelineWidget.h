@@ -162,6 +162,8 @@ public slots:
     // Painel Effects (Premiere): abrir diálogos de cor/texto do clipe.
     void openGradingForClip(const QString& clipId);
     void openTextEditorForClip(const QString& clipId);
+    // Abre o dock Pivot (edição 3D do clipe).
+    void openPivotForClip(const QString& clipId);
     // Cria um clipe independente de texto (animável) numa faixa de vídeo.
     void addTextClipAt(int row, double t);
     // Cria um clipe Mesa (composição 2D) numa faixa de vídeo.
@@ -174,6 +176,12 @@ public slots:
     // gera o MediaItem no pool e uma track nova com um clip cobrindo tudo.
     void addSolidToMesa(const QString& mesaId, const QString& generator,
                         const QColor& c1, const QColor& c2);
+    // Importa malha .obj como camada da Mesa (Mesa 3D).
+    void addMeshToMesa(const QString& mesaId, const QString& objPath);
+    // Converte .blend via Blender CLI e importa como malha 3D. Retorna
+    // QString() em caso de sucesso, ou a mensagem de erro — o caller precisa
+    // disso para não anunciar sucesso quando a conversão falhou.
+    QString importBlendAsMesh(const QString& mesaId, const QString& blendPath);
     // Duplica uma track que é camada de Mesa (cópia profunda com ids novos,
     // deslocada +20/+20 no canvas).
     void duplicateMesaTrack(const QString& mesaId, const QString& trackId);
@@ -205,6 +213,7 @@ signals:
     void mesaOpenRequested(const QString& mesaId);
     void mesaChanged(const QString& mesaId);
     void velocityRequested(const QString& clipId); // abre dock Editor de Velocidade
+    void pivotRequested(const QString& clipId); // abre dock Pivot (3D do clipe)
     void selectionChanged(const QString& id);
     void pancropRequested(const QString& id);
     void maskRequested(const QString& id);
@@ -227,7 +236,7 @@ protected:
     void dragLeaveEvent(QDragLeaveEvent*) override;
     void dropEvent(QDropEvent*) override;
 private:
-    enum DragMode { None, MoveClip, TrimLeft, TrimRight, ResizeSpeed, FadeIn, FadeOut, ClipOpacity, ClipSpeed, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, RulerLoopEdge, ResizeTrack, TrackVol, ClipVol, TrackDrag, TrackEnvVol,
+    enum DragMode { None, MoveClip, TrimLeft, TrimRight, ResizeSpeed, FadeIn, FadeOut, Razor, RulerLoop, ZoomSelect, Marquee, PlayheadDrag, RulerLoopEdge, ResizeTrack, TrackVol, ClipVol, TrackDrag, TrackEnvVol,
         RippleEdit,    // Trim com ripple (desloca subsequentes)
         RollingEdit,   // Ajusta fronteira entre 2 clipes
         SlipEdit,      // Mudar in/out sem mudar posição
@@ -318,7 +327,6 @@ private:
     void trackEnvelopePress(int row, bool audio, double t);
     void applyZoomRect(double t0, double t1);
     void removeClipsByIds(const QStringList& ids);
-    void showSpeedDialog(Clip* c);
     void showEffectsDialog(Clip* c);
     void showGradingDialog(Clip* c);
     void showTextEditorDialog(Clip* c);
@@ -432,9 +440,6 @@ private:
     double m_dragOrigIn = 0.0;
     double m_dragOrigDur = 0.0;
     double m_dragOrigFade = 0.0; // valor original de fadeIn/fadeOut ao arrastar
-    double m_dragOrigOpacity = 1.0; // opacidade original do clipe ao arrastar no topo
-    double m_dragOrigSpeed = 1.0;  // speed base ao arrastar a banda de velocidade
-    double m_speedRel = 0.0;       // tempo relativo do clipe no início do drag de speed
     // Estado para Rolling Edit
     QString m_rollClipA;  // clipe da esquerda
     QString m_rollClipB;  // clipe da direita
@@ -463,7 +468,6 @@ private:
     double m_zoomT1 = 0.0;
     QRect m_marqueeRect;
     QPoint m_mousePos{-1, -1}; // posição atual do mouse (destaque das alças)
-    QString m_hoverGripClip; // clipe cuja alça de opacidade está sob o mouse
     QString m_hoverCornerClip; // clipe cujo canto de fade está sob o mouse
     int m_hoverCornerSide = 0; // -1 esquerdo, +1 direito, 0 nenhum
     QString m_lastVolTip; // texto do último tooltip dB mostrado

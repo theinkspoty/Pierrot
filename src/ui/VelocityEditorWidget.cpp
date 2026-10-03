@@ -126,9 +126,16 @@ int VelocityCanvas::hitHandle(const QPoint& p, int* idx, int* side) const {
 }
 
 void VelocityCanvas::setClip(Clip* clip, double playhead, double fps) {
-    m_clip = clip;
+    setClipId(clip ? nullptr : nullptr, clip ? clip->id : QString(), playhead);
+    // project precisa ser setado antes — via setClipId(Project*, id, t).
+    Q_UNUSED(fps);
+}
+
+void VelocityCanvas::setClipId(Project* project, const QString& clipId, double playhead) {
+    m_project = project;
+    m_clipId = clipId;
     m_playhead = playhead;
-    m_fps = fps > 0 ? fps : 30.0;
+    m_clip = resolveClip();
     if (m_clip) {
         double lo = m_clip->speed, hi = m_clip->speed;
         for (const Keyframe& k : m_clip->kfSpeed) {
@@ -220,12 +227,24 @@ void VelocityCanvas::drawCurve(QPainter& p, const QRect& plot) {
     Q_UNUSED(tc);
 }
 
+Clip* VelocityCanvas::resolveClip() const {
+    if (!m_project || m_clipId.isEmpty()) return nullptr;
+    for (Track& t : m_project->videoTracks)
+        for (Clip& c : t.clips)
+            if (c.id == m_clipId) return &c;
+    for (Track& t : m_project->audioTracks)
+        for (Clip& c : t.clips)
+            if (c.id == m_clipId) return &c;
+    return nullptr;
+}
+
 void VelocityCanvas::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
     const auto& tc = themeColors();
     p.fillRect(rect(), tc.base);
 
+    m_clip = resolveClip();
     const int padL = 40, padR = 12, padT = 12, padB = 24;
     const QRect plot(padL, padT, width() - padL - padR, height() - padT - padB);
     p.setPen(tc.trackBorder);
@@ -350,6 +369,7 @@ void VelocityCanvas::paintEvent(QPaintEvent*) {
 }
 
 void VelocityCanvas::mousePressEvent(QMouseEvent* e) {
+    m_clip = resolveClip();
     if (!m_clip) return;
     if (e->button() != Qt::LeftButton) return;
 
@@ -430,6 +450,7 @@ void VelocityCanvas::mousePressEvent(QMouseEvent* e) {
 }
 
 void VelocityCanvas::mouseMoveEvent(QMouseEvent* e) {
+    m_clip = resolveClip();
     if (!m_clip || m_dragIdx < 0 || m_dragIdx >= m_clip->kfSpeed.size()) return;
     Keyframe& k = m_clip->kfSpeed[m_dragIdx];
     if (m_dragHandle >= 0) {
@@ -764,4 +785,5 @@ void VelocityEditorWidget::refreshUi() {
                              "para criar o envelope.")
                               .arg(c->speed, 0, 'f', 2));
     if (m_canvas) m_canvas->setClip(c, m_playhead, 30.0);
+    if (m_canvas) m_canvas->setClipId(m_project, c->id, m_playhead);
 }

@@ -58,6 +58,9 @@ public:
     // Alterna motion blur da composição atual (atalho Ctrl+Shift+B, botão
     // "MB" do header e menu de contexto usam todos este método).
     void toggleMotionBlur();
+    // Alterna modo 3D (AE Classic) da composição atual. Na Fase 0 o render
+    // continua 2D; a flag destrava os campos Z/FOV e a Fase 1.
+    void toggleMesa3d();
 
 signals:
     void modified();
@@ -70,6 +73,8 @@ signals:
     // Pedido de criação/alteração de camadas cuja fonte vive na TimelineWidget
     // (criação de tracks/clipes centralizada lá).
     void mesaAddSolidRequested(const QString& generator, const QColor& c1, const QColor& c2);
+    // Importa malha .obj como camada da Mesa (Mesa 3D / Fase 3 MVP).
+    void mesaAddMeshRequested(const QString& objPath);
     void mesaDuplicateLayerRequested(const QString& mesaId, const QString& trackId);
     // Abre o painel de propriedades (janela normal) para a camada em questão.
     void mesaLayerPropsRequested(const QString& trackId);
@@ -83,6 +88,9 @@ protected:
     void wheelEvent(QWheelEvent* e) override;
     void keyPressEvent(QKeyEvent* e) override;
     void resizeEvent(QResizeEvent* e) override;
+    void dragEnterEvent(QDragEnterEvent* e) override;
+    void dragMoveEvent(QDragMoveEvent* e) override;
+    void dropEvent(QDropEvent* e) override;
 
 private:
     MesaComposition* currentMesa() const;
@@ -202,9 +210,21 @@ private:
     QPointF m_marqueeOrigin;
     QRectF m_marqueeRect;
 
-    // Transform (move/scale/rotate)
+    // Transform (move/scale/rotate) — ferramentas estilo After Effects + Blender.
+    // V = selecionar/mover, W = escalar, R = rotacionar.
+    // R de novo = trackball; R+X/Y/Z trava eixo; dígitos+Enter = graus exatos.
     enum TransformOp { TNone, TMove, TScale, TRotate };
+    enum CanvasTool { ToolSelect = 0, ToolScale, ToolRotate };
+    enum RotateMode {
+        RotNone = 0,
+        RotView,      // livre (baseado na câmera/vista)
+        RotTrackball, // gira em todas as direções (aproximação 2D+Z)
+        RotX, RotY, RotZ
+    };
     TransformOp m_transformOp = TNone;
+    CanvasTool m_tool = ToolSelect;
+    RotateMode m_rotateMode = RotNone;
+    QString m_rotateDigits; // input numérico: "45" → aplica em Enter
     HitZone m_transformZone = HitNone;
     int m_transformTrackIdx = -1;
     QPointF m_transformStart;       // posição do mouse no início
@@ -213,9 +233,18 @@ private:
     double m_transformStartSX = 1;
     double m_transformStartSY = 1;
     double m_transformStartRot = 0;
+    double m_transformStartRotX = 0;
+    double m_transformStartRotY = 0;
     double m_transformStartAngle = 0;  // ângulo inicial (para rotate)
     double m_transformStartDist = 0;   // distância inicial (para scale uniforme)
     bool m_scaleUniform = true;        // escala de cantos: uniforme (Shift = livre por eixo)
+    bool m_transformFromCenter = false; // Ctrl: escala a partir do centro
+    // Overlay de transform ao vivo (graus/escala enquanto arrasta).
+    QString m_transformHud;            // ex.: "Rot 245°" / "Scale 150%"
+    QPointF m_transformHudPos;
+    // Helpers de rotação Blender.
+    QString rotateHud() const;
+    static QString axisName(int mode); // RotView/Trackball/X/Y/Z → texto
 
     // Transform MÚLTIPLO: valores iniciais de TODAS as selecionadas (por
     // índice na mesaTracks()) para mover/escalar/rotacionar o grupo junto.
@@ -224,6 +253,8 @@ private:
     QHash<int, double> m_multiStartSX;
     QHash<int, double> m_multiStartSY;
     QHash<int, double> m_multiStartRot;
+    QHash<int, double> m_multiStartRotX;
+    QHash<int, double> m_multiStartRotY;
 
     // Dragging camera
     bool m_draggingCamera = false;

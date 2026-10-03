@@ -1322,23 +1322,22 @@ sem fontconfig.
 
 ---
 
-#### Fase 3 — Malhas estáticas (0.9)
+#### Fase 3 — Malhas estáticas (0.9) — 🟡 MVP parcial (2026-10-02)
 
-**Objetivo:** importar um modelo simples na Mesa (AE Classic com OBJ/3D via plugin).
+**Objetivo:** importar um modelo simples na Mesa (AE Classic com OBJ).
 
-| Entrega | Detalhe |
+| Entrega | Status |
 |---|---|
-| Loader glTF 2.0 estático | `colombina/mesh/GltfLoader.*` (sem skin/anim) |
-| Loader OBJ estático | mesmo módulo |
-| Camada Mesa `meshPath` | MediaItem tipo mesh ou campo na track |
-| Raster software | triângulos + textura + Z (CPU) |
-| Luz/câmera | já da fase 2 aplicam na malha |
-| Export | malha no `MesaRenderer` → PNG sequence |
+| Loader OBJ (`v`+`f`, normalize) | ✅ `colombina/mesh/ObjLoader.*` |
+| `Track::meshPath` + serialização | ✅ |
+| Desenho no `MesaRenderer` (faces fill + perspectiva se `mesa3d`) | ✅ |
+| UI: Mesa ▸ Nova camada ▸ **Malha 3D (.obj)…** | ✅ (liga `mesa3d` sozinho) |
+| glTF 2.0 | ❌ |
+| Texturas / materiais | ❌ |
+| Export via pré-render da Mesa | ✅ (mesmo `MesaRenderer`) |
 
-**Aceite:**
-- glTF/OBJ simples (cubo, cadeira low-poly) aparece na Mesa.
-- Câmera e luz afetam a malha.
-- Export usa o mesmo raster.
+**Aceite parcial:** importar `.obj` simples e vê-lo no preview (modo 3D ON
+para perspectiva).
 
 **Fora:** skins, animações, materiais PBR, subdivisão.
 
@@ -1482,3 +1481,44 @@ Detalhamento completo:
 - [ ] **Diamantes de kfSpeed na lista de keyframes do GraphEditor** (GPropSpeed).
 - [ ] **Áudio com envelope** (preview/export de áudio ainda usam `speed` base).
 - [ ] **LAINKA/OFX com envelope** (usam `speed` base).
+
+> A banda de velocidade no corpo do clipe foi **removida** em 2026-10-03: atrapalhava
+> o arraste do clipe. A edição continua no dock de Velocidade.
+
+---
+
+## Máquinas mais fracas — degradação graciosa · 2026-10-03
+
+> **Anotado para depois.** Decidido em 2026-10-03, fora do caminho crítico das
+> conquistas em andamento (3D/Pivot/Mesa). Não entra no fechamento da 0.7.
+
+Contexto: um alpha tester em máquina mais fraca relatou crash e vídeo ausente no
+viewport. O mesmo código roda normal na máquina de desenvolvimento — bug de
+latência, não de correção.
+
+- [ ] **Ladder de degradação, não degrau** — ordem fixa: (1) reduz profundidade de
+  prefetch → (2) desliga motion blur stack → (3) reduz largura de decode →
+  (4) **por último** decode por software. Cada degrau visível na UI.
+- [ ] **Degradação nunca silenciosa** — se o preview cair para software, mostrar
+  num indicador. Sem isso o usuário conclui que o Pierrot é lento e desiste.
+- [ ] **Paridade preview↔export mantida na queda** — se o preview degrada, o
+  export degrada junto. Lei do projeto; não negociar.
+- [ ] **Auto-detect por medição, não por chute** — `PreviewProfiler` já mede por
+  quadro; usar os números para decidir "esta máquina não dá conta".
+- [ ] **Proxy como lever principal** — para CPU fraca, proxy (já existe) vale mais
+  que desligar VAAPI. VAAPI é o maior ganho de CPU; desligá-lo em máquina
+  humilde é o contrário do necessário.
+- [ ] **Auditoria de decode síncrono no thread da UI** — nenhum decode deve rodar
+  na UI thread por sinal (playhead/seleção). `PivotCanvas::ensureFrame()` abre um
+  `FFmpegDecoder` novo por chamada e não tem guarda `isVisible()`, ao contrário do
+  `PancropWidget::loadFrame()`. Unificar num helper `decodeUiFrame()` com guarda
+  de visibilidade + reuso de decoder.
+- [ ] **Build stamp no binário** — commit + data em `version.h` via CMake
+  (`git rev-parse --short HEAD`), no título, no About e no crash report. Hoje
+  todo build desde a 0.7 mostra "Pierrot 0.7", o que torna impossível saber qual
+  versão um tester está rodando.
+
+> **Precedente a não repetir:** o tester resolveu o sintoma desligando VAAPI nos
+> workers de preview (`FrameWorker`, `BgPrefetchWorker`). Tira a GPU do caminho
+> mais quente do app, não toca no decode síncrono que é o causador, custa performance
+> justamente onde ela mais importa e quebra a paridade preview↔export.

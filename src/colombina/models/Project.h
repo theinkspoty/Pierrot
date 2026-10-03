@@ -73,6 +73,8 @@ struct MediaItem {
     // gerado por `generatorFrame()`.
     bool isSolid = false;
     QColor solidColor{Qt::black};
+    // Malha 3D (.obj) importada como mídia de timeline/clipe.
+    bool isMesh = false;
     // Tipo do gerador quando isSolid: "" = cor sólida, "gradient" (gradiente
     // linear vertical sólida→solidColor2), "checkerboard" (tabuleiro com
     // genCells células por lado) ou "noise" (grão aleatório entre as cores).
@@ -464,6 +466,16 @@ struct Clip {
     double cropT = 0.0;
     double cropB = 0.0;
 
+    // ── Transform 3D do clipe (dock Pivot) ───────────────────────────────
+    // Usado em clipes 3D (malha .obj) e opcional em imagens (2.5D).
+    // Preview/export aplicam quando != 0; default 0 = transform 2D atual.
+    double clipZ = 0.0;     // profundidade (px no espaço da cena)
+    double clipRotX = 0.0;  // rotação em X (graus)
+    double clipRotY = 0.0;  // rotação em Y (graus)
+    QVector<Keyframe> kfClipZ;
+    QVector<Keyframe> kfClipRotX;
+    QVector<Keyframe> kfClipRotY;
+
     // Efeitos de áudio (ganhos em dB; 0 = neutro).
     double eqLow = 0.0;
     double eqMid = 0.0;
@@ -698,6 +710,9 @@ struct Track {
     double mesaRotX = 0.0;       // rotação em X (graus)
     double mesaRotY = 0.0;       // rotação em Y (graus)
     bool mesaAcceptsLights = false; // se true, a camada reage às luzes (Fase 2)
+    // Malha 3D estática (OBJ) como camada da Mesa — Fase 3 MVP.
+    // Vazio = camada 2D normal (clip de mídia/texto).
+    QString meshPath;
     double mesaScaleX = 1.0;     // escala horizontal no canvas
     double mesaScaleY = 1.0;     // escala vertical no canvas
     double mesaRotation = 0.0;   // rotação no canvas (graus) — = rot Z

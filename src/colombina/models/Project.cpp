@@ -24,6 +24,7 @@ static QJsonObject mediaToJson(const MediaItem& m) {
     for (int c : m.audioChannels) ch.append(c);
     o["audioChannels"] = ch;
     o["isSolid"] = m.isSolid;
+    o["isMesh"] = m.isMesh;
     o["solidColor"] = m.solidColor.name(QColor::HexArgb);
     o["generator"] = m.generator;
     o["solidColor2"] = m.solidColor2.name(QColor::HexArgb);
@@ -46,6 +47,7 @@ static MediaItem mediaFromJson(const QJsonObject& o) {
     const QJsonArray ch = o["audioChannels"].toArray();
     for (const QJsonValue& v : ch) m.audioChannels.append(v.toInt());
     m.isSolid = o["isSolid"].toBool();
+    m.isMesh = o["isMesh"].toBool(false);
     const QString sc = o["solidColor"].toString();
     if (QColor::isValidColorName(sc)) m.solidColor = QColor(sc);
     m.generator = o["generator"].toString();
@@ -348,6 +350,12 @@ static QJsonObject clipToJson(const Clip& c) {
     o["cropR"] = c.cropR;
     o["cropT"] = c.cropT;
     o["cropB"] = c.cropB;
+    o["clipZ"] = c.clipZ;
+    o["clipRotX"] = c.clipRotX;
+    o["clipRotY"] = c.clipRotY;
+    o["kfClipZ"] = kfToJson(c.kfClipZ);
+    o["kfClipRotX"] = kfToJson(c.kfClipRotX);
+    o["kfClipRotY"] = kfToJson(c.kfClipRotY);
     o["eqLow"] = c.eqLow;
     o["eqMid"] = c.eqMid;
     o["eqHigh"] = c.eqHigh;
@@ -556,6 +564,12 @@ static Clip clipFromJson(const QJsonObject& o) {
     c.cropR = o["cropR"].toDouble(0.0);
     c.cropT = o["cropT"].toDouble(0.0);
     c.cropB = o["cropB"].toDouble(0.0);
+    c.clipZ = o["clipZ"].toDouble(0.0);
+    c.clipRotX = o["clipRotX"].toDouble(0.0);
+    c.clipRotY = o["clipRotY"].toDouble(0.0);
+    c.kfClipZ = kfFromJson(o["kfClipZ"]);
+    c.kfClipRotX = kfFromJson(o["kfClipRotX"]);
+    c.kfClipRotY = kfFromJson(o["kfClipRotY"]);
     c.eqLow = o["eqLow"].toDouble(0.0);
     c.eqMid = o["eqMid"].toDouble(0.0);
     c.eqHigh = o["eqHigh"].toDouble(0.0);
@@ -710,6 +724,7 @@ static QJsonObject trackToJson(const Track& t) {
     o["mesaRotX"] = t.mesaRotX;
     o["mesaRotY"] = t.mesaRotY;
     o["mesaAcceptsLights"] = t.mesaAcceptsLights;
+    o["meshPath"] = t.meshPath;
     o["mesaScaleX"] = t.mesaScaleX;
     o["mesaScaleY"] = t.mesaScaleY;
     o["mesaRotation"] = t.mesaRotation;
@@ -774,6 +789,7 @@ static Track trackFromJson(const QJsonObject& o, bool audio) {
     t.mesaRotX = o["mesaRotX"].toDouble(0.0);
     t.mesaRotY = o["mesaRotY"].toDouble(0.0);
     t.mesaAcceptsLights = o["mesaAcceptsLights"].toBool(false);
+    t.meshPath = o["meshPath"].toString();
     t.mesaScaleX = o["mesaScaleX"].toDouble(1.0);
     t.mesaScaleY = o["mesaScaleY"].toDouble(1.0);
     t.mesaRotation = o["mesaRotation"].toDouble(0.0);
