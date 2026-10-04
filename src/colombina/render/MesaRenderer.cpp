@@ -151,6 +151,20 @@ QImage MesaRenderer::render(const MesaComposition& mesa, const Project& project,
     return result;
 }
 
+// Focal em px de saída para um FOV vertical dado.
+//
+// UMA fórmula para o projeto inteiro. Havia quatro divergentes: o Preview/export
+// usava outH, o canvas da Mesa usava max(canvasW,canvasH), o 2D usava um piso de
+// 64 e o renderMeshLayer usava fh*0.75 com camDist fixo em 300 — ignorando
+// camZ/camFov. Efeito practicalo: a MESMA track da Mesa mudava de tamanho e
+// posição conforme fosse renderizada como clipe de topo ou como camada de
+// baixo, e o Preview não batia com o canvas da Mesa.
+double MesaRenderer::focalForHeight(int outH, double fovDeg) {
+    const double h = std::max(1, outH);
+    const double fov = std::max(5.0, fovDeg);
+    return (h * 0.5) / std::tan(fov * 3.14159265358979323846 / 360.0);
+}
+
 // Desenha uma passada inteira: câmera (no instante `time`) + todas as layers.
 // Câmera 2D (padrão): T(centro)·R·S·T(-camX,-camY).
 // Câmera 3D (mesa3d=true, AE Classic): projeção perspectiva com FOV + Z;
@@ -197,7 +211,7 @@ QImage MesaRenderer::renderSample(const MesaComposition& mesa, const Project& pr
     const double poiZ = kfValue(mesa.kfCamPoiZ, mesa.camPoiZ, time);
 
     // Focal em px de saída a partir do FOV (vertical).
-    const double focal = (outH * 0.5) / std::tan(camFov * 3.14159265358979323846 / 360.0);
+    const double focal = focalForHeight(outH, camFov);
 
     // Projeção de um ponto do espaço da Mesa (x,y,z) para o frame de saída.
     // Convenção AE Classic: câmera em camZ (frente do canvas, Z+ = p/ câmera);
@@ -324,10 +338,13 @@ QImage MesaRenderer::renderSample(const MesaComposition& mesa, const Project& pr
                              wz, sx, sy, ok);
             };
             // Ordena faces por profundidade média (pintura back-to-front).
-            struct FaceD { QVector<int> idx; double z; };
+            // `face` = índice da face no OBJ, precisa sobreviver ao sort para
+            // casar com mesh.faceUVs na textura.
+            struct FaceD { QVector<int> idx; double z; int face = -1; };
             QVector<FaceD> faces;
             faces.reserve(mesh.faces.size());
-            for (const QVector<int>& fi : mesh.faces) {
+            for (int faceNo = 0; faceNo < mesh.faces.size(); ++faceNo) {
+                const QVector<int>& fi = mesh.faces[faceNo];
                 if (fi.size() < 3) continue;
                 double zsum = 0.0;
                 int n = 0;
@@ -344,6 +361,7 @@ QImage MesaRenderer::renderSample(const MesaComposition& mesa, const Project& pr
                 FaceD fd;
                 fd.idx = fi;
                 fd.z = zsum / n;
+                fd.face = faceNo;
                 faces.append(fd);
             }
             std::stable_sort(faces.begin(), faces.end(),
@@ -362,18 +380,21 @@ QImage MesaRenderer::renderSample(const MesaComposition& mesa, const Project& pr
                 const double shade = std::clamp(0.55 + 0.45 * ((fd.z - (cd.z - 80)) / 160.0),
                                                  0.35, 1.0);
                 if (mesh.hasTexture() && !mesh.texture.isNull()) {
-                    const QRectF bbox = poly.boundingRect();
                     QColor fill = face;
                     fill.setAlphaF(std::clamp(cd.op * shade, 0.0, 1.0));
                     p.setPen(QPen(fill.darker(150), 1.0));
                     p.setBrush(fill);
                     p.drawPolygon(poly);
+                    // Textura mapeada por UV. Se faltar UV utilizável,
+                    // fillFaceTextured devolve false sem desenhar e a cor
+                    // chapada acima fica — nunca a textura esticada dentro da
+                    // bbox, que saía deslocada em qualquer rotação/perspectiva.
                     QPainterPath clipPath;
                     clipPath.addPolygon(poly);
                     p.save();
                     p.setClipPath(clipPath);
-                    p.setOpacity(std::clamp(cd.op * shade * 0.9, 0.0, 1.0));
-                    p.drawImage(bbox, mesh.texture);
+                    mesh::fillFaceTextured(p, mesh, fd.face, poly,
+                                           std::clamp(cd.op * shade * 0.9, 0.0, 1.0));
                     p.restore();
                 } else {
                     QColor fc = face;
@@ -474,15 +495,14 @@ bool MesaRenderer::drawTrackLayer(QPainter& acc, const Track& track,
         double camDist = 300.0;
         if (mesa.mesa3d) {
             const double fov = std::max(5.0, kfValue(mesa.kfCamFov, mesa.camFov, relTime));
-            focal = (std::max(mesa.canvasW, mesa.canvasH) * 0.5)
-                    / std::tan(fov * kPi / 360.0);
+            focal = focalForHeight(mesa.canvasH, fov);
             // camZ == 0 põe a câmera dentro do objeto (divisão degenerada).
             // addMeshToMesa já evita isso, mas uma track editada à mão não tem
             // essa garantia, e aqui o clamp segurava tudo em perspectiva 1.0.
             const double camZ = kfValue(mesa.kfCamZ, mesa.camZ, relTime);
             camDist = (camZ > 1.0) ? camZ : 300.0;
         } else {
-            focal = std::max(64.0, std::max(mesa.canvasW, mesa.canvasH) * 0.5);
+            focal = std::max(64.0, mesa.canvasH * 0.5);
         }
 
         // Centróide como pivô de rotação (a malha entra normalizada na origem).
@@ -510,10 +530,11 @@ bool MesaRenderer::drawTrackLayer(QPainter& acc, const Track& track,
             proj[i] = QPointF(lx * k, ly * k);
         }
 
-        struct FaceP { QPolygonF poly; double z; };
+        struct FaceP { QPolygonF poly; double z; int face = -1; };
         QVector<FaceP> faces;
         faces.reserve(mesh.faces.size());
-        for (const QVector<int>& idx : mesh.faces) {
+        for (int faceNo = 0; faceNo < mesh.faces.size(); ++faceNo) {
+            const QVector<int>& idx = mesh.faces[faceNo];
             if (idx.size() < 3) continue;
             QPolygonF poly;
             double mz = 0;
@@ -523,7 +544,7 @@ bool MesaRenderer::drawTrackLayer(QPainter& acc, const Track& track,
                 mz += vz[vi];
             }
             if (poly.size() >= 3)
-                faces.append(FaceP{poly, mz / poly.size() + tZ});
+                faces.append(FaceP{poly, mz / poly.size() + tZ, faceNo});
         }
         // Pintor algorítmico: longe primeiro. Estável para não tremer quando
         // duas faces empatam no mesmo Z.
@@ -554,8 +575,8 @@ bool MesaRenderer::drawTrackLayer(QPainter& acc, const Track& track,
                 clipPath.addPolygon(f.poly);
                 acc.save();
                 acc.setClipPath(clipPath);
-                acc.setOpacity(std::clamp(tOp * shade * 0.9, 0.0, 1.0));
-                acc.drawImage(f.poly.boundingRect(), mesh.texture);
+                mesh::fillFaceTextured(acc, mesh, f.face, f.poly,
+                                       std::clamp(tOp * shade * 0.9, 0.0, 1.0));
                 acc.restore();
             }
         }
@@ -600,10 +621,13 @@ static QImage renderMeshLayer(const mesh::ObjMesh& mesh, const Clip& c,
     if (nv == 0) return img;
     const double cxm = sx0 / nv, cym = sy0 / nv, czm = sz0 / nv;
 
-    // Focal em px: a malha normalizada (~200 un) deve ocupar boa parte da
-    // altura da camada em escala 1. Ângulo de visão efetivo ~50°.
-    const double focal = fh * 0.75;
-    const double camDist = 300.0;
+    // Mesma câmera do resto do renderer (focalForHeight + camZ real). Antes
+    // eram fh*0.75 e camDist fixo em 300, ignorando camFov/camZ: a mesma track
+    // da Mesa saía diferente quando renderizada como camada de baixo.
+    const double camFov = kfValue(mesa.kfCamFov, mesa.camFov, relTime);
+    const double camZ = kfValue(mesa.kfCamZ, mesa.camZ, relTime);
+    const double focal = MesaRenderer::focalForHeight(fh, camFov);
+    const double camDist = (camZ > 1.0) ? camZ : 300.0;
     const QPointF origin(fw * 0.5 + tx, fh * 0.5 + ty);
 
     auto projectVert = [&](int vi, QPointF& out, double& wz) {
@@ -626,10 +650,11 @@ static QImage renderMeshLayer(const mesh::ObjMesh& mesh, const Clip& c,
         wz = z3 + z;
     };
 
-    struct FaceD { QVector<int> idx; double z; };
+    struct FaceD { QVector<int> idx; double z; int face = -1; };
     QVector<FaceD> faces;
     faces.reserve(mesh.faces.size());
-    for (const QVector<int>& fi : mesh.faces) {
+    for (int faceNo = 0; faceNo < mesh.faces.size(); ++faceNo) {
+        const QVector<int>& fi = mesh.faces[faceNo];
         if (fi.size() < 3) continue;
         double zsum = 0.0; int n = 0;
         for (int vi : fi) {
@@ -639,7 +664,7 @@ static QImage renderMeshLayer(const mesh::ObjMesh& mesh, const Clip& c,
             zsum += wz; ++n;
         }
         if (n == 0) continue;
-        faces.append({ fi, zsum / n });
+        faces.append({ fi, zsum / n, faceNo });
     }
     std::stable_sort(faces.begin(), faces.end(),
                      [](const FaceD& a, const FaceD& b) { return a.z < b.z; });
@@ -666,13 +691,11 @@ static QImage renderMeshLayer(const mesh::ObjMesh& mesh, const Clip& c,
         p.setBrush(fc);
         p.drawPolygon(poly);
         if (textured) {
-            const QRectF bbox = poly.boundingRect();
             QPainterPath clipPath;
             clipPath.addPolygon(poly);
             p.save();
             p.setClipPath(clipPath);
-            p.setOpacity(shade);
-            p.drawImage(bbox, mesh.texture);
+            mesh::fillFaceTextured(p, mesh, fd.face, poly, shade);
             p.restore();
         }
     }

@@ -11,6 +11,7 @@
 
 #include <QWidget>
 #include <QImage>
+#include <QElapsedTimer>
 #include "colombina/models/Project.h"
 
 class QLabel;
@@ -54,6 +55,7 @@ protected:
 
 private slots:
     void seekChanged(int);
+    void setPos(double p, bool fromUser);
     void playTick();
     void updatePreview();
 
@@ -73,6 +75,9 @@ private:
     double m_in = 0.0;
     double m_out = 0.0;
     bool m_playing = false;
+    double m_pos = 0.0;              // posição autoritativa, em segundos
+    bool m_updatingSeek = false;     // evita eco seekChanged <-> setPos
+    QElapsedTimer m_playClock;
 
     QLabel* m_title = nullptr;
     QLabel* m_preview = nullptr;

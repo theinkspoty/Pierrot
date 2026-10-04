@@ -32,6 +32,12 @@ public:
     QImage render(const MesaComposition& mesa, const Project& project,
                   double time);
 
+    // Focal em px de saída para um FOV vertical. Público porque o
+    // TimelineWidget precisa calibrar a escala da malha na MESMA fórmula que
+    // o renderer usa — foi duplicar a conta que fez Preview e Mesa
+    // desenharem a mesma malha em escalas diferentes.
+    static double focalForHeight(int outH, double fovDeg);
+
     // Prepara a renderização de UMA track (decodifica o frame ativo e retorna
     // a transformada a aplicar). Retorna false se não há frame ativo.
     // O resultado pode ser desenhado com drawTrackImage().

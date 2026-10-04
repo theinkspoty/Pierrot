@@ -2681,29 +2681,31 @@ void PreviewWidget::setPreviewQuality(int width) {
 // cima do vídeo no paintEvent.
 const Clip* PreviewWidget::clipAt(double t) const {
     if (!m_project) return nullptr;
-    const Clip* best = nullptr;
+    // Empilhamento: a faixa de índice 0 é a de TOPO (como V1 no Premiere), e
+    // o paintEvent compõe de baixo para cima percorrendo size()-1 → 0. Por isso
+    // o PRIMEIRO match vence: ele é o clipe visualmente mais alto.
+    //
+    // Já houve aqui um `return` no último match, achando que índice maior era
+    // o topo. É o contrário — e o efeito era o Preview escolher o clipe do
+    // rodapé. Não voltar a isso: para trocar a ordem de composição, o lugar
+    // é o paintEvent, não o clipAt.
     for (int tr = 0; tr < (int)m_project->videoTracks.size(); ++tr) {
         const Track& track = m_project->videoTracks[tr];
         if (!track.visible) continue;   // faixa oculta (olho)
         // Track de Mesa gera quadro mesmo sem mídia própria (a composição é a
         // fonte de vídeo).
         const bool mesaTrack = m_project->findMesaForTrack(track.id) != nullptr;
-        const Clip* here = nullptr;
+        const Clip* best = nullptr;
         for (const Clip& c : track.clips) {
             if (t >= c.pos && t < c.pos + c.dur && !c.isText) {
                 const MediaItem* m = m_project->findMedia(c.mediaIdAt(t - c.pos));
                 const bool hasVideo = mesaTrack || (m && m->hasVideo);
-                if (hasVideo && (!here || c.pos > here->pos)) here = &c;
+                if (hasVideo && (!best || c.pos > best->pos)) best = &c;
             }
         }
-        // Empilhamento: vence a track mais ALTA no índice — é a mesma ordem
-        // que o paintEvent usa ao compor o texto (size()-1 → 0). Antes isto
-        // fazia `return best` no PRIMEIRO match, então uma track de vídeo
-        // abaixo da Mesa roubava o clipe: tryRenderMesa nunca era chamado com
-        // a malha e o Preview mostrava o vídeo de baixo em vez da composição.
-        if (here) best = here;
+        if (best) return best;
     }
-    return best;
+    return nullptr;
 }
 
 bool PreviewWidget::tryRenderMesa(const Clip* clip) {

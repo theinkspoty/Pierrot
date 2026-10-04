@@ -34,7 +34,7 @@ constexpr int kColTime = 1;
 constexpr int kColVal = 2;
 
 enum class Prop {
-    Scale, Rotation, X, Y, Opacity, Volume, CropL, CropR, CropT, CropB
+    Scale, Rotation, X, Y, Volume, CropL, CropR, CropT, CropB
 };
 
 QString propName(Prop p) {
@@ -43,7 +43,6 @@ QString propName(Prop p) {
     case Prop::Rotation: return QStringLiteral("Rotação");
     case Prop::X:        return QStringLiteral("Posição X");
     case Prop::Y:        return QStringLiteral("Posição Y");
-    case Prop::Opacity:  return QStringLiteral("Opacidade");
     case Prop::Volume:   return QStringLiteral("Volume");
     case Prop::CropL:    return QStringLiteral("Recorte esq.");
     case Prop::CropR:    return QStringLiteral("Recorte dir.");
@@ -109,7 +108,6 @@ TransformDialog::TransformDialog(Clip* clip, QWidget* parent)
         (*l)->setMinimumWidth(42);
         (*l)->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     };
-    makePctSlider(m_clip->opacity, 100, &m_opacity, &m_opacityLabel);
     makePctSlider(m_clip->volume, 300, &m_volume, &m_volumeLabel);
 
     auto makeCropSlider = [this](double v, QSlider** s, QLabel** l) {
@@ -139,9 +137,6 @@ TransformDialog::TransformDialog(Clip* clip, QWidget* parent)
     auto* cropTRow = makeCropRow(m_cropT, m_cropTLabel);
     auto* cropBRow = makeCropRow(m_cropB, m_cropBLabel);
 
-    auto* opRow = new QHBoxLayout;
-    opRow->addWidget(m_opacity, 1);
-    opRow->addWidget(m_opacityLabel);
     auto* volRow = new QHBoxLayout;
     volRow->addWidget(m_volume, 1);
     volRow->addWidget(m_volumeLabel);
@@ -155,7 +150,6 @@ TransformDialog::TransformDialog(Clip* clip, QWidget* parent)
     form->addRow(tr("Recorte direita:"), cropRRow);
     form->addRow(tr("Recorte topo:"), cropTRow);
     form->addRow(tr("Recorte base:"), cropBRow);
-    form->addRow(tr("Opacidade:"), opRow);
     form->addRow(tr("Volume:"), volRow);
 
     // ---- Keyframes ----
@@ -220,7 +214,6 @@ TransformDialog::TransformDialog(Clip* clip, QWidget* parent)
         {Prop::Rotation, &m_clip->kfRotation},
         {Prop::X, &m_clip->kfTx},
         {Prop::Y, &m_clip->kfTy},
-        {Prop::Opacity, &m_clip->kfOpacity},
         {Prop::Volume, &m_clip->kfVolume},
         {Prop::CropL, &m_clip->kfCropL},
         {Prop::CropR, &m_clip->kfCropR},
@@ -262,7 +255,6 @@ void TransformDialog::rebuildKeyframes() {
     collectRows(m_table, propName(Prop::Rotation), &m_clip->kfRotation);
     collectRows(m_table, propName(Prop::X), &m_clip->kfTx);
     collectRows(m_table, propName(Prop::Y), &m_clip->kfTy);
-    collectRows(m_table, propName(Prop::Opacity), &m_clip->kfOpacity);
     collectRows(m_table, propName(Prop::Volume), &m_clip->kfVolume);
     collectRows(m_table, propName(Prop::CropL), &m_clip->kfCropL);
     collectRows(m_table, propName(Prop::CropR), &m_clip->kfCropR);
@@ -279,7 +271,6 @@ void TransformDialog::accept() {
     m_clip->cropR = m_cropR->value() / 100.0;
     m_clip->cropT = m_cropT->value() / 100.0;
     m_clip->cropB = m_cropB->value() / 100.0;
-    m_clip->opacity = m_opacity->value() / 100.0;
     m_clip->volume = m_volume->value() / 100.0;
     rebuildKeyframes();
     QDialog::accept();

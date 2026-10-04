@@ -12,6 +12,7 @@
 #include <QColor>
 #include <QImage>
 #include <QPointF>
+#include <QPolygonF>
 #include <QString>
 #include <QVector>
 
@@ -46,5 +47,20 @@ bool loadObjFile(const QString& path, ObjMesh& out, QString* error = nullptr);
 // no centro da malha. `scale` multiplica o tamanho normalizado.
 void drawMeshTextured(QPainter& painter, const ObjMesh& mesh, double scale,
                       const QColor& fallback, double opacity = 1.0);
+
+// Preenche `poly` (face já projetada na tela, mesmos índices de `faces`)
+// com a textura mapeada pelas UVs da face, por AFFINE.
+//
+// Antes os renderers faziam `drawImage(bbox, mesh.texture)` — jogava a
+// imagem inteira esticada dentro da caixa da face, o que só fica "certo"
+// numa frente ortográfica perfectly frontal. Qualquer rotação/perspectiva
+// arrastava a textura para fora da malha.
+//
+// Polígonos com mais de 3 vértices viram leque (0,1,2),(0,2,3)... usando as
+// UVs correspondentes. Devolve false sem textura, sem UVs ou com triângulo
+// degenerado — nesse caso o CHAMADOR preenche com cor chapada, porque uma
+// textura errada é pior que nenhuma.
+bool fillFaceTextured(QPainter& painter, const ObjMesh& mesh, int faceIndex,
+                      const QPolygonF& poly, double opacity = 1.0);
 
 } // namespace mesh

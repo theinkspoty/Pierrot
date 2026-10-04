@@ -22,6 +22,13 @@
 #include <cmath>
 
 namespace {
+// Passos do slider. Antes eram 1000 e o tempo saía de volta pro slider, o que
+// dava dois bugs de uma vez: o playTick somava dur/1000 a cada 33 ms (playback
+// corria dur/33x mais rápido, certo só por volta dos 33 s) e o stepFrame
+// reconvergia pro mesmo valor em mídia longa (as setas não faziam nada).
+// 100000 mantém a posição em ms e faz o slider arrastar com precisão de 1 ms.
+constexpr int kSeekSteps = 100000;
+
 QString fmtTime(double s) {
     if (s < 0.0) s = 0.0;
     const int t = (int)llround(s * 1000.0);
@@ -49,7 +56,7 @@ SourceMonitorWidget::SourceMonitorWidget(QWidget* parent) : QWidget(parent) {
     lay->addWidget(m_preview, /*stretch=*/1);
 
     m_seek = new QSlider(Qt::Horizontal, this);
-    m_seek->setRange(0, 1000);
+    m_seek->setRange(0, kSeekSteps);
     m_seek->setEnabled(false);
     lay->addWidget(m_seek);
 
@@ -173,6 +180,7 @@ void SourceMonitorWidget::clearMonitor() {
     if (m_playBtn) m_playBtn->setText(tr("▶"));
     m_media = MediaItem{};
     m_in = m_out = 0.0;
+    m_pos = 0.0;   // senão currentPos() lia a posição da mídia anterior
     m_title->setText(tr("Source: (nenhuma mídia)"));
     m_preview->setPixmap(QPixmap());
     m_preview->setText(tr("Duplo-clique na Central de Mídias\npara abrir no Source"));
@@ -225,8 +233,7 @@ void SourceMonitorWidget::openMedia(const QString& mediaId) {
     m_overwriteBtn->setEnabled(true);
     m_title->setText(tr("Source: %1").arg(m_media.name));
     m_preview->setText(QString());
-    m_seek->setValue(0);
-    refreshTimeLabels();
+    setPos(0.0, /*fromUser=*/false);
     updatePreview();
     // Foco no monitor para I/O/Espaço/`,`/`.` funcionarem sem clicar antes.
     setFocus(Qt::OtherFocusReason);
@@ -239,14 +246,31 @@ double SourceMonitorWidget::mediaDuration() const {
 }
 
 double SourceMonitorWidget::currentPos() const {
-    const double dur = mediaDuration();
-    if (dur <= 0.0) return 0.0;
-    return m_seek->value() / 1000.0 * dur;
+    if (mediaDuration() <= 0.0) return 0.0;
+    return qBound(0.0, m_pos, mediaDuration());
 }
 
-void SourceMonitorWidget::seekChanged(int) {
+// A posição é um double autoritativo; o slider é só reflexo dela. `fromUser`
+// evita que a sincronização do slider dispare seekChanged de novo.
+void SourceMonitorWidget::setPos(double p, bool fromUser) {
+    const double dur = mediaDuration();
+    if (dur <= 0.0) {
+        m_pos = 0.0;
+        return;
+    }
+    m_pos = qBound(0.0, p, dur);
+    m_updatingSeek = true;
+    m_seek->setValue((int)llround(m_pos / dur * kSeekSteps));
+    m_updatingSeek = false;
     refreshTimeLabels();
-    if (!m_mediaId.isEmpty()) m_throttle->start();
+    if (fromUser && !m_mediaId.isEmpty()) m_throttle->start();
+}
+
+void SourceMonitorWidget::seekChanged(int v) {
+    if (m_updatingSeek) return;
+    const double dur = mediaDuration();
+    if (dur <= 0.0) return;
+    setPos((double)v / kSeekSteps * dur, /*fromUser=*/true);
 }
 
 void SourceMonitorWidget::refreshTimeLabels() {
@@ -291,7 +315,9 @@ void SourceMonitorWidget::togglePlay() {
     m_playBtn->setText(m_playing ? tr("⏸") : tr("▶"));
     if (m_playing) {
         if (currentPos() >= m_out)
-            m_seek->setValue(int(m_in / qMax(mediaDuration(), 1e-6) * 1000.0));
+            setPos(m_in, /*fromUser=*/false);
+        // O playTick avança pelo TEMPO REAL decorrido, não por um passo fixo.
+        m_playClock.start();
         m_playTimer->start();
     } else {
         m_playTimer->stop();
@@ -300,15 +326,15 @@ void SourceMonitorWidget::togglePlay() {
 
 void SourceMonitorWidget::playTick() {
     if (mediaDuration() <= 0.0) return;
-    const double step = mediaDuration() / 1000.0;
-    double pos = currentPos() + step;
+    const qint64 ms = m_playClock.restart();
+    double pos = currentPos() + (ms > 0 ? ms / 1000.0 : 0.0);
     if (pos >= m_out) {
         pos = m_in;
         m_playing = false;
         m_playBtn->setText(tr("▶"));
         m_playTimer->stop();
     }
-    m_seek->setValue(int(pos / mediaDuration() * 1000.0));
+    setPos(pos, /*fromUser=*/false);
 }
 
 void SourceMonitorWidget::stepFrame(int dir) {
@@ -319,7 +345,7 @@ void SourceMonitorWidget::stepFrame(int dir) {
     const double fps = m_media.fps > 0.0 ? m_media.fps : 30.0;
     double pos = currentPos() + dir / fps;
     pos = qBound(0.0, pos, mediaDuration());
-    m_seek->setValue(int(pos / qMax(mediaDuration(), 1e-6) * 1000.0));
+    setPos(pos, /*fromUser=*/false);
 }
 
 void SourceMonitorWidget::updatePreview() {

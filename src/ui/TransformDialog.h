@@ -40,8 +40,6 @@ private:
     QLabel* m_cropTLabel = nullptr;
     QSlider* m_cropB = nullptr;
     QLabel* m_cropBLabel = nullptr;
-    QSlider* m_opacity = nullptr;
-    QLabel* m_opacityLabel = nullptr;
     QSlider* m_volume = nullptr;
     QLabel* m_volumeLabel = nullptr;
     QComboBox* m_prop = nullptr;

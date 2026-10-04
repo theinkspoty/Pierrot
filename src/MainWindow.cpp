@@ -1868,21 +1868,19 @@ void MainWindow::createActions() {
     toolTb->setToolButtonStyle(Qt::ToolButtonIconOnly);
     // Paleta de ferramentas vertical, como a Tools do Premiere: fica ao lado
     // dos cabeçalhos de faixa, com checkout no hover/pressionado do tema.
-    QColor toolsHover = themeColors().canvasBorder;
-    toolsHover.setAlpha(70);
-    QColor toolsChecked = themeColors().accent;
-    toolsChecked.setAlpha(55);
+    const auto& tc = themeColors();
     toolTb->setStyleSheet(QStringLiteral(
         "QToolBar{background:transparent;border:none;padding:4px 2px;spacing:4px;}"
         "QToolBar::separator{background:%1;}"
         "QToolBar::separator:vertical{height:1px;margin:6px 8px;}"
         "QToolBar::separator:horizontal{width:1px;margin:8px 6px;}"
-        "QToolBar QToolButton{border:none;border-radius:4px;background:transparent;}"
-        "QToolBar QToolButton:hover{background:%2;}"
-        "QToolBar QToolButton:checked{background:%3;}")
-        .arg(themeColors().transportBorder.name(),
-             toolsHover.name(QColor::HexArgb),
-             toolsChecked.name(QColor::HexArgb)));
+        "QToolBar QToolButton{border:none;border-radius:4px;background:%2;}"
+        "QToolBar QToolButton:hover{background:%3;}"
+        "QToolBar QToolButton:checked{background:%4;}")
+        .arg(tc.transportBorder.name(),
+             tc.toolBtnBg.name(QColor::HexArgb),
+             tc.toolBtnHover.name(QColor::HexArgb),
+             tc.toolBtnChecked.name(QColor::HexArgb)));
     const QStringList toolNames = {
         tr("Selecionar (0)"), tr("Mover (M)"), tr("Tesoura (R)"),
         tr("Envelope (E)"), tr("Lupa (Z)"),

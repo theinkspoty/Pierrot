@@ -5,13 +5,16 @@
 
 #include "ObjLoader.h"
 
+#include <QBrush>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPixmap>
 #include <QRegularExpression>
 #include <QTextStream>
+#include <QTransform>
 #include <QtGlobal>
 #include <algorithm>
 #include <cmath>
@@ -88,11 +91,10 @@ static QString resolveTexturePath(const QString& objPath, const QString& mapKdIn
         if (c.isEmpty()) continue;
         if (QFileInfo::exists(c)) return QFileInfo(c).absoluteFilePath();
     }
-    // Fallback: primeiro .png no diretório do OBJ.
-    const QFileInfoList pngs =
-        objDir.entryInfoList(QStringList() << QStringLiteral("*.png"),
-                             QDir::Files, QDir::Name);
-    if (!pngs.isEmpty()) return pngs.first().absoluteFilePath();
+    // NÃO existe mais o fallback "primeiro .png da pasta". Ele era uma roleta:
+    // num diretório com várias malhas, o OBJ A acabava com a textura da B, e o
+    // resultado era uma malha com a textura errada em vez de nenhuma — erro
+    // que ninguém consegue ver de relance. Sem match, sem textura.
     Q_UNUSED(out);
     return QString();
 }
@@ -218,6 +220,90 @@ bool loadObjFile(const QString& path, ObjMesh& out, QString* error) {
 
     out.normalize(200.0);
     return true;
+}
+
+// Achar a transformacao AFFINE que leva o triangulo de UV (em pixels da
+// textura) ao triangulo ja projetado na tela. Resolucao de Cramer 3x3 sobre
+//   a*u + d*v + c = x      b*u + e*v + f = y
+static bool affineFromTri(const QPointF& uv0, const QPointF& uv1, const QPointF& uv2,
+                          const QPointF& p0, const QPointF& p1, const QPointF& p2,
+                          QTransform& m) {
+    const double u0 = uv0.x(), v0 = uv0.y();
+    const double u1 = uv1.x(), v1 = uv1.y();
+    const double u2 = uv2.x(), v2 = uv2.y();
+    const double x0 = p0.x(), y0 = p0.y();
+    const double x1 = p1.x(), y1 = p1.y();
+    const double x2 = p2.x(), y2 = p2.y();
+
+    const double det = u0 * (v1 - v2) - v0 * (u1 - u2) + (u1 * v2 - v1 * u2);
+    // Triangulo achatado em espaco de textura: nao ha transformacao que
+    // mapeie tres pontos colineares, entao nem tenta.
+    if (std::fabs(det) < 1e-12) return false;
+
+    const double a = (x0 * (v1 - v2) - v0 * (x1 - x2) + (x1 * v2 - v1 * x2)) / det;
+    const double d = (u0 * (x1 - x2) - x0 * (u1 - u2) + (u1 * x2 - x1 * u2)) / det;
+    const double c = (u0 * (v1 * x2 - x1 * v2) - v0 * (u1 * x2 - x1 * u2)
+                      + x0 * (u1 * v2 - v1 * u2)) / det;
+    const double b = (y0 * (v1 - v2) - v0 * (y1 - y2) + (y1 * v2 - v1 * y2)) / det;
+    const double e = (u0 * (y1 - y2) - y0 * (u1 - u2) + (u1 * y2 - y1 * u2)) / det;
+    const double f = (u0 * (v1 * y2 - y1 * v2) - v0 * (u1 * y2 - y1 * u2)
+                      + y0 * (u1 * v2 - v1 * u2)) / det;
+
+    // Construtor de 9: x' = m11*x + m21*y + m31 ; y' = m12*x + m22*y + m32
+    // (setMatrix() está deprecado no Qt6).
+    m = QTransform(a, b, 0.0, d, e, 0.0, c, f, 1.0);
+    return true;
+}
+
+bool fillFaceTextured(QPainter& painter, const ObjMesh& mesh, int faceIndex,
+                      const QPolygonF& poly, double opacity) {
+    if (poly.size() < 3) return false;
+    if (mesh.texture.isNull()) return false;
+    if (faceIndex < 0 || faceIndex >= mesh.faceUVs.size()) return false;
+
+    const QVector<int>& fuv = mesh.faceUVs[faceIndex];
+    //tem que ser EXATAMENTE o mesmo tamanho: o chamador pula vértices
+    // inválidos ao montar `poly`, então se os tamanhos divergirem o índice k
+    // deixaria de apontar o mesmo vértice em `poly` e em `fuv` — a textura
+    // sairia deslocada sem nenhum aviso. Melhor não texturar essa face.
+    if (fuv.size() != poly.size()) return false;
+
+    // UV -> pixel da textura. OBJ tem V crescendo para CIMA e a QImage tem a
+    // linha 0 no topo, entao o V precisa ser invertido.
+    const double tw = std::max(1, mesh.texture.width() - 1);
+    const double th = std::max(1, mesh.texture.height() - 1);
+    QVector<QPointF> src;
+    src.reserve(fuv.size());
+    for (int k = 0; k < poly.size(); ++k) {
+        const int ui = fuv[k];
+        if (ui < 0 || ui >= mesh.uvs.size()) return false;
+        const QPointF uv = mesh.uvs[ui];
+        src.append(QPointF(uv.x() * tw, (1.0 - uv.y()) * th));
+    }
+
+    const QBrush brush(QPixmap::fromImage(mesh.texture));
+
+    painter.save();
+    painter.setPen(Qt::NoPen);
+    painter.setOpacity(std::clamp(opacity, 0.0, 1.0));
+
+    bool drew = false;
+    QPolygonF tri;
+    for (int k = 1; k + 1 < poly.size(); ++k) {   // leque (0, k, k+1)
+        QTransform m;
+        if (!affineFromTri(src[0], src[k], src[k + 1],
+                           poly[0], poly[k], poly[k + 1], m)) continue;
+        tri << poly[0] << poly[k] << poly[k + 1];
+        QBrush b = brush;
+        b.setTransform(m);
+        painter.setBrush(b);
+        painter.drawPolygon(tri);
+        tri.clear();
+        drew = true;
+    }
+
+    painter.restore();
+    return drew;
 }
 
 void drawMeshTextured(QPainter& painter, const ObjMesh& mesh, double scale,

@@ -138,9 +138,12 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
 
     // Tema da interface.
     m_themeCombo = new QComboBox(this);
-    m_themeCombo->addItem(tr("Escuro"));
+    // A ordem TEM de casar com os valores de AppTheme: o índice do combo é o
+    // que vai pro saveTheme().
+    m_themeCombo->addItem(tr("Escuro (Premiere)"));
     m_themeCombo->addItem(tr("Claro (Final Cut)"));
-    m_themeCombo->setCurrentIndex(savedTheme() == AppTheme::Light ? 1 : 0);
+    m_themeCombo->addItem(tr("Ridge Racer (R4)"));
+    m_themeCombo->setCurrentIndex(int(savedTheme()));
 
     m_rippleDelete = new QCheckBox(tr("Fechar o vão automaticamente ao excluir (ripple)"), this);
     m_rippleDelete->setChecked(s.value("timelineRippleDelete", true).toBool());
@@ -545,7 +548,7 @@ void SettingsDialog::accept() {
     ProxyManager::instance().setEnabled(m_proxies->isChecked());
     s.setValue("exportHwEncode", m_hwEncode->isChecked());
     s.setValue("graphSensitivity", m_graphSens->value());
-    saveTheme(m_themeCombo->currentIndex() == 1 ? AppTheme::Light : AppTheme::Dark);
+    saveTheme(static_cast<AppTheme>(m_themeCombo->currentIndex()));
     QStringList ofxPaths;
     for (int i = 0; i < m_ofxPaths->count(); ++i)
         ofxPaths.append(m_ofxPaths->item(i)->text());

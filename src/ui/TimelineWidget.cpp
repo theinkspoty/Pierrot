@@ -11,6 +11,7 @@
 #include "colombina/ffmpeg/MediaCache.h"
 #include "colombina/ffmpeg/FFmpegDecoder.h"
 #include "colombina/mesh/BlenderBridge.h"
+#include "colombina/render/MesaRenderer.h"
 #include "ui/TransformDialog.h"
 #include "ui/AudioEffectsDialog.h"
 #include "ui/TrackAudioFxDialog.h"
@@ -1054,9 +1055,25 @@ void TimelineWidget::addMeshToMesa(const QString& mesaId, const QString& objPath
     m.duration = 5.0;
     m_project->media.append(m);
 
-    // Track da Mesa com a malha.
-    m_project->addTrack(false);
-    Track& nt = m_project->videoTracks.last();
+    // Faixa da Mesa com a malha, no TOPO do empilhamento.
+    //
+    // A faixa de índice 0 é a de cima (é o que clipAt e o paintEvent
+    // assumem), e addTrack() ANEXA — criaria a malha no rodapé, embaixo de
+    // qualquer vídeo. Aí um clipe opícito na faixa de cima cobre a malha
+    // inteira e o Preview mostra só ele. Por isso insere na frente.
+    //
+    // m_selTracks guarda o índice da LINHA (não o id da faixa), então toda
+    // linha de vídeo selecionada precisa subir junto — senão a seleção
+    // passaria a apontar para a faixa errada. Os demais membros com índice
+    // de linha (m_volRow, m_dragTrackRow...) são estado transiente de gesto
+    // e estão inativos durante um import.
+    for (TrackSel& s : m_selTracks)
+        if (!s.audio && s.row >= 0) ++s.row;
+    Track freshTrack;
+    freshTrack.id = newId();
+    freshTrack.audio = false;
+    m_project->videoTracks.prepend(freshTrack);
+    Track& nt = m_project->videoTracks.first();
     nt.name = tr("Mesa %1 · 3D %2").arg(mc->name.isEmpty() ? tr("Mesa") : mc->name)
                                     .arg(base);
     TrackGroup* grp = m_project->findGroup(mesaId);
@@ -1078,8 +1095,11 @@ void TimelineWidget::addMeshToMesa(const QString& mesaId, const QString& objPath
     if (mc->camZ <= 0.0) {
         const double camZ = mc->canvasH * 1.2;
         mc->camZ = camZ;
-        const double focal =
-            (mc->canvasH * 0.5) / std::tan(25.0 * 3.14159265358979323846 / 180.0);
+        // Mesma fórmula do renderer (focalForHeight). A conta antiga assumia
+        // que 25 era MEIO-ângulo e usava tan(25°), enquanto o renderer trata
+        // camFov como ângulo cheio (tan(fov/2)) — a escala nascia calibrada
+        // contra um focal que ninguém usava.
+        const double focal = MesaRenderer::focalForHeight(mc->canvasH, mc->camFov);
         const double sc = (mc->canvasH * 0.5) * camZ / (200.0 * focal);
         nt.mesaScaleX = sc;
         nt.mesaScaleY = sc;

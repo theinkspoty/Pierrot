@@ -13,7 +13,9 @@
 // Paleta compartilhada para todo o app. Estilo Final Cut / Apple:
 // tons de cinza limpos, sem saturação, contraste suave.
 
-enum class AppTheme { Dark, Light };
+// Os valores sao o indice no combo de Ajustes>Interface e o valor gravado
+// em QSettings. Adicionar um tema = acrescentar aqui E no combo, nessa ordem.
+enum class AppTheme { Dark = 0, Light = 1, RidgeRacer = 2 };
 
 struct ThemeColors {
     // ── Janela / fundo ──────────────────────────────────────────
@@ -78,6 +80,19 @@ struct ThemeColors {
     QColor inputBg;           // fundo de edits, spins, combos
     QColor inputBorder;       // borda de inputs
     QColor inputFocus;        // borda focada
+    QColor inputFocusNeutral; // foco SEM cor (estilo Premiere, sem ciano).
+                             // Era hardcoded por ternario Light/Dark, o que
+                             // deixaria um 3o tema cair no ramo errado.
+    QColor ctrlHover;         // hover de botao no stylesheet global. Slots
+                             // DEDICADOS de proposito: btnHover/btnActive
+                             // nao servem (o btnActive do dark e o azul
+                             // Adobe, nao o cinza de "pressionado").
+    QColor ctrlPress;         // estado pressionado
+    QColor toolBtnBg;         // fundo do botao de ferramenta no toolbar
+    QColor toolBtnHover;      // hover do QToolBar vertical (ferramentas da
+                             // timeline). Eram derivados de canvasBorder+alpha
+                             // no MainWindow, o que impedia o tema de controlar.
+    QColor toolBtnChecked;    // ferramenta ativa/checked no toolbar
     QColor spinText;          // texto dos spins
 
     // ── Botões ──────────────────────────────────────────────────

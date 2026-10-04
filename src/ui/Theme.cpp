@@ -9,6 +9,7 @@
 
 static ThemeColors s_current;
 
+
 static ThemeColors makeDarkPalette() {
     // Fidelidade Adobe Premiere Pro (tema escuro padrão), medida de
     // screenshots do app: chrome 100% neutro (#232323 painéis, #121212 área
@@ -72,6 +73,12 @@ static ThemeColors makeDarkPalette() {
     c.inputBg           = QColor(0x1B, 0x1B, 0x1B);
     c.inputBorder       = QColor(0x3A, 0x3A, 0x3A);
     c.inputFocus        = QColor(0x26, 0x80, 0xEB);
+    c.inputFocusNeutral = QColor(0x5C, 0x60, 0x68);
+    c.ctrlHover         = QColor(0x3A, 0x3E, 0x48);
+    c.ctrlPress         = QColor(0x31, 0x32, 0x36);
+    c.toolBtnBg         = QColor(0, 0, 0, 0);      // transparente (status quo)
+    c.toolBtnHover      = QColor(0x0A, 0x0A, 0x0A, 70);
+    c.toolBtnChecked    = QColor(0x26, 0x80, 0xEB, 55);
     c.spinText          = QColor(0x4D, 0xA3, 0xFF);   // valores numéricos azuis
 
     c.btnPrimary        = QColor(0x26, 0x80, 0xEB);
@@ -181,6 +188,12 @@ static ThemeColors makeLightPalette() {
     c.inputBg           = QColor(225, 225, 228);
     c.inputBorder       = QColor(152, 152, 157);
     c.inputFocus        = QColor(0, 100, 225);
+    c.inputFocusNeutral = QColor(180, 182, 188);
+    c.ctrlHover         = QColor(200, 200, 205);
+    c.ctrlPress         = QColor(170, 172, 178);
+    c.toolBtnBg         = QColor(0, 0, 0, 0);
+    c.toolBtnHover      = QColor(65, 65, 68, 70);
+    c.toolBtnChecked    = QColor(0, 100, 225, 55);
     c.spinText          = QColor(0, 82, 185);
 
     c.btnPrimary        = QColor(0, 100, 225);
@@ -236,8 +249,144 @@ const ThemeColors& themeColors() {
     return s_current;
 }
 
+static ThemeColors makeRidgePalette() {
+    // Ridge Racer Type 4 (Namco, PS1) — tema amarelo dominante, por diversão.
+    // A ideia: a interface inteira é amarelo. Botões de ferramenta são
+    // pretos (ícones brancos por cima). Botões de ação (OK, Exportar…) são
+    // vermelhos com texto branco. Texto sobre amarelo é sempre preto.
+    //
+    // A seleção é PRETA, não amarela: amarelo sobre amarelo some. O monitor
+    // continua preto — o vídeo precisa de fundo neutro.
+    // Clipes na timeline são escuros (grafite) para contrastar com a faixa
+    // amarela; a borda de seleção de clipe é vermelha.
+    ThemeColors c;
+    c.window            = QColor(0xFF, 0xC8, 0x00);
+    c.windowText        = QColor(0x00, 0x00, 0x00);
+    c.base              = QColor(0xF5, 0xC0, 0x00);
+    c.alternateBase     = QColor(0xE6, 0xB0, 0x00);
+    c.text              = QColor(0x00, 0x00, 0x00);
+    c.button            = QColor(0xE8, 0x11, 0x23);   // todo botao = vermelho
+    c.buttonText        = QColor(0xFF, 0xFF, 0xFF);   // com texto branco
+    c.brightText        = QColor(0xE8, 0x11, 0x23);
+    c.link              = QColor(0x00, 0x00, 0x00);
+    c.highlight         = QColor(0x00, 0x00, 0x00);   // selecao = preto
+    c.highlightedText   = QColor(0xFF, 0xC8, 0x00);   // texto amarelo sobre preto
+    c.toolTipBase       = QColor(0x1A, 0x1A, 0x1A);
+    c.toolTipText       = QColor(0xFF, 0xFF, 0xFF);
+    c.placeholderText   = QColor(0xFF, 0xFF, 0xFF, 140);
+    c.disabledText      = QColor(0xFF, 0xFF, 0xFF, 140);
+    c.disabledWindowText= QColor(0xFF, 0xFF, 0xFF, 140);
+
+    c.monitorBg         = QColor(0x00, 0x00, 0x00);
+    c.canvasBg          = QColor(0x00, 0x00, 0x00);
+    c.canvasBorder      = QColor(0x00, 0x00, 0x00);
+    c.monitorLabel      = QColor(0xFF, 0xFF, 0xFF);
+
+    c.timelineBg        = QColor(0xFF, 0xC8, 0x00);
+    c.timelineGrid      = QColor(0xE6, 0xB0, 0x00);
+    c.rulerBg           = QColor(0xF5, 0xC0, 0x00);
+    c.rulerText         = QColor(0x80, 0x66, 0x00);
+    c.rulerTick         = QColor(0xCC, 0x9A, 0x00);
+    c.rulerTickMajor    = QColor(0xFF, 0xFF, 0xFF);
+    c.trackBg           = QColor(0xF5, 0xC0, 0x00);
+    c.trackBgAlt        = QColor(0xE6, 0xB0, 0x00);
+    c.trackBorder       = QColor(0xFF, 0xFF, 0xFF);
+    c.trackLabelBg      = QColor(0xE6, 0xB0, 0x00);
+    c.trackLabelText    = QColor(0x00, 0x00, 0x00);
+    c.clipBg            = QColor(0x1A, 0x1A, 0x1A);   // grafite: contrasta com faixa amarela
+    c.clipBorder        = QColor(0x00, 0x00, 0x00);
+    c.clipBorderSelect  = QColor(0xE8, 0x11, 0x23);   // vermelho para clipe selecionado
+    c.clipBorderSecondary = QColor(0xE8, 0x11, 0x23, 120);
+    c.clipText          = QColor(0xFF, 0xFF, 0xFF);   // branco nos clipes escuros
+    c.clipThumbBorder   = QColor(0xFF, 0xFF, 0xFF);
+    c.playhead          = QColor(0xE8, 0x11, 0x23);   // vermelho: visivel sobre amarelo
+    c.playheadHandle    = QColor(0xE8, 0x11, 0x23);
+    c.selectionRect     = QColor(0x00, 0x00, 0x00, 60);
+    c.selectionFill     = QColor(0x00, 0x00, 0x00, 28);
+
+    c.transportBg       = QColor(0xF5, 0xC0, 0x00);
+    c.transportBorder   = QColor(0xFF, 0xFF, 0xFF);
+
+    c.dockTitleBg       = QColor(0xFF, 0xC8, 0x00);
+    c.dockTitleBgHover  = QColor(0xE6, 0xB0, 0x00);
+    c.dockTitleText     = QColor(0x00, 0x00, 0x00);
+    c.dockBorder        = QColor(0xFF, 0xFF, 0xFF);
+    c.dockCloseHover    = QColor(0xE8, 0x11, 0x23);
+
+    c.inputBg           = QColor(0xFF, 0xF3, 0xC0);
+    c.inputBorder       = QColor(0xFF, 0xFF, 0xFF);
+    c.inputFocus        = QColor(0x00, 0x00, 0x00);
+    c.inputFocusNeutral = QColor(0x80, 0x66, 0x00);
+    c.ctrlHover         = QColor(0xFF, 0xFF, 0xFF, 80);   // flash branco no hover
+    c.ctrlPress         = QColor(0xFF, 0xFF, 0xFF, 140);
+    c.toolBtnBg         = QColor(0x00, 0x00, 0x00);   // ferramentas = preto
+    c.toolBtnHover      = QColor(0x33, 0x33, 0x33);
+    c.toolBtnChecked    = QColor(0xE8, 0x11, 0x23);   // ativa = vermelho
+    c.spinText          = QColor(0x00, 0x00, 0x00);
+
+    c.btnPrimary        = QColor(0xE8, 0x11, 0x23);
+    c.btnPrimaryText    = QColor(0xFF, 0xFF, 0xFF);
+    c.btnHover          = QColor(0xC4, 0x0F, 0x1F);
+    c.btnActive         = QColor(0xA0, 0x0C, 0x19);
+
+    c.accent            = QColor(0x00, 0x00, 0x00);
+    c.accentGold        = QColor(0xE8, 0x11, 0x23);
+    c.iconNormal        = QColor(0x00, 0x00, 0x00);
+    c.iconMuted         = QColor(0x80, 0x66, 0x00);
+
+    c.tabBg             = QColor(0xF5, 0xC0, 0x00);
+    c.tabSelected       = QColor(0xE6, 0xB0, 0x00);
+    c.tabBorder         = QColor(0xFF, 0xFF, 0xFF);
+
+    c.scrollbarBg       = QColor(0xE6, 0xB0, 0x00);
+    c.scrollbarHandle   = QColor(0xFF, 0xFF, 0xFF);
+    c.scrollbarHover    = QColor(0xFF, 0xFF, 0xFF, 180);
+
+    c.welcomeBgTop      = QColor(0xFF, 0xD4, 0x33);
+    c.welcomeBgBottom   = QColor(0xE6, 0xB0, 0x00);
+    c.welcomeBtnGradStart = QColor(0xE8, 0x11, 0x23);
+    c.welcomeBtnGradEnd   = QColor(0xFF, 0xFF, 0xFF);   // gradiente vermelho -> branco
+
+    c.expressBg         = QColor(0xFF, 0xC8, 0x00);
+    c.expressCardBg     = QColor(0xFF, 0xFF, 0xFF);   // cards brancos no painel express
+    c.expressDescText   = QColor(0x33, 0x33, 0x33);   // texto escuro sobre card branco
+    c.effectsSearchBg   = QColor(0xFF, 0xF3, 0xC0);
+    c.effectsTreeBg     = QColor(0xF5, 0xC0, 0x00);
+    c.effectsPreviewBg  = QColor(0xFF, 0xFF, 0xFF);
+
+    c.graphBg           = QColor(0xF5, 0xC0, 0x00);
+    c.graphGrid         = QColor(0xE6, 0xB0, 0x00);
+    c.graphLine         = QColor(0x00, 0x00, 0x00);   // curvas pretas sobre amarelo
+    c.graphKeyframe     = QColor(0xFF, 0xFF, 0xFF);   // diamantes brancos
+    c.graphLabel        = QColor(0x80, 0x66, 0x00);
+    c.graphRuler        = QColor(0xF5, 0xC0, 0x00);
+    c.graphAxis         = QColor(0xFF, 0xFF, 0xFF);
+    c.graphRulerText    = QColor(0x80, 0x66, 0x00);
+    c.graphHandle       = QColor(0xFF, 0xFF, 0xFF);
+
+    c.pancropBg         = QColor(0xF5, 0xC0, 0x00);
+    c.pancropRegion     = QColor(0x00, 0x00, 0x00, 60);
+    c.pancropHandle     = QColor(0x00, 0x00, 0x00);
+
+    c.sectionDivider    = QColor(0xFF, 0xFF, 0xFF);
+
+    return c;
+}
+
+static const ThemeColors& paletteFor(AppTheme theme) {
+    static const ThemeColors dark  = makeDarkPalette();
+    static const ThemeColors light = makeLightPalette();
+    static const ThemeColors ridge = makeRidgePalette();
+    switch (theme) {
+    case AppTheme::Light:      return light;
+    case AppTheme::RidgeRacer: return ridge;
+    case AppTheme::Dark:       break;
+    }
+    return dark;
+}
+
 void applyAppPalette(QApplication* app, AppTheme theme) {
-    s_current = (theme == AppTheme::Light) ? makeLightPalette() : makeDarkPalette();
+    s_current = paletteFor(theme);
     const auto& c = s_current;
 
     QPalette pal;
@@ -257,21 +406,33 @@ void applyAppPalette(QApplication* app, AppTheme theme) {
     pal.setColor(QPalette::PlaceholderText, c.placeholderText);
     pal.setColor(QPalette::Disabled, QPalette::Text, c.disabledText);
     pal.setColor(QPalette::Disabled, QPalette::WindowText, c.disabledWindowText);
+    // Roles que o Qt usa para chrome default (setas de scrollbar, bordas de
+    // groupbox, separadores de menu). Sem preencher, ficam no cinza do Qt e
+    // destoam do tema — no Ridge, cinza sobre amarelo é a "parte sem cor".
+    pal.setColor(QPalette::Light,       c.window.lighter(120));
+    pal.setColor(QPalette::Midlight,    c.window.lighter(110));
+    pal.setColor(QPalette::Dark,        c.window.darker(120));
+    pal.setColor(QPalette::Mid,         c.window.darker(110));
+    pal.setColor(QPalette::Shadow,      c.window.darker(150));
+    pal.setColor(QPalette::LinkVisited, c.link);
     app->setPalette(pal);
 }
 
 AppTheme savedTheme() {
     QSettings s;
-    return s.value("theme", 0).toInt() == 1 ? AppTheme::Light : AppTheme::Dark;
+    const int v = s.value("theme", int(AppTheme::Dark)).toInt();
+    // leitura defensiva: config antiga/corrompida nunca deve sair do enum
+    return (v >= int(AppTheme::Dark) && v <= int(AppTheme::RidgeRacer))
+        ? static_cast<AppTheme>(v) : AppTheme::Dark;
 }
 
 void saveTheme(AppTheme theme) {
     QSettings s;
-    s.setValue("theme", theme == AppTheme::Light ? 1 : 0);
+    s.setValue("theme", int(theme));
 }
 
 QString globalStyleSheet(AppTheme theme) {
-    const auto& c = (theme == AppTheme::Light) ? makeLightPalette() : makeDarkPalette();
+    const auto& c = paletteFor(theme);
     return QStringLiteral(R"(
         QDockWidget {
             color: %1;
@@ -307,7 +468,7 @@ QString globalStyleSheet(AppTheme theme) {
 }
 
 QString flatControlStyleSheet(AppTheme theme) {
-    const auto& c = (theme == AppTheme::Light) ? makeLightPalette() : makeDarkPalette();
+    const auto& c = paletteFor(theme);
     const QString win      = c.window.name();
     const QString base     = c.base.name();
     const QString alt      = c.alternateBase.name();
@@ -315,8 +476,8 @@ QString flatControlStyleSheet(AppTheme theme) {
     const QString text     = c.text.name();
     const QString btn      = c.button.name();
     const QString btntxt   = c.buttonText.name();
-    const QString hover    = (theme == AppTheme::Light) ? QColor(200, 200, 205).name() : QColor(58, 62, 72).name();
-    const QString press    = (theme == AppTheme::Light) ? QColor(170, 172, 178).name() : QColor(49, 50, 54).name();
+    const QString hover    = c.ctrlHover.name();
+    const QString press    = c.ctrlPress.name();
     const QString brd      = c.trackBorder.name();
     const QString input    = c.inputBg.name();
     const QString inputbrd = c.inputBorder.name();
@@ -336,8 +497,7 @@ QString flatControlStyleSheet(AppTheme theme) {
     const QString tabSel   = c.tabSelected.name();
     const QString btnPrimaryTxt = c.btnPrimaryText.name();
     // Foco neutro (Premiere): sem borda ciano em hover/focus de inputs.
-    const QString fneut = (theme == AppTheme::Light) ? QColor(180, 182, 188).name()
-                                                     : QColor(92, 96, 104).name();
+    const QString fneut = c.inputFocusNeutral.name();
     // Divisória entre painéis: quase invisível, como no Premiere.
     const QString div   = c.dockBorder.name();
 
