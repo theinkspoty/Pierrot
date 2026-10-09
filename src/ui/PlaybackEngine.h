@@ -48,6 +48,11 @@ public:
     void setLoopRange(double in, double out);
     void setLoopEnabled(bool enabled);
 
+    // Estado atual (usado pela janela de preview externo para espelhar os
+    // botões de loop/play do monitor principal).
+    bool loopEnabled() const { return m_loopEnabled; }
+    bool isPlaying() const { return m_playing; }
+
     // Chamado pelo timeout do QTimer do widget.
     void tick();
 

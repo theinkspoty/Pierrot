@@ -521,8 +521,8 @@ void TimelineWidget::renderScene(QPainter& p) {
         const bool sel = isTrackSelected(i, false);
         // Premiere: fundo chapado em todas as pistas (vídeo e áudio), sem
         // zebrado — a separação vem da linha divisória no rodapé de cada uma.
-        p.fillRect(0, y, width(), rowH, sel ? QColor(42, 48, 62)
-                                            : themeColors().trackBg);
+        // Seleção = tint translúcido de acento (não cor chapada).
+        p.fillRect(0, y, width(), rowH, themeColors().trackBg);
         if (sel) {
             p.fillRect(0, y, 4, rowH, themeColors().accent);
             p.setPen(QPen(themeColors().accent, 1));
@@ -555,8 +555,7 @@ void TimelineWidget::renderScene(QPainter& p) {
         // Premiere: a pista de áudio é um fundo chapado, sem listras
         // alternadas — a separação entre faixas vem da linha divisória
         // sutil desenhada no rodapé de cada uma.
-        p.fillRect(0, y, width(), rowH, sel ? QColor(42, 48, 62)
-                                            : themeColors().trackBg);
+        p.fillRect(0, y, width(), rowH, themeColors().trackBg);
         if (sel) {
             p.fillRect(0, y, 4, rowH, themeColors().accent);
             p.setPen(QPen(themeColors().accent, 1));
@@ -581,8 +580,7 @@ void TimelineWidget::renderScene(QPainter& p) {
             const int rowH = recTrackH(i);
             lastBottom = qMax(lastBottom, y + rowH);
             const bool sel = isRecTrackSelected(i);
-            p.fillRect(0, y, width(), rowH, sel ? QColor(46, 40, 44)
-                                                : themeColors().trackBg);
+            p.fillRect(0, y, width(), rowH, themeColors().trackBg);
             if (sel) {
                 p.fillRect(0, y, 4, rowH, recColor());
                 p.setPen(QPen(recColor(), 1));
@@ -659,10 +657,10 @@ void TimelineWidget::renderScene(QPainter& p) {
         }
     }
 
-    // Risquinho branco nos cortes: borda entre clipes adjacentes (mesma
-    // faixa, sem sobreposição) — indica onde o clipe foi dividido. Vídeo,
-    // áudio e gravação. Ordena por posição para encontrar cortes mesmo
-    // quando a lista original não está em ordem cronológica.
+    // Emenda nos cortes: borda entre clipes adjacentes (mesma faixa, sem
+    // sobreposição) — indica onde o clipe foi dividido. Vídeo, áudio e
+    // gravação. Ordena por posição para encontrar cortes mesmo quando a
+    // lista original não está em ordem cronológica.
     auto drawCutLines = [&](const QVector<Track>& tracks, bool audio) {
         for (int i = 0; i < (int)tracks.size(); ++i) {
             const bool vis = audio ? trackVisible(i, true) : trackVisible(i, false);
@@ -684,10 +682,15 @@ void TimelineWidget::renderScene(QPainter& p) {
                 if (std::fabs(cur->pos - prevEnd) > 1e-6) continue;
                 const int cx = (int)(H + (cur->pos - m_viewStart) * m_pps);
                 if (cx < H || cx > width()) continue;
-                // Fundo escuro + linha branca = corte visível.
-                p.fillRect(cx - 1, y + 2, 3, rowH - 4, QColor(0, 0, 0, 140));
-                p.setPen(QPen(QColor(255, 255, 255), 1));
-                p.drawLine(cx, y + 2, cx, y + rowH - 2);
+                // Separador fino e escuro no corte. Antes havia também uma
+                // linha branca de altura total, que poluía timelines com muitos
+                // cortes; a emenda sozinha já delimita o corte. A cor é a
+                // trackBorder do tema (escura no dark, cinza no claro, marrom no
+                // amarelo) para continuar legível em qualquer tema sem branco
+                // fixo.
+                const int seamTop = y + 4;
+                const int seamH = std::max(1, rowH - 8);
+                p.fillRect(cx - 1, seamTop, 2, seamH, themeColors().trackBorder);
             }
         }
     };
@@ -1716,10 +1719,15 @@ static void drawCollapseArrow(QPainter& p, const QRect& r, bool collapsed) {
 void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& tr, int index, bool selected) {
     const int H = kHeaderW;
 
-    // ── Fundo do cabeçalho (cinza do Premiere): a seleção só clareia um tom
-    // sutilmente azulado; não há cor de faixa nem strip (a cor vive nos clipes).
-    const QColor base = selected ? QColor(0x35, 0x3E, 0x4C) : QColor(0x2B, 0x2B, 0x2C);
+    // ── Fundo do cabeçalho (cinza do Premiere): a seleção acende no azul do
+    // tema (o indicador principal da faixa ativa), sem pintar a pista.
+    const QColor base = QColor(0x2B, 0x2B, 0x2C);
     p.fillRect(0, y, H, rowH, base);
+    if (selected) {
+        QColor selTint = themeColors().accent;
+        selTint.setAlpha(140);
+        p.fillRect(0, y, H, rowH, selTint);
+    }
     p.setPen(QColor(0x15, 0x15, 0x15));
     p.drawLine(0, y + rowH - 1, H, y + rowH - 1); // separador entre faixas
 
@@ -1863,15 +1871,8 @@ void TimelineWidget::drawTrackHeader(QPainter& p, int y, int rowH, const Track& 
         const QRect mr = headerMeterRect(y, rowH);
         if (!mr.isEmpty()) {
             p.setPen(Qt::NoPen);
-            p.setBrush(QColor(0x1C, 0x1C, 0x1C));
+            p.setBrush(QColor(0x1C, 0x1C, 0x20)); // slot escuro #1C1C20
             p.drawRect(mr);
-            const double v = hidden ? 0.0
-                : std::clamp(kfValue(kfs, tr.volume, m_playhead), 0.0, 2.0) / 2.0;
-            const int fillH = (int)std::lround(mr.height() * std::clamp(v, 0.0, 1.0));
-            if (fillH >= 1) {
-                p.setBrush(QColor(0x5B, 0xBD, 0x6B));
-                p.drawRect(mr.x(), mr.y() + mr.height() - fillH, mr.width(), fillH);
-            }
             // segmentos do meter (leitura retificada, como no Premiere)
             p.setPen(QColor(0x2B, 0x2B, 0x2C));
             for (int sy = mr.y() + 4; sy < mr.y() + mr.height(); sy += 4)

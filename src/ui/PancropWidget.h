@@ -16,7 +16,6 @@
 class QSlider;
 class QLabel;
 class QPushButton;
-class QDoubleSpinBox;
 class QToolButton;
 
 // Painel docável de pan/crop estilo DaVinci/Vegas: viewfinder com a caixa de
@@ -85,7 +84,6 @@ private:
     void commitSlider(int prop, double baseValue);
     void updateValueLabels();
     void setCropValues(double L, double R, double T, double B);
-    void nudgeFocusedSpinBox(int delta);
 
     // Keyframes (estilo DaVinci).
     double relPlayhead();
@@ -138,18 +136,18 @@ private:
     QSlider* m_anchorX = nullptr;
     QSlider* m_anchorY = nullptr;
 
-    QDoubleSpinBox* m_cropLVal = nullptr;
-    QDoubleSpinBox* m_cropRVal = nullptr;
-    QDoubleSpinBox* m_cropTVal = nullptr;
-    QDoubleSpinBox* m_cropBVal = nullptr;
-    QDoubleSpinBox* m_scaleVal = nullptr;
-    QDoubleSpinBox* m_panXVal = nullptr;
-    QDoubleSpinBox* m_panYVal = nullptr;
-    QDoubleSpinBox* m_rotationVal = nullptr;
-    QDoubleSpinBox* m_scaleXVal = nullptr;
-    QDoubleSpinBox* m_scaleYVal = nullptr;
-    QDoubleSpinBox* m_anchorXVal = nullptr;
-    QDoubleSpinBox* m_anchorYVal = nullptr;
+    QLabel* m_cropLVal = nullptr;
+    QLabel* m_cropRVal = nullptr;
+    QLabel* m_cropTVal = nullptr;
+    QLabel* m_cropBVal = nullptr;
+    QLabel* m_scaleVal = nullptr;
+    QLabel* m_panXVal = nullptr;
+    QLabel* m_panYVal = nullptr;
+    QLabel* m_rotationVal = nullptr;
+    QLabel* m_scaleXVal = nullptr;
+    QLabel* m_scaleYVal = nullptr;
+    QLabel* m_anchorXVal = nullptr;
+    QLabel* m_anchorYVal = nullptr;
 
     QHash<int, QPushButton*> m_kfDiamonds;
     QHash<int, QToolButton*> m_resetBtns;

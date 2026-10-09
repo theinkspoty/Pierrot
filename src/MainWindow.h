@@ -117,6 +117,10 @@ private:
     void saveSettings();
     void restoreSettings();
     void scheduleLayoutSave();
+    // Reaplica o arranjo de painéis guardado em "layoutBackup" quando uma
+    // atualização descartou o layout antigo (kLayoutVersion mudou). Sem isto o
+    // arranjo do usuário seria perdido em silêncio na troca de versão.
+    void restoreBackupLayout();
     void openMaskEditor(const QString& id);
     void setDockLocked(bool locked);
     void showPropsWindow();
@@ -183,6 +187,16 @@ private:
     // cadeado antes da janela ser montada, sobrescrevendo o layout salvo.
     bool m_restoringSettings = false;
     bool m_layoutRestored = false;
+    // Só grava o layout depois de restoreSettings() ler o que estava salvo —
+    // senão um pedido de layout disparado durante a montagem da janela
+    // sobrescreveria o arranjo do usuário pelo padrão.
+    bool m_settingsReady = false;
+    // Cache do último arranjo/geometria gravados. saveSettings() é chamado por
+    // muitos gatilhos (mover/redimensionar docks, redimensionar a janela) e não
+    // deve reescrever o QSettings quando nada mudou.
+    QByteArray m_lastSavedLayout;
+    QByteArray m_lastSavedGeometry;
+    bool m_layoutStateCached = false;
 
     Project m_project;
     // Snapshots de undo em JSON comprimido. std::deque dá eviction O(1) (a

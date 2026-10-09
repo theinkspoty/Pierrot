@@ -76,6 +76,7 @@ public slots:
     // QAction/QPushButton continuarem funcionando via slots do widget.
     void seek(double t);
     void togglePlay();
+    void stepFrameBy(int dir); // ±1 quadro (usado pela janela de preview externo)
     void shuttle(int dir);
     void playFrom(double t);
     void setLoopRange(double in, double out);

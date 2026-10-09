@@ -10,11 +10,11 @@
 #include <QHash>
 #include <QPair>
 #include <QSet>
+#include <QPoint>
 #include <QElapsedTimer>
 
 #include "colombina/models/Project.h"
 
-class QSlider;
 class QLabel;
 class QPushButton;
 class QTimer;
@@ -28,24 +28,37 @@ class PreviewWidget;
 double volToDb(double vol);   // 0→-inf, 1→0 dB, 2→+6 dB
 double dbToVol(double db);    // -inf→0, 0→1, +6→2
 
-// ── VU Meter vertical estilo LED com peak hold ────────────────────────
+// ── VU Meter vertical estilo Premiere: gradiente contínuo, peak hold
+//    e clip light no topo (liga em vermelho quando pico >= -0.1 dBFS).
 
 class VuMeter : public QWidget {
     Q_OBJECT
 public:
     explicit VuMeter(QWidget* parent = nullptr);
-    void setLevel(float rms); // 0..1
-    QSize sizeHint() const override { return QSize(12, 180); }
-    QSize minimumSizeHint() const override { return QSize(8, 60); }
+    void setLevel(float rms); // 0..1 (linear)
+    QSize sizeHint() const override { return QSize(11, 180); }
+    QSize minimumSizeHint() const override { return QSize(9, 60); }
 protected:
     void paintEvent(QPaintEvent*) override;
 private:
-    float m_level = 0.0f;
-    float m_peak = 0.0f;
+    float m_db = -60.0f;
+    float m_peakDb = -60.0f;
     QElapsedTimer m_peakTimer;
 };
 
-// ── Knob de pan rotativo ─────────────────────────────────────────────
+// ── Escala em dB (0..-54) colada à direita do VU meter ──────────────
+
+class MeterScale : public QWidget {
+    Q_OBJECT
+public:
+    explicit MeterScale(QWidget* parent = nullptr);
+    QSize sizeHint() const override { return QSize(24, 180); }
+    QSize minimumSizeHint() const override { return QSize(22, 60); }
+protected:
+    void paintEvent(QPaintEvent*) override;
+};
+
+// ── Knob de pan rotativo estilo filmcraft: anel com ponteiro, L/R ────
 
 class PanKnob : public QWidget {
     Q_OBJECT
@@ -53,20 +66,54 @@ public:
     explicit PanKnob(QWidget* parent = nullptr);
     void setPan(double pan); // -1..+1
     double value() const { return m_pan; } // -1..+1
-    QSize sizeHint() const override { return QSize(30, 30); }
-    QSize minimumSizeHint() const override { return QSize(24, 24); }
+    QSize sizeHint() const override { return QSize(36, 44); }
+    QSize minimumSizeHint() const override { return QSize(34, 40); }
 signals:
     void panChanged(double pan);
     void panTouchedUp(); // mouse press (início do toque)
+    void panReleased();  // mouse release (fim do toque)
 protected:
     void paintEvent(QPaintEvent*) override;
     void mousePressEvent(QMouseEvent*) override;
     void mouseMoveEvent(QMouseEvent*) override;
     void mouseReleaseEvent(QMouseEvent*) override;
+    void mouseDoubleClickEvent(QMouseEvent*) override;
     void wheelEvent(QWheelEvent*) override;
 private:
     double m_pan = 0.0;
     bool m_dragging = false;
+    QPoint m_lastPos;
+};
+
+// ── Fader de volume estilo Premiere: escala dB + groove + cap ────────
+// Lei de taper do filmcraft (mais curso próximo da unidade).
+// API compativel com o antigo QSlider (0..200 = volume x100).
+
+class FaderSlider : public QWidget {
+    Q_OBJECT
+public:
+    explicit FaderSlider(QWidget* parent = nullptr);
+    int value() const { return m_value; }      // 0..200 (vol*100)
+    void setValue(int v);                      // não emite signal
+    void setRange(int, int) {}                 // compat (fixo 0..200)
+    QSize sizeHint() const override { return QSize(52, 180); }
+    QSize minimumSizeHint() const override { return QSize(48, 60); }
+signals:
+    void valueChanged(int value);
+    void sliderPressed();
+    void sliderReleased();
+protected:
+    void paintEvent(QPaintEvent*) override;
+    void mousePressEvent(QMouseEvent*) override;
+    void mouseMoveEvent(QMouseEvent*) override;
+    void mouseReleaseEvent(QMouseEvent*) override;
+    void mouseDoubleClickEvent(QMouseEvent*) override;
+    void wheelEvent(QWheelEvent*) override;
+private:
+    double yPosToDb(double y) const;
+    double dbToYPos(double db) const;
+    int m_value = 100;
+    bool m_drag = false;
 };
 
 // ── Strip individual (faixa ou master) ────────────────────────────────
@@ -110,12 +157,13 @@ private:
     int m_trackIndex;
     bool m_isAudio;
     bool m_isMaster;
-    QSlider* m_fader = nullptr;
+    FaderSlider* m_fader = nullptr;
     QLabel* m_volLabel = nullptr;
     PanKnob* m_panKnob = nullptr;
     QPushButton* m_muteBtn = nullptr;
     QPushButton* m_soloBtn = nullptr;
     VuMeter* m_meter = nullptr;
+    MeterScale* m_meterScale = nullptr;
     QPushButton* m_autoBtn = nullptr;   // botão de automação (T/W/L/read)
     bool m_updating = false;
     bool m_autoArmed = false;

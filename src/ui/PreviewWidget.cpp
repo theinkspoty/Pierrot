@@ -2688,6 +2688,11 @@ void PreviewWidget::stepFrame(int dir) {
     seek(std::clamp(t, 0.0, m_project->duration()));
 }
 
+// Slot público do passo a passo, para os botões ◀▶ da janela de preview externo.
+void PreviewWidget::stepFrameBy(int dir) {
+    stepFrame(dir);
+}
+
 void PreviewWidget::onSeek(double t) {
     applySeekVisual(t);
 }
@@ -2924,6 +2929,36 @@ bool PreviewWidget::tryRenderMesa(const Clip* clip) {
     return true;
 }
 
+namespace {
+// Ganho efetivo de um clipe de áudio em `t` (tempo de timeline): volume do
+// clipe × envelope do clipe × envelope/volume da faixa × fades × crossfade de
+// transição com vizinho da mesma faixa, clampado 0..2. Fonte única para as
+// fontes ATIVAS (buildMixSources) e para as pré-aquecidas (buildWarmSources):
+// as warm precisam do MESMO ganho da costura, senão o clipe que entra num
+// corte toca com o volume cru do clipe e perde o fader da faixa → "mergulho"
+// curto no corte até o próximo tick recalcular.
+double previewClipAudioVol(const Track& tr, const Clip& c, double t) {
+    const double rel = t - c.pos;
+    double vol = c.volume * kfValue(c.kfVolume, 1.0, rel)
+                 * kfValue(tr.kfVolume, tr.volume, t);
+    if (c.fadeIn > 1e-6) vol *= std::min(1.0, rel / c.fadeIn);
+    if (c.fadeOut > 1e-6) vol *= std::min(1.0, (c.dur - rel) / c.fadeOut);
+    // Crossfade de transição: sobreposição com vizinho da MESMA faixa vira
+    // fade-in (da frente) / fade-out (de trás).
+    double transIn = 0.0, transOut = 0.0;
+    for (const Clip& o : tr.clips) {
+        if (o.id == c.id) continue;
+        if (o.pos < c.pos - 1e-6 && o.pos + o.dur > c.pos + 1e-6)
+            transIn = std::max(transIn, o.pos + o.dur - c.pos);
+        if (o.pos > c.pos + 1e-6 && o.pos < c.pos + c.dur - 1e-6)
+            transOut = std::max(transOut, c.pos + c.dur - o.pos);
+    }
+    if (transIn > 1e-6) vol *= std::clamp(rel / transIn, 0.0, 1.0);
+    if (transOut > 1e-6) vol *= std::clamp((c.dur - rel) / transOut, 0.0, 1.0);
+    return std::clamp(vol, 0.0, 2.0);
+}
+} // namespace
+
 // Clip de áudio "ativo": o mais acima (vídeo ou áudio) em `t` cujo media tem áudio.
 // Clipes de áudio ativos em `t`, prontos para o mixer. Dedupe de vídeo+áudio
 // vinculados (mesmo groupId): a faixa de áudio vence, senão o som sobraria
@@ -2977,24 +3012,7 @@ QVector<AudioMixer::SourceInfo> buildMixSources(const Project* p, double t) {
                 }
                 const MediaItem* m = p->findMedia(c.mediaIdAt(t - c.pos));
                 if (!m || !m->hasAudio) continue;
-                const double rel = t - c.pos;
-                double vol = c.volume * kfValue(c.kfVolume, 1.0, rel)
-                             * kfValue(tr.kfVolume, tr.volume, t);
-                if (c.fadeIn > 1e-6) vol *= std::min(1.0, rel / c.fadeIn);
-                if (c.fadeOut > 1e-6) vol *= std::min(1.0, (c.dur - rel) / c.fadeOut);
-                // Crossfade de transição: sobreposição com vizinho da MESMA
-                // faixa vira fade-in (da frente) / fade-out (de trás).
-                double transIn = 0.0, transOut = 0.0;
-                for (const Clip& o : tr.clips) {
-                    if (o.id == c.id) continue;
-                    if (o.pos < c.pos - 1e-6 && o.pos + o.dur > c.pos + 1e-6)
-                        transIn = std::max(transIn, o.pos + o.dur - c.pos);
-                    if (o.pos > c.pos + 1e-6 && o.pos < c.pos + c.dur - 1e-6)
-                        transOut = std::max(transOut, c.pos + c.dur - o.pos);
-                }
-                if (transIn > 1e-6) vol *= std::clamp((t - c.pos) / transIn, 0.0, 1.0);
-                if (transOut > 1e-6) vol *= std::clamp((c.pos + c.dur - t) / transOut, 0.0, 1.0);
-                vol = std::clamp(vol, 0.0, 2.0);
+                const double vol = previewClipAudioVol(tr, c, t);
                 // Mesmo grupo (vídeo+áudio vinculados) compartilha a chave para
                 // não dobrar o som; o STREAM diferencia as faixas de um arquivo
                 // multicanal (cada clipe de áudio usa o seu stream). O clipe da
@@ -3106,8 +3124,12 @@ QVector<AudioMixer::SourceInfo> buildWarmSources(
                 si.clipPos = c.pos;
                 si.clipDur = c.dur;
                 si.mediaStart = c.in;
-                si.vol = c.volume;
-                si.pan = kfValue(tr.kfPan, tr.pan, t);
+                // Mesmo ganho do instante da costura (início do clipe): inclui
+                // fader/automação da faixa e fades. Antes usava `c.volume` cru,
+                // então o clipe que entrava num corte saía baixo (sem o fader)
+                // até o próximo tick — o "mergulho" no corte.
+                si.vol = previewClipAudioVol(tr, c, c.pos);
+                si.pan = kfValue(tr.kfPan, tr.pan, c.pos);
                 si.trackIndex = ti;
                 si.isAudioTrack = isAudio;
                 si.eqLow = c.eqLow;

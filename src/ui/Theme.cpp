@@ -273,9 +273,9 @@ static ThemeColors makeRidgePalette() {
     c.highlightedText   = QColor(0xFF, 0xC8, 0x00);   // texto amarelo sobre preto
     c.toolTipBase       = QColor(0x1A, 0x1A, 0x1A);
     c.toolTipText       = QColor(0xFF, 0xFF, 0xFF);
-    c.placeholderText   = QColor(0xFF, 0xFF, 0xFF, 140);
-    c.disabledText      = QColor(0xFF, 0xFF, 0xFF, 140);
-    c.disabledWindowText= QColor(0xFF, 0xFF, 0xFF, 140);
+    c.placeholderText   = QColor(0x6B, 0x52, 0x00, 150);
+    c.disabledText      = QColor(0x4A, 0x3A, 0x00, 150);
+    c.disabledWindowText= QColor(0x4A, 0x3A, 0x00, 150);
 
     c.monitorBg         = QColor(0x00, 0x00, 0x00);
     c.canvasBg          = QColor(0x00, 0x00, 0x00);
@@ -285,12 +285,12 @@ static ThemeColors makeRidgePalette() {
     c.timelineBg        = QColor(0xFF, 0xC8, 0x00);
     c.timelineGrid      = QColor(0xE6, 0xB0, 0x00);
     c.rulerBg           = QColor(0xF5, 0xC0, 0x00);
-    c.rulerText         = QColor(0x80, 0x66, 0x00);
+    c.rulerText         = QColor(0x4A, 0x3A, 0x00);   // tinta escura: legível no amarelo
     c.rulerTick         = QColor(0xCC, 0x9A, 0x00);
-    c.rulerTickMajor    = QColor(0xFF, 0xFF, 0xFF);
+    c.rulerTickMajor    = QColor(0x4A, 0x3A, 0x00);   // ticks maiores em tinta, não branco
     c.trackBg           = QColor(0xF5, 0xC0, 0x00);
     c.trackBgAlt        = QColor(0xE6, 0xB0, 0x00);
-    c.trackBorder       = QColor(0xFF, 0xFF, 0xFF);
+    c.trackBorder       = QColor(0x80, 0x66, 0x00);   // marrom quente (branco some no amarelo)
     c.trackLabelBg      = QColor(0xE6, 0xB0, 0x00);
     c.trackLabelText    = QColor(0x00, 0x00, 0x00);
     c.clipBg            = QColor(0x1A, 0x1A, 0x1A);   // grafite: contrasta com faixa amarela
@@ -305,16 +305,16 @@ static ThemeColors makeRidgePalette() {
     c.selectionFill     = QColor(0x00, 0x00, 0x00, 28);
 
     c.transportBg       = QColor(0xF5, 0xC0, 0x00);
-    c.transportBorder   = QColor(0xFF, 0xFF, 0xFF);
+    c.transportBorder   = QColor(0x80, 0x66, 0x00);
 
     c.dockTitleBg       = QColor(0xFF, 0xC8, 0x00);
     c.dockTitleBgHover  = QColor(0xE6, 0xB0, 0x00);
     c.dockTitleText     = QColor(0x00, 0x00, 0x00);
-    c.dockBorder        = QColor(0xFF, 0xFF, 0xFF);
+    c.dockBorder        = QColor(0x80, 0x66, 0x00);
     c.dockCloseHover    = QColor(0xE8, 0x11, 0x23);
 
     c.inputBg           = QColor(0xFF, 0xF3, 0xC0);
-    c.inputBorder       = QColor(0xFF, 0xFF, 0xFF);
+    c.inputBorder       = QColor(0x80, 0x66, 0x00);   // marrom (branco some no amarelo claro)
     c.inputFocus        = QColor(0x00, 0x00, 0x00);
     c.inputFocusNeutral = QColor(0x80, 0x66, 0x00);
     c.ctrlHover         = QColor(0xFF, 0xFF, 0xFF, 80);   // flash branco no hover
@@ -332,15 +332,15 @@ static ThemeColors makeRidgePalette() {
     c.accent            = QColor(0x00, 0x00, 0x00);
     c.accentGold        = QColor(0xE8, 0x11, 0x23);
     c.iconNormal        = QColor(0x00, 0x00, 0x00);
-    c.iconMuted         = QColor(0x80, 0x66, 0x00);
+    c.iconMuted         = QColor(0x5A, 0x44, 0x00);   // tinta média, não #806600 fraco
 
     c.tabBg             = QColor(0xF5, 0xC0, 0x00);
     c.tabSelected       = QColor(0xE6, 0xB0, 0x00);
-    c.tabBorder         = QColor(0xFF, 0xFF, 0xFF);
+    c.tabBorder         = QColor(0x80, 0x66, 0x00);
 
     c.scrollbarBg       = QColor(0xE6, 0xB0, 0x00);
-    c.scrollbarHandle   = QColor(0xFF, 0xFF, 0xFF);
-    c.scrollbarHover    = QColor(0xFF, 0xFF, 0xFF, 180);
+    c.scrollbarHandle   = QColor(0x80, 0x66, 0x00);   // marrom (branco some na trilha amarela)
+    c.scrollbarHover    = QColor(0x4A, 0x3A, 0x00);
 
     c.welcomeBgTop      = QColor(0xFF, 0xD4, 0x33);
     c.welcomeBgBottom   = QColor(0xE6, 0xB0, 0x00);
@@ -357,18 +357,18 @@ static ThemeColors makeRidgePalette() {
     c.graphBg           = QColor(0xF5, 0xC0, 0x00);
     c.graphGrid         = QColor(0xE6, 0xB0, 0x00);
     c.graphLine         = QColor(0x00, 0x00, 0x00);   // curvas pretas sobre amarelo
-    c.graphKeyframe     = QColor(0xFF, 0xFF, 0xFF);   // diamantes brancos
-    c.graphLabel        = QColor(0x80, 0x66, 0x00);
+    c.graphKeyframe     = QColor(0x1A, 0x14, 0x00);   // diamantes em tinta escura (branco some)
+    c.graphLabel        = QColor(0x4A, 0x3A, 0x00);
     c.graphRuler        = QColor(0xF5, 0xC0, 0x00);
-    c.graphAxis         = QColor(0xFF, 0xFF, 0xFF);
-    c.graphRulerText    = QColor(0x80, 0x66, 0x00);
-    c.graphHandle       = QColor(0xFF, 0xFF, 0xFF);
+    c.graphAxis         = QColor(0x4A, 0x3A, 0x00);
+    c.graphRulerText    = QColor(0x4A, 0x3A, 0x00);
+    c.graphHandle       = QColor(0x4A, 0x3A, 0x00);   // alças/handles em tinta, não branco
 
     c.pancropBg         = QColor(0xF5, 0xC0, 0x00);
     c.pancropRegion     = QColor(0x00, 0x00, 0x00, 60);
     c.pancropHandle     = QColor(0x00, 0x00, 0x00);
 
-    c.sectionDivider    = QColor(0xFF, 0xFF, 0xFF);
+    c.sectionDivider    = QColor(0x80, 0x66, 0x00);   // marrom (branco some no amarelo)
 
     return c;
 }

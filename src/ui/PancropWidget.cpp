@@ -14,7 +14,6 @@
 #include <QToolButton>
 #include <QSlider>
 #include <QLabel>
-#include <QDoubleSpinBox>
 #include <QSignalBlocker>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -243,6 +242,7 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     // software; a aceleração real acontece no preview/export.
     m_decoder.setHardwareDecodeAllowed(false);
     setMinimumSize(360, 280);
+    setObjectName(QStringLiteral("pancropRoot"));
 
     auto makeSlider = [this](int min, int max) {
         auto* s = new QSlider(Qt::Horizontal, this);
@@ -250,24 +250,13 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
         s->setMinimumWidth(70);
         return s;
     };
-    auto makeSpinBox = [this](double min, double max, int decimals, const QString& suffix) {
-        auto* sb = new QDoubleSpinBox(this);
-        sb->setRange(min, max);
-        sb->setDecimals(decimals);
-        sb->setSuffix(suffix);
-        sb->setFixedWidth(74);
-        sb->setButtonSymbols(QAbstractSpinBox::NoButtons);
-        sb->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        sb->setStyleSheet(QStringLiteral(
-            "QDoubleSpinBox{color:%1; background:transparent; border:1px solid"
-            " transparent; border-radius:2px; padding:1px 4px;}"
-            "QDoubleSpinBox:hover{background:%2; border:1px solid %3;}"
-            "QDoubleSpinBox:focus{background:%2; border:1px solid %4;}")
-            .arg(themeColors().spinText.name(),
-                 themeColors().inputBg.name(),
-                 themeColors().inputBorder.name(),
-                 themeColors().inputFocus.name()));
-        return sb;
+    auto makeValLabel = [this]() {
+        auto* l = new QLabel(this);
+        l->setMinimumWidth(40);
+        l->setMaximumWidth(56);
+        l->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+        l->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        return l;
     };
     auto makeDiamond = [this](int prop) {
         auto* b = new QPushButton(QStringLiteral("◆"), this);
@@ -314,27 +303,29 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     m_anchorX = makeSlider(-100, 100);
     m_anchorY = makeSlider(-100, 100);
 
-    m_cropLVal = makeSpinBox(0, 100, 0, "%");
-    m_cropRVal = makeSpinBox(0, 100, 0, "%");
-    m_cropTVal = makeSpinBox(0, 100, 0, "%");
-    m_cropBVal = makeSpinBox(0, 100, 0, "%");
-    m_scaleVal = makeSpinBox(kMinScale * 100, kMaxScale * 100, 0, "%");
-    m_panXVal = makeSpinBox(-kPanMax, kPanMax, 0, "%");
-    m_panYVal = makeSpinBox(-kPanMax, kPanMax, 0, "%");
-    m_rotationVal = makeSpinBox(-kRotMax, kRotMax, 1, "°");
-    m_scaleXVal = makeSpinBox(kMinStretch, kMaxStretch, 0, "%");
-    m_scaleYVal = makeSpinBox(kMinStretch, kMaxStretch, 0, "%");
-    m_anchorXVal = makeSpinBox(-100, 100, 0, "%");
-    m_anchorYVal = makeSpinBox(-100, 100, 0, "%");
+    m_cropLVal = makeValLabel();
+    m_cropRVal = makeValLabel();
+    m_cropTVal = makeValLabel();
+    m_cropBVal = makeValLabel();
+    m_scaleVal = makeValLabel();
+    m_panXVal = makeValLabel();
+    m_panYVal = makeValLabel();
+    m_rotationVal = makeValLabel();
+    m_scaleXVal = makeValLabel();
+    m_scaleYVal = makeValLabel();
+    m_anchorXVal = makeValLabel();
+    m_anchorYVal = makeValLabel();
 
     auto addValRow = [&](QGridLayout* g, int r, const QString& label,
-                         QSlider* s, QDoubleSpinBox* sb, int prop) {
+                         QSlider* s, QLabel* v, int prop) {
         auto* lab = new QLabel(label, this);
-        lab->setFixedWidth(86);
+        lab->setMinimumWidth(54);
+        lab->setMaximumWidth(96);
+        lab->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
         lab->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
         g->addWidget(lab, r, 0);
         g->addWidget(s, r, 1);
-        g->addWidget(sb, r, 2);
+        g->addWidget(v, r, 2);
         g->addWidget(makeReset(prop), r, 3);
         g->addWidget(makeDiamond(prop), r, 4);
     };
@@ -386,65 +377,54 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     addValRow(rotSec.grid, 3, tr("Âncora X:"), m_anchorX, m_anchorXVal, P_AnchorX);
     addValRow(rotSec.grid, 4, tr("Âncora Y:"), m_anchorY, m_anchorYVal, P_AnchorY);
 
-    // Conecta sliders → commitSlider (mesmo esquema antigo, agora com spinboxes)
-    auto connectSlider = [&](QSlider* s, QDoubleSpinBox* sb, int prop,
-                             std::function<double()> toBase) {
+    // Conecta sliders → commitSlider; os labels de valor são atualizados junto.
+    auto connectSlider = [&](QSlider* s, int prop, std::function<double()> toBase) {
         connect(s, &QSlider::sliderReleased, this, [this]() { m_undoPushed = false; });
-        connect(s, &QSlider::valueChanged, this, [this, s, sb, prop, toBase]() {
+        connect(s, &QSlider::valueChanged, this, [this, s, prop, toBase]() {
             Clip* c = activeClip();
             if (!c) return;
-            QSignalBlocker b(sb);
-            sb->setValue(s->value());
             commitSlider(prop, toBase());
-            m_view->update();
-        });
-        connect(sb, &QDoubleSpinBox::valueChanged, this, [this, s, sb, prop, toBase]() {
-            Clip* c = activeClip();
-            if (!c) return;
-            QSignalBlocker b(s);
-            s->setValue((int)std::lround(sb->value()));
-            commitSlider(prop, toBase());
+            updateValueLabels();
             m_view->update();
         });
     };
 
-    connectSlider(m_cropL, m_cropLVal, P_CropL, [this]() { return m_cropL->value() / 100.0; });
-    connectSlider(m_cropR, m_cropRVal, P_CropR, [this]() { return m_cropR->value() / 100.0; });
-    connectSlider(m_cropT, m_cropTVal, P_CropT, [this]() { return m_cropT->value() / 100.0; });
-    connectSlider(m_cropB, m_cropBVal, P_CropB, [this]() { return m_cropB->value() / 100.0; });
-    connectSlider(m_scale, m_scaleVal, P_Scale, [this]() { return m_scale->value() / 100.0; });
-    connectSlider(m_panX, m_panXVal, P_PanX, [this]() {
+    connectSlider(m_cropL, P_CropL, [this]() { return m_cropL->value() / 100.0; });
+    connectSlider(m_cropR, P_CropR, [this]() { return m_cropR->value() / 100.0; });
+    connectSlider(m_cropT, P_CropT, [this]() { return m_cropT->value() / 100.0; });
+    connectSlider(m_cropB, P_CropB, [this]() { return m_cropB->value() / 100.0; });
+    connectSlider(m_scale, P_Scale, [this]() { return m_scale->value() / 100.0; });
+    connectSlider(m_panX, P_PanX, [this]() {
         const double W = m_project ? m_project->width : 1920.0;
         return m_panX->value() / 100.0 * W;
     });
-    connectSlider(m_panY, m_panYVal, P_PanY, [this]() {
+    connectSlider(m_panY, P_PanY, [this]() {
         const double H = m_project ? m_project->height : 1080.0;
         return m_panY->value() / 100.0 * H;
     });
-    connectSlider(m_rotation, m_rotationVal, P_Rotation, [this]() {
+    connectSlider(m_rotation, P_Rotation, [this]() {
         return (double)m_rotation->value();
     });
-    connectSlider(m_scaleX, m_scaleXVal, P_ScaleX, [this]() { return m_scaleX->value() / 100.0; });
-    connectSlider(m_scaleY, m_scaleYVal, P_ScaleY, [this]() { return m_scaleY->value() / 100.0; });
-    connectSlider(m_anchorX, m_anchorXVal, P_AnchorX, [this]() {
+    connectSlider(m_scaleX, P_ScaleX, [this]() { return m_scaleX->value() / 100.0; });
+    connectSlider(m_scaleY, P_ScaleY, [this]() { return m_scaleY->value() / 100.0; });
+    connectSlider(m_anchorX, P_AnchorX, [this]() {
         return m_anchorX->value() / 100.0;
     });
-    connectSlider(m_anchorY, m_anchorYVal, P_AnchorY, [this]() {
+    connectSlider(m_anchorY, P_AnchorY, [this]() {
         return m_anchorY->value() / 100.0;
     });
 
     // Conecta botões de reset por propriedade.
-    auto connectReset = [this](int prop, QSlider* s, QDoubleSpinBox* sb,
-                               double defVal, std::function<void(Clip*)> resetFn) {
+    auto connectReset = [this](int prop, QSlider* s, double defVal,
+                               std::function<void(Clip*)> resetFn) {
         if (QToolButton* btn = m_resetBtns.value(prop)) {
-            connect(btn, &QToolButton::clicked, this, [this, prop, s, sb, defVal, resetFn]() {
+            connect(btn, &QToolButton::clicked, this, [this, prop, s, defVal, resetFn]() {
                 Clip* c = activeClip();
                 if (!c) return;
                 if (!m_undoPushed) { emit editStart(); m_undoPushed = true; }
                 resetFn(c);
-                QSignalBlocker bs(s), bsb(sb);
+                QSignalBlocker bs(s);
                 s->setValue((int)std::lround(defVal * 100.0));
-                sb->setValue(defVal);
                 if (m_kfAuto && m_kfAuto->isChecked())
                     writeKeyframe(prop, defVal);
                 emit modified();
@@ -454,18 +434,18 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
             });
         }
     };
-    connectReset(P_CropL, m_cropL, m_cropLVal, 0.0, [](Clip* c) { c->cropL = 0.0; c->kfCropL.clear(); });
-    connectReset(P_CropR, m_cropR, m_cropRVal, 0.0, [](Clip* c) { c->cropR = 0.0; c->kfCropR.clear(); });
-    connectReset(P_CropT, m_cropT, m_cropTVal, 0.0, [](Clip* c) { c->cropT = 0.0; c->kfCropT.clear(); });
-    connectReset(P_CropB, m_cropB, m_cropBVal, 0.0, [](Clip* c) { c->cropB = 0.0; c->kfCropB.clear(); });
-    connectReset(P_Scale, m_scale, m_scaleVal, 1.0, [](Clip* c) { c->scale = 1.0; c->kfScale.clear(); });
-    connectReset(P_PanX, m_panX, m_panXVal, 0.0, [](Clip* c) { c->tx = 0.0; c->kfTx.clear(); });
-    connectReset(P_PanY, m_panY, m_panYVal, 0.0, [](Clip* c) { c->ty = 0.0; c->kfTy.clear(); });
-    connectReset(P_Rotation, m_rotation, m_rotationVal, 0.0, [](Clip* c) { c->rotation = 0.0; c->kfRotation.clear(); });
-    connectReset(P_ScaleX, m_scaleX, m_scaleXVal, 1.0, [](Clip* c) { c->scaleX = 1.0; c->kfScaleX.clear(); });
-    connectReset(P_ScaleY, m_scaleY, m_scaleYVal, 1.0, [](Clip* c) { c->scaleY = 1.0; c->kfScaleY.clear(); });
-    connectReset(P_AnchorX, m_anchorX, m_anchorXVal, 0.0, [](Clip* c) { c->anchorX = 0.0; c->kfAnchorX.clear(); });
-    connectReset(P_AnchorY, m_anchorY, m_anchorYVal, 0.0, [](Clip* c) { c->anchorY = 0.0; c->kfAnchorY.clear(); });
+    connectReset(P_CropL, m_cropL, 0.0, [](Clip* c) { c->cropL = 0.0; c->kfCropL.clear(); });
+    connectReset(P_CropR, m_cropR, 0.0, [](Clip* c) { c->cropR = 0.0; c->kfCropR.clear(); });
+    connectReset(P_CropT, m_cropT, 0.0, [](Clip* c) { c->cropT = 0.0; c->kfCropT.clear(); });
+    connectReset(P_CropB, m_cropB, 0.0, [](Clip* c) { c->cropB = 0.0; c->kfCropB.clear(); });
+    connectReset(P_Scale, m_scale, 1.0, [](Clip* c) { c->scale = 1.0; c->kfScale.clear(); });
+    connectReset(P_PanX, m_panX, 0.0, [](Clip* c) { c->tx = 0.0; c->kfTx.clear(); });
+    connectReset(P_PanY, m_panY, 0.0, [](Clip* c) { c->ty = 0.0; c->kfTy.clear(); });
+    connectReset(P_Rotation, m_rotation, 0.0, [](Clip* c) { c->rotation = 0.0; c->kfRotation.clear(); });
+    connectReset(P_ScaleX, m_scaleX, 1.0, [](Clip* c) { c->scaleX = 1.0; c->kfScaleX.clear(); });
+    connectReset(P_ScaleY, m_scaleY, 1.0, [](Clip* c) { c->scaleY = 1.0; c->kfScaleY.clear(); });
+    connectReset(P_AnchorX, m_anchorX, 0.0, [](Clip* c) { c->anchorX = 0.0; c->kfAnchorX.clear(); });
+    connectReset(P_AnchorY, m_anchorY, 0.0, [](Clip* c) { c->anchorY = 0.0; c->kfAnchorY.clear(); });
 
     auto* resetBtn = new QPushButton(tr("Redefinir Tudo"), this);
     resetBtn->setMinimumHeight(22);
@@ -475,9 +455,6 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
         QSignalBlocker b1(m_cropL), b2(m_cropR), b3(m_cropT), b4(m_cropB),
                        b5(m_scale), b6(m_panX), b7(m_panY), b8(m_rotation),
                        b9(m_scaleX), b10(m_scaleY), b11(m_anchorX), b12(m_anchorY);
-        QSignalBlocker s1(m_cropLVal), s2(m_cropRVal), s3(m_cropTVal), s4(m_cropBVal),
-                       s5(m_scaleVal), s6(m_panXVal), s7(m_panYVal), s8(m_rotationVal),
-                       s9(m_scaleXVal), s10(m_scaleYVal), s11(m_anchorXVal), s12(m_anchorYVal);
         m_cropL->setValue(0); m_cropR->setValue(0);
         m_cropT->setValue(0); m_cropB->setValue(0);
         m_scale->setValue(100); m_panX->setValue(0); m_panY->setValue(0);
@@ -485,12 +462,7 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
         m_scaleX->setValue((int)std::lround(kStretchCenter * 100.0));
         m_scaleY->setValue((int)std::lround(kStretchCenter * 100.0));
         m_anchorX->setValue(0); m_anchorY->setValue(0);
-        m_cropLVal->setValue(0); m_cropRVal->setValue(0);
-        m_cropTVal->setValue(0); m_cropBVal->setValue(0);
-        m_scaleVal->setValue(100); m_panXVal->setValue(0); m_panYVal->setValue(0);
-        m_rotationVal->setValue(0);
-        m_scaleXVal->setValue(100); m_scaleYVal->setValue(100);
-        m_anchorXVal->setValue(0); m_anchorYVal->setValue(0);
+        updateValueLabels();
         Clip* c = activeClip();
         if (c) {
             c->kfCropL.clear(); c->kfCropR.clear();
@@ -555,30 +527,28 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    scroll->setMinimumWidth(220);
+    scroll->setMinimumWidth(0);
 
     auto* lay = new QHBoxLayout(this);
     lay->setContentsMargins(4, 4, 4, 4);
     lay->setSpacing(6);
     lay->addWidget(m_view, 1);
-    lay->addWidget(scroll);
+    lay->addWidget(scroll, 1);
 
     // Atalhos de teclado (setas para ajustar valores).
-    auto* snapLeft = new QShortcut(QKeySequence(Qt::Key_Left), this);
-    connect(snapLeft, &QShortcut::activated, this, [this]() { nudgeFocusedSpinBox(-1); });
-    auto* snapRight = new QShortcut(QKeySequence(Qt::Key_Right), this);
-    connect(snapRight, &QShortcut::activated, this, [this]() { nudgeFocusedSpinBox(1); });
-    auto* snapShiftLeft = new QShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Left), this);
-    connect(snapShiftLeft, &QShortcut::activated, this, [this]() { nudgeFocusedSpinBox(-10); });
-    auto* snapShiftRight = new QShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Right), this);
-    connect(snapShiftRight, &QShortcut::activated, this, [this]() { nudgeFocusedSpinBox(10); });
-
     const auto& tc = themeColors();
     // Painel no estilo Premiere "Effect Controls": fundo neutro plano, seções
     // discretas com triângulo de recolher e divisor sutil, slider fino com
-    // preenchimento de destaque e valores sem caixa (ela só aparece no hover).
+    // preenchimento de destaque e valores como label sem caixa.
     setStyleSheet(QStringLiteral(
-        "QWidget{background:%1;}"
+        // Fundo só no widget raiz (objectName) e no scroll: a regra genérica
+        // "QWidget" pintava #161616 por cima de TODOS os filhos — inclusive do
+        // editor interno dos spinboxes — e escondia os valores no tema escuro.
+        "#pancropRoot{background:%1;}"
+        "QScrollArea{background:%1; border:none;}"
+        "QScrollArea > QWidget{background:%1;}"
+        "QScrollArea > QWidget > QWidget{background:%1;}"
+
         "QToolButton#sectionHeader{background:transparent; border:none;"
         " border-bottom:1px solid %2; color:%3; font-weight:bold;"
         " font-size:11px; padding:5px 6px; text-align:left;}"
@@ -747,9 +717,6 @@ void PancropWidget::syncFromClip() {
     QSignalBlocker b1(m_cropL), b2(m_cropR), b3(m_cropT), b4(m_cropB);
     QSignalBlocker b5(m_scale), b6(m_panX), b7(m_panY), b8(m_rotation);
     QSignalBlocker b9(m_scaleX), b10(m_scaleY), b11(m_anchorX), b12(m_anchorY);
-    QSignalBlocker s1(m_cropLVal), s2(m_cropRVal), s3(m_cropTVal), s4(m_cropBVal);
-    QSignalBlocker s5(m_scaleVal), s6(m_panXVal), s7(m_panYVal), s8(m_rotationVal);
-    QSignalBlocker s9(m_scaleXVal), s10(m_scaleYVal), s11(m_anchorXVal), s12(m_anchorYVal);
     m_cropL->setValue((int)std::lround(L * 100.0));
     m_cropR->setValue((int)std::lround(R * 100.0));
     m_cropT->setValue((int)std::lround(T * 100.0));
@@ -762,19 +729,7 @@ void PancropWidget::syncFromClip() {
     m_scaleY->setValue((int)std::lround(std::clamp(sy, kMinStretch / 100.0, kMaxStretch / 100.0) * 100.0));
     m_anchorX->setValue((int)std::lround(std::clamp(ax * 100.0, -100.0, 100.0)));
     m_anchorY->setValue((int)std::lround(std::clamp(ay * 100.0, -100.0, 100.0)));
-    // Sync spinboxes.
-    m_cropLVal->setValue(L * 100.0);
-    m_cropRVal->setValue(R * 100.0);
-    m_cropTVal->setValue(T * 100.0);
-    m_cropBVal->setValue(B * 100.0);
-    m_scaleVal->setValue(s * 100.0);
-    m_panXVal->setValue(tx / W * 100.0);
-    m_panYVal->setValue(ty / H * 100.0);
-    m_rotationVal->setValue(rot);
-    m_scaleXVal->setValue(sx * 100.0);
-    m_scaleYVal->setValue(sy * 100.0);
-    m_anchorXVal->setValue(ax * 100.0);
-    m_anchorYVal->setValue(ay * 100.0);
+    updateValueLabels();
     refreshDiamonds();
 }
 
@@ -791,19 +746,19 @@ void PancropWidget::updateValueLabels() {
     const int sy = m_scaleY->value();
     const int ax = m_anchorX->value();
     const int ay = m_anchorY->value();
-    auto fmt = [](int v) { return QStringLiteral("%1%").arg(v); };
-    if (m_cropLVal) m_cropLVal->setValue(L);
-    if (m_cropRVal) m_cropRVal->setValue(R);
-    if (m_cropTVal) m_cropTVal->setValue(T);
-    if (m_cropBVal) m_cropBVal->setValue(B);
-    if (m_scaleVal) m_scaleVal->setValue(sc);
-    if (m_panXVal) m_panXVal->setValue(px);
-    if (m_panYVal) m_panYVal->setValue(py);
-    if (m_rotationVal) m_rotationVal->setValue(rot);
-    if (m_scaleXVal) m_scaleXVal->setValue(sx);
-    if (m_scaleYVal) m_scaleYVal->setValue(sy);
-    if (m_anchorXVal) m_anchorXVal->setValue(ax);
-    if (m_anchorYVal) m_anchorYVal->setValue(ay);
+    auto pct = [](int v) { return QStringLiteral("%1%").arg(v); };
+    if (m_cropLVal) m_cropLVal->setText(pct(L));
+    if (m_cropRVal) m_cropRVal->setText(pct(R));
+    if (m_cropTVal) m_cropTVal->setText(pct(T));
+    if (m_cropBVal) m_cropBVal->setText(pct(B));
+    if (m_scaleVal) m_scaleVal->setText(pct(sc));
+    if (m_panXVal) m_panXVal->setText(pct(px));
+    if (m_panYVal) m_panYVal->setText(pct(py));
+    if (m_rotationVal) m_rotationVal->setText(QStringLiteral("%1°").arg(rot));
+    if (m_scaleXVal) m_scaleXVal->setText(pct(sx));
+    if (m_scaleYVal) m_scaleYVal->setText(pct(sy));
+    if (m_anchorXVal) m_anchorXVal->setText(pct(ax));
+    if (m_anchorYVal) m_anchorYVal->setText(pct(ay));
 }
 
 double PancropWidget::relPlayhead() {
@@ -1023,15 +978,6 @@ void PancropWidget::emitChange() {
         m_undoPushed = true;
     }
     emit modified();
-}
-
-void PancropWidget::nudgeFocusedSpinBox(int delta) {
-    // Ajusta o valor do QDoubleSpinBox que tem foco (ou o último usado).
-    QWidget* fw = focusWidget();
-    if (!fw) return;
-    QDoubleSpinBox* sb = qobject_cast<QDoubleSpinBox*>(fw);
-    if (!sb) return;
-    sb->setValue(sb->value() + delta);
 }
 
 void PancropWidget::computeView(double s, double tx, double ty, int w0, int h0,
@@ -1684,8 +1630,7 @@ void PancropWidget::viewportMove(QWidget* view, QMouseEvent* e) {
             QSignalBlocker bax(m_anchorX), bay(m_anchorY);
             m_anchorX->setValue((int)std::lround(newAx * 100.0));
             m_anchorY->setValue((int)std::lround(newAy * 100.0));
-            m_anchorXVal->setValue(newAx * 100.0);
-            m_anchorYVal->setValue(newAy * 100.0);
+            updateValueLabels();
             commitSlider(P_AnchorX, newAx);
             commitSlider(P_AnchorY, newAy);
             m_view->update();

@@ -2382,6 +2382,15 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
             else if (audio && vrow >= 0 && vrow < m_project->audioTracks.size())
                 track = &m_project->audioTracks[vrow];
         }
+        // Faixas de gravação (seção vermelha no rodapé) não entram no
+        // rowFromY: detecta aqui para oferecer a exclusão no menu.
+        int recRow = -1;
+        if (!track) recRowFromY(e->pos().y(), recRow);
+        QAction* delRec = nullptr;
+        if (recRow >= 0 && recRow < (int)m_project->recordingTracks.size()) {
+            menu.addSeparator();
+            delRec = menu.addAction(tr("Excluir faixa de gravação"));
+        }
         if (track && !track->audio) {
             menu.addSeparator();
             blendMenu = menu.addMenu(tr("Modo de composição"));
@@ -2440,6 +2449,16 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         if (act == addV) addTrack(false);
         else if (act == addA) addTrack(true);
         else if (act == addR) addRecordingTrack();
+        else if (act == delRec) {
+            emit editStart();
+            m_project->removeRecordingTrack(recRow);
+            m_selected.clear();
+            m_secondarySelected.clear();
+            clearTrackSelection();
+            invalidateScene();
+            updateScrollRanges();
+            emit modified();
+        }
         else if (act == newText) {
             const double tt = std::max(0.0, snapTime(xToTime(e->pos().x())));
             addTextClipAt(vrow, tt);

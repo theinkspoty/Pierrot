@@ -68,6 +68,7 @@ QString recolorSvg(const QByteArray& raw, const QColor& color) {
 #include <QHBoxLayout>
 #include <QAction>
 #include <QKeySequence>
+#include <QMouseEvent>
 #include <QActionGroup>
 #include <QSignalBlocker>
 #include <QFileDialog>
@@ -1051,32 +1052,110 @@ void MainWindow::rebuildWorkspaceMenu() {
 
 void MainWindow::saveSettings() {
     QSettings settings;
-    settings.setValue("geometry", saveGeometry());
-    settings.setValue("layout", saveState());
-    settings.setValue("layoutVersion", kLayoutVersion);
+    // Só grava o que realmente mudou: os gatilhos de layout são numerosos
+    // (mover/redimensionar docks, redimensionar/mover a janela) e reescrever o
+    // QSettings a cada micro-evento seria desperdício e risco de gravar um
+    // estado transitório por cima de um bom.
+    const QByteArray geom = saveGeometry();
+    if (!m_layoutStateCached || geom != m_lastSavedGeometry) {
+        settings.setValue("geometry", geom);
+        m_lastSavedGeometry = geom;
+    }
+    const QByteArray state = saveState();
+    if (!m_layoutStateCached || state != m_lastSavedLayout) {
+        settings.setValue("layout", state);
+        settings.setValue("layoutVersion", kLayoutVersion);
+        m_lastSavedLayout = state;
+    }
     settings.setValue("layoutLocked", m_lockAction->isChecked());
     // O workspace corrente também fica salvo no próprio slot nomeado, para
     // que trocar de workspace e voltar devolva o arranjo exato.
-    if (!m_currentWorkspace.isEmpty())
-        settings.setValue(QStringLiteral("workspaces/%1/state").arg(m_currentWorkspace),
-                          saveState());
+    if (!m_currentWorkspace.isEmpty()) {
+        settings.setValue(QStringLiteral("workspaces/%1/state").arg(m_currentWorkspace), state);
+        settings.setValue(QStringLiteral("workspaces/%1/version").arg(m_currentWorkspace),
+                          kLayoutVersion);
+    }
     settings.setValue("currentWorkspace", m_currentWorkspace);
+    m_layoutStateCached = true;
 }
 
 void MainWindow::scheduleLayoutSave() {
-    if (m_restoringSettings) return;
+    // Antes de restoreSettings() o layout salvo ainda não foi lido; gravar
+    // aqui apagaria o arranjo do usuário com o padrão da janela recém-montada.
+    if (!m_settingsReady || m_restoringSettings) return;
     if (m_layoutSaveTimer) m_layoutSaveTimer->start();
 }
 
+void MainWindow::restoreBackupLayout() {
+    QSettings settings;
+    const QByteArray backup = settings.value("layoutBackup").toByteArray();
+    if (backup.isEmpty() || !saneLayoutArray(backup)) {
+        statusBar()->showMessage(tr("Nenhum layout anterior guardado."), 3000);
+        return;
+    }
+    const int backupVersion = settings.value("layoutBackupVersion", -1).toInt();
+    QMessageBox box(this);
+    box.setWindowTitle(tr("Restaurar layout anterior"));
+    box.setIcon(QMessageBox::Question);
+    box.setText(tr("Reaplicar o arranjo de painéis guardado (versão de layout %1) "
+                   "e substituir o atual?").arg(backupVersion));
+    box.setStandardButtons(QMessageBox::Apply | QMessageBox::Cancel);
+    box.setDefaultButton(QMessageBox::Cancel);
+    if (box.exec() != QMessageBox::Apply) return;
+
+    m_restoringSettings = true;
+    restoreState(backup);
+    m_restoringSettings = false;
+    // Adota o arranjo restaurado como o atual, já carimbado com a versão
+    // vigente — senão ele voltaria a ser descartado no próximo início.
+    m_layoutStateCached = false;
+    saveSettings();
+    m_mesa->autoSelectMesa();
+    statusBar()->showMessage(tr("Layout anterior restaurado."), 3000);
+}
+
 bool MainWindow::event(QEvent* e) {
+    switch (e->type()) {
     // Ao perder o foco (mudar de janela), agenda o salvamento: cobre o caso de
     // o app ser encerrado logo depois sem passar pelo closeEvent().
-    if (e->type() == QEvent::WindowDeactivate && !m_restoringSettings)
+    case QEvent::WindowDeactivate:
+    // Qualquer rearrranjo dos docks termina num pedido de layout — mover para
+    // outra área, redimensionar as divisórias, reanexar/flutuar, reabaixar. O
+    // Qt não emite sinal para vários destes gestos (a divisória é desenhada
+    // pelo QMainWindowLayout, não é um QSplitter), então observamos o pedido de
+    // layout. Resize/Move da própria janela entram pelo mesmo caminho para a
+    // geometria não se perder num encerramento anormal. Tudo é debounced e o
+    // save ignora estados idênticos ao último gravado.
+    case QEvent::LayoutRequest:
+    case QEvent::Resize:
+    case QEvent::Move:
         scheduleLayoutSave();
+        break;
+    default:
+        break;
+    }
     return QMainWindow::event(e);
 }
 
 bool MainWindow::eventFilter(QObject* obj, QEvent* e) {
+    // Qt inicia o arraste fantasma do dock no MouseMove mesmo SEM botão
+    // pressionado: o QDockWidgetPrivate::mouseMoveEvent não checa buttons(),
+    // só o estado interno deixado por um clique anterior na barra de título.
+    // Resultado: clique único + mover o mouse sem segurar faz o dock se
+    // destacar (preview/ghost) e voltar. Consome o move sem botão — o
+    // arrasto de verdade tem botão e continua funcionando.
+    if (e->type() == QEvent::MouseMove) {
+        if (auto* dock = qobject_cast<QDockWidget*>(obj)) {
+            if (static_cast<QMouseEvent*>(e)->buttons() == Qt::NoButton)
+                return true;
+        }
+    }
+    // Redimensionar uma divisória entre áreas não muda o tamanho da janela —
+    // só a geometria dos docks —, então o Resize do próprio dock é o único
+    // aviso de que a largura/altura escolhida pelo usuário precisa ser salva.
+    if (e->type() == QEvent::Resize && qobject_cast<QDockWidget*>(obj)) {
+        scheduleLayoutSave();
+    }
     if (e->type() == QEvent::KeyPress) {
         auto* ke = static_cast<QKeyEvent*>(e);
         QWidget* fw = focusWidget();
@@ -1150,19 +1229,29 @@ void MainWindow::restoreSettings() {
     m_currentWorkspace = settings.value("currentWorkspace").toString();
     if (m_currentWorkspace.isEmpty()) m_currentWorkspace = tr("Edição");
 
-    if (settings.value("layoutVersion").toInt() == kLayoutVersion) {
-        const QByteArray state = settings.value("layout").toByteArray();
-        if (!state.isEmpty() && saneLayoutArray(state)) {
-            restoreState(state);
-            // O arranjo salvo traz as larguras que o usuário escolheu; as
-            // padrão não devem sobrescrevê-lo.
-            m_hasRestoredLayout = true;
-        }
+    const int savedLayoutVersion = settings.value("layoutVersion").toInt();
+    const QByteArray state = settings.value("layout").toByteArray();
+    const bool hasState = !state.isEmpty() && saneLayoutArray(state);
+    if (savedLayoutVersion == kLayoutVersion && hasState) {
+        restoreState(state);
+        // O arranjo salvo traz as larguras que o usuário escolheu; as
+        // padrão não devem sobrescrevê-lo.
+        m_hasRestoredLayout = true;
+    } else if (hasState) {
+        // O layout salvo é de uma versão anterior (kLayoutVersion mudou):
+        // reaplicá-lo direto pode deslocar painéis, mas descartá-lo em silêncio
+        // perde o arranjo do usuário. Guarda um backup que pode ser reaplicado
+        // por Exibir → "Restaurar layout anterior".
+        settings.setValue("layoutBackup", state);
+        settings.setValue("layoutBackupVersion", savedLayoutVersion);
     }
     if (settings.contains("layoutLocked"))
         m_lockAction->setChecked(settings.value("layoutLocked").toBool());
     setDockLocked(m_lockAction->isChecked());
     m_restoringSettings = false;
+    // A partir daqui o layout salvo já foi lido: os gatilhos de layout podem
+    // gravar com segurança.
+    m_settingsReady = true;
 
     // Garante que a Mesa encontra suas tracks mesmo quando o dock é restaurado
     // como visível — autoSelectMesa() precisa rodar após restoreState().
@@ -1301,13 +1390,16 @@ QDockWidget* MainWindow::makeDock(const QString& objectName, const QString& titl
     // Sem isto o Qt recusa arrastar um painel para dentro de outro, o gesto
     // que cria um dock flutuante com painel encaixado — no Premiere é a forma
     // mais comum de montar um layout. AnimatedDocks dá a transição suave.
-    // (NestedDocks é o default do Qt; AllowTabbedDocks permite a pilha de abas
-    // usada pelo tabifyDockWidget() em createDocks().)
+    // (O "dock que se destaca sozinho" NÃO é a animação: é o arraste fantasma
+    // do Qt em clique simples, corrigido no eventFilter.)
     setDockOptions(QMainWindow::AllowNestedDocks
                    | QMainWindow::AllowTabbedDocks
                    | QMainWindow::AnimatedDocks);
     addDockWidget(area, dock);
     m_allDocks.append(dock);
+    // Filtro que impede o arraste fantasma do dock em clique simples (ver
+    // eventFilter): engole MouseMove sem botão sobre o próprio dock.
+    dock->installEventFilter(this);
     return dock;
 }
 
@@ -1472,6 +1564,10 @@ void MainWindow::createDocks() {
     for (QDockWidget* dock : m_allDocks) {
         connect(dock, &QDockWidget::topLevelChanged, this, &MainWindow::scheduleLayoutSave);
         connect(dock, &QDockWidget::visibilityChanged, this, &MainWindow::scheduleLayoutSave);
+        // Movimentação entre áreas encaixadas não emite topLevelChanged (o dock
+        // nunca flutuou), então sem este sinal o rearranjo só era salvo no
+        // fechamento — e se perdia num encerramento anormal.
+        connect(dock, &QDockWidget::dockLocationChanged, this, &MainWindow::scheduleLayoutSave);
     }
 
     setTabPositionsUp();
@@ -1790,8 +1886,17 @@ void MainWindow::createActions() {
     m_workspaceMenu = viewMenu->addMenu(tr("Workspaces"));
     rebuildWorkspaceMenu();
 
+    // Recupera o arranjo guardado quando uma atualização subiu kLayoutVersion
+    // e descartou o layout antigo (ver restoreSettings()).
+    QAction* restoreLayout = viewMenu->addAction(tr("Restaurar layout anterior"));
+    restoreLayout->setToolTip(tr("Reaplica o arranjo de painéis guardado antes de uma "
+                                 "atualização que dispensou o layout antigo."));
+    connect(restoreLayout, &QAction::triggered, this, &MainWindow::restoreBackupLayout);
+
     // Preview externo: janela própria (segundo monitor) com o mesmo sinal de
-    // vídeo do monitor principal, sem overlays. F11 ou duplo-clique = tela cheia.
+    // vídeo do monitor principal, sem overlays, e os controles do Program
+    // Monitor (transporte, margens de segurança, zoom e timecode). F11,
+    // duplo-clique ou o botão de tela cheia expandem; Esc sai.
     m_monitorAction = new QAction(tr("Janela de preview externo"), this);
     m_monitorAction->setCheckable(true);
     m_monitorAction->setToolTip(tr("Abre o preview em uma janela própria — arraste para "
@@ -1804,10 +1909,27 @@ void MainWindow::createActions() {
                     m_monitor = nullptr;
                     if (m_monitorAction) m_monitorAction->setChecked(false);
                 });
+                // Comandos da janela externa voltam para o mesmo transporte.
+                connect(m_monitor, &PreviewMonitor::togglePlayRequested,
+                        m_preview, &PreviewWidget::togglePlay);
+                connect(m_monitor, &PreviewMonitor::stepRequested,
+                        m_preview, &PreviewWidget::stepFrameBy);
+                connect(m_monitor, &PreviewMonitor::loopToggled,
+                        m_preview, &PreviewWidget::setLoopEnabled);
+                // Estado do monitor principal alimenta a janela externa.
+                connect(m_preview, &PreviewWidget::playheadMoved,
+                        m_monitor, &PreviewMonitor::setTimecode);
+                connect(m_preview, &PreviewWidget::stateChanged,
+                        m_monitor, &PreviewMonitor::setPlaying);
+                m_monitor->setFps(m_project.fps);
+                m_monitor->setTimecode(m_timeline ? m_timeline->playhead() : 0.0);
+                m_monitor->setPlaying(m_preview->isPlaying());
+                m_monitor->setLoopEnabled(m_preview->loopEnabled());
             }
             m_monitor->setFrame(m_preview->compositeFrame());
             m_monitor->show();
             m_monitor->raise();
+            m_monitor->activateWindow();
         } else if (m_monitor) {
             m_monitor->close(); // WA_DeleteOnClose → destroyed → desmarca a ação
         }

@@ -1596,6 +1596,13 @@ void TimelineWidget::dropEvent(QDropEvent* e) {
 
     // ── Arrasto de efeito (do painel de efeitos) ─────────────────────────
     if (md->hasFormat(QLatin1String(kMimeEffect))) {
+        // O drop não dispara dragLeaveEvent, então a prévia de arrasto (a
+        // "fantasma" do clipe) ficaria desenhada na timeline até outra ação a
+        // limpar. Zera o estado aqui, em qualquer saída deste branch.
+        m_dragHoverRow = -1;
+        m_dragHoverDur = 0.0;
+        m_dragHoverName.clear();
+        m_dragProbeCache.clear();
         const QByteArray effectData = md->data(QLatin1String(kMimeEffect));
         const QString effectId = QString::fromUtf8(effectData);
         if (effectId.isEmpty()) { e->ignore(); return; }
