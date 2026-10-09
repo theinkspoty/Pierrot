@@ -53,6 +53,7 @@
 #include <QAudioDeviceInfo>
 #endif
 #include <algorithm>
+#include <atomic>
 #include <QDebug>
 #include <cmath>
 #include <climits>
@@ -83,30 +84,188 @@ static bool playDbg() {
     return on;
 }
 
-// Decodifica quadros de vídeo na própria thread (com dois FFmpegDecoder dedicados:
-// um para o clipe principal e outro para pré-carregamento especulativo).
+// Pool de decodificadores "quentes" por caminho de arquivo. Em vez de 2+1
+// decoders fixos (main + prefetch + bg), mantém N abertos no arquivo certo:
+// o uso vira um lease (acquire/release) por caminho, e o prefetch em background
+// só precisa "aquecer" — abre o próximo arquivo e deixa a entrada ociosa no
+// pool, sem transferir posse. Assim o open() de 500-800 ms é pago uma vez por
+// fonte (ou quando uma entra/sai por LRU), não todo corte.
+//
+// Segurança: um decoder NUNCA é usado por duas threads ao mesmo tempo —
+// acquire() marca a entrada busy, e tudo que é lento (open/frameAt) roda FORA
+// do mutex do pool, com o caller como dono exclusivo até release(). O mutex só
+// protege o mapa (QLock + QMutex), nunca o decoder.
+class DecoderPool {
+public:
+    explicit DecoderPool(int capacity)
+        : m_capacity(qMax(2, capacity)) {
+        m_clock.start();
+    }
+
+    ~DecoderPool() {
+        // As threads de decode já foram paradas (PreviewWidget::~) antes deste
+        // ponto; os FFmpegDecoder restantes morrem aqui, fechando seus arquivos.
+        QMutexLocker l(&m_mutex);
+        for (auto it = m_entries.cbegin(); it != m_entries.cend(); ++it)
+            delete it.value();
+        m_entries.clear();
+    }
+
+    // Lease: devolve um decoder aberto em `path` (já quente, ou abre agora).
+    // nullptr se o caminho estiver ocupado por outro lease (ex.: prefetch ainda
+    // decodificando) ou o pool não tiver slot livre (todos ocupados).
+    FFmpegDecoder* acquire(const QString& path) {
+        QMutexLocker l(&m_mutex);
+        auto it = m_entries.find(path);
+        if (it != m_entries.end()) {
+            if (it.value()->busy) return nullptr;
+            it.value()->busy = true;
+            it.value()->lastUseMs = m_clock.elapsed();
+            return it.value()->dec;
+        }
+        // Caminho novo: despeja ociosos (LRU) até sobrar 1 slot. Se sobrar tudo
+        // ocupado, o chamador libera o próprio lease e tenta de novo.
+        evictIdleLocked(m_capacity - 1);
+        if ((int)m_entries.size() >= m_capacity) return nullptr;
+        auto e = new Entry();
+        e->busy = true;
+        e->lastUseMs = m_clock.elapsed();
+        FFmpegDecoder* d = e->dec;
+        m_entries.insert(path, e);
+        l.unlock();
+        // open() é lento (~500-800ms): fora do mutex. Falha remove a entrada.
+        // (remove() no mapa de Entry* só apaga a chave; o objeto morre no delete.)
+        if (!d->open(path)) {
+            QMutexLocker l2(&m_mutex);
+            if (m_entries.value(path) == e) m_entries.remove(path);
+            delete e;
+            return nullptr;
+        }
+        return d;
+    }
+
+    // Devolve a entrada (fica quente, pronta para o próximo acquire).
+    void release(const QString& path) {
+        QMutexLocker l(&m_mutex);
+        auto it = m_entries.find(path);
+        if (it != m_entries.end() && it.value()->busy) {
+            it.value()->busy = false;
+            it.value()->lastUseMs = m_clock.elapsed();
+        }
+    }
+
+    // Nº de arquivos atualmente abertos (para diagnóstico/overlay).
+    int count() const {
+        QMutexLocker l(&m_mutex);
+        return m_entries.size();
+    }
+
+    // Já existe entrada aberta para este caminho (quente)? Usado pelo
+    // warm-ahead para não reaquecer o que já está no pool.
+    bool contains(const QString& path) const {
+        QMutexLocker l(&m_mutex);
+        return m_entries.contains(path);
+    }
+
+private:
+    struct Entry {
+        FFmpegDecoder* dec = new FFmpegDecoder();
+        bool busy = false;
+        qint64 lastUseMs = 0; // último acquire/release (LRU)
+        ~Entry() { delete dec; }
+    };
+
+    void evictIdleLocked(int keep) {
+        while ((int)m_entries.size() > keep) {
+            QString victim;
+            qint64 oldest = m_clock.elapsed() + 1; // sentinela
+            for (auto it = m_entries.cbegin(); it != m_entries.cend(); ++it) {
+                if (it.value()->busy) continue;
+                if (it.value()->lastUseMs < oldest) {
+                    oldest = it.value()->lastUseMs;
+                    victim = it.key();
+                }
+            }
+            if (victim.isEmpty()) return; // todos ocupados: não há o que despejar
+            delete m_entries.take(victim); // destrói o FFmpegDecoder (fecha o arquivo)
+        }
+    }
+
+    int m_capacity;
+    mutable QMutex m_mutex;
+    QHash<QString, Entry*> m_entries;
+    QElapsedTimer m_clock;
+};
+
+// Capacidade do pool (padrão 6; PIERROT_DECODER_POOL=<n> ajusta). 6 dá folga
+// para o main + prefetch em andamento + warm-ahead + quentes ociosos sem
+// estourar memória (o warm de um arquivo não enche o cache de ~240MB de cada
+// decoder; só o clipe tocado o faz).
+static int decoderPoolCapacity() {
+    bool ok = false;
+    const int n = qEnvironmentVariableIntValue("PIERROT_DECODER_POOL", &ok);
+    return (ok && n >= 2) ? n : 6;
+}
+
+// Decodifica quadros de vídeo na própria thread (com lease do DecoderPool: um
+// para o clipe principal, e o prefetch aquecendo o pool para o swap).
 // O PreviewWidget pede o "último" quadro desejado e descarta intermediários.
 class FrameWorker : public QObject {
     Q_OBJECT
 public:
-    explicit FrameWorker(QObject* parent = nullptr)
-        : QObject(parent),
-          m_mainDecoder(std::make_unique<FFmpegDecoder>()),
-          m_prefetchDecoder(std::make_unique<FFmpegDecoder>()) {}
+    explicit FrameWorker(DecoderPool* pool, QObject* parent = nullptr)
+        : QObject(parent), m_pool(pool) {}
+
+    // Cancelamento cooperativo do frameAt EM ANDAMENTO (Fase 3). Thread-safe:
+    // a UI chama direto (não é slot — um invoke enfileirado só rodaria depois
+    // de o decode terminar, que é justamente o que queremos evitar). Só tem
+    // efeito se um decode estiver armado (janela de decodeOne).
+    void requestCancel() {
+        if (m_cancelArmed.load(std::memory_order_acquire))
+            m_cancel.store(true, std::memory_order_relaxed);
+    }
 
 public slots:
     void decodeOne(const QString& clipId, const QString& path, double t, int maxW, double dt) {
         CrashReporter::setActivity("decodificando quadro do preview");
-        if (!m_mainDecoder->isOpen() || m_mainDecoder->source() != path) {
-            if (m_prefetchDecoder->isOpen() && m_prefetchDecoder->source() == path) {
-                // O decodificador de prefetch já abriu e aqueceu este arquivo: swap instantâneo!
-                std::swap(m_mainDecoder, m_prefetchDecoder);
-            } else {
-                if (!m_mainDecoder->open(path)) {
-                    emit frameReady(clipId, path, t, maxW, QImage());
-                    return;
-                }
+        // Arma o token de cancelamento para todo este decode. RAII desarma em
+        // QUALQUER retorno (inclusive os "soft" sem slot), para nunca vazar um
+        // cancel pendente para o próximo pedido.
+        m_cancel.store(false, std::memory_order_relaxed);
+        m_cancelArmed.store(true, std::memory_order_release);
+        struct Disarm {
+            std::atomic<bool>& f;
+            explicit Disarm(std::atomic<bool>& x) : f(x) {}
+            ~Disarm() { f.store(false, std::memory_order_release); }
+        } disarm(m_cancelArmed);
+        if (m_curPath != path) {
+            // Leva do pool o decoder quente deste arquivo (o prefetch em
+            // background deixou o próximo clipe já aberto/aquecido na posição do
+            // corte: acquire quente é instantâneo; o antigo volta ocioso, pronto
+            // para ser reusado se a timeline voltar a este caminho).
+            FFmpegDecoder* d = m_pool->acquire(path);
+            if (!d && !m_curPath.isEmpty()) {
+                // Pool cheio/ocupado: libera o lease atual (fica quente no pool)
+                // e tenta de novo — o LRU despeja o ocioso mais antigo p/ entrar.
+                m_pool->release(m_curPath);
+                m_curPath.clear();
+                m_decoder = nullptr;
+                d = m_pool->acquire(path);
             }
+            if (!d) {
+                // Sem slot livre ou o caminho está no meio de um decode do
+                // prefetch: falha "macia" (quadro vazio); o próximo pedido pega
+                // já quente. Bloquear aqui só pioraria o tiquinho do corte.
+                qWarning().noquote() << QStringLiteral("[dec] pool sem slot/ocupado para %1").arg(path);
+                emit frameReady(clipId, path, t, maxW, QImage());
+                return;
+            }
+            if (!m_curPath.isEmpty()) m_pool->release(m_curPath);
+            m_curPath = path;
+            m_decoder = d;
+            // O acquire pode ter sido FRIO (open 500-800ms; decoder ainda não
+            // posicionado): os m_ready do arquivo antigo não valem mais aqui.
+            m_readyValid = false;
         }
 
         // Pipeline de 1 frame à frente: quando o próximo frame já foi
@@ -119,41 +278,35 @@ public slots:
         // fps do arquivo (fd) deixava o m_ready fora de fase quando os dois
         // diferem, entregando frame repetido ou atrasado.
         const double step = (dt > 0.0) ? dt
-                            : ((m_mainDecoder->fps() > 0.0) ? 1.0 / m_mainDecoder->fps() : 1.0 / 30.0);
+                            : ((m_decoder && m_decoder->fps() > 0.0) ? 1.0 / m_decoder->fps() : 1.0 / 30.0);
         QImage img;
         static QElapsedTimer dbgClock;
         const bool dbgOn = playDbg();
         if (dbgOn && !dbgClock.isValid()) dbgClock.start();
         const qint64 dbgT0 = dbgOn ? dbgClock.nsecsElapsed() : 0;
-        bool dbgWasReady = false, dbgWasPReady = false;
+        bool dbgWasReady = false;
         if (m_readyValid && m_readyPath == path && m_readyMaxW == maxW
             && std::fabs(m_readyT - t) <= step * 0.5) {
             img = m_readyImg;
             m_readyValid = false;
             dbgWasReady = true;
-        } else if (m_pReadyValid && m_pReadyPath == path && m_pReadyMaxW == maxW
-                   && std::fabs(m_pReadyT - t) <= step * 0.5) {
-            // Quadro pré-decodificado do clip NOVO logo após o swap no corte.
-            img = m_pReadyImg;
-            m_pReadyValid = false;
-            dbgWasPReady = true;
         } else {
-            img = m_mainDecoder->frameAt(t, maxW);
+            img = m_decoder->frameAt(t, maxW, &m_cancel);
         }
         if (dbgOn) {
             const double dbgMs = (dbgClock.nsecsElapsed() - dbgT0) / 1000000.0;
-            if (dbgMs > 3.0 || dbgWasReady || dbgWasPReady)
+            if (dbgMs > 3.0 || dbgWasReady)
                 qDebug().noquote() << QStringLiteral("[w] t=%1 %2 %3ms")
                           .arg(t, 0, 'f', 3)
-                          .arg(dbgWasPReady ? QStringLiteral("pready") : (dbgWasReady ? QStringLiteral("ready") : QStringLiteral("dec")), 6)
+                          .arg(dbgWasReady ? QStringLiteral("ready") : QStringLiteral("dec"), 6)
                           .arg(dbgMs, 0, 'f', 1);
         }
         emit frameReady(clipId, path, t, maxW, img);
 
         // Decodifica o próximo frame na folga para o próximo pedido (apenas se
         // o decoder ainda estiver no mesmo arquivo).
-        if (!img.isNull() && m_mainDecoder->isOpen() && m_mainDecoder->source() == path) {
-            m_readyImg = m_mainDecoder->frameAt(t + step, maxW);
+        if (!img.isNull() && m_decoder && m_decoder->isOpen() && m_decoder->source() == path) {
+            m_readyImg = m_decoder->frameAt(t + step, maxW, &m_cancel);
             m_readyT = t + step;
             m_readyPath = path;
             m_readyMaxW = maxW;
@@ -168,14 +321,19 @@ public slots:
         const bool dbgOn = playDbg();
         if (dbgOn && !dbgClock.isValid()) dbgClock.start();
         const qint64 dbgT0 = dbgOn ? dbgClock.nsecsElapsed() : 0;
-        m_pReadyValid = false;
-        if (!m_prefetchDecoder->isOpen() || m_prefetchDecoder->source() != path) {
-            if (!m_prefetchDecoder->open(path)) {
-                emit prefetchReady(path, t, maxW, QImage());
-                return;
-            }
+        // Camada de baixo com o MESMO arquivo do topo: o topo já empresta o
+        // decoder (busy) — decodePrefetch roda na MESMA thread do decodeOne
+        // (seriado), então usar m_decoder é seguro e não precisa do lease.
+        const bool own = (path == m_curPath);
+        FFmpegDecoder* d = own ? m_decoder : m_pool->acquire(path);
+        if (!d) {
+            // Pool ocupado/sem slot: deixa a camada de baixo vazia nesta transição.
+            emit prefetchReady(path, t, maxW, QImage());
+            return;
         }
-        const QImage img = m_prefetchDecoder->frameAt(t, maxW);
+        const QImage img = d->frameAt(t, maxW);
+        if (!img.isNull() && step > 0.0) d->frameAt(t + step, maxW);
+        if (!own) m_pool->release(path);
         if (dbgOn) {
             const double dbgMs = (dbgClock.nsecsElapsed() - dbgT0) / 1000000.0;
             qDebug().noquote() << QStringLiteral("[w] PREFETCH t=%1 %2ms")
@@ -183,33 +341,6 @@ public slots:
                       .arg(dbgMs, 0, 'f', 1);
         }
         emit prefetchReady(path, t, maxW, img);
-        // Pipeline de 1 frame à frente PARA O CLIPE NOVO: decodifica também o
-        // segundo quadro. No corte, o primeiro uso do decoder trocado (swap)
-        // devolve este quadro instantâneo; sem ele, o primeiro slot do novo
-        // clipe decodificava dois quadros seguidos e o preview engasgava até
-        // os m_ready voltarem a ficar em fase (a "travada" do corte).
-        if (!img.isNull() && step > 0.0) {
-            m_pReadyImg = m_prefetchDecoder->frameAt(t + step, maxW);
-            m_pReadyT = t + step;
-            m_pReadyPath = path;
-            m_pReadyMaxW = maxW;
-            m_pReadyValid = !m_pReadyImg.isNull();
-        } else {
-            m_pReadyValid = false;
-        }
-    }
-
-    void warmUpPrefetchDecoder(const QString& path, double t, int maxW,
-                                   const QImage& frame1, FFmpegDecoder* decoder) {
-        // O decoder chega JA ABERTO/AQUECIDO da thread de prefetch; não reabrimos
-        // aqui (abrir custa 500-800ms e congelaria o worker). Adota a posse e o
-        // guarda como m_prefetchDecoder para o swap instantâneo no corte.
-        if (decoder) m_prefetchDecoder.reset(decoder);
-        m_pReadyImg = frame1;
-        m_pReadyT = t;
-        m_pReadyPath = path;
-        m_pReadyMaxW = maxW;
-        m_pReadyValid = !frame1.isNull();
     }
 
     void desengasga() {
@@ -217,13 +348,13 @@ public slots:
         // deixa o decoder com o DPB em resolução cheia + caches de 2 frames
         // retidos — degrada o frameAt ao longo de vídeos longos (vídeo engasga,
         // áudio perfeito). Libera os buffers internos SEM invalidar os ready:
-        // m_ready/m_pReady são QImage JÁ decodificadas (snapshots) — valem
-        // mesmo após o flush. Invalidá-los era o que criava um buraco de 1-2
-        // frames: o primeiro pedido pós-flush caía em decode síncrono e chegava
-        // atrasado em relação ao relógio. Com os ready vivos, o próximo frame
-        // continua instantâneo e o re-seek frio fica só no pre-decode seguinte.
-        if (m_mainDecoder->isOpen()) m_mainDecoder->releaseBuffers();
-        if (m_prefetchDecoder->isOpen()) m_prefetchDecoder->releaseBuffers();
+        // m_ready é QImage JÁ decodificada (snapshot) — vale mesmo após o flush.
+        // Invalidá-lo era o que criava um buraco de 1-2 frames: o primeiro
+        // pedido pós-flush caía em decode síncrono e chegava atrasado em relação
+        // ao relógio. Com o ready vivo, o próximo frame continua instantâneo e o
+        // re-seek frio fica só no pre-decode seguinte. Só vale para o decoder
+        // EMPRESTADO (o do pool ocioso não degrada: não está decodificando).
+        if (m_decoder && m_decoder->isOpen()) m_decoder->releaseBuffers();
     }
 
 signals:
@@ -231,8 +362,9 @@ signals:
     void prefetchReady(const QString& path, double t, int maxW, const QImage& img);
 
 private:
-    std::unique_ptr<FFmpegDecoder> m_mainDecoder;
-    std::unique_ptr<FFmpegDecoder> m_prefetchDecoder;
+    DecoderPool* m_pool;            // não dono (vida do PreviewWidget)
+    FFmpegDecoder* m_decoder = nullptr; // lease atual do pool (posse entre decodeOne)
+    QString m_curPath;              // caminho do lease atual
 
     // Frame decodificado adiante (pipeline de 1 frame à frente).
     QImage m_readyImg;
@@ -241,27 +373,22 @@ private:
     int m_readyMaxW = 0;
     bool m_readyValid = false;
 
-    // Pipeline de 1 frame à frente do clip de PREFETCH (o que será trocado no
-    // corte). Consumido pelo decodeOne logo após o swap.
-    QImage m_pReadyImg;
-    QString m_pReadyPath;
-    double m_pReadyT = -1.0;
-    int m_pReadyMaxW = 0;
-    bool m_pReadyValid = false;
+    std::atomic<bool> m_cancel{false};       // pedido de cancelamento pendente
+    std::atomic<bool> m_cancelArmed{false};  // true somente durante decodeOne
 };
 
 // Thread separada para prefetch — decodifica o próximo clipe em background
 // sem bloquear o FrameWorker principal (decodePrefetch original levava
 // 500-800ms de open+frameAt, congelando o worker e quebrando o m_ready).
-// No fim, transfere a posse do decoder JA ABERTO/AQUECIDO para o worker, que o
-// adota como m_prefetchDecoder para o swap instantâneo no corte (sem jamais
-// acessar o decoder de duas threads ao mesmo tempo).
+// Aqui não há posse: o prefetch só AQUECE o DecoderPool — abre o arquivo na
+// posição do corte e deixa a entrada ociosa (release). No corte, o FrameWorker
+// reacquire a mesma entrada já quente em µs. Como acquire/release são
+// exclusivos (busy), jamais há acesso concorrente ao mesmo decoder.
 class BgPrefetchWorker : public QObject {
     Q_OBJECT
 public:
-    explicit BgPrefetchWorker(QObject* parent = nullptr)
-        : QObject(parent),
-          m_decoder(std::make_unique<FFmpegDecoder>()) {}
+    explicit BgPrefetchWorker(DecoderPool* pool, QObject* parent = nullptr)
+        : QObject(parent), m_pool(pool) {}
 
 public slots:
     void decode(const QString& path, double t, int maxW, double step) {
@@ -271,17 +398,19 @@ public slots:
         if (dbgOn && !dbgClock.isValid()) dbgClock.start();
         const qint64 dbgT0 = dbgOn ? dbgClock.nsecsElapsed() : 0;
 
-        if (!m_decoder) m_decoder = std::make_unique<FFmpegDecoder>();
-        if (!m_decoder->isOpen() || m_decoder->source() != path) {
-            if (!m_decoder->open(path)) {
-                emit failed(path);
-                return;
-            }
+        FFmpegDecoder* d = m_pool->acquire(path);
+        if (!d) {
+            // Pool sem slot ou o caminho está emprestado ao worker principal
+            // (mesmo arquivo): prefetch é best-effort, o corte segue esperando
+            // pelo acquire quente do FrameWorker.
+            emit failed(path);
+            return;
         }
-        QImage frame0 = m_decoder->source() == path ? m_decoder->frameAt(t, maxW) : QImage();
+        QImage frame0 = d->frameAt(t, maxW);
         QImage frame1;
-        if (!frame0.isNull() && step > 0.0 && m_decoder->source() == path)
-            frame1 = m_decoder->frameAt(t + step, maxW);
+        if (!frame0.isNull() && step > 0.0)
+            frame1 = d->frameAt(t + step, maxW);
+        m_pool->release(path);
 
         if (dbgOn) {
             const double dbgMs = (dbgClock.nsecsElapsed() - dbgT0) / 1000000.0;
@@ -289,16 +418,41 @@ public slots:
                       .arg(t, 0, 'f', 3)
                       .arg(dbgMs, 0, 'f', 1);
         }
-        emit done(path, t, maxW, frame0, frame1, m_decoder.release());
+        emit done(path, t, maxW, frame0, frame1);
+    }
+
+    // Aquece um clipe mais à frente (Fase 2): só abre e posiciona o decoder no
+    // início do clip, sem devolver frame. No corte daquele clip o acquire do
+    // FrameWorker volta quente em µs. Serializado com decode() na mesma thread.
+    void warm(const QString& path, double t, int maxW) {
+        CrashReporter::setActivity("aquecendo clipe a frente");
+        static QElapsedTimer dbgClock;
+        const bool dbgOn = playDbg();
+        if (dbgOn && !dbgClock.isValid()) dbgClock.start();
+        const qint64 dbgT0 = dbgOn ? dbgClock.nsecsElapsed() : 0;
+
+        FFmpegDecoder* d = m_pool->acquire(path);
+        if (d) {
+            d->frameAt(t, maxW); // posiciona o decoder; soft se já quente
+            m_pool->release(path);
+            if (dbgOn) {
+                const double dbgMs = (dbgClock.nsecsElapsed() - dbgT0) / 1000000.0;
+                qDebug().noquote() << QStringLiteral("[w] WARM(bg) t=%1 %2ms")
+                          .arg(t, 0, 'f', 3)
+                          .arg(dbgMs, 0, 'f', 1);
+            }
+        }
+        emit warmed(path);
     }
 
 signals:
     void done(const QString& path, double t, int maxW,
-              const QImage& frame0, const QImage& frame1, FFmpegDecoder* decoder);
+              const QImage& frame0, const QImage& frame1);
     void failed(const QString& path);
+    void warmed(const QString& path);
 
 private:
-    std::unique_ptr<FFmpegDecoder> m_decoder;
+    DecoderPool* m_pool; // não dono (vida do PreviewWidget)
 };
 
 // Mixer de áudio: soma o PCM de todos os clipes ativos em `t` (clipe de vídeo
@@ -1783,10 +1937,14 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     connect(m_timer, &QTimer::timeout, this, [this]() { PlaybackEngine::tick(); });
     connect(m_playBtn, &QPushButton::clicked, this, &PreviewWidget::togglePlay);
 
+    // Pool de decodificadores quentes: os workers emprestam / devolvem entradas
+    // por caminho de arquivo (o prefetch só aquece; o main leva no corte).
+    m_decPool = new DecoderPool(decoderPoolCapacity());
+
     // Thread de vídeo: decodificar quadros aqui tira a decodificação (que é
     // cara em arquivos grandes/4K/MKV) do caminho da UI.
     m_frameThread = new CrashReporter::TrackedThread("preview-frame", this);
-    m_frameWorker = new FrameWorker;
+    m_frameWorker = new FrameWorker(m_decPool);
     m_frameWorker->moveToThread(m_frameThread);
     connect(m_frameThread, &QThread::finished, m_frameWorker, &QObject::deleteLater);
     connect(m_frameWorker, &FrameWorker::frameReady,
@@ -1799,13 +1957,15 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     // caminho do worker (que mantém o pipeline m_ready). Sem isto, o open+2
     // frameAt do prefetch (500-800ms) congelava o worker por corte.
     m_bgPrefetchThread = new CrashReporter::TrackedThread("preview-prefetch", this);
-    m_bgPrefetchWorker = new BgPrefetchWorker;
+    m_bgPrefetchWorker = new BgPrefetchWorker(m_decPool);
     m_bgPrefetchWorker->moveToThread(m_bgPrefetchThread);
     connect(m_bgPrefetchThread, &QThread::finished, m_bgPrefetchWorker, &QObject::deleteLater);
     connect(m_bgPrefetchWorker, &BgPrefetchWorker::done,
             this, &PreviewWidget::onBgPrefetchDone, Qt::QueuedConnection);
     connect(m_bgPrefetchWorker, &BgPrefetchWorker::failed,
             this, &PreviewWidget::onBgPrefetchFailed, Qt::QueuedConnection);
+    connect(m_bgPrefetchWorker, &BgPrefetchWorker::warmed,
+            this, &PreviewWidget::onBgWarmDone, Qt::QueuedConnection);
     m_bgPrefetchThread->start();
 
     setMinimumSize(320, 200);
@@ -1828,6 +1988,10 @@ PreviewWidget::~PreviewWidget() {
         m_bgPrefetchThread->quit();
         m_bgPrefetchThread->wait(5000);
     }
+    // Threads paradas e workers destruídos (deleteLater): nenhum lease ativo —
+    // seguro fechar os decoders restantes do pool.
+    delete m_decPool;
+    m_decPool = nullptr;
 }
 
 void PreviewWidget::setProject(Project* p) {
@@ -1857,6 +2021,8 @@ void PreviewWidget::setProject(Project* p) {
         m_reqQueue.clear();
         m_layerCache.clear();
         m_prefetch = PrefetchFrame();
+        m_warmQueue.clear();
+        m_warmInFlight.clear();
         m_shownPath.clear();
         m_shownT = -1.0;
         m_shownW = -1;
@@ -2332,7 +2498,7 @@ void PreviewWidget::drawPerfOverlay(QPainter& p) {
 
     p.save();
     p.resetTransform();
-    const QRect box(8, 8, 392, 172);
+    const QRect box(8, 8, 392, 190);
     p.fillRect(box, QColor(0, 0, 0, 190));
     QFont f = p.font();
     f.setPointSizeF(8);
@@ -2344,7 +2510,8 @@ void PreviewWidget::drawPerfOverlay(QPainter& p) {
         "decode(worker->frame) %10 ms   prefetch->ready %11 ms\n"
         "paint %12 ms (comp %13)   resolve proxy %14 ms\n"
         "prefetch %15   fila %16   camadas %17   cortes %18\n"
-        "dropped %19   skip %20   adaptive %21")
+        "dropped %19   skip %20   adaptive %21\n"
+        "abre %22 fonte(s)   open total %23 ms   ultima %24 ms   pool %25 quentes")
         .arg(prof.wroteProxy() ? QStringLiteral("PROXY")
                                : QStringLiteral("original"))
         .arg(prof.frameCount())
@@ -2368,7 +2535,11 @@ void PreviewWidget::drawPerfOverlay(QPainter& p) {
         .arg(fr.skipped)
         .arg(m_adaptiveActive
              ? QStringLiteral("ON (%1p)").arg(m_previewQuality)
-             : QStringLiteral("OFF"));
+             : QStringLiteral("OFF"))
+        .arg(FFmpegDecoder::openCount())
+        .arg(ms(FFmpegDecoder::openTotalNs()), 0, 'f', 1)
+        .arg(ms(FFmpegDecoder::lastOpenNs()), 0, 'f', 1)
+        .arg(m_decPool ? m_decPool->count() : 0);
     p.drawText(box.adjusted(10, 8, -6, -6), Qt::AlignLeft | Qt::AlignTop, txt);
     p.restore();
 }
@@ -2620,6 +2791,8 @@ void PreviewWidget::onPrefetch() { updatePrefetch(); }
 void PreviewWidget::onStopPlaybackUI() {
     QMutexLocker l(&m_frameMutex);
     m_prefetch = PrefetchFrame();
+    m_warmQueue.clear();
+    m_warmInFlight.clear();
 }
 
 void PreviewWidget::onPlayheadMoved(double t) {
@@ -3363,6 +3536,26 @@ void PreviewWidget::updateFrame() {
 // (scrub não empilha — a fila só guarda pedidos ainda não enviados).
 void PreviewWidget::requestFrame(const QString& clipId, const QString& path, double t, int maxW) {
     QMutexLocker l(&m_frameMutex);
+    // Fase 3: se um decode já está em andamento e este pedido do TOPO o supera
+    // (cortou para outro clipe, ou scrub/seek de mais de 3 frames parado),
+    // cancela o decode obsoleto — o worker larga o alvo antigo e pega o novo já.
+    // Durante reprodução no MESMO clipe NÃO cancela: o avanço de 1 frame por
+    // tick completaria mesmo; cancelar a cada tick travaria o preview.
+    if (m_hasInflightReq && m_frameWorker && m_project) {
+        // PIERROT_NO_CANCEL=1 desliga (A/B: medir o efeito do cancelamento).
+        static const bool kCancelOn = [] {
+            return !qEnvironmentVariableIsSet("PIERROT_NO_CANCEL");
+        }();
+        const Clip* top = clipAt(m_playhead);
+        if (kCancelOn && top && top->id == clipId) {
+            bool cancel = (m_inflightReq.clipId != clipId);
+            if (!cancel && !m_playing) {
+                const double fd = projFps(m_project) > 0.0 ? 1.0 / projFps(m_project) : 1.0 / 30.0;
+                cancel = std::fabs(m_inflightReq.t - t) > fd * 3.0;
+            }
+            if (cancel) m_frameWorker->requestCancel();
+        }
+    }
     // Coalesce: durante o scrub (e na reprodução) chegam vários alvos para o
     // mesmo clipe; só o mais recente interessa — o worker é serial e decodificar
     // posições intermediárias só atrasa a chegada ao alvo final.
@@ -3513,6 +3706,8 @@ void PreviewWidget::kickFrameWorker() {
             if (m_reqQueue[i].clipId == top->id) { idx = i; break; }
     }
     const FrameReq r = m_reqQueue.takeAt(idx);
+    m_inflightReq = r;
+    m_hasInflightReq = true;
     QMetaObject::invokeMethod(m_frameWorker, "decodeOne", Qt::QueuedConnection,
                               Q_ARG(QString, r.clipId), Q_ARG(QString, r.path),
                               Q_ARG(double, r.t), Q_ARG(int, r.maxW), Q_ARG(double, r.dt));
@@ -3541,6 +3736,7 @@ void PreviewWidget::onFrameReady(const QString& clipId, const QString& path, dou
     {
         QMutexLocker l(&m_frameMutex);
         m_workerBusy = false;
+        m_hasInflightReq = false;
         m_perfWorkerStartNs = 0;
         if (workerLatNs > 0) m_perf.workerMs = workerLatNs / 1000000;
         kickFrameWorker(); // continua com o próximo pedido, se houver
@@ -3696,9 +3892,8 @@ void PreviewWidget::onPrefetchReady(const QString& path, double t, int maxW, con
 }
 
 void PreviewWidget::onBgPrefetchDone(const QString& path, double t, int maxW,
-                                     const QImage& frame0, const QImage& frame1,
-                                     FFmpegDecoder* decoder) {
-    const double step = m_project ? 1.0 / projFps(m_project) : 1.0 / 30.0;
+                                     const QImage& frame0, const QImage& frame1) {
+    Q_UNUSED(frame1);
     const qint64 latNs =
         (PreviewProfiler::active() && m_perfT.isValid() && m_perfPrefetchStartNs > 0)
             ? m_perfT.nsecsElapsed() - m_perfPrefetchStartNs : 0;
@@ -3715,15 +3910,9 @@ void PreviewWidget::onBgPrefetchDone(const QString& path, double t, int maxW,
             if (frame0.isNull()) m_prefetch.requested = false;
         }
     }
-    // Entrega o decoder AQUECIDO (aberto na posição do próximo clipe) ao worker,
-    // para o swap instantâneo no corte — sem nunca bloquear o worker com open().
-    if (decoder && m_frameWorker)
-        QMetaObject::invokeMethod(m_frameWorker, "warmUpPrefetchDecoder", Qt::QueuedConnection,
-                                  Q_ARG(QString, path),
-                                  Q_ARG(double, t + step),
-                                  Q_ARG(int, maxW),
-                                  Q_ARG(QImage, frame1),
-                                  Q_ARG(FFmpegDecoder*, decoder));
+    // O decoder NÃO vem junto: o prefetch só aqueceu o pool e já devolveu a
+    // entrada (release). No corte, o FrameWorker reacquire o mesmo decoder já
+    // quente na posição do próximo clipe — sem troca de posse, sem fila.
 }
 
 void PreviewWidget::onBgPrefetchFailed(const QString& path) {
@@ -3733,6 +3922,24 @@ void PreviewWidget::onBgPrefetchFailed(const QString& path) {
         m_prefetch.valid = false;
         m_prefetch.requested = false;
     }
+}
+
+// Próximo clipe que começa depois do fim de `c` (varredura igual à do
+// updatePrefetch: próximo início de clipe na timeline, preferindo faixa de cima).
+static const Clip* clipAfter(const Project* p, const Clip* c) {
+    if (!p || !c) return nullptr;
+    const double start = c->pos + c->dur;
+    const Clip* found = nullptr;
+    double nextPos = 1e9;
+    for (int tr = (int)p->videoTracks.size() - 1; tr >= 0; --tr) {
+        for (const Clip& cc : p->videoTracks[tr].clips) {
+            if (cc.pos >= start - 1e-4 && cc.pos < nextPos) {
+                nextPos = cc.pos;
+                found = &cc;
+            }
+        }
+    }
+    return found;
 }
 
 void PreviewWidget::updatePrefetch() {
@@ -3773,29 +3980,87 @@ void PreviewWidget::updatePrefetch() {
     const int decW = qMax(160, qMax(m_previewQuality, widgetW));
     const QString vpath = resolvePreviewVideo(nextMedia->filePath);
 
+    // ── Frame0 do próximo clipe (crítico: o corte mais próximo) ──────────
+    // Decide ANTES do warm-ahead e despacha logo, para que decode(N1) seja o
+    // primeiro da fila da thread bg (nunca atrasado pelo warm do 2º clipe).
+    bool needFrame0 = false;
     {
         QMutexLocker l(&m_frameMutex);
         if (m_perfT.isValid()) m_perfPrefetchStartNs = m_perfT.nsecsElapsed();
         if (m_prefetch.requested && m_prefetch.path == vpath
             && std::fabs(m_prefetch.t - srcT) < 1e-4 && m_prefetch.maxW == decW) {
-            return; // já solicitado ou já pronto
+            needFrame0 = false; // já solicitado ou já pronto
+        } else {
+            m_prefetch.path = vpath;
+            m_prefetch.t = srcT;
+            m_prefetch.maxW = decW;
+            m_prefetch.img = QImage();
+            m_prefetch.valid = false;
+            m_prefetch.requested = true;
+            m_prefetch.invoked = true; // despachado agora (re-despachado se o corte chegar sem terminar)
+            m_prefetch.clipEnd = clip->pos + clip->dur;
+            needFrame0 = true;
         }
-        m_prefetch.path = vpath;
-        m_prefetch.t = srcT;
-        m_prefetch.maxW = decW;
-        m_prefetch.img = QImage();
-        m_prefetch.valid = false;
-        m_prefetch.requested = true;
-        m_prefetch.invoked = true;  // despachado agora (só é re-despachado se o corte chegar sem terminar)
-        m_prefetch.clipEnd = clip->pos + clip->dur;
     }
-    if (!m_bgPrefetchWorker || m_bgPrefetchBusy) return;
-    m_bgPrefetchBusy = true;
-    QMetaObject::invokeMethod(m_bgPrefetchWorker, "decode", Qt::QueuedConnection,
-                              Q_ARG(QString, vpath),
-                              Q_ARG(double, srcT),
-                              Q_ARG(int, decW),
-                              Q_ARG(double, 1.0 / projFps(m_project)));
+    if (needFrame0 && m_bgPrefetchWorker && !m_bgPrefetchBusy) {
+        m_bgPrefetchBusy = true;
+        QMetaObject::invokeMethod(m_bgPrefetchWorker, "decode", Qt::QueuedConnection,
+                                  Q_ARG(QString, vpath),
+                                  Q_ARG(double, srcT),
+                                  Q_ARG(int, decW),
+                                  Q_ARG(double, 1.0 / projFps(m_project)));
+    }
+
+    // ── Warm-ahead (Fase 2): 2º/3º clipe à frente, só abre+posiciona ─────
+    // Entra na fila da mesma thread DEPOIS do decode(N1) acima, então nunca
+    // compete com o frame do corte próximo. Se não der tempo, o cut daquele
+    // clipe paga um open() — na prática há janela de 2-5s + a duração do clipe
+    // do meio pra aquecer. Vem SEMPRE aqui (mesmo se N1 já foi pedido/ocupado),
+    // para cortes em sequência não reabrirem o 2º arquivo frio.
+    QVector<WarmReq> wants;
+    const Clip* ahead = nextClip;
+    for (int i = 0; i < 2 && ahead; ++i) {
+        ahead = clipAfter(m_project, ahead);
+        if (!ahead) break;
+        const MediaItem* am = m_project->findMedia(ahead->mediaId);
+        if (!am || !am->hasVideo) continue;
+        const QString apath = resolvePreviewVideo(am->filePath);
+        if (apath.isEmpty() || apath == vpath) continue; // mesmo arquivo já coberto
+        if (m_decPool->contains(apath) || apath == m_warmInFlight) continue;
+        bool dup = false;
+        for (const WarmReq& w : wants)
+            if (w.path == apath) { dup = true; break; }
+        if (!dup) wants.push_back({apath, ahead->in, decW});
+    }
+    {
+        QMutexLocker l(&m_frameMutex);
+        m_warmQueue = std::move(wants);
+        if (m_warmQueue.isEmpty()) m_warmInFlight.clear();
+    }
+    kickWarmQueue();
+}
+
+// Despacha o próximo aquecimento da fila (seguro: pega m_frameMutex). Todos os
+// callers rodam na thread da UI (updatePrefetch e onBgWarmDone); o lock aqui é
+// só para manter o invariante com outras leituras da UI.
+void PreviewWidget::kickWarmQueue() {
+    if (!m_bgPrefetchWorker) return;
+    QMutexLocker l(&m_frameMutex);
+    if (!m_warmInFlight.isEmpty() || m_warmQueue.isEmpty()) return;
+    const WarmReq w = m_warmQueue.takeFirst();
+    m_warmInFlight = w.path;
+    QMetaObject::invokeMethod(m_bgPrefetchWorker, "warm", Qt::QueuedConnection,
+                              Q_ARG(QString, w.path),
+                              Q_ARG(double, w.t),
+                              Q_ARG(int, w.maxW));
+}
+
+void PreviewWidget::onBgWarmDone(const QString& path) {
+    {
+        QMutexLocker l(&m_frameMutex);
+        if (m_warmInFlight == path) m_warmInFlight.clear();
+    }
+    kickWarmQueue(); // próximo da fila, se houver
 }
 
 // Aplica pan/crop sobre um quadro e devolve o recorte.

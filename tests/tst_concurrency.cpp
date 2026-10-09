@@ -21,7 +21,7 @@
 
 #include <QtTest>
 
-#include "colombina/ffmpeg/FFmpegDecoder.h"
+#include "laartman/FFmpegDecoder.h"
 
 #include <QProcess>
 #include <QStandardPaths>
@@ -384,14 +384,27 @@ void tst_concurrency::hwAutoCureAfterEmptyFrames() {
         QSKIP("VAAPI indisponível nesta máquina — auto-cura não exercitável.");
     }
 
-    // O driver está em uso: insiste o bastante para o auto-cura desarmar.
+    // O driver está em uso: insiste o bastante para o auto-cura desarmar
+    // (ele só age depois de 4 quadros vazios SEGUIDOS). Se algum quadro sair
+    // de verdade, o hardware é saudável e não há nada a curar.
+    bool decodedOnHw = false;
     for (int i = 0; i < 8 && dec.usesHardware(); ++i) {
-        if (!dec.frameAt(0.5 + i * 0.1).isNull()) break;
+        if (!dec.frameAt(0.5 + i * 0.1).isNull()) { decodedOnHw = true; break; }
     }
 
-    // Reabrir: agora o auto-cura já desligou o hw para a sessão.
+    // Reabrir. Em VAAPI saudável o hw continua armado e decodificando; em
+    // VAAPI quebrada o auto-cura já desligou o hw para a sessão e o software
+    // assume.
     dec.close();
     QVERIFY(dec.open(m_media));
+    if (dec.usesHardware() && decodedOnHw) {
+        // A GPU decodificou de verdade: o auto-cura não precisou agir, mas a
+        // reabertura tem que continuar devolvendo quadro — é o "primeiro clipe"
+        // desta sessão, agora com o decoder que ficou saudável.
+        QVERIFY2(!dec.frameAt(1.0).isNull(),
+                 "VAAPI saudável mas o preview não decodifica após reabrir");
+        QSKIP("VAAPI decodifica de verdade nesta máquina — auto-cura não exercitável.");
+    }
     QVERIFY2(!dec.usesHardware(),
              "hw ainda ativo depois de ManyEmptyFrames — o auto-cura não desligou o VAAPI");
     QVERIFY2(!dec.frameAt(1.0).isNull(),

@@ -34,6 +34,15 @@ static bool audioDbg() {
     return on;
 }
 
+// Diagnóstico de abertura de arquivo (o custo escondido do corte): ligue com
+// PIERROT_PLAY_DEBUG=1 ou PIERROT_PERF_DEBUG=1. Sem isso o open() de 500-800ms
+// fica invisível — o seek medido no engine não o enxerga.
+static bool openDbg() {
+    static const bool on = qEnvironmentVariableIsSet("PIERROT_PLAY_DEBUG")
+                        || qEnvironmentVariableIsSet("PIERROT_PERF_DEBUG");
+    return on;
+}
+
 static void decoderLogCallback(void*, int, const char*, va_list) {
     // Silencia completamente qualquer log/aviso interno do FFmpeg
 }
@@ -462,13 +471,29 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
     QMutexLocker vlock(&m_mutex);
     QMutexLocker alock(&m_audioMutex);
     if (m_ctx && m_source == filePath) return true;
+    // Só conta/temporiza abertura FRIA (o atalho acima, arquivo já aberto, sai
+    // antes). commitOpen() é chamado em todo retorno real, inclusive falhas.
+    const auto openT0 = std::chrono::steady_clock::now();
+    auto commitOpen = [&]() {
+        const quint64 ns = quint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - openT0).count());
+        s_lastOpenNs.store(ns);
+        s_openTotalNs.fetch_add(ns);
+        s_openCount.fetch_add(1);
+        if (openDbg())
+            qDebug().noquote() << QStringLiteral("[dec] open %1 ms  %2")
+                      .arg(ns / 1e6, 0, 'f', 1).arg(filePath);
+    };
     freeAllLocked();
 
     AVFormatContext* fmt = nullptr;
-    if (avformat_open_input(&fmt, filePath.toUtf8().constData(), nullptr, nullptr) != 0)
+    if (avformat_open_input(&fmt, filePath.toUtf8().constData(), nullptr, nullptr) != 0) {
+        commitOpen();
         return false;
+    }
     if (avformat_find_stream_info(fmt, nullptr) < 0) {
         avformat_close_input(&fmt);
+        commitOpen();
         return false;
     }
     m_ctx = fmt;
@@ -553,6 +578,17 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
                         m_codec = cc;
                         m_stream = idx;
                         m_hw = hwDev && cc->pix_fmt == AV_PIX_FMT_VAAPI;
+                        // O get_format do VAAPI pode ser resolvido só quando o
+                        // primeiro frame é decodificado (threading de frames):
+                        // cc->pix_fmt sai 0 (YUV420P) mesmo com hw_frames_ctx
+                        // armado, e os frames saem AV_PIX_FMT_VAAPI com data[0]
+                        // nulo (na GPU). Cair em m_hw=false fazia o hostFrame
+                        // pular a transferência hw→NV12 e o sws ler ponteiro de
+                        // GPU → quadro preto/nenhum. A presencia de hw_frames_ctx
+                        // indica o VAAPI negociado (NV12); pix_fmt==VAAPI cobre
+                        // drivers que resolvem no open().
+                        m_hw = hwDev
+                            && (cc->pix_fmt == AV_PIX_FMT_VAAPI || cc->hw_frames_ctx);
                         m_hwPixFmt = m_hw ? (int)AV_PIX_FMT_VAAPI : -1;
                         const AVStream* st = fmt->streams[idx];
                         if (st->avg_frame_rate.num > 0 && st->avg_frame_rate.den > 0) {
@@ -625,6 +661,7 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
             }
         }
     }
+    commitOpen();
     return true;
 }
 
@@ -732,6 +769,9 @@ quint64 FFmpegDecoder::s_lastDiscard = 0;
 quint64 FFmpegDecoder::s_seekCount = 0;
 quint64 FFmpegDecoder::s_seekTotalNs = 0;
 quint64 FFmpegDecoder::s_lastSeekNs = 0;
+std::atomic<quint64> FFmpegDecoder::s_openCount{0};
+std::atomic<quint64> FFmpegDecoder::s_openTotalNs{0};
+std::atomic<quint64> FFmpegDecoder::s_lastOpenNs{0};
 
 QImage FFmpegDecoder::frameFromCacheLocked(const FrameCacheKey& key) {
     auto it = m_frameCacheIdx.find(key);
@@ -777,10 +817,19 @@ void FFmpegDecoder::frameCacheClearLocked() {
     m_frameCacheIdx.clear();
 }
 
-QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
+QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bool>* cancel) {
     QMutexLocker locker(&m_mutex);
     QImage result;
     if (!m_ctx || m_stream < 0) return result;
+
+    // Cancelamento cooperativo (Fase 3): a UI marca o token quando um alvo novo
+    // supera este decode (scrub, seek, ou corte para outro clipe). Abortamos só
+    // em pontos seguros — antes do seek e no topo dos laços — para não deixar
+    // estado pela metade. O trabalho já feito (m_lastFrame, m_lastPtsSec,
+    // posição do codec) é mantido: o próximo frameAt aproveita ou re-seeka.
+    auto cancelled = [cancel]() {
+        return cancel && cancel->load(std::memory_order_relaxed);
+    };
 
     // ── Frame cache: retorna frame armazenado se disponível ───────────
     const double targetSec = m_isImage ? 0.0 : std::max(0.0, seconds);
@@ -900,6 +949,8 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
                            || targetSec < m_lastPtsSec - 0.5
                            || targetSec > m_lastPtsSec + 2.0);
 
+    if (cancelled()) return result; // desiste antes do seek (caro)
+
     if (needSeek) {
         const qint64 seekT0 = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
         const int seekErr = av_seek_frame(fmt, m_stream, target, AVSEEK_FLAG_BACKWARD);
@@ -928,7 +979,6 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
 
     AVFrame* chosen = nullptr;
     bool atEof = false;
-    bool decodedAny = false; // se o decoder produziu ao menos um quadro
     // Decodificação por hardware: o frame decodificado mora na GPU (formato
     // VAAPI) e não pode ser lido cru pelo sws. `hostFrame` transfere para um
     // buffer NV12 em RAM (m_swFrame) e devolve o frame "host". O fsec é
@@ -989,9 +1039,10 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
 
     quint64 discarded = 0;
     s_lastDiscard = 0;
+    bool aborted = false;
     while (!chosen && !atEof) {
+        if (cancelled()) { aborted = true; break; }
         while (avcodec_receive_frame(cc, m_frame) == 0) {
-            decodedAny = true;
             ++discarded;
             double fsec = 0.0;
             AVFrame* src = hostFrame(m_frame, fsec);
@@ -1040,7 +1091,7 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
         if (r < 0) {
             avcodec_send_packet(cc, nullptr);
             while (avcodec_receive_frame(cc, m_frame) == 0) {
-                decodedAny = true;
+                if (cancelled()) { aborted = true; break; }
                 double fsec = 0.0;
                 AVFrame* src = hostFrame(m_frame, fsec);
                 if (!src) {
@@ -1065,6 +1116,12 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
             avcodec_send_packet(cc, m_pkt);
         }
         av_packet_unref(m_pkt);
+    }
+
+    if (aborted) {
+        av_frame_unref(m_frame);
+        av_packet_unref(m_pkt);
+        return result; // QImage nula: pedido cancelado por alvo mais novo
     }
 
     if (!chosen && m_lastFrameSec >= 0.0 && m_lastFrame)
@@ -1124,9 +1181,11 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth) {
     }
 
     // Auto-cura: hardware decodificou quadro(s) mas nada virou imagem (driver
-    // com formato quebrado/transferência falha). Após algumas ocorrências
-    // seguidas, desativa o VAAPI para a sessão — o vídeo volta por software.
-    if (m_hw && decodedAny && result.isNull()) {
+    // com formato quebrado/transferência falha) — ou não decodificou NENHUM
+    // quadro (VAAPI da NVIDIA abre o device mas não decodifica H.264). Nos dois
+    // casos o resultado é nulo com hw armado; após algumas ocorrências seguidas,
+    // desativa o VAAPI para a sessão — o vídeo volta por software.
+    if (m_hw && result.isNull()) {
         if (++s_hwFailSeq >= 4) {
             s_hwBroken = true;
             qWarning() << "[hw] decodificação VAAPI produzindo quadros vazios — "

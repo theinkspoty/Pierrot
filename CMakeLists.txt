@@ -31,12 +31,25 @@ endif()
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
 find_package(FFmpeg REQUIRED)
 
+# ── LaArtman: o motor de codecs, a camada mais baixa ───────────────────
+# Só I/O de mídia via libav (decode hoje; encode/mux no futuro). Não conhece
+# Project, render nem UI — é deliberadamente a base de tudo. A colombina
+# depende dele; ninguém acima o inclui direto além de incluir seu header.
+set(LAARTMAN_SOURCES
+    src/laartman/FFmpegDecoder.cpp
+    src/laartman/FFmpegEncoder.cpp
+)
+
+set(LAARTMAN_HEADERS
+    src/laartman/FFmpegDecoder.h
+    src/laartman/FFmpegEncoder.h
+)
+
 # ── Colombina: o kernel, a camada blindada (quase não muda) ─────────────
 # models/, ffmpeg/, render/, export/, ofx/. Não pode incluir src/ui — a
 # barreira é estrutural: nada aqui pode depender da casca (widgets).
 set(COLOMBINA_SOURCES
     src/colombina/models/Project.cpp
-    src/colombina/ffmpeg/FFmpegDecoder.cpp
     src/colombina/ffmpeg/AudioConformCache.cpp
     src/colombina/ffmpeg/MediaCache.cpp
     src/colombina/ffmpeg/ProxyManager.cpp
@@ -56,7 +69,6 @@ set(COLOMBINA_SOURCES
 
 set(COLOMBINA_HEADERS
     src/colombina/models/Project.h
-    src/colombina/ffmpeg/FFmpegDecoder.h
     src/colombina/ffmpeg/MediaCache.h
     src/colombina/ffmpeg/ProxyManager.h
     src/colombina/export/ProjectExporter.h
@@ -211,11 +223,32 @@ if(PIERROT_ENABLE_RUST)
 endif()
 
 # ── Alvos ───────────────────────────────────────────────────────────────
+add_library(laartman STATIC ${LAARTMAN_SOURCES} ${LAARTMAN_HEADERS})
+
+# `src` no include path para os consumidores acharem "laartman/FFmpegDecoder.h".
+target_include_directories(laartman PUBLIC src)
+
+target_link_libraries(laartman PUBLIC
+    ${PIERROT_QT_CORE}
+    ${PIERROT_QT_GUI}
+    FFmpeg::avformat
+    FFmpeg::avcodec
+    FFmpeg::avutil
+    FFmpeg::swscale
+)
+
+if(TARGET FFmpeg::swresample)
+    target_link_libraries(laartman PUBLIC FFmpeg::swresample)
+else()
+    message(FATAL_ERROR "FFmpeg libswresample não encontrada — necessária para decodificar o áudio.")
+endif()
+
 add_library(colombina STATIC ${COLOMBINA_SOURCES} ${COLOMBINA_HEADERS})
 
 target_include_directories(colombina PUBLIC src src/colombina/ofx/sdk)
 
 target_link_libraries(colombina PUBLIC
+    laartman
     ${PIERROT_QT_CONCURRENT}
     ${PIERROT_QT_CORE}
     ${PIERROT_QT_GUI}
@@ -316,7 +349,7 @@ add_test(NAME tst_edl COMMAND tst_edl)
 add_executable(tst_exporter
     tests/tst_exporter.cpp
     src/colombina/models/Project.cpp
-    src/colombina/ffmpeg/FFmpegDecoder.cpp
+    src/laartman/FFmpegDecoder.cpp
     src/colombina/render/MesaRenderer.cpp
     src/colombina/export/ProjectExporter.cpp
     src/colombina/ffmpeg/ProxyManager.cpp
@@ -365,7 +398,7 @@ add_test(NAME tst_crashreporter COMMAND tst_crashreporter)
 # ASAN/UBSAN — a cobertura do decoder era 2,3% e a do MesaRenderer 0%.
 add_executable(tst_concurrency
     tests/tst_concurrency.cpp
-    src/colombina/ffmpeg/FFmpegDecoder.cpp
+    src/laartman/FFmpegDecoder.cpp
 )
 target_include_directories(tst_concurrency PRIVATE src src/colombina/ofx/sdk)
 target_link_libraries(tst_concurrency PRIVATE
@@ -382,10 +415,25 @@ target_link_libraries(tst_concurrency PRIVATE
 )
 add_test(NAME tst_concurrency COMMAND tst_concurrency)
 
+# tst_encoder: ciclo encode→mux→decode do motor LaArtman. Gera quadros RGBA,
+# codifica num MP4 (libx264) e decodifica de volta; pula se o FFmpeg não tiver
+# o encoder. Linka a lib `laartman` de verdade (valida o alvo, não duplica .cpp).
+add_executable(tst_encoder
+    tests/tst_encoder.cpp
+)
+target_include_directories(tst_encoder PRIVATE src src/colombina/ofx/sdk)
+target_link_libraries(tst_encoder PRIVATE
+    laartman
+    ${PIERROT_QT_TEST}
+    ${PIERROT_QT_CORE}
+    ${PIERROT_QT_GUI}
+)
+add_test(NAME tst_encoder COMMAND tst_encoder)
+
 add_executable(tst_audio_conform
     tests/tst_audio_conform.cpp
     src/colombina/ffmpeg/AudioConformCache.cpp
-    src/colombina/ffmpeg/FFmpegDecoder.cpp
+    src/laartman/FFmpegDecoder.cpp
 )
 target_include_directories(tst_audio_conform PRIVATE src src/colombina/ofx/sdk)
 target_link_libraries(tst_audio_conform PRIVATE
@@ -422,7 +470,7 @@ add_test(NAME tst_audio_conform_intervals COMMAND tst_audio_conform_intervals)
 add_executable(tst_export_pipeline
     tests/tst_export_pipeline.cpp
     src/colombina/models/Project.cpp
-    src/colombina/ffmpeg/FFmpegDecoder.cpp
+    src/laartman/FFmpegDecoder.cpp
     src/colombina/render/MesaRenderer.cpp
     src/colombina/export/ProjectExporter.cpp
     src/colombina/ffmpeg/ProxyManager.cpp

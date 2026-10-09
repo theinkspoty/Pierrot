@@ -229,7 +229,7 @@ src/
   version.h                   Versão do projeto
   CrashReporter               Relatório de crash (backtrace + infos do sistema)
   models/Project              Modelo: mídia, faixas, clipes + serialização JSON
-  ffmpeg/FFmpegDecoder        Decodificação de frames e picos de áudio (libav*)
+  laartman/FFmpegDecoder      Motor de codecs: decodificação de frames/áudio (libav*)
   ffmpeg/MediaCache           Cache de waveforms/thumbnails em thread de fundo
   export/ProjectExporter      Geração do comando ffmpeg (filter_complex)
   ui/TimelineWidget           Timeline interativa (drag, corte, trim, zoom, reordenação de faixas/pastas, presets de estilo)

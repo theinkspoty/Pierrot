@@ -9,7 +9,7 @@
 #include "clipattrs.h"
 
 #include "colombina/ffmpeg/MediaCache.h"
-#include "colombina/ffmpeg/FFmpegDecoder.h"
+#include "laartman/FFmpegDecoder.h"
 #include "colombina/mesh/BlenderBridge.h"
 #include "colombina/render/MesaRenderer.h"
 #include "ui/TransformDialog.h"

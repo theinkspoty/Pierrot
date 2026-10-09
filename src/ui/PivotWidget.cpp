@@ -5,7 +5,7 @@
 
 #include "PivotWidget.h"
 #include "ui/Theme.h"
-#include "colombina/ffmpeg/FFmpegDecoder.h"
+#include "laartman/FFmpegDecoder.h"
 #include "colombina/ffmpeg/ProxyManager.h"
 #include "colombina/render/Math3D.h"
 

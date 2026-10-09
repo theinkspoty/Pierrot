@@ -5,7 +5,7 @@
 
 #include "TimelineWidget.h"
 #include "colombina/models/Project.h"
-#include "colombina/ffmpeg/FFmpegDecoder.h"
+#include "laartman/FFmpegDecoder.h"
 #include "ui/SettingsDialog.h"
 #include "ui/TrimmerDialog.h"
 #include "colombina/util.h"

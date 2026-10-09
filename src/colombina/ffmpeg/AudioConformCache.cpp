@@ -5,7 +5,7 @@
 
 #include "AudioConformCache.h"
 
-#include "colombina/ffmpeg/FFmpegDecoder.h"
+#include "laartman/FFmpegDecoder.h"
 #include "colombina/ffmpeg/AudioConformIntervals.h"
 
 #include <QDebug>

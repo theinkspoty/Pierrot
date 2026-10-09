@@ -18,7 +18,7 @@ O áudio do Pierrot tem **duas cadeias independentes que convergem em paridade**
 
 ## Cadeia do preview
 
-### Decodificação — `FFmpegDecoder` (src/colombina/ffmpeg/FFmpegDecoder.cpp)
+### Decodificação — `FFmpegDecoder` (src/laartman/FFmpegDecoder.cpp)
 - Resample padrão S16 interleaved, 48 kHz estéreo (`swr`, FFmpegDecoder.cpp:595-620).
 - Contexto de áudio **separado** do de vídeo com mutex próprio (`m_audioMutex`,
   h:123) → audio e vídeo decodificam em threads distintas; `open()` segura os

@@ -5,7 +5,7 @@
 
 #include "ui/TrimmerDialog.h"
 
-#include "colombina/ffmpeg/FFmpegDecoder.h"
+#include "laartman/FFmpegDecoder.h"
 #include "colombina/ffmpeg/ProxyManager.h"
 
 #include <QDialogButtonBox>

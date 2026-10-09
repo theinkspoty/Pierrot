@@ -16,7 +16,7 @@
 #include <QIcon>
 #include <QTransform>
 #include "colombina/models/Project.h"
-#include "colombina/ffmpeg/FFmpegDecoder.h"
+#include "laartman/FFmpegDecoder.h"
 #include "colombina/render/MesaRenderer.h"
 #include "ui/PlaybackEngine.h"
 
@@ -29,6 +29,7 @@ class QThread;
 class AudioMixer; // QIODevice que mistura o PCM de todos os clipes ativos
 class FrameWorker; // decodifica quadros de vídeo fora da thread da UI
 class BgPrefetchWorker; // prefetch em thread separada (não bloqueia o worker)
+class DecoderPool; // pool de decodificadores quentes por caminho de arquivo
 class QAudioSink;
 class QAudioOutput;
 
@@ -137,8 +138,10 @@ protected:
     void onFrameReady(const QString& clipId, const QString& path, double t, int maxW, const QImage& img);
     void onPrefetchReady(const QString& path, double t, int maxW, const QImage& img);
     void onBgPrefetchDone(const QString& path, double t, int maxW,
-                          const QImage& frame0, const QImage& frame1, FFmpegDecoder* decoder);
+                          const QImage& frame0, const QImage& frame1);
     void onBgPrefetchFailed(const QString& path);
+    void onBgWarmDone(const QString& path);
+    void kickWarmQueue();
     void updatePrefetch();
     void stopAudio();
     void startAudio(double t);
@@ -241,12 +244,24 @@ protected:
     // Decodificação de vídeo em thread própria (não trava a UI na reprodução).
     QThread* m_frameThread = nullptr;
     FrameWorker* m_frameWorker = nullptr;
+    // Pool de decodificadores quentes (vida do PreviewWidget; usado pelos dois
+    // workers via acquire/release por caminho de arquivo).
+    DecoderPool* m_decPool = nullptr;
     // Thread dedicada ao prefetch: decodifica o próximo clipe sem bloquear o
     // FrameWorker principal (que mantém o pipeline m_ready em cadência).
     QThread* m_bgPrefetchThread = nullptr;
     BgPrefetchWorker* m_bgPrefetchWorker = nullptr;
     // true enquanto um prefetch em background está em andamento
     bool m_bgPrefetchBusy = false;
+    // Aquecimento de clipes à frente (Fase 2): fila de caminhos para abrir de
+    // antemão na thread de prefetch (além do frame0 do próximo clipe).
+    struct WarmReq {
+        QString path;
+        double t = 0.0;
+        int maxW = 0;
+    };
+    QVector<WarmReq> m_warmQueue;       // alvos; um por vez despachado
+    QString m_warmInFlight;             // caminho com warm() em andamento na thread bg
     // Pedido de decodificação. clipId diz para qual clipe o quadro se destina:
     // o clipe do topo alimenta m_frame; os demais alimentam m_layerCache.
     struct FrameReq {
@@ -279,6 +294,10 @@ protected:
     QHash<QString, LayerFrame> m_layerCache;            // clipId -> quadro inferior
     PrefetchFrame m_prefetch;
     bool m_workerBusy = false;
+    // Requisição atualmente em decodificação na thread do worker (para a UI
+    // decidir cancelá-la quando um alvo novo a supera; Fase 3).
+    FrameReq m_inflightReq;
+    bool m_hasInflightReq = false;
     QString m_shownPath;
     // Diagnóstico de performance (overlay com PIERROT_PERF_DEBUG=1).
     QElapsedTimer m_perfT;

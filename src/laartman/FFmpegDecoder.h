@@ -11,6 +11,7 @@
 #include <QVector>
 #include <QHash>
 #include <QList>
+#include <atomic>
 
 // Ponteiros p/ tipos do FFmpeg (definidos em libavcodec/avcodec.h, incluído
 // pelos .cpp). Só há membros por ponteiro, então forward declaration basta e
@@ -65,7 +66,13 @@ public:
     // agendamento derrubava o app. Precisa ser chamado antes de open().
     void setHardwareDecodeAllowed(bool allowed);
 
-    QImage frameAt(double seconds, int maxWidth = 0);
+    // `cancel` (Fase 3): token cooperativo opcional. Quando a UI marca o
+    // token enquanto este frameAt roda, ele aborta no próximo ponto seguro e
+    // devolve QImage nula — o progresso já decodificado é preservado, então o
+    // próximo frameAt continua de onde paramos (ou faz seek, se o alvo exigir).
+    // Lido de outra thread: só std::atomic<bool>, nunca tocado sob m_mutex.
+    QImage frameAt(double seconds, int maxWidth = 0,
+                   const std::atomic<bool>* cancel = nullptr);
 
     // Libera os buffers de quadros decodificados (DPB do codec e o último
     // quadro em memória) sem fechar o arquivo. Depois de uma decodificação
@@ -189,6 +196,15 @@ public:
     static quint64 seekCount()    { return s_seekCount; }
     static quint64 seekTotalNs()  { return s_seekTotalNs; }
     static quint64 lastSeekNs()   { return s_lastSeekNs; }
+    // Custo de ABRIR o arquivo (avformat_open_input + find_stream_info). O que
+    // dói num corte não é decodificar (p99 < 1ms) e sim reabrir/parsear o
+    // container (~500-800ms). Aberturas atômicas porque open() roda tanto na
+    // thread do FrameWorker quanto na do prefetch em background.
+    static std::atomic<quint64> s_openCount, s_openTotalNs, s_lastOpenNs;
+    static void resetOpenStats() { s_openCount = 0; s_openTotalNs = 0; s_lastOpenNs = 0; }
+    static quint64 openCount()    { return s_openCount.load(); }
+    static quint64 openTotalNs()  { return s_openTotalNs.load(); }
+    static quint64 lastOpenNs()   { return s_lastOpenNs.load(); }
     // Quantos quadros o laço de frameAt decodificou e_DESCARTOU antes de achar
     // o alvo. É o custo escondido de um seek: com GOP aberto, decodificar do
     // keyframe até o alvo paga dezenas de quadros que ninguém vê.

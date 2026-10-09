@@ -4,7 +4,7 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "MesaRenderer.h"
-#include "colombina/ffmpeg/FFmpegDecoder.h"
+#include "laartman/FFmpegDecoder.h"
 #include "colombina/ffmpeg/ProxyManager.h"
 #include "colombina/generators.h"
 #include "colombina/mesh/ObjLoader.h"

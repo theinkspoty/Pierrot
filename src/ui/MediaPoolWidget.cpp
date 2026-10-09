@@ -4,7 +4,7 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "MediaPoolWidget.h"
-#include "colombina/ffmpeg/FFmpegDecoder.h"
+#include "laartman/FFmpegDecoder.h"
 #include "colombina/ffmpeg/MediaCache.h"
 #include "colombina/ffmpeg/ProxyManager.h"
 #include "ui/TimelineWidget.h"
