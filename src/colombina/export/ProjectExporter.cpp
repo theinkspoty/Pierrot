@@ -595,6 +595,38 @@ static QString masksFilter(const Clip& c, double pos) {
     return QStringLiteral(",geq=A='p(3)*clamp(%1,0,1)'").arg(maxExpr);
 }
 
+// Filtro ffmpeg para o efeito PSX (paridade com o preview). O geq avalia por
+// pixel: quantiza cada canal para `bits` e soma o deslocamento do padrão de
+// dithering Bayer 4x4 (o "granulado" do PlayStation 1). `format=rgba` antes
+// garante canais r/g/b disponíveis independente do formato atual da cadeia.
+static QString psxFilter(const Clip& c) {
+    if (!c.psxEnabled) return QString();
+    const int bits = std::clamp(c.psxBits, 3, 8);
+    const double step = 255.0 / (1 << bits);
+    const double dith = std::clamp(c.psxDither, 0.0, 1.0) * step;
+    static const int bayer[16] = {
+        0, 8, 2, 10,
+        12, 4, 14, 6,
+        3, 11, 1, 9,
+        15, 7, 13, 5
+    };
+    const QString MX = QStringLiteral("mod(X,4)");
+    const QString MY = QStringLiteral("mod(Y,4)");
+    // Lookup da matriz em função de (X%4, Y%4) via `if` aninhado.
+    QString lookup = QStringLiteral("if(eq(%1,3)&&eq(%2,3),%3,0)").arg(MX, MY).arg(bayer[15]);
+    for (int i = 14; i >= 0; --i) {
+        const int mx = i % 4, my = i / 4;
+        lookup = QStringLiteral("if(eq(%1,%2)&&eq(%3,%4),%5,%6)")
+                     .arg(MX).arg(mx).arg(MY).arg(my).arg(bayer[i]).arg(lookup);
+    }
+    const QString stepS = num(step);
+    const QString off = QStringLiteral("(%1-7.5)/15.0*%2").arg(lookup).arg(num(dith));
+    const QString expr = QStringLiteral("floor(clip(p(X,Y)+%1,0,255)/%2)*%3")
+                             .arg(off, stepS, stepS);
+    return QStringLiteral(",format=rgba,geq=r='%1':g='%2':b='%3'")
+        .arg(expr, expr, expr);
+}
+
 // Fonte TTF disponível no sistema para o drawtext (com fallback fontconfig).
 // Busca em diretórios padrão + ~/.local/share/fonts + XDG_DATA_HOME/fonts.
 QString fontFilePath() {
@@ -1497,6 +1529,7 @@ QStringList ProjectExporter::buildCommand(const Project& project,
             // clipe (que usa rampas de fade) para não duplicar a rampa.
             if (v.trackOpacity < 1.0)
                 fc.last().append(QStringLiteral(",colorchannelmixer=aa=%1").arg(num(v.trackOpacity)));
+            fc.last().append(psxFilter(*v.c));
             fc.last().append(QStringLiteral("[%1]").arg(lbl));
             // Wipe: o clipe da frente desliza de um dos lados sobre o anterior
             // durante a sobreposição (progresso = min(1,(t-pos)/dur)).

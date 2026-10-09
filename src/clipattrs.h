@@ -68,6 +68,9 @@ inline QJsonObject toJson(const Clip& c) {
     o["chromaKeySimilarity"] = c.chromaKeySimilarity;
     o["chromaKeySoftness"] = c.chromaKeySoftness;
     o["chromaKeySpillSuppress"] = c.chromaKeySpillSuppress;
+    o["psxEnabled"] = c.psxEnabled;
+    o["psxDither"] = c.psxDither;
+    o["psxBits"] = c.psxBits;
     o["liftR"] = c.liftR; o["liftG"] = c.liftG; o["liftB"] = c.liftB;
     o["gammaR"] = c.gammaR; o["gammaG"] = c.gammaG; o["gammaB"] = c.gammaB;
     o["gainR"] = c.gainR; o["gainG"] = c.gainG; o["gainB"] = c.gainB;
@@ -214,6 +217,9 @@ inline void applyJson(Clip& c, const QJsonObject& o) {
     if (key("chromaKeySimilarity")) c.chromaKeySimilarity = d("chromaKeySimilarity", c.chromaKeySimilarity);
     if (key("chromaKeySoftness")) c.chromaKeySoftness = d("chromaKeySoftness", c.chromaKeySoftness);
     if (key("chromaKeySpillSuppress")) c.chromaKeySpillSuppress = d("chromaKeySpillSuppress", c.chromaKeySpillSuppress);
+    if (key("psxEnabled")) c.psxEnabled = b("psxEnabled", c.psxEnabled);
+    if (key("psxDither")) c.psxDither = d("psxDither", c.psxDither);
+    if (key("psxBits")) c.psxBits = qBound(3, o["psxBits"].toInt(c.psxBits), 8);
     if (key("liftR")) c.liftR = d("liftR", c.liftR);
     if (key("liftG")) c.liftG = d("liftG", c.liftG);
     if (key("liftB")) c.liftB = d("liftB", c.liftB);

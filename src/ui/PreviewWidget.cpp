@@ -2042,6 +2042,11 @@ void PreviewWidget::refreshView() {
     // qualquer um deles com o playhead parado manteria a chave e devolveria o
     // quadro antigo.
     m_cropMemo = QImage();
+    // O cache do frame composto é chaveado só por índice de frame + nº de
+    // camadas; edições de conteúdo (efeitos de clipe, da faixa de efeitos,
+    // blend, opacidade) não mudam essas chaves e deixariam o composto velho
+    // com o playhead parado. Invalida aqui, junto com o memo de crop.
+    m_compositedCache = QImage();
     updateFrame();
     update();
 }
@@ -2227,6 +2232,10 @@ void PreviewWidget::renderFrame(QPainter& p) {
         double s = 1.0, sX = 1.0, sY = 1.0, rot = 0.0, x = 0.0, y = 0.0;
         double alpha = 1.0, ox = 0.0, oy = 0.0;
         QPainter::CompositionMode mode = QPainter::CompositionMode_SourceOver;
+        // Faixa de efeitos (Adjustment Layer): sem frame próprio; aplica os
+        // efeitos de `fxClip` ao acumulado NESTA posição z-order.
+        bool isAdjustment = false;
+        const Clip* fxClip = nullptr;
     };
     QVector<Layer> layers;
 
@@ -2238,6 +2247,23 @@ void PreviewWidget::renderFrame(QPainter& p) {
         for (int tr = (int)m_project->videoTracks.size() - 1; tr >= 0; --tr) {
             const Track& t = m_project->videoTracks[tr];
             if (!t.visible) continue;   // faixa oculta (olho) não participa da composição
+            // Faixa de efeitos (Adjustment Layer): não renderiza mídia. Aplica os
+            // efeitos do clipe de ajuste ativo ao acumulado NESTA posição z-order.
+            if (t.fxTrack) {
+                const Clip* fx = nullptr;
+                for (const Clip& cl : t.clips) {
+                    if (cl.isText) continue;
+                    if (m_playhead >= cl.pos && m_playhead < cl.pos + cl.dur)
+                        if (!fx || cl.pos > fx->pos) fx = &cl;
+                }
+                if (fx) {
+                    Layer A;
+                    A.isAdjustment = true;
+                    A.fxClip = fx;
+                    layers.append(A);
+                }
+                continue;
+            }
             const bool isMesaTrack = m_project->findMesaForTrack(t.id) != nullptr;
             const Clip* c = nullptr;
             for (const Clip& cl : t.clips) {
@@ -2384,18 +2410,29 @@ void PreviewWidget::renderFrame(QPainter& p) {
         PreviewProfiler::Scope compScope(PreviewProfiler::active() ? &profFrame().compositeNs : nullptr);
         QImage acc(canvas.size(), QImage::Format_ARGB32);
         acc.fill(Qt::black);
-        QPainter ap(&acc);
-        ap.setClipRect(QRect(0, 0, acc.width(), acc.height()));
         const double cx = acc.width() / 2.0;
         const double cy = acc.height() / 2.0;
         for (const Layer& L : layers) {
+            // Faixa de efeitos (Adjustment Layer): aplica os efeitos do clipe de
+            // ajuste ao ACUMULADO atual (tudo que está abaixo, nesta posição
+            // z-order). Não pode haver painter ativo em `acc` — por isso o draw
+            // de cada camada usa um painter próprio (escopado).
+            if (L.isAdjustment) {
+                if (L.fxClip)
+                    applyBasicEffectsOn(acc, *L.fxClip, m_playhead - L.fxClip->pos);
+                continue;
+            }
             if (L.frame.isNull()) continue;
+            QPainter ap(&acc);
+            ap.setClipRect(QRect(0, 0, acc.width(), acc.height()));
             ap.setCompositionMode(L.mode);
             drawLayer(ap, L.frame, L.s, L.rot, L.x, L.y, L.alpha, L.sX, L.sY, k, cx, cy,
                       QRect(0, 0, acc.width(), acc.height()), L.ox, L.oy);
         }
         // Texto sempre em SourceOver (o modo de composição da última camada
         // não pode vazar para o texto).
+        QPainter ap(&acc);
+        ap.setClipRect(QRect(0, 0, acc.width(), acc.height()));
         ap.setCompositionMode(QPainter::CompositionMode_SourceOver);
         // Texto (independente e anexado) por cima das camadas.
         if (m_project) {
@@ -2870,6 +2907,7 @@ const Clip* PreviewWidget::clipAt(double t) const {
     for (int tr = 0; tr < (int)m_project->videoTracks.size(); ++tr) {
         const Track& track = m_project->videoTracks[tr];
         if (!track.visible) continue;   // faixa oculta (olho)
+        if (track.fxTrack) continue;    // faixa de efeitos não é clipe "topo"
         // Track de Mesa gera quadro mesmo sem mídia própria (a composição é a
         // fonte de vídeo).
         const bool mesaTrack = m_project->findMesaForTrack(track.id) != nullptr;
@@ -3364,6 +3402,9 @@ void PreviewWidget::updateFrame() {
     m_clipChromaKeySimilarity = clip->chromaKeySimilarity;
     m_clipChromaKeySoftness = clip->chromaKeySoftness;
     m_clipChromaKeySpillSuppress = clip->chromaKeySpillSuppress;
+    m_clipPsxEnabled = clip->psxEnabled;
+    m_clipPsxDither = clip->psxDither;
+    m_clipPsxBits = clip->psxBits;
     m_clipOfxFx = clip->ofxFx;
     m_clipFrei0rFx = clip->frei0rFx;
     m_clipMasks = clip->masks;
@@ -4114,6 +4155,9 @@ void PreviewWidget::applyBasicEffects(QImage& img) {
     c.chromaKeySimilarity = m_clipChromaKeySimilarity;
     c.chromaKeySoftness = m_clipChromaKeySoftness;
     c.chromaKeySpillSuppress = m_clipChromaKeySpillSuppress;
+    c.psxEnabled = m_clipPsxEnabled;
+    c.psxDither = m_clipPsxDither;
+    c.psxBits = m_clipPsxBits;
     // Máscaras do clipe do topo: aplicadas na mesma ordem (início) e espaço
     // (quadro já cortado) que nas camadas inferiores — o topo também respeita
     // o recorte por forma. `m_lastSrcT` é o tempo relativo do clipe.
@@ -4468,6 +4512,36 @@ void PreviewWidget::applyBasicEffectsOn(QImage& img, const Clip& c, double rel) 
         const bool hasLut = !c.cgLutPath.isEmpty()
             && colorgrade::loadCubeFile(c.cgLutPath, lut);
         colorgrade::applyToImage(img, c, hasLut ? &lut : nullptr);
+    }
+
+    // PSX: quantização de cor para profundidade baixa + dithering ordenado
+    // (padrão Bayer 4x4) — o "granulado" característico do PlayStation 1.
+    // O desempenho é importante (loop por pixel na thread da UI), então só o
+    // passo de quantização + o deslocamento determinístico do padrão.
+    if (c.psxEnabled) {
+        const int bits = std::clamp(c.psxBits, 3, 8);
+        const double step = 255.0 / (1 << bits);
+        const double dith = std::clamp(c.psxDither, 0.0, 1.0) * step;
+        // Bayer 4x4 clássico (0..15) → offset -0.5..0.5 do passo.
+        static const int bayer[16] = {
+            0, 8, 2, 10,
+            12, 4, 14, 6,
+            3, 11, 1, 9,
+            15, 7, 13, 5
+        };
+        for (int y = 0; y < img.height(); ++y) {
+            uchar* line = img.scanLine(y);
+            const int by = (y & 3) * 4;
+            for (int x = 0; x < img.width(); ++x) {
+                const int si = x * 4;
+                const double off = (bayer[by + (x & 3)] - 7.5) / 15.0 * dith;
+                for (int ch = 0; ch < 3; ++ch) {
+                    double v = line[si + ch] + off;
+                    v = std::lround(std::clamp(v, 0.0, 255.0) / step) * step;
+                    line[si + ch] = (uchar)std::clamp((int)std::lround(v), 0, 255);
+                }
+            }
+        }
     }
 }
 

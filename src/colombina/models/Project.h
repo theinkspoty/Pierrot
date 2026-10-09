@@ -362,6 +362,13 @@ struct Clip {
     double chromaKeySoftness = 0.10;    // suavidade da borda (0=dura, 1=muito suave)
     double chromaKeySpillSuppress = 0.5; // supressão de spill (0=nenhuma, 1=máxima)
 
+    // ── PSX (estética retrô PlayStation 1) ────────────────────────────────
+    // Granulado = dithering ordenado (padrão Bayer 4x4) + quantização de cor
+    // para profundidade baixa (5 bits/canal = RGB555, como o PS1).
+    bool   psxEnabled = false;
+    double psxDither  = 1.0;   // intensidade do granulado (0..1)
+    int    psxBits    = 5;     // bits por canal (3..8; 5 = visual do PS1)
+
     // ── Correção de cor (estilo vegas: Lift/Gamma/Gain) ─────────────────
     // Lift: afeta os PRETOS (escala com 255 - pixel). Gamma: curva de poder
     // nos meios (1.0 = neutro). Gain: afeta os BRANCOS (escala com o pixel).
@@ -638,6 +645,12 @@ struct Track {
     QString id;                // id único da track (para referência em MesaComposition)
     QString name;
     bool audio = false;
+    // ── Faixa de efeitos (Adjustment Layer, estilo Premiere/Resolve) ────────
+    // TRUE = faixa especial que NÃO renderiza mídia. Os clipes que ela contém
+    // são "clips de ajuste": carregam os campos de efeito de um Clip normal,
+    // mas sem mediaId. Na composição o efeito do clip de ajuste é aplicado ao
+    // ACUMULADO de tudo que está abaixo, na posição z-order desta faixa.
+    bool fxTrack = false;
     QString blendMode = QStringLiteral("normal");
     double volume = 1.0;
     double pan = 0.0; // -1.0 (esquerda) a +1.0 (direita), 0.0 = centro
@@ -753,6 +766,10 @@ inline QString newId() {
 // valor.
 inline QColor recordingTrackColor() { return QColor(198, 62, 58); }
 
+// Azul da faixa de efeitos (Adjustment Layer). Assim como o vermelho de
+// gravação, fica no modelo para timeline e exportação usarem o mesmo valor.
+inline QColor fxTrackColor() { return QColor(58, 122, 198); }
+
 class Project {
 public:
     QString name;
@@ -855,6 +872,29 @@ public:
             ? QString("Audio %1").arg(audioTracks.size() + 1)
             : QString("Video %1").arg(videoTracks.size() + 1);
         (audio ? audioTracks : videoTracks).append(t);
+    }
+
+    // Cria uma FAIXA DE EFEITOS (Adjustment Layer, azul). É uma faixa de vídeo
+    // com fxTrack=true que não renderiza mídia: os clipes nela aplicam seus
+    // efeitos ao acumulado de tudo que está abaixo. `atTop` = insere no topo
+    // (índice 0, acima de tudo); senão, no fim da pilha de vídeo.
+    void addFxTrack(bool atTop = true) {
+        Track t;
+        t.id = newId();
+        t.audio = false;
+        t.fxTrack = true;
+        t.name = QStringLiteral("Efeitos");
+        t.color = fxTrackColor();
+        // Um clipe de ajuste inicial cobrindo 10s, para já ter onde aplicar
+        // efeitos. Sem mediaId: é um clipe de ajuste.
+        Clip c;
+        c.id = newId();
+        c.pos = 0.0;
+        c.dur = 10.0;
+        c.name = QStringLiteral("Ajuste");
+        t.clips.append(c);
+        if (atTop) videoTracks.insert(0, t);
+        else videoTracks.append(t);
     }
 
     void removeTrack(bool audio, int index) {

@@ -234,6 +234,9 @@ protected:
     double m_clipChromaKeySimilarity = 0.15;
     double m_clipChromaKeySoftness = 0.10;
     double m_clipChromaKeySpillSuppress = 0.5;
+    bool m_clipPsxEnabled = false;
+    double m_clipPsxDither = 1.0;
+    int m_clipPsxBits = 5;
     QVector<Mask> m_clipMasks; // máscaras do clipe ativo (aplicadas no crop)
 
     // Áudio do preview (mixer com um decoder por clipe ativo).

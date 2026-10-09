@@ -86,7 +86,6 @@ class TimelineWidget : public QWidget {
     Q_OBJECT
 public:
     static inline const char* const kMimeMedia = "application/x-pierrot-media";
-    static inline const char* const kMimeEffect = "application/x-pierrot-effect";
 
     explicit TimelineWidget(QWidget* parent = nullptr);
 
@@ -121,6 +120,7 @@ public:
 
     void addTrack(bool audio);
     void addRecordingTrack();
+    void addFxTrack(); // faixa de efeitos (Adjustment Layer, azul)
     void updateScrollRanges();
     void ensureScrollRangeReaches(double tEnd); // leve: só alarga o hbar (arraste)
     void markTrimEdge(double tEdge, bool ripple); // indicador de trim (borda)

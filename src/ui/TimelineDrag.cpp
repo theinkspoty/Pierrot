@@ -1488,7 +1488,6 @@ void TimelineWidget::mouseDoubleClickEvent(QMouseEvent* e) {
 void TimelineWidget::dragEnterEvent(QDragEnterEvent* e) {
     const QMimeData* md = e->mimeData();
     if (md->hasFormat(QLatin1String(kMimeMedia))
-        || md->hasFormat(QLatin1String(kMimeEffect))
         || md->hasUrls()) {
         e->acceptProposedAction();
         e->accept();
@@ -1498,7 +1497,6 @@ void TimelineWidget::dragEnterEvent(QDragEnterEvent* e) {
 void TimelineWidget::dragMoveEvent(QDragMoveEvent* e) {
     const QMimeData* md = e->mimeData();
     if (md->hasFormat(QLatin1String(kMimeMedia))
-        || md->hasFormat(QLatin1String(kMimeEffect))
         || md->hasUrls()) {
         int row = -1;
         bool audio = false;
@@ -1592,99 +1590,6 @@ void TimelineWidget::dropEvent(QDropEvent* e) {
             e->acceptProposedAction();
             return;
         }
-    }
-
-    // ── Arrasto de efeito (do painel de efeitos) ─────────────────────────
-    if (md->hasFormat(QLatin1String(kMimeEffect))) {
-        // O drop não dispara dragLeaveEvent, então a prévia de arrasto (a
-        // "fantasma" do clipe) ficaria desenhada na timeline até outra ação a
-        // limpar. Zera o estado aqui, em qualquer saída deste branch.
-        m_dragHoverRow = -1;
-        m_dragHoverDur = 0.0;
-        m_dragHoverName.clear();
-        m_dragProbeCache.clear();
-        const QByteArray effectData = md->data(QLatin1String(kMimeEffect));
-        const QString effectId = QString::fromUtf8(effectData);
-        if (effectId.isEmpty()) { e->ignore(); return; }
-
-        // Encontra o clipe sob o cursor.
-        int row = -1;
-        bool audio = false;
-        if (!rowFromY(e->position().toPoint().y(), row, audio) || audio) {
-            e->ignore();
-            return;
-        }
-        const double t = xToTime(e->position().toPoint().x());
-        Clip* target = clipAt(row, false, t);
-        if (!target) { e->ignore(); return; }
-
-        emit editStart();
-
-        if (effectId == "pierrot_lainka") {
-            target->lainkaEnabled = true;
-            target->lainkaTargetFps = 6;
-            target->lainkaJitterPos = 10.0;
-            target->lainkaFlicker = 8.0;
-            target->lainkaWarpAmount = 8.0;
-            target->lainkaDustAmount = 0.0;
-            target->lainkaScratchAmount = 0.0;
-            target->lainkaOpacity = 100.0;
-        } else if (effectId == "pierrot_motion") {
-            target->motionEnabled = true;
-            target->motionAmount = 25.0;
-        } else if (effectId == "pierrot_brightness") {
-            target->brightness = 0.2; // valor inicial ao arrastar
-        } else if (effectId == "pierrot_contrast") {
-            target->contrast = 1.2;
-        } else if (effectId == "pierrot_saturation") {
-            target->saturation = 1.2;
-        } else if (effectId == "pierrot_blur") {
-            target->blur = 5.0;
-        } else if (effectId == "pierrot_grayscale") {
-            target->grayscale = true;
-        } else if (effectId == "pierrot_chromakey") {
-            target->chromaKey = true;
-        } else if (effectId == "pierrot_audio_eq") {
-            // EQ Express: só aplica o preset inicial se o EQ ainda estiver neutro.
-            if (std::fabs(target->eqLow) <= 0.01 && std::fabs(target->eqMid) <= 0.01
-                && std::fabs(target->eqHigh) <= 0.01) {
-                target->eqLow = 0.0;
-                target->eqMid = 1.5;
-                target->eqHigh = 1.0;
-            }
-        } else if (effectId == "pierrot_audio_reverb") {
-            target->reverb = true;
-            target->reverbMix = 0.35;
-            target->reverbSize = 0.5;
-        } else if (effectId.startsWith(QStringLiteral("trans:"))) {
-            // Transição de vídeo do painel Effects — NÃO é plugin OFX.
-            const QString t = effectId.mid(QStringLiteral("trans:").size());
-            if (t != QStringLiteral("constantpower"))
-                target->transitionType = t;
-        } else if (effectId.startsWith(QStringLiteral("text:"))
-                   || effectId.startsWith(QStringLiteral("frei0r:"))
-                   || effectId == QStringLiteral("pierrot_lumetri")) {
-            // IDs especiais do painel Effects: não vão no stack OFX.
-            // Texto/fade e Lumetri o MainWindow/Express tratam; aqui só ignora.
-        } else {
-            // Efeito OFX: adiciona ao stack ofxFx do clipe.
-            bool already = false;
-            for (const OfxPluginInstance& fx : target->ofxFx)
-                if (fx.pluginId == effectId) { already = true; break; }
-            if (!already) {
-                OfxPluginInstance fx;
-                fx.pluginId = effectId;
-                fx.enabled = true;
-                target->ofxFx.append(fx);
-            }
-        }
-
-        invalidateScene();
-        update();
-        emit modified();
-        e->acceptProposedAction();
-        e->accept();
-        return;
     }
 
     // ── Arrasto de mídia (existente) ─────────────────────────────────────

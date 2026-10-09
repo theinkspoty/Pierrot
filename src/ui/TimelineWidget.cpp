@@ -265,6 +265,19 @@ void TimelineWidget::addTrack(bool audio) {
     emit modified();
 }
 
+// Cria uma faixa de efeitos (Adjustment Layer, azul) no topo da pilha de
+// vídeo, com um clipe de ajuste inicial, e a seleciona para edição.
+void TimelineWidget::addFxTrack() {
+    if (!m_project) return;
+    emit editStart();
+    m_project->addFxTrack(true);
+    invalidateScene();
+    updateScrollRanges();
+    setTrackSel(0, false);   // a nova faixa entrou no índice 0 (topo)
+    refreshView();
+    emit modified();
+}
+
 // Cria uma faixa na seção de gravação (vermelha) e a seleciona.
 void TimelineWidget::addRecordingTrack() {
     if (!m_project) return;
@@ -1683,6 +1696,9 @@ void TimelineWidget::pasteAttributes() {
             dst->chromaKeySimilarity = src.chromaKeySimilarity;
             dst->chromaKeySoftness = src.chromaKeySoftness;
             dst->chromaKeySpillSuppress = src.chromaKeySpillSuppress;
+            dst->psxEnabled = src.psxEnabled;
+            dst->psxDither = src.psxDither;
+            dst->psxBits = src.psxBits;
         }
         if (chkOfxFx->isChecked()) {
             dst->ofxFx = src.ofxFx;
@@ -2368,6 +2384,7 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         QAction* addV = menu.addAction(tr("Adicionar faixa de vídeo"));
         QAction* addA = menu.addAction(tr("Adicionar faixa de áudio"));
         QAction* addR = menu.addAction(tr("Adicionar faixa de gravação"));
+        QAction* addFx = menu.addAction(tr("Adicionar faixa de efeitos"));
         QAction* newText = menu.addAction(tr("Novo texto…"));
         QAction* newMesa = menu.addAction(tr("Nova Mesa…"));
         QAction* paste = nullptr;
@@ -2449,6 +2466,7 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         if (act == addV) addTrack(false);
         else if (act == addA) addTrack(true);
         else if (act == addR) addRecordingTrack();
+        else if (act == addFx) addFxTrack();
         else if (act == delRec) {
             emit editStart();
             m_project->removeRecordingTrack(recRow);

@@ -950,10 +950,19 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
     } else {
         // Premiere: clipe selecionado mantém a mesma cor do corpo (um pouco
         // mais clara) e ganha BORDA BRANCA — sem mudança de matiz.
-        fill = sel ? themeColors().clipBg.lighter(128) : themeColors().clipBg;
-        border = sel ? themeColors().clipBorderSelect
-                     : sel2 ? themeColors().clipBorderSecondary
-                            : themeColors().clipBorder;
+        // Clipe de ajuste (faixa de efeitos): corpo na cor AZUL da faixa,
+        // para diferir visualmente dos clipes de mídia normais.
+        if (tr.fxTrack) {
+            fill = sel ? tint.lighter(128) : tint;
+            border = sel ? themeColors().clipBorderSelect
+                         : sel2 ? themeColors().clipBorderSecondary
+                                : tint.lighter(140);
+        } else {
+            fill = sel ? themeColors().clipBg.lighter(128) : themeColors().clipBg;
+            border = sel ? themeColors().clipBorderSelect
+                         : sel2 ? themeColors().clipBorderSecondary
+                                : themeColors().clipBorder;
+        }
     }
     p.setPen(QPen(border, sel ? 2 : sel2 ? 1.5 : 1));
     p.setBrush(fill);
@@ -971,6 +980,16 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
         const QRect cr(0, 0, r.width(), r.height());
         if (audio)
             drawAudioWaveform(cp, cr, c, path, tint);
+        else if (tr.fxTrack) {
+            // Clipe de ajuste (faixa de efeitos): corpo azul translúcido com
+            // rótulo "Efeitos" — não tem mídia, então não há thumbs/onda.
+            cp.fillRect(cr, QColor(tint.red(), tint.green(), tint.blue(), 90));
+            cp.setPen(QColor(tint.lighter(140)));
+            cp.setFont(QFont(cp.font().family(), 8, QFont::Bold));
+            cp.drawText(cr.adjusted(4, 4, -4, -4),
+                        Qt::AlignLeft | Qt::AlignTop,
+                        QStringLiteral("Efeitos"));
+        }
         else if (c.isText)
             drawTextClipBody(cp, cr, c);
         else if (mi && mi->isMesh) {

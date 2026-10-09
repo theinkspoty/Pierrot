@@ -125,6 +125,7 @@ void ExpressWidget::rebuildTabs()
     if (m_currentClip->motionEnabled)     createBuiltInTab("pierrot_motion");
     if (m_currentClip->grayscale)         createBuiltInTab("pierrot_grayscale");
     if (m_currentClip->chromaKey)         createBuiltInTab("pierrot_chromakey");
+    if (m_currentClip->psxEnabled)        createBuiltInTab("pierrot_psx");
     if (m_currentClip->brightness != 0.0) createBuiltInTab("pierrot_brightness");
     if (m_currentClip->contrast != 1.0)   createBuiltInTab("pierrot_contrast");
     if (m_currentClip->saturation != 1.0) createBuiltInTab("pierrot_saturation");
@@ -200,6 +201,11 @@ void ExpressWidget::addEffect(const QString& effectId)
         emit modified();
     } else if (effectId == "pierrot_blur" && m_currentClip->blur == 0.0) {
         m_currentClip->blur = 5.0;
+        emit modified();
+    } else if (effectId == "pierrot_psx" && !m_currentClip->psxEnabled) {
+        m_currentClip->psxEnabled = true;
+        m_currentClip->psxDither = 1.0;
+        m_currentClip->psxBits = 5;
         emit modified();
     } else if (effectId == "pierrot_audio_eq") {
         if (std::fabs(m_currentClip->eqLow) <= 0.01
@@ -310,6 +316,7 @@ void ExpressWidget::removeEffectFromClip(const QString& effectId)
     else if (effectId == "pierrot_contrast")   m_currentClip->contrast = 1.0;
     else if (effectId == "pierrot_saturation") m_currentClip->saturation = 1.0;
     else if (effectId == "pierrot_blur")       m_currentClip->blur = 0.0;
+    else if (effectId == "pierrot_psx")        m_currentClip->psxEnabled = false;
     else if (effectId == "pierrot_audio_eq")   m_currentClip->eqLow = m_currentClip->eqMid = m_currentClip->eqHigh = 0.0;
     else if (effectId == "pierrot_audio_reverb") m_currentClip->reverb = false;
     else if (effectId.startsWith(QStringLiteral("frei0r:"))) {
@@ -382,6 +389,7 @@ static const QHash<QString, QString>& effectDisplayNames()
         { QStringLiteral("pierrot_chromakey"),  QStringLiteral("Chroma Key") },
         { QStringLiteral("pierrot_lainka"),     QStringLiteral("LAINKA") },
         { QStringLiteral("pierrot_motion"),     QStringLiteral("MotiOn") },
+        { QStringLiteral("pierrot_psx"),        QStringLiteral("PSX") },
         { QStringLiteral("pierrot_audio_eq"),   QStringLiteral("EQ Express") },
         { QStringLiteral("pierrot_audio_reverb"), QStringLiteral("Reverb EX") },
     };
@@ -458,6 +466,34 @@ void ExpressWidget::createBuiltInTab(const QString& effectId)
         chk->setChecked(c && c->grayscale);
         connect(chk, &QCheckBox::toggled, this, [this](bool v) { applyBuiltInBool("grayscale", v); });
         form->addRow(chk);
+    }
+    else if (effectId == "pierrot_psx") {
+        auto* chk = new QCheckBox(tr("Ativar PSX"));
+        chk->setChecked(c && c->psxEnabled);
+        connect(chk, &QCheckBox::toggled, this, [this](bool v) { applyBuiltInBool("psxEnabled", v); });
+        form->addRow(chk);
+
+        auto* dithSl = new QSlider(Qt::Horizontal);
+        dithSl->setRange(0, 100);
+        dithSl->setValue(c ? (int)llround(c->psxDither * 100.0) : 100);
+        auto* dithLbl = new QLabel(QStringLiteral("%1%").arg(dithSl->value()));
+        connect(dithSl, &QSlider::valueChanged, dithLbl, [dithLbl](int v) { dithLbl->setText(QStringLiteral("%1%").arg(v)); });
+        connect(dithSl, &QSlider::valueChanged, this, [this](int v) { applyBuiltInValue("psxDither", v / 100.0); });
+        auto* dithRow = new QHBoxLayout;
+        dithRow->addWidget(dithSl, 1);
+        dithRow->addWidget(dithLbl);
+        form->addRow(tr("Granulado:"), dithRow);
+
+        auto* bitsSl = new QSlider(Qt::Horizontal);
+        bitsSl->setRange(3, 8);
+        bitsSl->setValue(c ? std::clamp(c->psxBits, 3, 8) : 5);
+        auto* bitsLbl = new QLabel(QStringLiteral("%1 bits").arg(bitsSl->value()));
+        connect(bitsSl, &QSlider::valueChanged, bitsLbl, [bitsLbl](int v) { bitsLbl->setText(QStringLiteral("%1 bits").arg(v)); });
+        connect(bitsSl, &QSlider::valueChanged, this, [this](int v) { applyBuiltInValue("psxBits", v); });
+        auto* bitsRow = new QHBoxLayout;
+        bitsRow->addWidget(bitsSl, 1);
+        bitsRow->addWidget(bitsLbl);
+        form->addRow(tr("Profundidade:"), bitsRow);
     }
     else if (effectId == "pierrot_chromakey") {
         auto* chk = new QCheckBox(tr("Ativar Chroma Key"));
@@ -1140,6 +1176,8 @@ void ExpressWidget::applyBuiltInValue(const QString& key, double value)
     else if (key == "chromaKeySimilarity") m_currentClip->chromaKeySimilarity = value;
     else if (key == "chromaKeySoftness") m_currentClip->chromaKeySoftness = value;
     else if (key == "chromaKeySpillSuppress") m_currentClip->chromaKeySpillSuppress = value;
+    else if (key == "psxDither") m_currentClip->psxDither = std::clamp(value, 0.0, 1.0);
+    else if (key == "psxBits") m_currentClip->psxBits = qBound(3, (int)value, 8);
     else if (key == "lainkaSkip") m_currentClip->lainkaSkip = qMax(1, (int)value);
     else if (key == "lainkaJitterPos") m_currentClip->lainkaJitterPos = value;
     else if (key == "lainkaJitterRot") m_currentClip->lainkaJitterRot = value;
@@ -1172,6 +1210,7 @@ void ExpressWidget::applyBuiltInBool(const QString& key, bool value)
     if (!m_currentClip) return;
     if (key == "grayscale") m_currentClip->grayscale = value;
     else if (key == "chromaKey") m_currentClip->chromaKey = value;
+    else if (key == "psxEnabled") m_currentClip->psxEnabled = value;
     else if (key == "lainkaEnabled") m_currentClip->lainkaEnabled = value;
     else if (key == "motionEnabled") m_currentClip->motionEnabled = value;
     else if (key == "reverb") {

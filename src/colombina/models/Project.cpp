@@ -273,6 +273,9 @@ static QJsonObject clipToJson(const Clip& c) {
     o["chromaKeySimilarity"] = c.chromaKeySimilarity;
     o["chromaKeySoftness"] = c.chromaKeySoftness;
     o["chromaKeySpillSuppress"] = c.chromaKeySpillSuppress;
+    o["psxEnabled"] = c.psxEnabled;
+    o["psxDither"] = c.psxDither;
+    o["psxBits"] = c.psxBits;
     o["liftR"] = c.liftR; o["liftG"] = c.liftG; o["liftB"] = c.liftB;
     o["gammaR"] = c.gammaR; o["gammaG"] = c.gammaG; o["gammaB"] = c.gammaB;
     o["gainR"] = c.gainR; o["gainG"] = c.gainG; o["gainB"] = c.gainB;
@@ -492,6 +495,9 @@ static Clip clipFromJson(const QJsonObject& o) {
     c.chromaKeySimilarity = o["chromaKeySimilarity"].toDouble(0.15);
     c.chromaKeySoftness = o["chromaKeySoftness"].toDouble(0.10);
     c.chromaKeySpillSuppress = o["chromaKeySpillSuppress"].toDouble(0.5);
+    c.psxEnabled = o["psxEnabled"].toBool(false);
+    c.psxDither = o["psxDither"].toDouble(1.0);
+    c.psxBits = o["psxBits"].toInt(5);
     c.liftR = o["liftR"].toDouble(0.0);
     c.liftG = o["liftG"].toDouble(0.0);
     c.liftB = o["liftB"].toDouble(0.0);
@@ -693,6 +699,7 @@ static QJsonObject trackToJson(const Track& t) {
     o["id"] = t.id;
     o["name"] = t.name;
     o["audio"] = t.audio;
+    o["fxTrack"] = t.fxTrack;
     o["blendMode"] = t.blendMode;
     o["volume"] = t.volume;
     o["pan"] = t.pan;
@@ -757,6 +764,7 @@ static Track trackFromJson(const QJsonObject& o, bool audio) {
     t.name = o["name"].toString(audio ? QStringLiteral("Audio")
                                       : QStringLiteral("Video"));
     t.audio = audio;
+    t.fxTrack = o["fxTrack"].toBool(false);
     t.blendMode = o["blendMode"].toString(QStringLiteral("normal"));
     t.volume = o["volume"].toDouble(1.0);
     t.pan = o["pan"].toDouble(0.0);

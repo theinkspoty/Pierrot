@@ -164,6 +164,8 @@ void EffectsWidget::buildTree() {
                   tr("Remove cor (verde por padrão) para transparência"));
 
     auto* stylize = addFolder(m_tree, videoFx, tr("Stylize"));
+    addEffectItem(stylize, tr("PSX"), QStringLiteral("pierrot_psx"),
+                  tr("Granulado retrô: quantização de cor + dithering estilo PlayStation 1"));
     addEffectItem(stylize, tr("LAINKA (stop motion)"), QStringLiteral("pierrot_lainka"),
                   tr("Stop motion: jitter, flicker, warp, dust, scratch"));
     addEffectItem(stylize, tr("MotiOn (motion blur)"), QStringLiteral("pierrot_motion"),
