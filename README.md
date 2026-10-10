@@ -16,17 +16,21 @@ pra vídeos sem complexidade, pra uso meu.
 
 | Item                | Detalhe                                                     |
 |---------------------|-------------------------------------------------------------|
-| Formato de projeto  | `.Blanc`;                      |
+| Formato de projeto  | `.Blanc` (JSON; salvamento assíncrono + backup rotativo)    |
 | Exportação          | MP4 (H.264/AAC), MKV (H.264/AAC), WebM (VP9/Opus)          |
 | Resolução           | configurável (padrão 1920×1080)                             |
 | Quadros/s           | configurável (padrão 30)                                    |
 | Taxa de áudio       | 48 kHz (exportação)                                         |
-| Efeitos por clipe   | vídeo: volume, opacidade, velocidade, fades, texto, brilho, contraste, saturação, desfoque, P&B, chroma key + plugins OFX; áudio: EQ Express e Reverb EX |
+| Correção de cor     | Lumetri por clipe: exposição, realces/sombras/brancos/pretos, sat/vibrance, temperatura/tint, Lift/Gamma/Gain, curvas RGB, vinheta, LUT `.cube`, nitidez |
+| Efeitos por clipe   | vídeo: brilho, contraste, saturação, desfoque, P&B, chroma key, máscaras, motion blur, texto, LAINKA + hosts **OFX** e **frei0r**; áudio: EQ Express e Reverb EX |
+| Fluxo de edição     | Source Monitor (In/Out, Insert/Overwrite), **multicâmera** (teclas 1..N), **Editor de Velocidade** (time remapping bezier) |
+| Mesa (composição)   | camadas com transform/blend + câmera e malha `.obj` (3D leve) |
 | Blend por faixa     | 12 modos + opacidade de faixa (0–100%)                      |
 | Zoom da timeline    | 2 px/s – 4000 px/s                                          |
 | Fonte               | C++ (Qt Widgets) + FFmpeg (libav*)                          |
 
-Para a lista completa de funcionalidades, veja **[FEATURES.md](FEATURES.md)**.
+Para a lista completa de funcionalidades, veja **[FEATURES.md](FEATURES.md)**;
+para as novidades de cada versão, veja **[CHANGELOG.md](CHANGELOG.md)**.
 
 ## Dependências (Ubuntu/Debian)
 

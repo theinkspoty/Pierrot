@@ -91,8 +91,6 @@ protected:
     // "pular" a agulha quando o áudio finalmente toca. Timeout opcional em ms.
     bool m_awaitingAudio = false;
     qint64 m_awaitAudioDeadlineMs = -1;
-    bool m_delayedAudioPending = false;  // true quando startAudio foi adiado 100ms
-    double m_delayedAudioT = 0.0;        // playhead no momento do adiamento
     qint64 m_currentFrameIndex = -1;
     double m_lastTickSec = -1.0;   // momento do tick anterior (rate-limit do slew)
     bool m_playing = true;

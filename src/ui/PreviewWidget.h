@@ -15,6 +15,7 @@
 #include <QImage>
 #include <QIcon>
 #include <QTransform>
+#include <QMetaType>
 #include "colombina/models/Project.h"
 #include "laartman/FFmpegDecoder.h"
 #include "colombina/render/MesaRenderer.h"
@@ -39,6 +40,22 @@ class QMenu;
 class OfxPluginManager;
 class Frei0rPluginManager;
 class ScopeWidget;
+
+// Snapshot dos parâmetros de efeitos NÃO temporais (crop + efeitos básicos +
+// máscaras) de um clipe, para que o FrameWorker os aplique na thread de vídeo,
+// fora do caminho síncrono da UI. Só é ativado para clipes sem LAINKA/MotiOn/
+// OFX/frei0r — esses continuam sendo processados na UI. `active=false` preserva
+// o caminho atual (quadro cru chega à UI e applyCrop() roda nela).
+struct FrameFx {
+    bool active = false;
+    int cropL = 0;
+    int cropR = 0;
+    int cropT = 0;
+    int cropB = 0;
+    double rel = 0.0;   // tempo relativo do clipe p/ keyframes (máscaras/efeitos)
+    Clip clip;          // efeitos básicos + máscaras (snapshot; COW barato)
+};
+Q_DECLARE_METATYPE(FrameFx)
 
 class PreviewWidget : public QWidget, public PlaybackEngine {
     Q_OBJECT
@@ -99,6 +116,9 @@ protected:
     const Clip* clipAt(double t) const override;
     double audioClockSec() const override;
  private:
+    // A thread de vídeo (FrameWorker) precisa chamar os estáticos de efeito
+    // (applyCropTo/applyBasicEffectsOn) para aplicar o caminho rápido.
+    friend class FrameWorker;
     // Aplica o QSS do contador de tempo a partir dos tokens do tema, para que
     // ele acompanhe a troca claro/escuro.
     void refreshTimeLabelStyle();
@@ -124,10 +144,11 @@ protected:
     // o alpha pela cobertura (feather + invert, em união). `rel` = tempo
     // relativo do clipe (avalia os keyframes das máscaras).
     static void applyMasks(QImage& img, const Clip& c, double rel);
-    QImage applyCropTo(const QImage& img, int cL, int cR, int cT, int cB);
+    static QImage applyCropTo(const QImage& img, int cL, int cR, int cT, int cB);
     // Pedidos asíncronos de quadro: primário (clipe do topo) e camadas
     // inferiores (empilhamento multi-faixa). clipId identifica o destino.
-    void requestFrame(const QString& clipId, const QString& path, double t, int maxW);
+    void requestFrame(const QString& clipId, const QString& path, double t, int maxW,
+                      const FrameFx& fx = FrameFx());
     void requestLowerLayers(int decW);
     void kickFrameWorker();
     // resolveVideo() com medição de custo (a chamada faz um QFile::exists sob
@@ -136,7 +157,8 @@ protected:
     void renderFrame(QPainter& p);
     void drawPlaybackBadges(QPainter& p);
     void drawPerfOverlay(QPainter& p);
-    void onFrameReady(const QString& clipId, const QString& path, double t, int maxW, const QImage& img);
+    void onFrameReady(const QString& clipId, const QString& path, double t, int maxW, const QImage& img,
+                      bool processed);
     void onPrefetchReady(const QString& path, double t, int maxW, const QImage& img);
     void onBgPrefetchDone(const QString& path, double t, int maxW,
                           const QImage& frame0, const QImage& frame1);
@@ -241,9 +263,12 @@ protected:
 
     // Áudio do preview (mixer com um decoder por clipe ativo).
     AudioMixer* m_audioFeed = nullptr;
+    // Sink reutilizado entre play/stop (evita new/destroy de 10-50ms por play).
+    // Recriado só quando a saída padrão muda (id guardado em *_Device).
     QAudioSink* m_audioSink = nullptr;
     QAudioOutput* m_audioOut = nullptr;
-    bool m_audioConformWarmed = false; // true após a primeira reprodução (pula wait no 1º play)
+    QString m_audioSinkDevice;
+    QString m_audioOutDevice;
 
     // Decodificação de vídeo em thread própria (não trava a UI na reprodução).
     QThread* m_frameThread = nullptr;
@@ -274,6 +299,7 @@ protected:
         double t = 0.0;
         double dt = 1.0 / 30.0;
         int maxW = 0;
+        FrameFx fx;     // parâmetros de efeitos p/ aplicar na thread do worker
     };
     struct PrefetchFrame {
         QString path;
@@ -303,6 +329,10 @@ protected:
     FrameReq m_inflightReq;
     bool m_hasInflightReq = false;
     QString m_shownPath;
+    // true quando o quadro exibido do TOPO veio pronto da thread do worker
+    // (já cortado/efeituado): o caminho de "re-crop sem re-decode" não pode
+    // re-aplicar applyCrop() por cima — precisa pedir um novo decode.
+    bool m_shownFx = false;
     // Diagnóstico de performance (overlay com PIERROT_PERF_DEBUG=1).
     QElapsedTimer m_perfT;
     qint64 m_perfWorkerStartNs = 0;

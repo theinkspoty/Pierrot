@@ -720,9 +720,7 @@ void MixerWidget::setPreview(PreviewWidget* pw) {
 }
 
 void MixerWidget::clearStrips() {
-    for (auto* s : m_videoStrips) { s->deleteLater(); }
     for (auto* s : m_audioStrips) { s->deleteLater(); }
-    m_videoStrips.clear();
     m_audioStrips.clear();
     if (m_masterStrip) { m_masterStrip->deleteLater(); m_masterStrip = nullptr; }
 }
@@ -800,20 +798,9 @@ void MixerWidget::refresh() {
 
     int pos = 0;
 
-    // Faixas de vídeo.
-    for (int i = 0; i < m_project->videoTracks.size(); ++i) {
-        const Track& t = m_project->videoTracks[i];
-        auto* strip = new MixerStrip(t.name, i, false);
-        strip->setVolume(t.volume);
-        strip->setPan(t.pan);
-        strip->setMuted(t.muted);
-        strip->setSolo(t.solo);
-        strip->setAutomationArmed(t.automationArmed, t.automationMode);
-        m_videoStrips.append(strip);
-        addStrip(strip, pos++);
-    }
-
-    // Faixas de áudio.
+    // Só faixas de ÁUDIO têm strip no mixer. Faixas de vídeo nunca são fonte
+    // de áudio neste app (o áudio de um vídeo vive na faixa de áudio pareada),
+    // então fader/VU/pan delas não fazem sentido aqui.
     for (int i = 0; i < m_project->audioTracks.size(); ++i) {
         const Track& t = m_project->audioTracks[i];
         auto* strip = new MixerStrip(t.name, i, true);
@@ -855,10 +842,6 @@ void MixerWidget::updateLevels() {
 
     const PreviewWidget::AudioLevels levels = m_preview->audioLevels();
 
-    for (auto* strip : m_videoStrips) {
-        const auto key = qMakePair(false, strip->trackIndex());
-        strip->setRmsLevel(levels.rms.value(key, 0.0f));
-    }
     for (auto* strip : m_audioStrips) {
         const auto key = qMakePair(true, strip->trackIndex());
         strip->setRmsLevel(levels.rms.value(key, 0.0f));
@@ -883,11 +866,6 @@ void MixerWidget::setPlayhead(double t) {
     if (!m_playing) return;
     // Durante a reprodução: grava automação em modo Write (contínuo) e em Touch
     // (apenas enquanto o fader/knob está sendo segurado).
-    for (auto* strip : m_videoStrips) {
-        Track* tr = findTrack(false, strip->trackIndex());
-        if (tr && tr->automationArmed) writeAutoPoint(false, strip->trackIndex(), QStringLiteral("volume"), strip->volume());
-        if (tr && tr->automationArmed) writeAutoPoint(false, strip->trackIndex(), QStringLiteral("pan"), strip->pan());
-    }
     for (auto* strip : m_audioStrips) {
         Track* tr = findTrack(true, strip->trackIndex());
         if (tr && tr->automationArmed) writeAutoPoint(true, strip->trackIndex(), QStringLiteral("volume"), strip->volume());

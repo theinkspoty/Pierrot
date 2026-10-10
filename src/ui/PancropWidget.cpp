@@ -6,6 +6,7 @@
 #include "PancropWidget.h"
 #include "ui/Theme.h"
 #include "colombina/ffmpeg/ProxyManager.h"
+#include "colombina/generators.h"
 
 #include <QPainter>
 #include <QPainterPath>
@@ -678,6 +679,15 @@ void PancropWidget::loadFrame() {
     }
     const MediaItem* mi = m_project->findMedia(c->mediaId);
     if (!mi || !mi->hasVideo) { m_frame = QImage(); m_framePath.clear(); return; }
+    if (mi->isSolid) {
+        // Mídia gerada (gerador estilo Vegas): gera o quadro sem decoder.
+        const int w = qMax(1, mi->width > 0 ? mi->width : m_project->width);
+        const int h = qMax(1, mi->height > 0 ? mi->height : m_project->height);
+        m_frame = generatorFrame(*mi, w, h);
+        m_framePath.clear();
+        m_lastDecodedClipId = c->id;
+        return;
+    }
     const QString vpath = ProxyManager::instance().resolveVideo(mi->filePath);
     // Força reset do decoder ao trocar de clipe — mesmo que o arquivo fonte seja
     // o mesmo, o estado interno (m_lastFrame/m_nextFrame/m_lastPtsSec) fica do

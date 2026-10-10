@@ -7,6 +7,7 @@
 
 #include "laartman/FFmpegDecoder.h"
 #include "colombina/ffmpeg/ProxyManager.h"
+#include "colombina/generators.h"
 
 #include <QDoubleSpinBox>
 #include <QApplication>
@@ -350,7 +351,13 @@ void SourceMonitorWidget::stepFrame(int dir) {
 
 void SourceMonitorWidget::updatePreview() {
     QImage img;
-    if (m_decoder && !m_mediaId.isEmpty() && !m_media.filePath.isEmpty()) {
+    if (m_media.isSolid) {
+        // Mídia gerada (gerador estilo Vegas): gera o quadro diretamente —
+        // não há arquivo para decodificar. O padrão é determinístico por id.
+        const int w = qMax(1, m_media.width > 0 ? m_media.width : 1920);
+        const int h = qMax(1, m_media.height > 0 ? m_media.height : 1080);
+        img = generatorFrame(m_media, w, h);
+    } else if (m_decoder && !m_mediaId.isEmpty() && !m_media.filePath.isEmpty()) {
         img = m_decoder->frameAt(currentPos(), 640);
     }
     if (!img.isNull()) {
@@ -358,9 +365,7 @@ void SourceMonitorWidget::updatePreview() {
         m_preview->setText(QString());
     } else if (!m_mediaId.isEmpty()) {
         m_preview->setPixmap(QPixmap());
-        m_preview->setText(m_media.filePath.isEmpty()
-                               ? tr("(mídia gerada — sem quadro de arquivo)")
-                               : tr("(sem quadro)"));
+        m_preview->setText(tr("(sem quadro)"));
     }
 }
 

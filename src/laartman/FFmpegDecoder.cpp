@@ -718,6 +718,7 @@ void FFmpegDecoder::freeAllLocked() {
     m_audioStream = -1;
     m_audioSkipFrames = 0;
     m_audioSeekTargetSec = -1.0;
+    m_audioFinished = false;
     m_source.clear();
     m_lastPtsSec = -1.0;
     m_swsSrcW = m_swsSrcH = 0;
@@ -762,8 +763,8 @@ void FFmpegDecoder::setHardwareDecodeAllowed(bool allowed) {
 
 quint64 FFmpegDecoder::s_cacheHits = 0;
 quint64 FFmpegDecoder::s_cacheMisses = 0;
-quint64 FFmpegDecoder::s_lastWorkNs = 0;
-quint64 FFmpegDecoder::s_workTotalNs = 0;
+std::atomic<quint64> FFmpegDecoder::s_lastWorkNs{0};
+std::atomic<quint64> FFmpegDecoder::s_workTotalNs{0};
 quint64 FFmpegDecoder::s_discardCount = 0;
 quint64 FFmpegDecoder::s_lastDiscard = 0;
 quint64 FFmpegDecoder::s_seekCount = 0;
@@ -819,6 +820,21 @@ void FFmpegDecoder::frameCacheClearLocked() {
 
 QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bool>* cancel) {
     QMutexLocker locker(&m_mutex);
+    // Mede o tempo REAL gasto dentro de frameAt (excluindo a espera pelo
+    // lock, que pertence à "fila"). s_lastWorkNs era lida pelo profiler
+    // (PreviewWidget → decWorkNs/dwork) mas nunca era escrita: o dwork do
+    // overlay ficava sempre 0. RAII cobre todos os retornos do frameAt.
+    struct WorkTimer {
+        WorkTimer() : t0(std::chrono::steady_clock::now()) {}
+        ~WorkTimer() {
+            const qint64 ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - t0).count();
+            const quint64 u = ns > 0 ? quint64(ns) : 0;
+            s_lastWorkNs.store(u, std::memory_order_relaxed);
+            s_workTotalNs.fetch_add(u, std::memory_order_relaxed);
+        }
+        std::chrono::steady_clock::time_point t0;
+    } workTimer;
     QImage result;
     if (!m_ctx || m_stream < 0) return result;
 
@@ -1235,6 +1251,11 @@ int FFmpegDecoder::audioChannels() const {
     return m_audioOutCh;
 }
 
+bool FFmpegDecoder::audioFinished() const {
+    QMutexLocker locker(&m_audioMutex);
+    return m_audioFinished;
+}
+
 void FFmpegDecoder::seekAudio(double seconds) {
     QMutexLocker locker(&m_audioMutex);
     if (audioDbg()) qDebug() << "[audio] seek" << seconds << "stream=" << m_audioStream;
@@ -1255,6 +1276,7 @@ void FFmpegDecoder::seekAudio(double seconds) {
     // (m_audioSeekTargetSec), preciso independentemente de onde o seek pousou.
     m_audioSkipFrames = 30;
     m_audioSeekTargetSec = seconds;
+    m_audioFinished = false;
     if (audioDbg())
         qDebug() << "[audio] seekAudio: target=" << seconds << "stream=" << m_audioStream;
 }
@@ -1299,7 +1321,10 @@ int FFmpegDecoder::decodeAudio(void* outBuf, int maxBytes) {
             continue;
         }
         if (recv == AVERROR_EOF) {
-            // Drena o resampler (atraso interno no fim).
+            // Drena o resampler (atraso interno no fim) e marca o FIM do
+            // arquivo: o consumidor (AudioConformCache) pode parar em vez de
+            // re-pedir enquanto decodeAudio devolver 0 bytes.
+            m_audioFinished = true;
             const int cap = (maxBytes - produced) / bytesPerSample;
             if (cap <= 0) break;
             const int got = swr_convert(swr, &out, cap, nullptr, 0);

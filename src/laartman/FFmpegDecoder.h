@@ -85,6 +85,11 @@ public:
     int audioChannels() const;
     void seekAudio(double seconds);
     int decodeAudio(void* outBuf, int maxBytes);
+    // true quando o decodeAudio alcançou o FIM do arquivo (codec + resampler
+    // drenados). Distingue de "por enquanto não há bytes" (retorno 0 temporário
+    // ou erro) — permite ao consumidor (AudioConformCache) parar em vez de
+    // re-pedir cegamente. Resetado por seekAudio()/open()/close().
+    bool audioFinished() const;
 
 private:
     void freeAllLocked(); // chama com m_mutex E m_audioMutex segurados
@@ -133,6 +138,10 @@ private:
     // N frames — que não cobria a distância e fazia o áudio retomar adiantado/
     // atrasado, teleportando o playhead do preview para trás.
     double m_audioSeekTargetSec = -1.0;
+    // true quando decodeAudio() drenou o codec e o resampler (fim do arquivo).
+    // A versão anterior retornava 0 tanto para "acabou" quanto para "não há
+    // bytes ainda", e o consumidor re-pedida sem fim. Resetado em seekAudio().
+    bool m_audioFinished = false;
     mutable QMutex m_audioMutex;
 
     // Imagem estática (JPEG, PNG, BMP, etc.): frame único, sem seek.
@@ -210,10 +219,14 @@ public:
     // keyframe até o alvo paga dezenas de quadros que ninguém vê.
     static quint64 s_discardCount, s_lastDiscard;
     static quint64 lastDiscard()  { return s_lastDiscard; }
-    // Tempo total dentro de decodeOne. Comparado com a latência dispatch->pronto
+    // Tempo total dentro de frameAt. Comparado com a latência dispatch->pronto
     // (wrk), separa "o worker demorou" de "o pedido ficou na fila esperando".
-    static quint64 s_lastWorkNs, s_workTotalNs;
-    static quint64 lastWorkNs()   { return s_lastWorkNs; }
+    // Lidos pelo overlay na thread da UI e escritos pela thread do decode, então
+    // são atômicos (como as stats de open).
+    static std::atomic<quint64> s_lastWorkNs, s_workTotalNs;
+    static void resetWorkStats() { s_lastWorkNs.store(0); s_workTotalNs.store(0); }
+    static quint64 lastWorkNs()   { return s_lastWorkNs.load(); }
+    static quint64 workTotalNs()  { return s_workTotalNs.load(); }
     static quint64 discardTotal() { return s_discardCount; }
     void   frameToCacheLocked(const FrameCacheKey& key, const QImage& img);
     void   frameCacheClearLocked();

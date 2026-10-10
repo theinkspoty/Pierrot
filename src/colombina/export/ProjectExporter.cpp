@@ -965,11 +965,10 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     }
 
     bool anySolo = false;
-    for (const Track& t : project.videoTracks)
+    // Só faixas de ÁUDIO têm solo com efeito no mix (consistente com o preview:
+    // faixas de vídeo nunca são fonte de áudio).
+    for (const Track& t : project.audioTracks)
         if (t.solo) { anySolo = true; break; }
-    if (!anySolo)
-        for (const Track& t : project.audioTracks)
-            if (t.solo) { anySolo = true; break; }
 
     QVector<AudioClipRef> aclips;
     for (const Track& t : project.audioTracks) {
@@ -1049,13 +1048,7 @@ QStringList ProjectExporter::buildCommand(const Project& project,
         } else if (v.m->isSolid) {
             const int gw = v.m->width > 0 ? v.m->width : W;
             const int gh = v.m->height > 0 ? v.m->height : H;
-            if (v.m->generator == QStringLiteral("noise")) {
-                // Ruído animado via lavfi: grão muda a cada quadro.
-                args << "-f" << "lavfi"
-                     << "-i" << QString("nullsrc=s=%1x%2:r=%3:d=%4,"
-                                        "geq=lum=random(1)*255:cb=128:cr=128")
-                                    .arg(gw).arg(gh).arg(FPS).arg(num(v.c->dur * v.c->speed));
-            } else if (v.m->generator.isEmpty()) {
+            if (v.m->generator.isEmpty()) {
                 // Cor sólida (gerador estilo Vegas): input lavfi com a cor.
                 args << "-f" << "lavfi"
                      << "-i" << QString("color=c=%1:s=%2x%3:r=%4:d=%5")
@@ -1063,9 +1056,10 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                                     .arg(gw).arg(gh).arg(FPS)
                                     .arg(num(v.c->dur * v.c->speed));
             } else {
-                // Gradiente/checkerboard: gera um PNG estático e faz loop
-                // (o padrão não muda com o tempo), consistente com o preview.
-                QImage img = generatorFrame(*v.m, W, H);
+                // Gradiente/checkerboard/ruído: o preview é estático e no
+                // tamanho próprio do gerador, então exporta um PNG estático
+                // com `generatorFrame` e faz loop — consistente com o preview.
+                QImage img = generatorFrame(*v.m, gw, gh);
                 QTemporaryFile tmp;
                 tmp.setAutoRemove(false);
                 tmp.setFileTemplate(QDir::tempPath() + "/pierrot-gen-XXXXXX.png");

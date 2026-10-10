@@ -13,6 +13,7 @@
 #include <QTransform>
 #include <QVector>
 #include <QString>
+#include <QMutex>
 #include <cmath>
 #include <algorithm>
 #include <climits>
@@ -49,6 +50,12 @@ namespace ImgPool {
         int count = 0;
     };
 
+    // Guarda o pool de buffers: desde o Fix 1, o FrameWorker (thread de vídeo)
+    // aplica o caminho rápido de efeitos (chroma usa o pool) ao MESMO tempo que
+    // a UI aplica MotiOn/LAINKA para o clipe do topo — os QImages de reuso
+    // compartilham o armazenamento e a troca de posse seria um data race.
+    static QMutex& poolMutex() { static QMutex m; return m; }
+
     static Pool& poolFor(QImage::Format fmt, int /*w*/, int /*h*/) {
         static Pool p32p;
         static Pool g8;
@@ -57,6 +64,7 @@ namespace ImgPool {
     }
 
     static QImage get(QImage::Format fmt, int w, int h) {
+        QMutexLocker lock(&poolMutex());
         Pool& p = poolFor(fmt, w, h);
         for (int i = 0; i < p.count; ++i) {
             if (p.bufs[i].width() == w && p.bufs[i].height() == h
@@ -71,6 +79,7 @@ namespace ImgPool {
 
     static void release(QImage& img) {
         if (img.isNull()) return;
+        QMutexLocker lock(&poolMutex());
         Pool& p = poolFor(img.format(), img.width(), img.height());
         if (p.count < 4) {
             p.bufs[p.count++] = img;

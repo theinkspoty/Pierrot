@@ -133,14 +133,12 @@ void PlaybackEngine::togglePlay() {
     m_playing = true;
     setFrameInterval();
     if (m_timer) m_timer->start();
-    // Mostra o primeiro frame imediatamente, sem esperar o áudio acordar —
-    // senão o vídeo fica preto por até 2 s na primeira reprodução.
+    // Mostra o primeiro frame imediatamente.
     onSeek(m_playhead);
     if (m_playBtn) m_playBtn->setText(QStringLiteral("Pausar"));
-    // Adia o startAudio em 100ms para o frame aparecer antes do áudio
-    // bloquear a UI thread (waitReadyBeforeSink ~300ms).
-    m_delayedAudioT = m_playhead;
-    m_delayedAudioPending = true;
+    // startAudio é barato agora (sink reutilizado, sem waitReadyBeforeSink):
+    // pode iniciar já, no mesmo tick do play.
+    onStartAudio(m_playhead);
     onStateChanged(true);
 }
 
@@ -215,7 +213,6 @@ void PlaybackEngine::stopPlaybackInternal() {
     m_playRate = 1.0;
     m_awaitingAudio = false;
     m_awaitAudioDeadlineMs = -1;
-    m_delayedAudioPending = false;
     if (m_timer) m_timer->stop();
     if (m_playBtn) m_playBtn->setText(QStringLiteral("Reproduzir"));
     m_currentFrameIndex = -1;
@@ -246,14 +243,6 @@ void PlaybackEngine::tickImpl() {
 
     // ── Fase 1: relógio (wall + slew de áudio) ────────────────────────
     const qint64 clockStart = PreviewProfiler::active() ? PreviewProfiler::nowNs() : 0;
-
-    // Audio adiado:100ms após o play, dispara o startAudio.
-    if (m_delayedAudioPending && m_playing) {
-        if (m_clock.elapsed() >= 100) {
-            m_delayedAudioPending = false;
-            onStartAudio(m_delayedAudioT);
-        }
-    }
 
     // Tempo esperado pelo relógio de parede…
     const double elapsed = m_clock.elapsed() / 1000.0;

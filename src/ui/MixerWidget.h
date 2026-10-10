@@ -200,7 +200,6 @@ private:
     void writeAutoPoint(bool isAudio, int index, const QString& prop, double value);
     Project* m_project = nullptr;
     PreviewWidget* m_preview = nullptr;
-    QVector<MixerStrip*> m_videoStrips;
     QVector<MixerStrip*> m_audioStrips;
     MixerStrip* m_masterStrip = nullptr;
     QTimer* m_levelTimer = nullptr;

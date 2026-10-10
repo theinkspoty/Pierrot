@@ -226,7 +226,8 @@ public:
     }
 
 public slots:
-    void decodeOne(const QString& clipId, const QString& path, double t, int maxW, double dt) {
+    void decodeOne(const QString& clipId, const QString& path, double t, int maxW, double dt,
+                   const FrameFx& fx = FrameFx()) {
         CrashReporter::setActivity("decodificando quadro do preview");
         // Arma o token de cancelamento para todo este decode. RAII desarma em
         // QUALQUER retorno (inclusive os "soft" sem slot), para nunca vazar um
@@ -257,7 +258,7 @@ public slots:
                 // prefetch: falha "macia" (quadro vazio); o próximo pedido pega
                 // já quente. Bloquear aqui só pioraria o tiquinho do corte.
                 qWarning().noquote() << QStringLiteral("[dec] pool sem slot/ocupado para %1").arg(path);
-                emit frameReady(clipId, path, t, maxW, QImage());
+                emit frameReady(clipId, path, t, maxW, QImage(), false);
                 return;
             }
             if (!m_curPath.isEmpty()) m_pool->release(m_curPath);
@@ -301,7 +302,16 @@ public slots:
                           .arg(dbgWasReady ? QStringLiteral("ready") : QStringLiteral("dec"), 6)
                           .arg(dbgMs, 0, 'f', 1);
         }
-        emit frameReady(clipId, path, t, maxW, img);
+        // Caminho rápido: clipes sem efeitos temporais (LAINKA/MotiOn/OFX/
+        // frei0r) têm o crop + efeitos básicos/máscaras aplicados AQUI, na
+        // thread de vídeo — o C2 (copy do applyCropTo) e o C3 (per-pixel dos
+        // efeitos básicos) saem do tiquinho da UI.
+        const bool fxApplied = fx.active && !img.isNull();
+        if (fxApplied) {
+            img = PreviewWidget::applyCropTo(img, fx.cropL, fx.cropR, fx.cropT, fx.cropB);
+            PreviewWidget::applyBasicEffectsOn(img, fx.clip, fx.rel);
+        }
+        emit frameReady(clipId, path, t, maxW, img, fxApplied);
 
         // Decodifica o próximo frame na folga para o próximo pedido (apenas se
         // o decoder ainda estiver no mesmo arquivo).
@@ -358,7 +368,8 @@ public slots:
     }
 
 signals:
-    void frameReady(const QString& clipId, const QString& path, double t, int maxW, const QImage& img);
+    void frameReady(const QString& clipId, const QString& path, double t, int maxW, const QImage& img,
+                    bool processed);
     void prefetchReady(const QString& path, double t, int maxW, const QImage& img);
 
 private:
@@ -1704,6 +1715,7 @@ void PreviewWidget::refreshTimeLabelStyle() {
 }
 
 PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
+    qRegisterMetaType<FrameFx>("FrameFx"); // snapshot de efeitos p/ o worker
     // O QElapsedTimer da instrumentação precisa estar rodando antes do primeiro
     // tick — sem start() ele fica inválido para sempre e todas as leituras de
     // latência (worker/prefetch) davam 0, mascarando o gargalo de decode.
@@ -2295,11 +2307,16 @@ void PreviewWidget::renderFrame(QPainter& p) {
                 const MediaItem* mm = m_project->findMedia(c->mediaId);
                 if (!mm || !mm->hasVideo) continue;
                 if (mm->isSolid) {
-                    const int w = qMax(1, mm->width > 0 ? mm->width : m_project->width);
-                    const int h = qMax(1, mm->height > 0 ? mm->height : m_project->height);
-                    const int sw = 64;
-                    const int sh = qMax(1, sw * h / w);
-                    clipFrame = generatorFrame(*mm, sw, sh);
+                    // Mídia gerada: gera no tamanho natural, sem passar de uma
+                    // vez pela resolução exibida (não borra e não estoura 4K
+                    // a cada paint). Preserva o aspecto da mídia.
+                    const int mw = mm->width > 0 ? mm->width : (int)pw;
+                    const int mh = mm->height > 0 ? mm->height : (int)ph;
+                    const double sc = qMin(1.0, qMin((double)canvas.width() / mw,
+                                                     (double)canvas.height() / mh));
+                    const int w = qMax(1, (int)std::lround(mw * sc));
+                    const int h = qMax(1, (int)std::lround(mh * sc));
+                    clipFrame = generatorFrame(*mm, w, h);
                     if (c->lainkaEnabled) {
                         const double srcT = clipSrcTime(*c, m_playhead - c->pos);
                         clipFrame = lainkaApplyFx(clipFrame, c->id, srcT,
@@ -3006,62 +3023,43 @@ QVector<AudioMixer::SourceInfo> buildMixSources(const Project* p, double t) {
     QVector<AudioMixer::SourceInfo> out;
     if (!p) return out;
     bool anySolo = false;
-    for (const Track& tr : p->videoTracks)
+    // Só faixas de ÁUDIO têm solo com efeito no mix: faixas de vídeo nunca
+    // são fonte de áudio neste app (o áudio de um vídeo vive na faixa de áudio
+    // pareada), então solo delas não deve silenciar o mix.
+    for (const Track& tr : p->audioTracks)
         if (tr.solo) { anySolo = true; break; }
-    if (!anySolo)
-        for (const Track& tr : p->audioTracks)
-            if (tr.solo) { anySolo = true; break; }
 
     struct Rep { const Clip* clip; double vol; double pan; int trackIdx; bool isAudio; };
     QHash<QString, Rep> reps;
+    // Só faixas de ÁUDIO são fonte de áudio. O áudio de um vídeo vive na faixa
+    // de áudio pareada (criada no import via groupId); o clipe de vídeo nunca
+    // toca sozinho. Assim, apagar o clipe de áudio silencia o som (em vez de o
+    // clipe de vídeo continuar tocando por não ser mais sobrescrito), e faixas
+    // de vídeo não ganham strip/fader/VU no mixer.
     auto collect = [&](const QVector<Track>& tracks, bool isAudio) {
         for (int ti = 0; ti < tracks.size(); ++ti) {
             const Track& tr = tracks[ti];
-            if (!tr.visible) {
-                // Faixa oculta (olho/falante desligado): remove contribuições
-                // vinculadas de outra faixa (grupo vídeo+áudio) e segue.
-                if (isAudio) continue;
-                for (const Clip& c : tr.clips) {
-                    if (!(t >= c.pos && t < c.pos + c.dur)) continue;
-                    const QString base = c.groupId.isEmpty() ? c.id : c.groupId;
-                    const QString key = QStringLiteral("%1|%2").arg(base).arg(c.audioStreamIndex);
-                    reps.remove(key);
-                }
-                continue;
-            }
+            if (!tr.visible) continue;
             for (const Clip& c : tr.clips) {
                 if (!(t >= c.pos && t < c.pos + c.dur)) continue;
                 if (tr.muted || (anySolo && !tr.solo)) {
-                    // Remove a entrada vinculada (mesmo groupId) de outra
-                    // faixa: se o clipe de vídeo está na faixa de vídeo e o
-                    // de áudio está mutado na faixa de áudio, a chave do
-                    // vídeo permaneceria em `reps` e o áudio continuaria.
-                    const QString base = c.groupId.isEmpty() ? c.id : c.groupId;
-                    const QString key = QStringLiteral("%1|%2").arg(base).arg(c.audioStreamIndex);
-                    reps.remove(key);
                     if (audioDbg())
-                        qDebug().noquote() << QStringLiteral("[audio] MUTE skip t=%1 faixa='%2' isAudio=%3 base=%4 (restaram keys=%5)")
-                              .arg(t, 0, 'f', 3)
-                              .arg(tr.name)
-                              .arg(isAudio)
-                              .arg(base)
-                              .arg(reps.keys().join(QLatin1Char(',')));
+                        qDebug().noquote() << QStringLiteral("[audio] MUTE skip t=%1 faixa='%2 base=%3")
+                              .arg(t, 0, 'f', 3).arg(tr.name)
+                              .arg(c.groupId.isEmpty() ? c.id : c.groupId);
                     continue;
                 }
                 const MediaItem* m = p->findMedia(c.mediaIdAt(t - c.pos));
                 if (!m || !m->hasAudio) continue;
                 const double vol = previewClipAudioVol(tr, c, t);
-                // Mesmo grupo (vídeo+áudio vinculados) compartilha a chave para
-                // não dobrar o som; o STREAM diferencia as faixas de um arquivo
-                // multicanal (cada clipe de áudio usa o seu stream). O clipe da
-                // faixa de áudio vence o da faixa de vídeo (inserido depois).
-                const QString base = c.groupId.isEmpty() ? c.id : c.groupId;
-                const QString key = QStringLiteral("%1|%2").arg(base).arg(c.audioStreamIndex);
+                // O STREAM diferencia as faixas de um arquivo multicanal (cada
+                // clipe de áudio usa o seu stream); groupId não é mais preciso
+                // aqui, pois só a faixa de áudio contribui.
+                const QString key = QStringLiteral("%1|%2").arg(c.id).arg(c.audioStreamIndex);
                 reps.insert(key, {&c, vol, kfValue(tr.kfPan, tr.pan, t), ti, isAudio});
             }
         }
     };
-    collect(p->videoTracks, false);
     collect(p->audioTracks, true);
 
     for (auto it = reps.cbegin(); it != reps.cend(); ++it) {
@@ -3132,14 +3130,14 @@ QVector<AudioMixer::SourceInfo> buildWarmSources(
     if (!p) return out;
     constexpr double kWarmWin = 0.8; // segundos à frente do playhead
     bool anySolo = false;
-    for (const Track& tr : p->videoTracks)
+    // Só faixas de ÁUDIO têm solo com efeito (consistente com buildMixSources).
+    for (const Track& tr : p->audioTracks)
         if (tr.solo) { anySolo = true; break; }
-    if (!anySolo)
-        for (const Track& tr : p->audioTracks)
-            if (tr.solo) { anySolo = true; break; }
 
     QSet<QString> have;
     for (const AudioMixer::SourceInfo& a : active) have.insert(a.key);
+    // Só faixas de ÁUDIO são fonte de áudio (o áudio de um vídeo vive na faixa
+    // de áudio pareada). Consistente com buildMixSources.
     auto warmCollect = [&](const QVector<Track>& tracks, bool isAudio) {
         for (int ti = 0; ti < (int)tracks.size(); ++ti) {
             const Track& tr = tracks[ti];
@@ -3180,7 +3178,7 @@ QVector<AudioMixer::SourceInfo> buildWarmSources(
                 si.reverb = c.reverb;
                 si.reverbMix = c.reverbMix;
                 si.reverbSize = c.reverbSize;
-                if (isAudio) {
+                {
                     const Track& tac = p->audioTracks[ti];
                     si.trackFxOn = tac.hasAudioFx();
                     si.trackFxEqLow = tac.eqLow;
@@ -3204,7 +3202,6 @@ QVector<AudioMixer::SourceInfo> buildWarmSources(
             }
         }
     };
-    warmCollect(p->videoTracks, false);
     warmCollect(p->audioTracks, true);
     return out;
 }
@@ -3243,21 +3240,11 @@ void PreviewWidget::startAudio(double t) {
     // O mixer lê SÓ do conform (PCM já decodificado em background) → está
     // sempre "pronto": não há decoders a abrir, então o sink já começa. Faltas
     // de trecho são silêncio momentâneo até o worker terminar a janela pedida.
+    // Nada de waitReadyBeforeSink() aqui: ele segurava a UI por até 150ms no
+    // play (C1 do relatório). `updateSources` já dispara a conform em
+    // background; aceitamos 1-2 frames de silêncio no warm-up frio.
     m_audioFeed->updateSources(sources, /*reseek=*/true,
                                QVector<AudioMixer::SourceInfo>(), -1, t);
-
-    // Pré-aquece o head do playhead ANTES de o sink puxar: sem isso os
-    // primeiros chunks do warm-up frio saem mudo. Na primeira reprodução,
-    // pular o wait para não congelar a UI (o áudio pode ter um leve
-    // atraso de 1-2 frames, imperceptível). Timeout de 150ms (era 300ms):
-    // o conform já roda em background; segurar a UI por 300ms era um
-    // micro-travamento perceptível no play.
-    if (m_audioConformWarmed) {
-        m_audioFeed->waitReadyBeforeSink((int)(0.15 * AudioConformCache::kSampleRate),
-                                         150);
-    } else {
-        m_audioConformWarmed = true;
-    }
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
     const QAudioDevice def = QMediaDevices::defaultAudioOutput();
@@ -3265,7 +3252,18 @@ void PreviewWidget::startAudio(double t) {
         if (audioDbg()) qDebug() << "[audio] defaultAudioOutput nulo — sem saída de áudio";
         return;
     }
-    m_audioSink = new QAudioSink(def, fmt, this);
+    // Reusa o sink entre play/stop (C4): new/destroy custa 10-50ms por play.
+    // Recria só se a saída padrão mudou.
+    const QString devId = QString::fromUtf8(def.id());
+    if (!m_audioSink || m_audioSinkDevice != devId) {
+        if (m_audioSink) {
+            m_audioSink->stop();
+            m_audioSink->deleteLater();
+            m_audioSink = nullptr;
+        }
+        m_audioSink = new QAudioSink(def, fmt, this);
+        m_audioSinkDevice = devId;
+    }
     m_audioSink->start(m_audioFeed);
 #else
     const QAudioDeviceInfo def = QAudioDeviceInfo::defaultOutputDevice();
@@ -3273,7 +3271,16 @@ void PreviewWidget::startAudio(double t) {
         if (audioDbg()) qDebug() << "[audio] defaultOutputDevice nulo — sem saída de áudio";
         return;
     }
-    m_audioOut = new QAudioOutput(def, fmt, this);
+    const QString devId = def.deviceName();
+    if (!m_audioOut || m_audioOutDevice != devId) {
+        if (m_audioOut) {
+            m_audioOut->stop();
+            m_audioOut->deleteLater();
+            m_audioOut = nullptr;
+        }
+        m_audioOut = new QAudioOutput(def, fmt, this);
+        m_audioOutDevice = devId;
+    }
     m_audioOut->start(m_audioFeed);
 #endif
 }
@@ -3281,15 +3288,14 @@ void PreviewWidget::startAudio(double t) {
 void PreviewWidget::stopAudio() {
 #if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
     if (m_audioSink) {
+        // Não destrói: o sink é reutilizado no próximo play (C4). `start()`
+        // troca a fonte para o novo m_audioFeed. O `deleteLater` da antiga
+        // fonte é seguro porque o sink já foi parado e largou a referência.
         m_audioSink->stop();
-        m_audioSink->deleteLater();
-        m_audioSink = nullptr;
     }
 #else
     if (m_audioOut) {
         m_audioOut->stop();
-        m_audioOut->deleteLater();
-        m_audioOut = nullptr;
     }
 #endif
     if (m_audioFeed) {
@@ -3537,6 +3543,22 @@ void PreviewWidget::updateFrame() {
         m_underRequested = false;
     }
 
+    // Snapshot do caminho rápido: clipes sem efeitos temporais levam crop +
+    // efeitos básicos + máscaras para a thread de vídeo (FrameWorker), tirando
+    // o C2/C3 do tiquinho da UI. O snapshot usa os MESMOS valores que
+    // applyCrop() usaria (crop avaliado em m_playhead e máscaras em srcT).
+    FrameFx topFx;
+    topFx.active = !m_clipLainkaEnabled
+                   && !(m_clipMotionEnabled && m_clipMotionAmount > 0.0)
+                   && m_clipOfxFx.isEmpty()
+                   && m_clipFrei0rFx.isEmpty();
+    topFx.cropL = m_lastCropL;
+    topFx.cropR = m_lastCropR;
+    topFx.cropT = m_lastCropT;
+    topFx.cropB = m_lastCropB;
+    topFx.rel = srcT;
+    if (topFx.active) topFx.clip = *clip;
+
     // Path efetivo de vídeo do clipe do topo: proxy se houver (consistente com
     // requestFrame/onFrameReady e o cache).
     const QString vpath = resolvePreviewVideo(m->filePath);
@@ -3561,6 +3583,7 @@ void PreviewWidget::updateFrame() {
             m_shownPath = vpath;
             m_shownT = srcT;
             m_shownW = decW;
+            m_shownFx = false; // quadro cru do prefetch; crop é aplicado na UI
             m_lastSrcT = srcT;
             m_lastDecodeW = decW;
             m_lastFile = vpath;
@@ -3574,30 +3597,42 @@ void PreviewWidget::updateFrame() {
 
     // O quadro do tamanho/posição atuais já está pronto? Apenas reaplica o
     // pan/crop (por exemplo quando só o corte mudou) sem decodificar de novo.
+    bool sameShown = false;
+    bool shownFx = false;
     {
         QMutexLocker l(&m_frameMutex);
-        if (!usedPrefetch && m_shownPath == vpath && std::fabs(m_shownT - srcT) < 1e-6
-            && m_shownW == decW) {
+        sameShown = (!usedPrefetch && m_shownPath == vpath && std::fabs(m_shownT - srcT) < 1e-6
+                     && m_shownW == decW);
+        shownFx = m_shownFx;
+    }
+    if (sameShown) {
+        if (shownFx) {
+            // Veio pronto da thread do worker (já cortado/efeituado): aplicar
+            // applyCrop() por cima duplicaria o corte. Re-pede o quadro com o
+            // snapshot atual — o worker reaplica a cadeia.
+            requestFrame(clip->id, vpath, srcT, decW, topFx);
+        } else {
             applyCrop();
             update();
-            return;
         }
+        return;
     }
     if (usedPrefetch) {
         if (PreviewProfiler::active()) profFrame().prefetchHit = true;
         // Já no tick do corte, dispara o próximo frame: o decoder trocado está
         // posicionado e decodifica adiante, evitando "segurar" o frame do corte.
-        requestFrame(clip->id, vpath, srcT + 1.0 / projFps(m_project), decW);
+        requestFrame(clip->id, vpath, srcT + 1.0 / projFps(m_project), decW, topFx);
         return;
     }
     if (PreviewProfiler::active()) profFrame().prefetchHit = false;
-    requestFrame(clip->id, vpath, srcT, decW);
+    requestFrame(clip->id, vpath, srcT, decW, topFx);
 }
 
 // Pedido "assíncrono": a decodificação acontece na thread do FrameWorker.
 // Vários pedidos seguidos entram numa fila; apenas um roda por vez
 // (scrub não empilha — a fila só guarda pedidos ainda não enviados).
-void PreviewWidget::requestFrame(const QString& clipId, const QString& path, double t, int maxW) {
+void PreviewWidget::requestFrame(const QString& clipId, const QString& path, double t, int maxW,
+                                 const FrameFx& fx) {
     QMutexLocker l(&m_frameMutex);
     // Fase 3: se um decode já está em andamento e este pedido do TOPO o supera
     // (cortou para outro clipe, ou scrub/seek de mais de 3 frames parado),
@@ -3624,14 +3659,18 @@ void PreviewWidget::requestFrame(const QString& clipId, const QString& path, dou
     // posições intermediárias só atrasa a chegada ao alvo final.
     for (FrameReq& r : m_reqQueue)
         if (r.clipId == clipId && r.path == path && r.maxW == maxW) {
+            r.fx = fx;
             if (std::fabs(r.t - t) < 1e-6) return; // já enfileirado igual
             r.t = t;
             r.dt = 1.0 / projFps(m_project);
             return;
         }
-    m_reqQueue.append({clipId, path, t, 1.0 / projFps(m_project), maxW});
+    m_reqQueue.append({clipId, path, t, 1.0 / projFps(m_project), maxW, fx});
     kickFrameWorker();
 }
+
+// Crop (pan/crop) do clipe no instante `rel` da timeline (definição abaixo).
+static void clipCrop(const Clip& c, double rel, int& cL, int& cR, int& cT, int& cB);
 
 // Pedidos os quadros dos clipes de vídeo ativos no playhead que ficam POR
 // BAIXO do clipe do topo (empilhamento de faixas). Quadros já em cache
@@ -3687,8 +3726,24 @@ void PreviewWidget::requestLowerLayers(int decW) {
                 && it->maxW == decW && !it->img.isNull())
                 continue; // já em cache (3 frames: evita re-decode de background a cada frame)
         }
-        requestFrame(c->id, vpath, srcT, decW);
+        requestFrame(c->id, vpath, srcT, decW, [&] {
+            // Camada inferior sem LAINKA: crop + efeitos básicos vão para a
+            // thread do worker (era o H6: per-pixel na UI a cada quadro).
+            FrameFx fx;
+            fx.active = !c->lainkaEnabled;
+            if (fx.active) {
+                const double rel = m_playhead - c->pos;
+                clipCrop(*c, rel, fx.cropL, fx.cropR, fx.cropT, fx.cropB);
+                fx.rel = rel;
+                fx.clip = *c;
+            }
+            return fx;
+        }());
         ++dbgLayerDecodes;
+        // Prioriza o clipe do topo: no máximo 1 camada inferior nova por tick.
+        // Com N faixas, os decodes atrasados se completam ao longo dos próximos
+        // frames em vez de roubarem todos os slots do worker de uma vez.
+        break;
     }
 
     // Tracks Mesa: decodifica o frame individual de cada track via MesaRenderer
@@ -3773,7 +3828,8 @@ void PreviewWidget::kickFrameWorker() {
     m_hasInflightReq = true;
     QMetaObject::invokeMethod(m_frameWorker, "decodeOne", Qt::QueuedConnection,
                               Q_ARG(QString, r.clipId), Q_ARG(QString, r.path),
-                              Q_ARG(double, r.t), Q_ARG(int, r.maxW), Q_ARG(double, r.dt));
+                              Q_ARG(double, r.t), Q_ARG(int, r.maxW), Q_ARG(double, r.dt),
+                              Q_ARG(FrameFx, r.fx));
 }
 
 // Crop (pan/crop) do clipe no instante `rel` da timeline.
@@ -3784,7 +3840,8 @@ static void clipCrop(const Clip& c, double rel, int& cL, int& cR, int& cT, int& 
     cB = (int)std::lround(std::clamp(kfValue(c.kfCropB, c.cropB, rel), 0.0, 0.9) * 1000.0);
 }
 
-void PreviewWidget::onFrameReady(const QString& clipId, const QString& path, double t, int maxW, const QImage& img) {
+void PreviewWidget::onFrameReady(const QString& clipId, const QString& path, double t, int maxW,
+                                 const QImage& img, bool processed) {
     const qint64 workerLatNs =
         (PreviewProfiler::active() && m_perfT.isValid() && m_perfWorkerStartNs > 0)
             ? m_perfT.nsecsElapsed() - m_perfWorkerStartNs
@@ -3884,43 +3941,56 @@ void PreviewWidget::onFrameReady(const QString& clipId, const QString& path, dou
             m_shownPath = path;
             m_shownT = t;
             m_shownW = maxW;
+            m_shownFx = processed;   // m_frameFull já chegou cortado/efeituado
         }
         m_frameFull = img;
         m_lastSrcT = t;
         m_lastDecodeW = maxW;
         m_lastFile = path;
-        applyCrop();
+        if (processed) {
+            // Camada rápida: crop + efeitos básicos/máscaras foram aplicados na
+            // thread de vídeo — aplicar applyCrop() aqui duplicaria o pipeline.
+            m_frame = img;
+        } else {
+            applyCrop();
+        }
         update();
         return;
     }
 
     // Quadro de uma camada INFERIOR: guarda no cache de camadas (cortado + LAINKA).
-    const double rel = m_playhead - clip->pos;
-    int cL, cR, cT, cB;
-    clipCrop(*clip, rel, cL, cR, cT, cB);
-    QImage cropped = applyCropTo(img, cL, cR, cT, cB);
-    // Aplica LAINKA também em camadas inferiores.
-    if (clip->lainkaEnabled) {
-        double srcT = clipSrcTime(*clip, m_playhead - clip->pos);
-        const double pfps = projFps(m_project);
-        const int effSkip = (clip->lainkaTargetFps > 0 && pfps > 1.0)
-            ? std::max(1, (int)std::lround(pfps / clip->lainkaTargetFps))
-            : clip->lainkaSkip;
-        if (effSkip > 1)
-            srcT = lainkaQuantizeTime(srcT, effSkip, pfps);
-        cropped = lainkaApplyFx(cropped, clip->id, srcT,
-                                clip->lainkaSkip, clip->lainkaJitterPos,
-                                clip->lainkaJitterRot, clip->lainkaJitterScale,
-                                clip->lainkaFlicker, clip->lainkaFlickerSpeed,
-                                clip->lainkaWarpAmount, clip->lainkaWarpSpeed,
-                                clip->lainkaWarpGrid, clip->lainkaOnionSkin,
-                                clip->lainkaDustAmount, clip->lainkaScratchAmount,
-                                clip->lainkaMotionBlur, clip->lainkaOpacity,
-                                clip->lainkaTargetFps, clip->lainkaAntialias,
-                                QImage());
+    QImage cropped;
+    if (processed) {
+        // Já veio cortado + com efeitos básicos/máscaras da thread do worker.
+        cropped = img;
+    } else {
+        const double rel = m_playhead - clip->pos;
+        int cL, cR, cT, cB;
+        clipCrop(*clip, rel, cL, cR, cT, cB);
+        cropped = applyCropTo(img, cL, cR, cT, cB);
+        // Aplica LAINKA também em camadas inferiores.
+        if (clip->lainkaEnabled) {
+            double srcT = clipSrcTime(*clip, m_playhead - clip->pos);
+            const double pfps = projFps(m_project);
+            const int effSkip = (clip->lainkaTargetFps > 0 && pfps > 1.0)
+                ? std::max(1, (int)std::lround(pfps / clip->lainkaTargetFps))
+                : clip->lainkaSkip;
+            if (effSkip > 1)
+                srcT = lainkaQuantizeTime(srcT, effSkip, pfps);
+            cropped = lainkaApplyFx(cropped, clip->id, srcT,
+                                    clip->lainkaSkip, clip->lainkaJitterPos,
+                                    clip->lainkaJitterRot, clip->lainkaJitterScale,
+                                    clip->lainkaFlicker, clip->lainkaFlickerSpeed,
+                                    clip->lainkaWarpAmount, clip->lainkaWarpSpeed,
+                                    clip->lainkaWarpGrid, clip->lainkaOnionSkin,
+                                    clip->lainkaDustAmount, clip->lainkaScratchAmount,
+                                    clip->lainkaMotionBlur, clip->lainkaOpacity,
+                                    clip->lainkaTargetFps, clip->lainkaAntialias,
+                                    QImage());
+        }
+        // Aplica efeitos básicos também em camadas inferiores.
+        applyBasicEffectsOn(cropped, *clip, m_playhead - clip->pos);
     }
-    // Aplica efeitos básicos também em camadas inferiores.
-    applyBasicEffectsOn(cropped, *clip, m_playhead - clip->pos);
     {
         QMutexLocker l(&m_frameMutex);
         m_layerCache[clipId] = {cropped, path, t, maxW};

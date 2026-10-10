@@ -251,11 +251,16 @@ void AudioConformCache::doFill(Chunk* c, double startSec, double horizonSec,
 
         qint64 wantEnd = target + secToFrame(wantHorizon);
         int zeros = 0;
+        bool eof = false;
         while (decPos < wantEnd && sessionWritten < goal) {
             const int got = dec.decodeAudio(buf.data(),
                                             (int)(buf.size() * sizeof(int16_t)));
             if (got <= 0) {
-                if (++zeros >= 8) break; // fim de arquivo
+                // EOF explícito: para já — o restante vira silêncio abaixo.
+                // Sem o sinal, contava 8 zeros seguidos (cego); com audioFinished()
+                // paramos assim que o decoder drena codec+resampler de verdade.
+                if (dec.audioFinished()) { eof = true; break; }
+                if (++zeros >= 8) break; // proteção contra decode travado
                 continue;
             }
             zeros = 0;
@@ -268,7 +273,7 @@ void AudioConformCache::doFill(Chunk* c, double startSec, double horizonSec,
         // Fim de arquivo antes do fim da janela: o restante é silêncio. Marca a
         // cauda como coberta para o worker NÃO re-buscar o mesmo ponto sem fim
         // (busy-loop de re-seek + "decodeAudio -> 0 bytes" para sempre).
-        if (zeros >= 8 && decPos < wantEnd) {
+        if ((eof || zeros >= 8) && decPos < wantEnd) {
             static const std::vector<int16_t> zbuf(4096 * kChannels, 0);
             while (decPos < wantEnd) {
                 const qint64 f = qMin<qint64>(zbuf.size() / (2 * kChannels),

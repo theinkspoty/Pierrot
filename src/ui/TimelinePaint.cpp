@@ -7,6 +7,7 @@
 #include "colombina/models/Project.h"
 #include "ui/SettingsDialog.h"
 #include "colombina/ffmpeg/MediaCache.h"
+#include "colombina/generators.h"
 #include "ui/TlLog.h"
 #include "ui/Theme.h"
 
@@ -1000,9 +1001,12 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
             cp.drawText(cr.adjusted(4, 4, -4, -4),
                         Qt::AlignLeft | Qt::AlignTop,
                         QStringLiteral("3D"));
-        } else if (mi && mi->isSolid)
-            cp.fillRect(cr, mi->solidColor);
-        else
+        } else if (mi && mi->isSolid) {
+            // Mídia gerada (gerador estilo Vegas): desenha o padrão real
+            // (cor, gradiente, checkerboard ou ruído) no corpo do clipe.
+            const QImage gen = generatorFrame(*mi, cr.width(), cr.height());
+            cp.drawImage(cr, gen);
+        } else
             drawVideoThumbs(cp, cr, c, path);
         if (!audio)
             drawOpacityHandle(cp, cr, c);
