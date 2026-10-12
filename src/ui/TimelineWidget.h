@@ -14,6 +14,7 @@
 #include <QPoint>
 #include <QPixmap>
 #include "colombina/models/Project.h"
+#include "colombina/frei0r/Frei0rPluginManager.h" // Frei0rPluginInfo (catálogo)
 
 struct FFmpegMediaInfo;
 
@@ -22,6 +23,7 @@ class QPainter;
 class QMouseEvent;
 class QKeyEvent;
 class QContextMenuEvent;
+class QMenu;
 class QVariantAnimation;
 class QTimer;
 class QLineEdit;
@@ -43,6 +45,11 @@ constexpr int kVideoRowH = 56;
 constexpr int kAudioRowH = 56;     // padrão: alto o bastante p/ a barra de volume
 constexpr int kMinRowH = 24;       // faixa recolhida
 constexpr int kFolderH = 22;
+// Painel de efeitos da faixa de efeitos expandida (estilo After Effects):
+// barra do grupo "Efeitos" + uma linha por efeito + respiro inferior.
+constexpr int kFxGroupH = 20;
+constexpr int kFxRowH   = 18;
+constexpr int kFxPad    = 8;
 constexpr double kMinDur = 0.04;   // duração mínima de um clipe
 constexpr double kMinPps = 2.0;
 constexpr double kMaxPps = 4000.0;
@@ -120,7 +127,14 @@ public:
 
     void addTrack(bool audio);
     void addRecordingTrack();
-    void addFxTrack(); // faixa de efeitos (Adjustment Layer, azul)
+    void addFxTrack(); // faixa de efeitos (azul), nasce vazia
+    // Catálogo de plugins usado pelo menu "+" do painel de efeitos da faixa.
+    void setFxOfxPlugins(const QVector<OfxPluginInfo>& plugins) { m_fxOfxPlugins = plugins; }
+    void setFxFrei0rPlugins(const QVector<Frei0rPluginInfo>& plugins) { m_fxFrei0rPlugins = plugins; }
+    // Liga/desliga um efeito já presente no clipe (nativo/frei0r/OFX). Usado
+    // pela propagação do olho do painel da faixa de efeitos. Retorna true se o
+    // estado do clipe realmente mudou.
+    bool setFxEffectEnabled(Clip* clip, const QString& effectId, bool enabled);
     void updateScrollRanges();
     void ensureScrollRangeReaches(double tEnd); // leve: só alarga o hbar (arraste)
     void markTrimEdge(double tEdge, bool ripple); // indicador de trim (borda)
@@ -219,6 +233,17 @@ signals:
     void maskRequested(const QString& id);
     void propertiesRequested(const QString& id);
     void mediaImported();
+    // Painel de efeitos da faixa de efeitos expandida (estilo AE). O "+" grava
+    // uma escolha de efeito NA FAIXA (Track::fxEffects) e a aplica aos clipes
+    // dela; o clique numa linha abre o efeito no dock Express (do clipe ativo);
+    // o olho liga/desliga a escolha e propaga aos clipes.
+    void fxEffectAddRequested(const QString& trackId, const QString& effectId);
+    void fxEffectEditRequested(const QString& clipId, const QString& effectId);
+    void fxEffectToggleRequested(const QString& trackId, const QString& effectId,
+                                 bool enabled);
+    // Um clipe acabou de entrar numa faixa de efeitos: aplicar os efeitos
+    // habilitados da faixa ao clipe (Track::fxEffects).
+    void fxTrackClipAdded(const QString& trackId, const QString& clipId);
 protected:
     void paintEvent(QPaintEvent*) override;
     void resizeEvent(QResizeEvent*) override;
@@ -334,6 +359,28 @@ private:
     void showAudioEffectsDialog(Clip* c);
     void trackFxMenu(Track* tr, const QPoint& at);
     void drawTrackHeader(QPainter& p, int y, int rowH, const Track& tr, int index, bool selected);
+    // ── Faixa de efeitos expandida (painel de efeitos, estilo AE) ────────
+    // O painel lista os EFEITOS DA FAIXA (Track::fxEffects): barra "Efeitos"
+    // com um botão "+" (adicionar do catálogo) e uma linha por efeito com olho
+    // de liga/desliga. O clique numa linha abre o efeito no Express (no clipe
+    // ativo da faixa). Cada clipe que entra na faixa recebe uma cópia desses
+    // efeitos e renderiza a própria mídia.
+    Clip* fxActiveClip(const Track& tr) const;               // clipe no playhead (ou o 1º)
+    int fxEffectRows(const Track& tr, QVector<QString>* ids,
+                     QVector<QString>* labels, QVector<bool>* enabled) const;
+    QString fxEffectLabel(const QString& id) const;          // rótulo do catálogo pelo id
+    int fxPanelH(const Track& tr) const;                     // altura do painel dentro da faixa
+    QRect fxAddBtnRect(int y, int rowH) const;
+    QRect fxRowRect(int y, int rowH, int idx) const;
+    QRect fxRowEyeRect(int y, int rowH, int idx) const;
+    // Hit-test do painel. parts: 1=botão +, 2=linha (editar no Express),
+    // 3=olho (ligar/desligar). Retorna false se o ponto não caiu no painel.
+    bool fxPanelHit(const QPoint& pos, Clip*& clip, int& part,
+                    QString& effectId, bool& enabled) const;
+    void drawFxPanel(QPainter& p, const Track& track, int y, int rowH);
+    void buildFxAddMenu(QMenu* menu);
+    bool isFxExpanded(const QString& trackId) const { return m_fxExpanded.contains(trackId); }
+    void setFxExpanded(const QString& trackId, bool on);
     void drawOutputToggleIcon(QPainter& p, const QRect& r, const Track& tr,
                               const QColor& active, bool hidden);
     int headerBtnAt(const QPoint& pos, int& row, bool& audio) const;
@@ -414,6 +461,10 @@ private:
     TrackSel m_selAnchor;
     bool m_hasAnchor = false;
     int m_tool = 0;
+    // Faixas de efeitos expandidas (por id) — estado de UI, não serializado.
+    QSet<QString> m_fxExpanded;
+    QVector<OfxPluginInfo> m_fxOfxPlugins;        // catálogo p/ o menu "+"
+    QVector<Frei0rPluginInfo> m_fxFrei0rPlugins;  // catálogo p/ o menu "+"
     // Ferramenta anterior salva ao segurar R (corte momentâneo) p/ restaurar.
     int m_tempToolStore = -1;
     bool m_snap = true;

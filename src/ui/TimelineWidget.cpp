@@ -265,8 +265,9 @@ void TimelineWidget::addTrack(bool audio) {
     emit modified();
 }
 
-// Cria uma faixa de efeitos (Adjustment Layer, azul) no topo da pilha de
-// vídeo, com um clipe de ajuste inicial, e a seleciona para edição.
+// Cria uma faixa de efeitos (azul) no topo da pilha de vídeo e a seleciona.
+// A faixa nasce VAZIA: os clipes que forem movidos para ela recebem os efeitos
+// escolhidos no painel da faixa (Track::fxEffects).
 void TimelineWidget::addFxTrack() {
     if (!m_project) return;
     emit editStart();
@@ -3357,6 +3358,10 @@ bool TimelineWidget::moveClipToTrack(const QString& id, int row, bool audio) {
     // não ficarem pendurados durante o arrasto (MoveClip usa findClipById
     // logo depois e leria memória inválida, "separando" o par e travando).
     rebuildClipIndex();
+    // Clipe que entrou numa faixa de efeitos: aplica os efeitos habilitados da
+    // faixa (MainWindow copies Track::fxEffects para o clipe).
+    if (dst.fxTrack && !copy.isText)
+        emit fxTrackClipAdded(dst.id, copy.id);
     return true;
 }
 

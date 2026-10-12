@@ -724,6 +724,15 @@ static QJsonObject trackToJson(const Track& t) {
     QJsonArray clips;
     for (const Clip& c : t.clips) clips.append(clipToJson(c));
     o["clips"] = clips;
+    // Efeitos escolhidos da faixa de efeitos (template aplicado a clipes).
+    QJsonArray fxEff;
+    for (const TrackFx& e : t.fxEffects) {
+        QJsonObject eo;
+        eo["id"] = e.id;
+        eo["on"] = e.enabled;
+        fxEff.append(eo);
+    }
+    o["fxEffects"] = fxEff;
     // Props de canvas (Mesa)
     o["mesaX"] = t.mesaX;
     o["mesaY"] = t.mesaY;
@@ -820,6 +829,14 @@ static Track trackFromJson(const QJsonObject& o, bool audio) {
     t.kfMesaRotY = kfFromJson(o["kfMesaRotY"]);
     t.kfVolume = kfFromJson(o["kfVolume"]);
     t.kfPan = kfFromJson(o["kfPan"]);
+    const QJsonArray fxEff = o["fxEffects"].toArray();
+    for (const QJsonValue& v : fxEff) {
+        const QJsonObject eo = v.toObject();
+        TrackFx e;
+        e.id = eo["id"].toString();
+        e.enabled = eo["on"].toBool(true);
+        if (!e.id.isEmpty()) t.fxEffects.append(e);
+    }
     return t;
 }
 

@@ -44,6 +44,11 @@ public:
     // Adiciona um efeito ao clipe atual e cria/ativa a aba.
     void addEffect(const QString& effectId);
 
+    // Aplica um efeito ao modelo do clipe, sem abrir aba nem mexer na seleção.
+    // Usado pela faixa de efeitos para aplicar o template a vários clipes.
+    // Retorna true se o modelo do clipe mudou (emite modified() nesse caso).
+    bool applyEffectToClip(Clip* clip, const QString& effectId);
+
 signals:
     void modified();
 

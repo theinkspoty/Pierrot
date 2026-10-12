@@ -156,83 +156,77 @@ void ExpressWidget::rebuildTabs()
 
 // ── Adiciona efeito (chamado pelo drag-and-drop) ─────────────────────────
 
-void ExpressWidget::addEffect(const QString& effectId)
+// Aplica um efeito ao clipe NO MODELO, sem abrir aba nem mexer na seleção.
+// É a mesma lógica de adição da addEffect(), fatorada para poder aplicar a
+// N clipes de uma vez (ex.: clipes que entram na faixa de efeitos). Emite
+// `modified()` somente se o clipe realmente mudou. Retorna true se mudou.
+bool ExpressWidget::applyEffectToClip(Clip* clip, const QString& effectId)
 {
-    if (!m_currentClip) {
-        qWarning() << "[OFX] Tentativa de adicionar efeito" << effectId << "sem clipe selecionado";
-        return;
-    }
-    qInfo() << "[OFX] addEffect:" << effectId << "ao clipe" << m_currentClip->id;
+    if (!clip) return false;
+    bool changed = false;
 
-    // Se já está aberto como aba, só ativa.
-    if (m_tabMap.contains(effectId)) {
-        m_tabs->setCurrentIndex(m_tabMap[effectId]);
-        return;
-    }
-
-    // Aplica o efeito ao clipe se for nativo e ainda não aplicado.
-    if (effectId == "pierrot_lainka" && !m_currentClip->lainkaEnabled) {
-        m_currentClip->lainkaEnabled = true;
-        m_currentClip->lainkaTargetFps = 6;
-        m_currentClip->lainkaJitterPos = 10.0;
-        m_currentClip->lainkaFlicker = 8.0;
-        m_currentClip->lainkaWarpAmount = 8.0;
-        m_currentClip->lainkaDustAmount = 0.0;
-        m_currentClip->lainkaScratchAmount = 0.0;
-        m_currentClip->lainkaOpacity = 100.0;
-        emit modified();
-    } else if (effectId == "pierrot_motion" && !m_currentClip->motionEnabled) {
-        m_currentClip->motionEnabled = true;
-        emit modified();
-    } else if (effectId == "pierrot_grayscale" && !m_currentClip->grayscale) {
-        m_currentClip->grayscale = true;
-        emit modified();
-    } else if (effectId == "pierrot_chromakey" && !m_currentClip->chromaKey) {
-        m_currentClip->chromaKey = true;
-        emit modified();
-    } else if (effectId == "pierrot_brightness" && m_currentClip->brightness == 0.0) {
-        m_currentClip->brightness = 0.2;
-        emit modified();
-    } else if (effectId == "pierrot_contrast" && m_currentClip->contrast == 1.0) {
-        m_currentClip->contrast = 1.2;
-        emit modified();
-    } else if (effectId == "pierrot_saturation" && m_currentClip->saturation == 1.0) {
-        m_currentClip->saturation = 1.2;
-        emit modified();
-    } else if (effectId == "pierrot_blur" && m_currentClip->blur == 0.0) {
-        m_currentClip->blur = 5.0;
-        emit modified();
-    } else if (effectId == "pierrot_psx" && !m_currentClip->psxEnabled) {
-        m_currentClip->psxEnabled = true;
-        m_currentClip->psxDither = 1.0;
-        m_currentClip->psxBits = 5;
-        emit modified();
+    if (effectId == "pierrot_lainka" && !clip->lainkaEnabled) {
+        clip->lainkaEnabled = true;
+        clip->lainkaTargetFps = 6;
+        clip->lainkaJitterPos = 10.0;
+        clip->lainkaFlicker = 8.0;
+        clip->lainkaWarpAmount = 8.0;
+        clip->lainkaDustAmount = 0.0;
+        clip->lainkaScratchAmount = 0.0;
+        clip->lainkaOpacity = 100.0;
+        changed = true;
+    } else if (effectId == "pierrot_motion" && !clip->motionEnabled) {
+        clip->motionEnabled = true;
+        changed = true;
+    } else if (effectId == "pierrot_grayscale" && !clip->grayscale) {
+        clip->grayscale = true;
+        changed = true;
+    } else if (effectId == "pierrot_chromakey" && !clip->chromaKey) {
+        clip->chromaKey = true;
+        changed = true;
+    } else if (effectId == "pierrot_brightness" && clip->brightness == 0.0) {
+        clip->brightness = 0.2;
+        changed = true;
+    } else if (effectId == "pierrot_contrast" && clip->contrast == 1.0) {
+        clip->contrast = 1.2;
+        changed = true;
+    } else if (effectId == "pierrot_saturation" && clip->saturation == 1.0) {
+        clip->saturation = 1.2;
+        changed = true;
+    } else if (effectId == "pierrot_blur" && clip->blur == 0.0) {
+        clip->blur = 5.0;
+        changed = true;
+    } else if (effectId == "pierrot_psx" && !clip->psxEnabled) {
+        clip->psxEnabled = true;
+        clip->psxDither = 1.0;
+        clip->psxBits = 5;
+        changed = true;
     } else if (effectId == "pierrot_audio_eq") {
-        if (std::fabs(m_currentClip->eqLow) <= 0.01
-            && std::fabs(m_currentClip->eqMid) <= 0.01
-            && std::fabs(m_currentClip->eqHigh) <= 0.01) {
+        if (std::fabs(clip->eqLow) <= 0.01
+            && std::fabs(clip->eqMid) <= 0.01
+            && std::fabs(clip->eqHigh) <= 0.01) {
             // EQ Express: preset inicial sutil (presença nos médios/agudos).
-            m_currentClip->eqLow = 0.0;
-            m_currentClip->eqMid = 1.5;
-            m_currentClip->eqHigh = 1.0;
-            emit modified();
+            clip->eqLow = 0.0;
+            clip->eqMid = 1.5;
+            clip->eqHigh = 1.0;
+            changed = true;
         }
-    } else if (effectId == "pierrot_audio_reverb" && !m_currentClip->reverb) {
-        m_currentClip->reverb = true;
-        m_currentClip->reverbMix = 0.35;
-        m_currentClip->reverbSize = 0.5;
-        emit modified();
+    } else if (effectId == "pierrot_audio_reverb" && !clip->reverb) {
+        clip->reverb = true;
+        clip->reverbMix = 0.35;
+        clip->reverbSize = 0.5;
+        changed = true;
     } else if (effectId.startsWith(QStringLiteral("trans:"))
                || effectId.startsWith(QStringLiteral("text:"))
                || effectId == QStringLiteral("pierrot_lumetri")) {
         // IDs do painel Effects tratados no MainWindow — não são OFX.
-        return;
+        return false;
     } else if (!effectId.startsWith("pierrot_")) {
         // frei0r: id "frei0r:<pluginName>".
         if (effectId.startsWith(QStringLiteral("frei0r:"))) {
             const QString name = effectId.mid(QStringLiteral("frei0r:").size());
             bool found = false;
-            for (const Frei0rEffect& fx : m_currentClip->frei0rFx)
+            for (const Frei0rEffect& fx : clip->frei0rFx)
                 if (fx.pluginName == name) { found = true; break; }
             if (!found) {
                 Frei0rEffect fx;
@@ -269,30 +263,58 @@ void ExpressWidget::addEffect(const QString& effectId)
                         fx.colors = info->paramDefaultColors;
                     }
                 }
-                m_currentClip->frei0rFx.append(fx);
-                qInfo() << "[frei0r] Efeito" << name << "aplicado ao clipe"
-                        << m_currentClip->id;
-                emit modified();
+                clip->frei0rFx.append(fx);
+                qInfo() << "[frei0r] Efeito" << name << "aplicado ao clipe" << clip->id;
+                changed = true;
             }
-            createFrei0rTab(name);
-            return;
-        }
-        // OFX: adiciona ao clipe se não existe.
-        bool found = false;
-        for (const OfxPluginInstance& fx : m_currentClip->ofxFx)
-            if (fx.pluginId == effectId) { found = true; break; }
-        if (!found) {
-            OfxPluginInstance fx;
-            fx.pluginId = effectId;
-            fx.enabled = true;
-            m_currentClip->ofxFx.append(fx);
-            qInfo() << "[OFX] Efeito" << effectId << "aplicado ao clipe" << m_currentClip->id
-                    << "- total de efeitos OFX:" << m_currentClip->ofxFx.size();
-            emit modified();
+        } else {
+            // OFX: adiciona ao clipe se não existe.
+            bool found = false;
+            for (const OfxPluginInstance& fx : clip->ofxFx)
+                if (fx.pluginId == effectId) { found = true; break; }
+            if (!found) {
+                OfxPluginInstance fx;
+                fx.pluginId = effectId;
+                fx.enabled = true;
+                clip->ofxFx.append(fx);
+                qInfo() << "[OFX] Efeito" << effectId << "aplicado ao clipe" << clip->id
+                        << "- total de efeitos OFX:" << clip->ofxFx.size();
+                changed = true;
+            }
         }
     }
 
+    if (changed) emit modified();
+    return changed;
+}
+
+void ExpressWidget::addEffect(const QString& effectId)
+{
+    if (!m_currentClip) {
+        qWarning() << "[OFX] Tentativa de adicionar efeito" << effectId << "sem clipe selecionado";
+        return;
+    }
+    qInfo() << "[OFX] addEffect:" << effectId << "ao clipe" << m_currentClip->id;
+
+    // Se já está aberto como aba, só ativa.
+    if (m_tabMap.contains(effectId)) {
+        m_tabs->setCurrentIndex(m_tabMap[effectId]);
+        return;
+    }
+
+    applyEffectToClip(m_currentClip, effectId);
+
+    // IDs do painel Effects tratados no MainWindow — não são OFX.
+    if (effectId.startsWith(QStringLiteral("trans:"))
+        || effectId.startsWith(QStringLiteral("text:"))
+        || effectId == QStringLiteral("pierrot_lumetri"))
+        return;
+
     // Cria a aba.
+    if (effectId.startsWith(QStringLiteral("frei0r:"))) {
+        createFrei0rTab(effectId.mid(QStringLiteral("frei0r:").size()));
+        return;
+    }
     if (effectId.startsWith("pierrot_"))
         createBuiltInTab(effectId);
     else

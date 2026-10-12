@@ -641,16 +641,29 @@ struct TrackGroup {
     QString mesaId;         // vazio = pasta normal; preenchido = grupo Mesa
 };
 
+// Escolha de efeito da FAIXA DE EFEITOS (template). Diferente do clip de
+// ajuste antigo (sem mídia, aplicado ao acumulado), o efeito da faixa é
+// COPIADO para cada clipe que entra na faixa: o clipe renderiza a própria
+// mídia com o efeito e segue editável no Express. `enabled` controla se novos
+// clipes recebem o efeito.
+struct TrackFx {
+    QString id;            // id do efeito: pierrot_*, frei0r:<nome>, ou id OFX
+    bool enabled = true;
+};
+
 struct Track {
     QString id;                // id único da track (para referência em MesaComposition)
     QString name;
     bool audio = false;
-    // ── Faixa de efeitos (Adjustment Layer, estilo Premiere/Resolve) ────────
-    // TRUE = faixa especial que NÃO renderiza mídia. Os clipes que ela contém
-    // são "clips de ajuste": carregam os campos de efeito de um Clip normal,
-    // mas sem mediaId. Na composição o efeito do clip de ajuste é aplicado ao
-    // ACUMULADO de tudo que está abaixo, na posição z-order desta faixa.
+    // ── Faixa de efeitos (estilo AE/Premiere, azul) ─────────────────────────
+    // TRUE = faixa especial que renderiza os clipes nela normalmente. Os
+    // efeitos escolhidos no painel (fxEffects) são copiados para cada clipe
+    // que ENTRA na faixa: o clipe renderiza a própria mídia já com o efeito e
+    // segue editável no Express. A faixa nasce vazia (sem clipe de ajuste).
     bool fxTrack = false;
+    // Efeitos escolhidos no painel da faixa de efeitos (apenas se fxTrack).
+    // Modelo copiado para cada clipe que entra na faixa.
+    QVector<TrackFx> fxEffects;
     QString blendMode = QStringLiteral("normal");
     double volume = 1.0;
     double pan = 0.0; // -1.0 (esquerda) a +1.0 (direita), 0.0 = centro
@@ -766,8 +779,8 @@ inline QString newId() {
 // valor.
 inline QColor recordingTrackColor() { return QColor(198, 62, 58); }
 
-// Azul da faixa de efeitos (Adjustment Layer). Assim como o vermelho de
-// gravação, fica no modelo para timeline e exportação usarem o mesmo valor.
+// Azul da faixa de efeitos. Assim como o vermelho de gravação, fica no modelo
+// para timeline e exportação usarem o mesmo valor.
 inline QColor fxTrackColor() { return QColor(58, 122, 198); }
 
 class Project {
@@ -874,9 +887,9 @@ public:
         (audio ? audioTracks : videoTracks).append(t);
     }
 
-    // Cria uma FAIXA DE EFEITOS (Adjustment Layer, azul). É uma faixa de vídeo
-    // com fxTrack=true que não renderiza mídia: os clipes nela aplicam seus
-    // efeitos ao acumulado de tudo que está abaixo. `atTop` = insere no topo
+    // Cria uma FAIXA DE EFEITOS (azul). Os clipes movidos para ela recebem uma
+    // cópia dos efeitos escolhidos no painel da faixa (Track::fxEffects): a
+    // faixa não tem clipe de ajuste pré-criado. `atTop` = insere no topo
     // (índice 0, acima de tudo); senão, no fim da pilha de vídeo.
     void addFxTrack(bool atTop = true) {
         Track t;
@@ -885,14 +898,6 @@ public:
         t.fxTrack = true;
         t.name = QStringLiteral("Efeitos");
         t.color = fxTrackColor();
-        // Um clipe de ajuste inicial cobrindo 10s, para já ter onde aplicar
-        // efeitos. Sem mediaId: é um clipe de ajuste.
-        Clip c;
-        c.id = newId();
-        c.pos = 0.0;
-        c.dur = 10.0;
-        c.name = QStringLiteral("Ajuste");
-        t.clips.append(c);
         if (atTop) videoTracks.insert(0, t);
         else videoTracks.append(t);
     }

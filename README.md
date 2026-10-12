@@ -64,6 +64,25 @@ O binário também precisa do `ffmpeg` no `PATH` para exportar (qualquer distro)
 4. `S` divide o clipe na posição do playhead; `Delete` remove o selecionado.
 5. **Arquivo → Exportar…** (Ctrl+E) para gerar o vídeo final.
 
+## Agradecimentos e inspirações
+
+Pierrot é inspirado em **2 programas**: **Sony Vegas 8** e **Final Cut Express
+2003** — totalmente escrito pra Linux, para uso pessoal, baseado nas ferramentas
+que eu acho úteis.
+
+Agradecimentos especiais a **Gumduck**, por ajudar a desenvolver o áudio e
+features.
+
+Inspirações adicionais e o que cada uma ajudou a moldar:
+
+- **Adobe Premiere Pro** — painel de Efeitos, Effect Controls (Propriedades),
+  Media Pool, Source Monitor e o mixer de áudio.
+- **Adobe After Effects** — o canvas de composição (Mesa), a faixa de efeitos
+  expandível e o Graph Editor de keyframes.
+- **DaVinci Resolve** — organização por categorias nas configurações e o visual
+  de cor/timecode.
+- **Blender** — o HUD de transformação do canvas Mesa.
+
 ## Licença
 
 Pierrot está sob a **GPL-3.0**. É uso pessoal, mas o código é aberto — se

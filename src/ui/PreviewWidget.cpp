@@ -2244,10 +2244,6 @@ void PreviewWidget::renderFrame(QPainter& p) {
         double s = 1.0, sX = 1.0, sY = 1.0, rot = 0.0, x = 0.0, y = 0.0;
         double alpha = 1.0, ox = 0.0, oy = 0.0;
         QPainter::CompositionMode mode = QPainter::CompositionMode_SourceOver;
-        // Faixa de efeitos (Adjustment Layer): sem frame próprio; aplica os
-        // efeitos de `fxClip` ao acumulado NESTA posição z-order.
-        bool isAdjustment = false;
-        const Clip* fxClip = nullptr;
     };
     QVector<Layer> layers;
 
@@ -2259,23 +2255,6 @@ void PreviewWidget::renderFrame(QPainter& p) {
         for (int tr = (int)m_project->videoTracks.size() - 1; tr >= 0; --tr) {
             const Track& t = m_project->videoTracks[tr];
             if (!t.visible) continue;   // faixa oculta (olho) não participa da composição
-            // Faixa de efeitos (Adjustment Layer): não renderiza mídia. Aplica os
-            // efeitos do clipe de ajuste ativo ao acumulado NESTA posição z-order.
-            if (t.fxTrack) {
-                const Clip* fx = nullptr;
-                for (const Clip& cl : t.clips) {
-                    if (cl.isText) continue;
-                    if (m_playhead >= cl.pos && m_playhead < cl.pos + cl.dur)
-                        if (!fx || cl.pos > fx->pos) fx = &cl;
-                }
-                if (fx) {
-                    Layer A;
-                    A.isAdjustment = true;
-                    A.fxClip = fx;
-                    layers.append(A);
-                }
-                continue;
-            }
             const bool isMesaTrack = m_project->findMesaForTrack(t.id) != nullptr;
             const Clip* c = nullptr;
             for (const Clip& cl : t.clips) {
@@ -2430,15 +2409,6 @@ void PreviewWidget::renderFrame(QPainter& p) {
         const double cx = acc.width() / 2.0;
         const double cy = acc.height() / 2.0;
         for (const Layer& L : layers) {
-            // Faixa de efeitos (Adjustment Layer): aplica os efeitos do clipe de
-            // ajuste ao ACUMULADO atual (tudo que está abaixo, nesta posição
-            // z-order). Não pode haver painter ativo em `acc` — por isso o draw
-            // de cada camada usa um painter próprio (escopado).
-            if (L.isAdjustment) {
-                if (L.fxClip)
-                    applyBasicEffectsOn(acc, *L.fxClip, m_playhead - L.fxClip->pos);
-                continue;
-            }
             if (L.frame.isNull()) continue;
             QPainter ap(&acc);
             ap.setClipRect(QRect(0, 0, acc.width(), acc.height()));
@@ -2924,7 +2894,8 @@ const Clip* PreviewWidget::clipAt(double t) const {
     for (int tr = 0; tr < (int)m_project->videoTracks.size(); ++tr) {
         const Track& track = m_project->videoTracks[tr];
         if (!track.visible) continue;   // faixa oculta (olho)
-        if (track.fxTrack) continue;    // faixa de efeitos não é clipe "topo"
+        // Faixa de efeitos renderiza mídia normal (o efeito entra no próprio
+        // clipe ao entrar na faixa); ela é o topo da pilha como qualquer outra.
         // Track de Mesa gera quadro mesmo sem mídia própria (a composição é a
         // fonte de vídeo).
         const bool mesaTrack = m_project->findMesaForTrack(track.id) != nullptr;

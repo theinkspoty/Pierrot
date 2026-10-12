@@ -288,6 +288,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     m_express->setOfxPlugins(m_ofxManager->plugins());
     m_express->setFrei0rPlugins(m_frei0rManager->plugins());
     m_express->setFrei0rManager(m_frei0rManager);
+    // Catálogos para o menu "+" do painel de efeitos da faixa de efeitos.
+    m_timeline->setFxOfxPlugins(m_ofxManager->plugins());
+    m_timeline->setFxFrei0rPlugins(m_frei0rManager->plugins());
     connect(m_express, &ExpressWidget::modified, this, &MainWindow::setModified);
     connect(m_express, &ExpressWidget::modified, this, [this]() { m_preview->refreshView(); });
 
@@ -370,6 +373,91 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         // Efeitos de vídeo/áudio/frei0r/OFX → Express.
         m_express->addEffect(id);
     });
+
+    // Painel de efeitos da faixa de efeitos (estilo AE). O "+" grava a escolha
+    // NA FAIXA (Track::fxEffects) e a aplica aos clipes que já estão nela; o
+    // olho liga/desliga a escolha propagando aos clipes; o clique na linha abre
+    // o efeito no Express (sobre o clipe ativo da faixa). O Lumetri continua
+    // indo para o painel de correção de cor.
+    auto applyFxToClip = [this](const QString& clipId, const QString& id) {
+        Clip* c = m_timeline->findClipById(clipId);
+        if (!c) return;
+        if (id == QStringLiteral("pierrot_lumetri")) {
+            m_timeline->openGradingForClip(clipId);
+            return;
+        }
+        // Garante o clipe selecionado (seleção dispara selectionChanged, que
+        // sincroniza o clipe no Express).
+        if (m_timeline->lastSelectedId() != clipId)
+            m_timeline->selectClip(clipId);
+        m_express->addEffect(id);
+        if (m_expressDock) { m_expressDock->show(); m_expressDock->raise(); }
+        setModified();
+        m_timeline->update();
+    };
+    auto findVideoTrack = [this](const QString& trackId) -> Track* {
+        for (Track& t : m_project.videoTracks)
+            if (t.id == trackId) return &t;
+        return nullptr;
+    };
+    connect(m_timeline, &TimelineWidget::fxEffectAddRequested, this,
+            [this, findVideoTrack](const QString& trackId, const QString& id) {
+                Track* tr = findVideoTrack(trackId);
+                if (!tr) return;
+                pushUndo();
+                // Garante a escolha na lista da faixa (idempotente).
+                bool exists = false;
+                for (TrackFx& fx : tr->fxEffects)
+                    if (fx.id == id) { exists = true; fx.enabled = true; break; }
+                if (!exists) tr->fxEffects.append(TrackFx{id, true});
+                // Aplica aos clipes que já estão na faixa.
+                bool any = false;
+                for (Clip& c : tr->clips)
+                    if (!c.isText && m_express->applyEffectToClip(&c, id)) any = true;
+                if (any) setModified();
+                m_timeline->update();
+                m_preview->refreshView();
+            });
+    connect(m_timeline, &TimelineWidget::fxEffectEditRequested, this,
+            [applyFxToClip](const QString& clipId, const QString& id) {
+                applyFxToClip(clipId, id);
+            });
+    connect(m_timeline, &TimelineWidget::fxEffectToggleRequested, this,
+            [this, findVideoTrack](const QString& trackId, const QString& id, bool enabled) {
+                Track* tr = findVideoTrack(trackId);
+                if (!tr) return;
+                pushUndo();
+                for (TrackFx& fx : tr->fxEffects)
+                    if (fx.id == id) { fx.enabled = enabled; break; }
+                bool any = false;
+                for (Clip& c : tr->clips) {
+                    if (c.isText) continue;
+                    if (enabled) {
+                        // Cria a instância se faltar; se já existe (desligada
+                        // pelo olho), apenas religa.
+                        if (!m_express->applyEffectToClip(&c, id))
+                            if (m_timeline->setFxEffectEnabled(&c, id, true)) any = true;
+                    } else if (m_timeline->setFxEffectEnabled(&c, id, false)) any = true;
+                }
+                if (any) setModified();
+                m_timeline->update();
+                m_preview->refreshView();
+            });
+    connect(m_timeline, &TimelineWidget::fxTrackClipAdded, this,
+            [this, findVideoTrack](const QString& trackId, const QString& clipId) {
+                Track* tr = findVideoTrack(trackId);
+                Clip* c = m_timeline->findClipById(clipId);
+                if (!tr || !c) return;
+                // Copia os efeitos habilitados da faixa para o clipe.
+                bool any = false;
+                for (const TrackFx& fx : tr->fxEffects)
+                    if (fx.enabled && m_express->applyEffectToClip(c, fx.id)) any = true;
+                if (any) {
+                    setModified();
+                    m_timeline->update();
+                    m_preview->refreshView();
+                }
+            });
 
     // Conecta seleção de clipes na timeline ao painel de efeitos, ao Express
     // e ao painel de Propriedades (Effect Controls).
@@ -1963,12 +2051,22 @@ void MainWindow::createActions() {
             tr("<b>Pierrot</b> — editor de vídeo de código aberto<br>"
                "Versão ") +
             QString::fromLatin1(PIERROT_VERSION) +
-            tr("<br><br>"
-               "sempre quis migrar para o linux, mas a falta de editor sempre me "
-               "fazia voltar ao windows... 0s editores que existiam nas lojas não "
-               "respondiam o estilo de edição que eu fazia. comecei esse projeto para "
-               "ser um programa útil para mim, mas deve ter outros editores como eu, "
-               "então deixei ele de código aberto para que todos possam usar.<br><br>"
+            tr(" — Protótipo 4<br><br>"
+               "Pierrot é um editor de vídeo inspirado em 2 programas \"Sony Vegas 8\" "
+               "e \"Final Cut Express 2003\", totalmente escrito pra linux. Para uso "
+               "pessoal, baseado nas ferramentas que eu acho úteis.<br><br>"
+               "<b>Agradecimentos:</b> Gumduck, por ajudar a desenvolver o áudio e "
+               "features.<br><br>"
+               "<b>Inspirações adicionais</b>"
+               "<ul>"
+               "<li><b>Adobe Premiere Pro</b> — painel de Efeitos, Effect Controls "
+               "(Propriedades), Media Pool, Source Monitor e o mixer de áudio.</li>"
+               "<li><b>Adobe After Effects</b> — o canvas de composição (Mesa), a "
+               "faixa de efeitos expandível e o Graph Editor de keyframes.</li>"
+               "<li><b>DaVinci Resolve</b> — organização por categorias nas "
+               "configurações e o visual de cor/timecode.</li>"
+               "<li><b>Blender</b> — o HUD de transformação do canvas Mesa.</li>"
+               "</ul>"
                "<a href='https://github.com/theinkspoty/Pierrot'>github.com/theinkspoty/Pierrot</a>"));
         box.setTextInteractionFlags(Qt::TextBrowserInteraction);
         box.exec();

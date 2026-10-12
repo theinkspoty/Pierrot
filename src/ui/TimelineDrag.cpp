@@ -24,6 +24,8 @@
 #include <QScrollBar>
 #include <QTimer>
 #include <QLineEdit>
+#include <QMenu>
+#include <QAction>
 #include <QSet>
 #include <QToolTip>
 #include <algorithm>
@@ -379,8 +381,16 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
                                : &m_project->videoTracks[brow];
             emit editStart();
             if (b == 0) {                              // recolher/expandir
-                tr->collapsed = !tr->collapsed;
-                updateScrollRanges();
+                if (tr->fxTrack) {
+                    // Faixa de efeitos: a seta expande o painel de efeitos
+                    // (lista do clipe de ajuste) em vez de recolher a faixa.
+                    setFxExpanded(tr->id, !isFxExpanded(tr->id));
+                    updateScrollRanges();
+                    refreshView();
+                } else {
+                    tr->collapsed = !tr->collapsed;
+                    updateScrollRanges();
+                }
             }
             else if (baudio && (b == 1 || b == 3)) {       // keyframe anterior/próximo
                 const QVector<Keyframe>& kfs = tr->kfVolume;
@@ -489,6 +499,41 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
             m_dropAudio = false;
             m_dropGroup.clear();
             m_dragStart = e->pos();
+            return;
+        }
+    }
+
+    // Painel de efeitos da faixa de efeitos expandida (estilo AE): o "+" grava
+    // a escolha NA FAIXA (aplica aos clipes dela), o olho liga/desliga a escolha
+    // (propagando aos clipes) e o clique na linha abre o efeito no dock Express.
+    {
+        Clip* fxClip = nullptr;
+        int fpart = 0;
+        QString feid;
+        bool fen = false;
+        if (fxPanelHit(e->pos(), fxClip, fpart, feid, fen)) {
+            QString fxtrackId;
+            {
+                int trow = -1;
+                bool taudio = false;
+                if (rowFromY(e->pos().y(), trow, taudio) && !taudio
+                    && trow >= 0 && trow < (int)m_project->videoTracks.size())
+                    fxtrackId = m_project->videoTracks[trow].id;
+            }
+            if (fpart == 1) {
+                QMenu menu(this);
+                buildFxAddMenu(&menu);
+                QAction* act = menu.exec(e->globalPosition().toPoint());
+                if (act) {
+                    const QString id = act->data().toString();
+                    if (!id.isEmpty())
+                        emit fxEffectAddRequested(fxtrackId, id);
+                }
+            } else if (fpart == 3) {
+                emit fxEffectToggleRequested(fxtrackId, feid, !fen);
+            } else if (fpart == 2 && fxClip) {
+                emit fxEffectEditRequested(fxClip->id, feid);
+            }
             return;
         }
     }
@@ -1769,6 +1814,10 @@ void TimelineWidget::finishDrop(const QStringList& mediaIds, const QPoint& dropP
             auto it = clips.begin();
             while (it != clips.end() && it->pos <= c.pos) ++it;
             clips.insert(it, c);
+            // Mídia solta diretamente na faixa de efeitos: aplicar a ela os
+            // efeitos habilitados da faixa (o MainWindow trata o update).
+            if (m_project->videoTracks[vRow].fxTrack)
+                emit fxTrackClipAdded(m_project->videoTracks[vRow].id, c.id);
             lastPlaced = c.id;
         }
         for (int k = 0; k < aStreams; ++k) {
