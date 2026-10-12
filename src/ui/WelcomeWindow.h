@@ -6,19 +6,20 @@
 #pragma once
 
 #include <QDialog>
-#include <QPixmap>
 #include <QHash>
 
 class QComboBox;
 class QSpinBox;
 class QLineEdit;
 class QListWidget;
+class QListWidgetItem;
 class QCheckBox;
 class QLabel;
-class QListWidgetItem;
+class QPushButton;
 
-class BannerWidget;
-
+// Janela de boas-vindas: abre/cria projeto antes de instanciar o editor.
+// Visual sólido estilo Premiere (painéis #232323, um único acento azul), com
+// moldura de janela padrão (mesma do editor) — sem titlebar próprio.
 class WelcomeWindow : public QDialog {
     Q_OBJECT
 public:
@@ -34,22 +35,23 @@ public:
 private slots:
     void openSelected();
     void removeSelected();
+    void browseProject();
     void requestNewProject();
     void onResolutionChanged(int idx);
     void onAutoIntervalChanged(int idx);
+    void onAutoSaveToggled(bool on);
 
 private:
-    void buildLayout();
+    void buildUi();
     void loadRecentProjects();
-    void applyThumb(const QString& filePath);
+    void applyThumb(const QString& mediaPath);
+    void setRecentGrid(bool grid);
     int autosaveMinutes() const;
     void saveAutoSettings() const;
-    void paintEvent(QPaintEvent* e) override;
-    void resizeEvent(QResizeEvent* e) override;
 
     QListWidget* m_recent = nullptr;
-    BannerWidget* m_banner = nullptr;  // faixa do topo (de ponta a ponta, crop)
-    QPixmap m_bannerImg;               // imagem original do banner
+    QPushButton* m_gridBtn = nullptr;
+    QPushButton* m_listBtn = nullptr;
     QLineEdit* m_name = nullptr;
     QComboBox* m_resolution = nullptr;
     QWidget* m_customWidget = nullptr;

@@ -49,6 +49,10 @@ public:
     // Retorna true se o modelo do clipe mudou (emite modified() nesse caso).
     bool applyEffectToClip(Clip* clip, const QString& effectId);
 
+    // Remove um efeito do modelo do clipe, sem abrir aba nem mexer na seleção.
+    // Retorna true se o modelo do clipe mudou (emite modified() nesse caso).
+    bool removeEffectFromClip(Clip* clip, const QString& effectId);
+
 signals:
     void modified();
 

@@ -251,8 +251,10 @@ em tom claro, volume da faixa atrás de **Shift+V** (como Premiere), seleção
 
 - [x] **Faixa de gravação não pode ser removida** — corrigido: menu de contexto
   da faixa de gravação → "Excluir faixa de gravação" (`removeRecordingTrack`).
-- [ ] **Ctrl+Z undo excessivo** — `pushUndo()` empilha snapshot do projeto sem
-  coalescing; falta macro/timer que agregue entradas relacionadas.
+- [x] **Ctrl+Z undo excessivo** — corrigido: o dedup `back() == snap` em
+  `pushUndo()` só se aplica no topo da pilha. Antes, depois de um undo/redo o
+  pré-estado da nova edição coincidia com o topo e o push era engolido — o
+  Ctrl+Z seguinte apagava 2 ações de uma vez.
 - [ ] **Bug dock no hover** — diagnóstico: não é `restoreState`; é
   `QMainWindow::AnimatedDocks` + `AllowNestedDocks`. Decisão de produto
   (layout Premiere), não bug.

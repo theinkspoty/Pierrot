@@ -47,6 +47,8 @@
 #include <QMenu>
 #include <QKeyEvent>
 #include <QDebug>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QMimeData>
 #include <QUrl>
 #include <QFileInfo>
@@ -3358,6 +3360,11 @@ bool TimelineWidget::moveClipToTrack(const QString& id, int row, bool audio) {
     // não ficarem pendurados durante o arrasto (MoveClip usa findClipById
     // logo depois e leria memória inválida, "separando" o par e travando).
     rebuildClipIndex();
+    // Clipe que saiu de uma faixa de efeitos: o efeito é da faixa, então o
+    // clipe "sai como entrou" (MainWindow remove os efeitos copiados da faixa).
+    Track& src = m_project->videoTracks[curRow];
+    if (src.fxTrack && !dst.fxTrack && !copy.isText)
+        emit fxTrackClipRemoved(src.id, copy.id);
     // Clipe que entrou numa faixa de efeitos: aplica os efeitos habilitados da
     // faixa (MainWindow copies Track::fxEffects para o clipe).
     if (dst.fxTrack && !copy.isText)

@@ -5,7 +5,9 @@
 
 #pragma once
 
+#include <QWidget>
 #include <QDialog>
+#include <QColor>
 #include "colombina/models/Project.h"
 
 class QPlainTextEdit;
@@ -15,24 +17,43 @@ class QCheckBox;
 class QSlider;
 class QPushButton;
 class QLabel;
+class TextPreview;
 
-// Criador de texto/título sobreposto de um clipe (estilo Premiere/Vegas/FC).
+// Formulário de edição de texto/título, reutilizado em dois contextos:
+//   • dentro do diálogo modal (TextEditorDialog), aplicando só no OK;
+//   • dentro de um painel dockável (live), aplicando a cada mudança.
 // Edita o TextStyle efetivo do clipe: se ele estiver vinculado a um
-// TextResource (cópia unificada), escreve no recurso (atualiza todos os
-// clipes vinculados); senão, escreve no próprio clipe.
-class TextEditorDialog : public QDialog {
+// TextResource (cópia unificada), escreve no recurso (atualiza os vinculados).
+class TextEditorWidget : public QWidget {
     Q_OBJECT
 public:
-    explicit TextEditorDialog(Project* project, Clip* clip, QWidget* parent = nullptr);
-    void accept() override;
+    explicit TextEditorWidget(QWidget* parent = nullptr);
+
+    // Define o clipe editado (nullptr desabilita o formulário).
+    void setContext(Project* project, Clip* clip);
+    // Modo live: cada mudança é aplicada na hora (emite changed()). Desligado,
+    // o formulário só escreve quando apply() é chamado (diálogo modal).
+    void setLive(bool live) { m_live = live; }
+    // Escreve os controles no estilo do clipe e emite changed().
+    void apply();
+
+signals:
+    void changed();
 
 private:
-    QPushButton* makeColorButton(QColor color);
+    QPushButton* makeColorButton(const QColor& color);
     void pickColor(QPushButton* btn);
+    void syncFromStyle();
+    void refreshPreview();
+    void onEdited();
+    TextStyle* style() const;
 
-    Project* m_project;
-    Clip* m_clip;
-    TextStyle& m_style;
+    Project* m_project = nullptr;
+    Clip* m_clip = nullptr;
+    bool m_live = false;
+    bool m_updating = false;   // evita reentrância ao carregar os controles
+
+    TextPreview* m_preview = nullptr;
     QPlainTextEdit* m_text = nullptr;
     QComboBox* m_font = nullptr;
     QDoubleSpinBox* m_size = nullptr;   // % da altura do quadro
@@ -47,4 +68,15 @@ private:
     QComboBox* m_align = nullptr;
     QSlider* m_posX = nullptr;
     QSlider* m_posY = nullptr;
+};
+
+// Diálogo modal clássico (criação/edição de um clipe de texto).
+class TextEditorDialog : public QDialog {
+    Q_OBJECT
+public:
+    explicit TextEditorDialog(Project* project, Clip* clip, QWidget* parent = nullptr);
+    void accept() override;
+
+private:
+    TextEditorWidget* m_editor = nullptr;
 };

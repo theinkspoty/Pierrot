@@ -29,6 +29,10 @@ jobs:
         run: cmake --build build -j"$(nproc)"
 
       - name: Testes (ctest)
+        # O runner é headless: sem isto o Qt tenta abrir xcb/wayland e morre
+        # antes de rodar os testes que criam QGuiApplication (concurrency/encoder).
+        env:
+          QT_QPA_PLATFORM: "offscreen"
         run: ctest --test-dir build --output-on-failure
 
   # É o job que procura de fato os SIGSEGV em decode concorrente: o código
@@ -68,6 +72,7 @@ jobs:
         # imprimir. detect_leaks fica desligado de propósito: o Qt e o FFmpeg
         # deixam caches globais vivos na saída e reportam como leak.
         env:
+          QT_QPA_PLATFORM: "offscreen"
           ASAN_OPTIONS: exitcode=1:detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: ctest --test-dir build --output-on-failure -E tst_crashreporter

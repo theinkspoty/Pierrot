@@ -419,6 +419,8 @@ static QJsonObject clipToJson(const Clip& c) {
         f0rArr.append(fxo);
     }
     o["frei0rFx"] = f0rArr;
+    // Efeitos copiados da faixa de efeitos (origem da faixa, removidos ao sair).
+    o["fromFxTrack"] = QJsonArray::fromStringList(c.fromFxTrack);
     // ── Máscaras ─────────────────────────────────────────────────────────
     QJsonArray maskArr;
     for (const Mask& m : c.masks) {
@@ -643,6 +645,11 @@ static Clip clipFromJson(const QJsonObject& o) {
             fx.colors.append(QColor::isValidColorName(s) ? QColor(s) : QColor());
         }
         c.frei0rFx.append(fx);
+    }
+    // Efeitos copiados da faixa de efeitos (origem da faixa).
+    if (o["fromFxTrack"].isArray()) {
+        for (const QJsonValue& v : o["fromFxTrack"].toArray())
+            c.fromFxTrack.append(v.toString());
     }
     // ── Máscaras ─────────────────────────────────────────────────────────
     const QJsonArray maskArr = o["masks"].toArray();

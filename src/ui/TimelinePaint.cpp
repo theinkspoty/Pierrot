@@ -1236,7 +1236,12 @@ void TimelineWidget::drawAudioWaveform(QPainter& p, const QRect& r, const Clip& 
         gPeak = peaks[idx];
         if (gPeak < 1e-4f) gPeak = peaks.last();
     }
-    const double gain = gPeak > 1e-4 ? (0.92 / gPeak) : 1.0;
+    // Ganho limitado: um corte quase todo silêncio tem só ruído de fundo
+    // (~1e-4..1e-3). Sem teto, `0.92/gPeak` viraria milhares e a onda "falsa"
+    // encheria o clipe inteiro (o clássico "buga ao cortar em silêncio"). O
+    // teto mantém o silêncio plano e não afeta cortes com sinal real.
+    constexpr double kMaxWaveGain = 20.0;
+    const double gain = gPeak > 1e-4 ? std::min(0.92 / gPeak, kMaxWaveGain) : 1.0;
 
     // Onda em tom CLARO do matiz do clipe, quase opaca (Premiere: waveform
     // claro sobre o corpo sólido, sem transparência crescendo por amplitude).
@@ -2122,6 +2127,11 @@ QRect TimelineWidget::fxRowEyeRect(int y, int rowH, int idx) const {
     return QRect(r.x() + 5, r.y() + 2, 16, kFxRowH - 4);
 }
 
+QRect TimelineWidget::fxRowDelRect(int y, int rowH, int idx) const {
+    const QRect r = fxRowRect(y, rowH, idx);
+    return QRect(r.right() - 21, r.y() + 2, 16, kFxRowH - 4);
+}
+
 bool TimelineWidget::fxPanelHit(const QPoint& pos, Clip*& clip, int& part,
                                 QString& effectId, bool& enabled) const {
     clip = nullptr;
@@ -2155,7 +2165,11 @@ bool TimelineWidget::fxPanelHit(const QPoint& pos, Clip*& clip, int& part,
     if (idx >= n) { part = 0; return true; }                    // respiro inferior: consome
     effectId = ids[idx];
     enabled = ens[idx];
-    part = fxRowEyeRect(y, rowH, idx).contains(pos) ? 3 : 2;
+    if (fxRowDelRect(y, rowH, idx).contains(pos)) {
+        part = 4;                                               // botão "×"
+    } else {
+        part = fxRowEyeRect(y, rowH, idx).contains(pos) ? 3 : 2;
+    }
     return true;
 }
 
@@ -2290,9 +2304,14 @@ void TimelineWidget::drawFxPanel(QPainter& p, const Track& track, int y, int row
         p.setFont(rf);
         p.setPen(ens[i] ? QColor(0xD6, 0xD6, 0xD6) : QColor(0x88, 0x88, 0x8C));
         const QString nm = p.fontMetrics().elidedText(
-            labels[i], Qt::ElideRight, rr.width() - 40);
-        p.drawText(QRect(er.right() + 6, rr.y(), rr.width() - 42, rr.height()),
+            labels[i], Qt::ElideRight, rr.width() - 62);
+        p.drawText(QRect(er.right() + 6, rr.y(), rr.width() - 64, rr.height()),
                    Qt::AlignLeft | Qt::AlignVCenter, nm);
+        // Botão "×" (remover efeito da faixa).
+        const QRect dr = fxRowDelRect(y, rowH, i);
+        p.setPen(QColor(0x9A, 0x9A, 0x9E));
+        p.drawLine(dr.left() + 4, dr.top() + 4, dr.right() - 4, dr.bottom() - 4);
+        p.drawLine(dr.left() + 4, dr.bottom() - 4, dr.right() - 4, dr.top() + 4);
     }
     p.setFont(basef);
     p.restore();

@@ -45,7 +45,7 @@
 #include <QFontMetrics>
 #include <QMouseEvent>
 #include <QResizeEvent>
-#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 #include <QAudioSink>
 #include <QMediaDevices>
 #else
@@ -2779,7 +2779,7 @@ void PreviewWidget::applySeekVisual(double t) {
 }
 
 double PreviewWidget::audioClockSec() const {
-#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     if (m_audioSink) return m_audioSink->processedUSecs() / 1.0e6;
 #else
     if (m_audioOut) return m_audioOut->processedUSecs() / 1.0e6;
@@ -3193,7 +3193,7 @@ void PreviewWidget::startAudio(double t) {
     }
 
     QAudioFormat fmt;
-#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     fmt.setSampleFormat(QAudioFormat::Int16);
 #else
     fmt.setCodec(QStringLiteral("audio/pcm"));
@@ -3217,7 +3217,7 @@ void PreviewWidget::startAudio(double t) {
     m_audioFeed->updateSources(sources, /*reseek=*/true,
                                QVector<AudioMixer::SourceInfo>(), -1, t);
 
-#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     const QAudioDevice def = QMediaDevices::defaultAudioOutput();
     if (def.isNull()) {
         if (audioDbg()) qDebug() << "[audio] defaultAudioOutput nulo — sem saída de áudio";
@@ -3257,7 +3257,7 @@ void PreviewWidget::startAudio(double t) {
 }
 
 void PreviewWidget::stopAudio() {
-#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     if (m_audioSink) {
         // Não destrói: o sink é reutilizado no próximo play (C4). `start()`
         // troca a fonte para o novo m_audioFeed. O `deleteLater` da antiga

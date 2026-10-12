@@ -502,6 +502,12 @@ struct Clip {
     // ── Efeitos frei0r (plugins FOSS: Kdenlive/Shotcut/MLT) ─────────────
     QVector<Frei0rEffect> frei0rFx; // stack frei0r (ordem = aplicação)
 
+    // Efeitos copiados da FAIXA DE EFEITOS para este clipe (ids). O efeito é
+    // da faixa, não do clipe: quando o clipe sai da faixa, esses efeitos são
+    // removidos (o clipe "sai como entrou"). Efeitos adicionados manualmente
+    // pelo usuário não entram nesta lista e não são tocados.
+    QStringList fromFxTrack;
+
     // ── Máscaras (recorte de forma animável) ────────────────────────────
     // Uma ou mais máscaras em união (aditivo). Aplicadas após o crop e antes
     // do transform, sobre o quadro do clipe. Serializadas no .Blanc.

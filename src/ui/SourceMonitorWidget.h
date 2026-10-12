@@ -21,6 +21,8 @@ class QTimer;
 class QKeyEvent;
 class QToolButton;
 class FFmpegDecoder;
+class SourceScrub;
+class AspectLabel;
 
 class SourceMonitorWidget : public QWidget {
     Q_OBJECT
@@ -54,7 +56,8 @@ protected:
     void keyPressEvent(QKeyEvent* e) override;
 
 private slots:
-    void seekChanged(int);
+    void onScrubPos(double p, bool fromUser);
+    void onScrubRange(double in, double out);
     void setPos(double p, bool fromUser);
     void playTick();
     void updatePreview();
@@ -76,12 +79,11 @@ private:
     double m_out = 0.0;
     bool m_playing = false;
     double m_pos = 0.0;              // posição autoritativa, em segundos
-    bool m_updatingSeek = false;     // evita eco seekChanged <-> setPos
     QElapsedTimer m_playClock;
 
     QLabel* m_title = nullptr;
-    QLabel* m_preview = nullptr;
-    QSlider* m_seek = nullptr;
+    AspectLabel* m_preview = nullptr;
+    SourceScrub* m_scrub = nullptr;
     QLabel* m_timeLbl = nullptr;
     QLabel* m_rangeLbl = nullptr;
     QDoubleSpinBox* m_spIn = nullptr;

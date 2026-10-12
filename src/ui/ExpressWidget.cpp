@@ -326,40 +326,70 @@ void ExpressWidget::addEffect(const QString& effectId)
 
 // ── Remove efeito do clipe ───────────────────────────────────────────────
 
+// Remove um efeito do MODELO do clipe (sem mexer na seleção/abas). Retorna true
+// se o clipe realmente mudou (emite modified() nesse caso).
+bool ExpressWidget::removeEffectFromClip(Clip* clip, const QString& effectId)
+{
+    if (!clip) return false;
+    bool changed = false;
+
+    if (effectId == "pierrot_lainka") {
+        if (clip->lainkaEnabled) { clip->lainkaEnabled = false; changed = true; }
+    } else if (effectId == "pierrot_motion") {
+        if (clip->motionEnabled) { clip->motionEnabled = false; changed = true; }
+    } else if (effectId == "pierrot_grayscale") {
+        if (clip->grayscale) { clip->grayscale = false; changed = true; }
+    } else if (effectId == "pierrot_chromakey") {
+        if (clip->chromaKey) { clip->chromaKey = false; changed = true; }
+    } else if (effectId == "pierrot_brightness") {
+        if (clip->brightness != 0.0) { clip->brightness = 0.0; changed = true; }
+    } else if (effectId == "pierrot_contrast") {
+        if (clip->contrast != 1.0) { clip->contrast = 1.0; changed = true; }
+    } else if (effectId == "pierrot_saturation") {
+        if (clip->saturation != 1.0) { clip->saturation = 1.0; changed = true; }
+    } else if (effectId == "pierrot_blur") {
+        if (clip->blur != 0.0) { clip->blur = 0.0; changed = true; }
+    } else if (effectId == "pierrot_psx") {
+        if (clip->psxEnabled) { clip->psxEnabled = false; changed = true; }
+    } else if (effectId == "pierrot_audio_eq") {
+        if (std::fabs(clip->eqLow) > 0.01 || std::fabs(clip->eqMid) > 0.01
+            || std::fabs(clip->eqHigh) > 0.01) {
+            clip->eqLow = clip->eqMid = clip->eqHigh = 0.0;
+            changed = true;
+        }
+    } else if (effectId == "pierrot_audio_reverb") {
+        if (clip->reverb) { clip->reverb = false; changed = true; }
+    } else if (effectId.startsWith(QStringLiteral("frei0r:"))) {
+        const QString name = effectId.mid(QStringLiteral("frei0r:").size());
+        for (int i = 0; i < clip->frei0rFx.size(); ++i) {
+            if (clip->frei0rFx[i].pluginName == name) {
+                clip->frei0rFx.removeAt(i);
+                changed = true;
+                break;
+            }
+        }
+    } else if (effectId.startsWith(QStringLiteral("trans:"))
+               || effectId.startsWith(QStringLiteral("text:"))
+               || effectId == QStringLiteral("pierrot_lumetri")) {
+        // Tratados no MainWindow — não são efeitos de clipe removíveis aqui.
+    } else {
+        // OFX: remove do clipe.
+        for (int i = 0; i < clip->ofxFx.size(); ++i) {
+            if (clip->ofxFx[i].pluginId == effectId) {
+                clip->ofxFx.removeAt(i);
+                changed = true;
+                break;
+            }
+        }
+    }
+
+    if (changed) emit modified();
+    return changed;
+}
+
 void ExpressWidget::removeEffectFromClip(const QString& effectId)
 {
-    if (!m_currentClip) return;
-
-    if (effectId == "pierrot_lainka")          m_currentClip->lainkaEnabled = false;
-    else if (effectId == "pierrot_motion")     m_currentClip->motionEnabled = false;
-    else if (effectId == "pierrot_grayscale")  m_currentClip->grayscale = false;
-    else if (effectId == "pierrot_chromakey")  m_currentClip->chromaKey = false;
-    else if (effectId == "pierrot_brightness") m_currentClip->brightness = 0.0;
-    else if (effectId == "pierrot_contrast")   m_currentClip->contrast = 1.0;
-    else if (effectId == "pierrot_saturation") m_currentClip->saturation = 1.0;
-    else if (effectId == "pierrot_blur")       m_currentClip->blur = 0.0;
-    else if (effectId == "pierrot_psx")        m_currentClip->psxEnabled = false;
-    else if (effectId == "pierrot_audio_eq")   m_currentClip->eqLow = m_currentClip->eqMid = m_currentClip->eqHigh = 0.0;
-    else if (effectId == "pierrot_audio_reverb") m_currentClip->reverb = false;
-    else if (effectId.startsWith(QStringLiteral("frei0r:"))) {
-        const QString name = effectId.mid(QStringLiteral("frei0r:").size());
-        for (int i = 0; i < m_currentClip->frei0rFx.size(); ++i) {
-            if (m_currentClip->frei0rFx[i].pluginName == name) {
-                m_currentClip->frei0rFx.removeAt(i);
-                break;
-            }
-        }
-    }
-    else {
-        // OFX: remove do clipe.
-        for (int i = 0; i < m_currentClip->ofxFx.size(); ++i) {
-            if (m_currentClip->ofxFx[i].pluginId == effectId) {
-                m_currentClip->ofxFx.removeAt(i);
-                break;
-            }
-        }
-    }
-    emit modified();
+    removeEffectFromClip(m_currentClip, effectId);
 }
 
 // ── Fechar aba ───────────────────────────────────────────────────────────

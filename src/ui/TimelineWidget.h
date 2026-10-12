@@ -241,9 +241,14 @@ signals:
     void fxEffectEditRequested(const QString& clipId, const QString& effectId);
     void fxEffectToggleRequested(const QString& trackId, const QString& effectId,
                                  bool enabled);
+    // O "×" de uma linha do painel: remover a escolha da faixa (e dos clipes).
+    void fxEffectRemoveRequested(const QString& trackId, const QString& effectId);
     // Um clipe acabou de entrar numa faixa de efeitos: aplicar os efeitos
     // habilitados da faixa ao clipe (Track::fxEffects).
     void fxTrackClipAdded(const QString& trackId, const QString& clipId);
+    // Um clipe saiu de uma faixa de efeitos (vai para faixa normal): MainWindow
+    // remove os efeitos copiados da faixa (o clipe "sai como entrou").
+    void fxTrackClipRemoved(const QString& trackId, const QString& clipId);
 protected:
     void paintEvent(QPaintEvent*) override;
     void resizeEvent(QResizeEvent*) override;
@@ -373,8 +378,10 @@ private:
     QRect fxAddBtnRect(int y, int rowH) const;
     QRect fxRowRect(int y, int rowH, int idx) const;
     QRect fxRowEyeRect(int y, int rowH, int idx) const;
+    QRect fxRowDelRect(int y, int rowH, int idx) const;
     // Hit-test do painel. parts: 1=botão +, 2=linha (editar no Express),
-    // 3=olho (ligar/desligar). Retorna false se o ponto não caiu no painel.
+    // 3=olho (ligar/desligar), 4=botão × (remover da faixa). Retorna false se o
+    // ponto não caiu no painel.
     bool fxPanelHit(const QPoint& pos, Clip*& clip, int& part,
                     QString& effectId, bool& enabled) const;
     void drawFxPanel(QPainter& p, const Track& track, int y, int rowH);
@@ -526,6 +533,10 @@ private:
     bool m_staticDirty = true;
     QHash<QString, ClipOrig> m_dragOrig;
     QHash<QString, ClipOrig> m_rippleOrig; // faixa inteira no início do ripple
+    // Ripple MOVE (ferramenta Ripple, arrasto pelo meio do clipe): os clipes à
+    // frente acompanham o movimento. Guarda a posição original dos que seguem.
+    bool m_rippleMove = false;
+    QHash<QString, double> m_rippleMoveOrig;
     QVector<ClipboardEntry> m_clipboard;
     int m_resizeRow = -1;
     bool m_resizeAudio = false;

@@ -14,6 +14,7 @@
 #include "ui/GraphEditorWidget.h"
 #include "ui/EffectsWidget.h"
 #include "ui/ClipPropertiesWidget.h"
+#include "ui/TextEditorDialog.h"
 #include "ui/ExpressWidget.h"
 #include "ui/FileBrowserWidget.h"
 #include "ui/MixerWidget.h"
@@ -412,11 +413,38 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                 if (!exists) tr->fxEffects.append(TrackFx{id, true});
                 // Aplica aos clipes que já estão na faixa.
                 bool any = false;
-                for (Clip& c : tr->clips)
-                    if (!c.isText && m_express->applyEffectToClip(&c, id)) any = true;
+                for (Clip& c : tr->clips) {
+                    if (c.isText) continue;
+                    if (m_express->applyEffectToClip(&c, id)) {
+                        if (!c.fromFxTrack.contains(id)) c.fromFxTrack.append(id);
+                        any = true;
+                    }
+                }
                 if (any) setModified();
                 m_timeline->update();
                 m_preview->refreshView();
+            });
+    connect(m_timeline, &TimelineWidget::fxEffectRemoveRequested, this,
+            [this, findVideoTrack](const QString& trackId, const QString& id) {
+                Track* tr = findVideoTrack(trackId);
+                if (!tr) return;
+                pushUndo();
+                // Remove a escolha da faixa.
+                for (int i = 0; i < tr->fxEffects.size(); ++i) {
+                    if (tr->fxEffects[i].id == id) {
+                        tr->fxEffects.removeAt(i);
+                        break;
+                    }
+                }
+                // Remove o efeito dos clipes que estão na faixa.
+                bool any = false;
+                for (Clip& c : tr->clips) {
+                    if (m_express->removeEffectFromClip(&c, id)) any = true;
+                    c.fromFxTrack.removeAll(id);
+                }
+                if (any) m_preview->refreshView();
+                setModified();
+                m_timeline->update();
             });
     connect(m_timeline, &TimelineWidget::fxEffectEditRequested, this,
             [applyFxToClip](const QString& clipId, const QString& id) {
@@ -435,8 +463,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                     if (enabled) {
                         // Cria a instância se faltar; se já existe (desligada
                         // pelo olho), apenas religa.
-                        if (!m_express->applyEffectToClip(&c, id))
-                            if (m_timeline->setFxEffectEnabled(&c, id, true)) any = true;
+                        bool ok = m_express->applyEffectToClip(&c, id);
+                        if (!ok) ok = m_timeline->setFxEffectEnabled(&c, id, true);
+                        if (ok) {
+                            if (!c.fromFxTrack.contains(id)) c.fromFxTrack.append(id);
+                            any = true;
+                        }
                     } else if (m_timeline->setFxEffectEnabled(&c, id, false)) any = true;
                 }
                 if (any) setModified();
@@ -450,16 +482,32 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                 if (!tr || !c) return;
                 // Copia os efeitos habilitados da faixa para o clipe.
                 bool any = false;
-                for (const TrackFx& fx : tr->fxEffects)
-                    if (fx.enabled && m_express->applyEffectToClip(c, fx.id)) any = true;
+                for (const TrackFx& fx : tr->fxEffects) {
+                    if (!fx.enabled) continue;
+                    if (m_express->applyEffectToClip(c, fx.id)) {
+                        if (!c->fromFxTrack.contains(fx.id)) c->fromFxTrack.append(fx.id);
+                        any = true;
+                    }
+                }
                 if (any) {
                     setModified();
                     m_timeline->update();
                     m_preview->refreshView();
                 }
             });
-
-    // Conecta seleção de clipes na timeline ao painel de efeitos, ao Express
+    connect(m_timeline, &TimelineWidget::fxTrackClipRemoved, this,
+            [this](const QString&, const QString& clipId) {
+                // O clipe saiu de uma faixa de efeitos: "sai como entrou",
+                // sem os efeitos copiados da faixa.
+                Clip* c = m_timeline->findClipById(clipId);
+                if (!c || c->fromFxTrack.isEmpty()) return;
+                bool any = false;
+                for (const QString& id : c->fromFxTrack)
+                    if (m_express->removeEffectFromClip(c, id)) any = true;
+                c->fromFxTrack.clear();
+                if (any) m_preview->refreshView();
+                m_timeline->update();
+            });
     // e ao painel de Propriedades (Effect Controls).
     connect(m_timeline, &TimelineWidget::selectionChanged, this, [this](const QString& id) {
         Clip* clip = nullptr;
@@ -475,6 +523,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         m_effects->setSelectedClip(clip);
         m_express->setSelectedClip(clip);
         m_props->showClip(id);
+        // Editor de Texto (dock): edita o texto do clipe selecionado.
+        m_textEditor->setContext(&m_project,
+                                 (clip && (clip->isText
+                                           || !m_project.textStyleFor(*clip)->isEmpty()))
+                                     ? clip : nullptr);
     });
 
     createDocks();
@@ -1537,6 +1590,21 @@ void MainWindow::createDocks() {
                              m_express, Qt::RightDockWidgetArea);
     tabifyDockWidget(m_effectsDock, m_expressDock);
     m_expressDock->hide();
+
+    // Editor de Texto (dock opcional, live): edita o clipe de texto
+    // selecionado sem abrir o diálogo modal. Some do caminho até o usuário
+    // pedir em Exibir → Painéis à direita → Texto.
+    m_textEditor = new TextEditorWidget(this);
+    m_textEditor->setLive(true);
+    m_textDock = makeDock(QStringLiteral("textEditorDock"), tr("Texto"),
+                          m_textEditor, Qt::RightDockWidgetArea);
+    tabifyDockWidget(m_expressDock, m_textDock);
+    m_textDock->hide();
+    connect(m_textEditor, &TextEditorWidget::changed, this, [this]() {
+        m_timeline->invalidateScene();
+        m_preview->refreshView();
+        setModified();
+    });
 
     m_fileBrowserDock = makeDock(QStringLiteral("fileBrowserDock"),
                                  tr("Explorador de Arquivos"),
@@ -2709,7 +2777,8 @@ QIcon MainWindow::iconRuler() const {
 
 void MainWindow::pushUndo() {
     // Descarta o "redo" se o usuário desfez e fez uma nova edição.
-    if (m_undoIndex < (int)m_undoStack.size() - 1) {
+    const bool hadRedo = (m_undoIndex < (int)m_undoStack.size() - 1);
+    if (hadRedo) {
         while ((int)m_undoStack.size() > m_undoIndex + 1) {
             m_undoBytes -= m_undoStack.back().size();
             m_undoStack.pop_back();
@@ -2717,8 +2786,13 @@ void MainWindow::pushUndo() {
         }
     }
     const QByteArray snap = snapshotState();
-    // Edição "sem mudança" (ex.: clique sem arraste) não empilha nada.
-    if (m_undoStack.empty() || m_undoStack.back() != snap) {
+    // Dedup só é seguro no TOPO da pilha. Depois de um undo/redo o índice não
+    // aponta mais para o último estado registrado: o pré-estado da nova edição
+    // coincide com o topo e o `back() == snap` engolia o push — o Ctrl+Z
+    // seguinte apagava 2 ações de uma vez (ou nada em cima do "Início").
+    const bool swallowed = !hadRedo && !m_undoStack.empty()
+                           && m_undoStack.back() == snap;
+    if (!swallowed) {
         m_undoStack.push_back(snap);
         m_undoLabels.push_back(m_pendingUndoLabel.isEmpty() ? tr("Edição")
                                                             : m_pendingUndoLabel);

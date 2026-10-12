@@ -531,6 +531,8 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
                 }
             } else if (fpart == 3) {
                 emit fxEffectToggleRequested(fxtrackId, feid, !fen);
+            } else if (fpart == 4) {
+                emit fxEffectRemoveRequested(fxtrackId, feid);
             } else if (fpart == 2 && fxClip) {
                 emit fxEffectEditRequested(fxClip->id, feid);
             }
@@ -613,6 +615,7 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
             if (!isSelected(clip->id))
                 setSelection(clip->id);
             m_dragMode = None;
+            m_rippleMove = false;
             const int cx = (int)timeToX(clip->pos);
             const int cw = (int)(clip->dur * m_pps);
             const int dx = x - cx;
@@ -631,21 +634,27 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
             } else if (m_tool == ToolMove) {
                 m_dragMode = MoveClip;
             } else if (m_tool == ToolRipple) {
-                // Ripple Edit: trim com ripple (desloca subsequentes)
-                if (dx <= cw / 2) {
+                // Ripple: nas BORDAS, trim com ripple; no MEIO do clipe, mover o
+                // clipe levando junto os clipes à frente (estilo Vegas).
+                if (cw > 24 && dx > 10 && cw - dx > 10) {
+                    m_dragMode = MoveClip;
+                    m_rippleMove = true;
+                } else if (dx <= cw / 2) {
                     m_dragMode = TrimLeft;  // TrimLeft com ripple
                 } else {
                     m_dragMode = TrimRight; // TrimRight com ripple
                 }
-                // rippleTrimLeft/Right medem o delta contra o estado CORRENTE
-                // do clipe e deslocam os vizinhos, então um arraste ao vivo
-                // precisa voltar ao estado original a cada mousemove. Guarda a
-                // faixa inteira: os vizinhos deslocados não estão em
-                // m_dragOrig (que só traz o clipe e seu grupo).
-                m_rippleOrig.clear();
-                if (Track* tr = trackOf(clip)) {
-                    for (const Clip& other : tr->clips)
-                        m_rippleOrig.insert(other.id, { other.pos, other.in, other.dur });
+                if (m_dragMode != MoveClip) {
+                    // rippleTrimLeft/Right medem o delta contra o estado CORRENTE
+                    // do clipe e deslocam os vizinhos, então um arraste ao vivo
+                    // precisa voltar ao estado original a cada mousemove. Guarda a
+                    // faixa inteira: os vizinhos deslocados não estão em
+                    // m_dragOrig (que só traz o clipe e seu grupo).
+                    m_rippleOrig.clear();
+                    if (Track* tr = trackOf(clip)) {
+                        for (const Clip& other : tr->clips)
+                            m_rippleOrig.insert(other.id, { other.pos, other.in, other.dur });
+                    }
                 }
             } else if (m_tool == ToolRolling) {
                 // Rolling Edit: ajustar fronteira entre 2 clipes
@@ -696,6 +705,7 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
             m_dragOrigIn = clip->in;
             m_dragOrigDur = clip->dur;
             m_dragOrig.clear();
+            m_rippleMoveOrig.clear();
             // Alt = arrastar apenas o clipe, sem arrastar o grupo vinculado.
             const bool solo = (e->modifiers() & Qt::AltModifier) != 0;
             auto addOrig = [this, solo](Clip* c) {
@@ -712,6 +722,30 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
                 addOrig(sc);
             }
             addOrig(clip);
+
+            // Ripple MOVE: registra os clipes que estão à frente (por faixa) para
+            // deslocá-los junto com o arraste.
+            if (m_rippleMove) {
+                auto snapshotDownstream = [this](QVector<Track>& tracks) {
+                    for (Track& tr : tracks) {
+                        // Borda direita original do(s) clipe(s) arrastado(s) nesta faixa.
+                        double rightEdge = -1.0;
+                        for (const Clip& c : tr.clips) {
+                            auto it = m_dragOrig.constFind(c.id);
+                            if (it != m_dragOrig.constEnd())
+                                rightEdge = std::max(rightEdge, it.value().pos + it.value().dur);
+                        }
+                        if (rightEdge < 0.0) continue;
+                        for (const Clip& c : tr.clips) {
+                            if (m_dragOrig.contains(c.id)) continue;
+                            if (c.pos >= rightEdge - 1e-6)
+                                m_rippleMoveOrig.insert(c.id, c.pos);
+                        }
+                    }
+                };
+                snapshotDownstream(m_project->videoTracks);
+                snapshotDownstream(m_project->audioTracks);
+            }
         } else if (m_tool == ToolSelect || m_tool == ToolMove) {
             // Espaço vazio com a ferramenta de seleção: caixa de seleção
             // (marquee). Com Ctrl, soma aos já selecionados.
@@ -1149,7 +1183,7 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                     // gesto já foi capturado, então nenhum hit-test deve
                     // interromper o mouseMove. As funções são const, logo não
                     // tinham efeito colateral além do return.
-                    if (rowFromY(e->pos().y(), row, audio)) {
+                    if (!m_rippleMove && rowFromY(e->pos().y(), row, audio)) {
                         // Só o clipe sob o mouse acompanha na vertical (muda de
                         // faixa se o tipo bater). Os demais membros do grupo
                         // mantêm suas faixas — só a posição no tempo anda junto.
@@ -1191,6 +1225,21 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                             sc->pos = clampPosToTrack(sc,
                                                       std::max(0.0, it.value().pos + delta),
                                                       moving);
+                    }
+                    // Ripple MOVE: os clipes à frente acompanham o arraste,
+                    // mantendo a distância relativa ao clipe arrastado. Usa o
+                    // delta REALMENTE aplicado (o clipe sob o mouse pode ter
+                    // sido limitado por um clipe anterior), senão os seguintes
+                    // andariam mais que ele e se sobreporiam.
+                    if (m_rippleMove) {
+                        double appliedDelta = delta;
+                        if (Clip* dc0 = findClipById(m_dragClip))
+                            appliedDelta = dc0->pos - m_dragOrigPos;
+                        for (auto it = m_rippleMoveOrig.constBegin();
+                             it != m_rippleMoveOrig.constEnd(); ++it) {
+                            Clip* sc = findClipById(it.key());
+                            if (sc) sc->pos = std::max(0.0, it.value() + appliedDelta);
+                        }
                     }
                 } else if (m_dragMode == TrimLeft && m_tool == ToolRipple) {
                     // Ripple Edit: trim esquerdo com ripple (desloca subsequentes).
@@ -1438,6 +1487,8 @@ void TimelineWidget::mouseReleaseEvent(QMouseEvent* e) {
     m_dragUndoPushed = false;
     m_dragOrig.clear();
     m_rippleOrig.clear();
+    m_rippleMove = false;
+    m_rippleMoveOrig.clear();
     m_volRow = -1;
     m_volClip.clear();
     m_snapLineX = -1.0; // limpa guia de alinhamento

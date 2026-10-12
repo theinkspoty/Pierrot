@@ -55,8 +55,11 @@ private:
     void filterTree(const QString& text);
     static QTreeWidgetItem* addFolder(QTreeWidget* tree, QTreeWidgetItem* parent,
                                       const QString& title);
+    // source: "native" (feito no Pierrot), "frei0r" ou "ofx". Define a cor/badge
+    // do item para deixar a origem visível à primeira vista.
     static void addEffectItem(QTreeWidgetItem* parent, const QString& title,
-                              const QString& id, const QString& tip = QString());
+                              const QString& id, const QString& tip = QString(),
+                              const QString& source = QStringLiteral("native"));
 
     Project* m_project = nullptr;
     Clip* m_currentClip = nullptr;

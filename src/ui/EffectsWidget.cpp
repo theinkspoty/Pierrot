@@ -61,11 +61,40 @@ QTreeWidgetItem* EffectsWidget::addFolder(QTreeWidget* tree, QTreeWidgetItem* pa
 }
 
 void EffectsWidget::addEffectItem(QTreeWidgetItem* parent, const QString& title,
-                                  const QString& id, const QString& tip) {
+                                  const QString& id, const QString& tip,
+                                  const QString& source) {
     auto* item = new QTreeWidgetItem(parent);
     item->setText(0, title);
     item->setData(0, Qt::UserRole, id);
     if (!tip.isEmpty()) item->setToolTip(0, tip);
+
+    // Badge de origem: deixa óbvio o que é nativo x plugin (frei0r/OFX), o
+    // ponto mais confuso do painel. Nativo fica sem marca; plugin ganha um
+    // quadradinho colorido + tom no texto.
+    QColor badge;
+    QString tag;
+    if (source == QLatin1String("frei0r")) {
+        badge = QColor(124, 196, 116);
+        tag = tr("frei0r");
+    } else if (source == QLatin1String("ofx")) {
+        badge = QColor(186, 150, 232);
+        tag = tr("OFX");
+    }
+    if (!badge.isValid()) return;
+
+    QPixmap pm(10, 10);
+    pm.fill(Qt::transparent);
+    {
+        QPainter bp(&pm);
+        bp.setRenderHint(QPainter::Antialiasing, true);
+        bp.setPen(Qt::NoPen);
+        bp.setBrush(badge);
+        bp.drawEllipse(1, 1, 8, 8);
+    }
+    item->setIcon(0, QIcon(pm));
+    item->setForeground(0, badge.lighter(115));
+    const QString hint = tip.isEmpty() ? tag : (tag + QStringLiteral(" — ") + tip);
+    item->setToolTip(0, hint);
 }
 
 // ── Construtor — layout Premiere (busca + árvore única) ──────────────────
@@ -138,8 +167,8 @@ void EffectsWidget::buildTree() {
     addEffectItem(audioTr, tr("Constant Power"), QStringLiteral("trans:constantpower"),
                   tr("Crossfade de áudio quando há sobreposição na mesma faixa"));
 
-    // ── Video Effects ────────────────────────────────────────────────────
-    auto* videoFx = addFolder(m_tree, nullptr, tr("Video Effects"));
+    // ── Video Effects (nativos do Pierrot), por categoria ───────────────
+    auto* videoFx = addFolder(m_tree, nullptr, tr("Video Effects (do Pierrot)"));
 
     auto* adjust = addFolder(m_tree, videoFx, tr("Adjust"));
     addEffectItem(adjust, tr("Brightness & Contrast"), QStringLiteral("pierrot_brightness"),
@@ -171,21 +200,13 @@ void EffectsWidget::buildTree() {
     addEffectItem(stylize, tr("MotiOn (motion blur)"), QStringLiteral("pierrot_motion"),
                   tr("Motion blur por amostragem da imagem"));
 
-    // Third-party
-    auto* third = addFolder(m_tree, videoFx, tr("Third-Party"));
-    if (m_ofxPlugins.isEmpty()) {
-        auto* none = new QTreeWidgetItem(third);
-        none->setText(0, tr("(nenhum plugin OFX)"));
-        none->setFlags(none->flags() & ~Qt::ItemIsSelectable);
-        none->setForeground(0, QColor(120, 120, 120));
-    } else {
-        for (const OfxPluginInfo& p : m_ofxPlugins) {
-            addEffectItem(third, p.name.isEmpty() ? p.id : p.name, p.id,
-                          p.description.isEmpty() ? p.id : p.description);
-        }
-    }
-
-    auto* f0r = addFolder(m_tree, videoFx, tr("frei0r"));
+    // ── frei0r (plugins externos) — grupo próprio, à parte dos nativos ──
+    auto* f0r = addFolder(m_tree, nullptr,
+                          m_frei0rPlugins.isEmpty()
+                              ? tr("frei0r (nenhum instalado)")
+                              : tr("frei0r — plugins (%1)").arg(m_frei0rPlugins.size()));
+    f0r->setToolTip(0, tr("Plugins frei0r (Kdenlive/Shotcut/MLT). Instale com o "
+                          "pacote frei0r-plugins ou defina PIERROT_FREI0R_PATH."));
     if (m_frei0rPlugins.isEmpty()) {
         auto* none = new QTreeWidgetItem(f0r);
         none->setText(0, tr("(instale frei0r-plugins)"));
@@ -198,7 +219,28 @@ void EffectsWidget::buildTree() {
             if (!p.isFilter) continue;
             addEffectItem(f0r, p.label.isEmpty() ? p.name : p.label,
                           QStringLiteral("frei0r:") + p.name,
-                          p.description.isEmpty() ? p.name : p.description);
+                          p.description.isEmpty() ? p.name : p.description,
+                          QStringLiteral("frei0r"));
+        }
+    }
+
+    // ── OFX (plugins de terceiros) — grupo próprio ──────────────────────
+    auto* third = addFolder(m_tree, nullptr,
+                            m_ofxPlugins.isEmpty()
+                                ? tr("OFX (nenhum instalado)")
+                                : tr("OFX — plugins de terceiros (%1)").arg(m_ofxPlugins.size()));
+    third->setToolTip(0, tr("Plugins OFX (ex.: DaVinci/Resolve, Sapphire, "
+                            "BorisFX) encontrados no sistema."));
+    if (m_ofxPlugins.isEmpty()) {
+        auto* none = new QTreeWidgetItem(third);
+        none->setText(0, tr("(nenhum plugin OFX)"));
+        none->setFlags(none->flags() & ~Qt::ItemIsSelectable);
+        none->setForeground(0, QColor(120, 120, 120));
+    } else {
+        for (const OfxPluginInfo& p : m_ofxPlugins) {
+            addEffectItem(third, p.name.isEmpty() ? p.id : p.name, p.id,
+                          p.description.isEmpty() ? p.id : p.description,
+                          QStringLiteral("ofx"));
         }
     }
 
