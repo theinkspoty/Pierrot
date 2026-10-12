@@ -86,4 +86,5 @@ private:
     QCheckBox* m_exportDirEnabled = nullptr;
     QLineEdit* m_exportDirEdit = nullptr;
     QComboBox* m_themeCombo = nullptr;
+    QComboBox* m_langCombo = nullptr;
 };

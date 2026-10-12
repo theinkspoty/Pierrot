@@ -64,8 +64,8 @@ private:
     QPixmap makeDragPixmap() const;
     QPoint m_pressPos;
     QListWidgetItem* m_pressItem = nullptr;
-    bool m_pressWasSelected = false;
     bool m_pressCtrl = false;
+    bool m_pressShift = false;
     bool m_dragging = false;
     QRubberBand* m_band = nullptr;
     bool m_bandActive = false;
@@ -76,7 +76,8 @@ private:
 // Visualização em LISTA do painel de mídias (padrão do projeto, como o painel
 // Project do Premiere): tabela com colunas Nome/Frame Rate/Media Start/Media
 // End/Duração/Info de vídeo/Info de áudio. Mesmo arrasto manual da PoolList,
-// sem o rubber band (a seleção por linhas fica com a base).
+// sem o rubber band; a seleção é controlada à mão: clique comum reduz ao item
+// pressionado, Ctrl+clique alterna e Shift+clique remove da seleção.
 class PoolTree : public QTreeWidget {
     Q_OBJECT
 public:
@@ -102,6 +103,9 @@ private:
     void hideDragIcon();
     QPoint m_pressPos;
     QTreeWidgetItem* m_pressItem = nullptr;
+    bool m_pressWasSelected = false;
+    bool m_pressCtrl = false;
+    bool m_pressShift = false;
     bool m_dragging = false;
     QLabel* m_dragIcon = nullptr;
     friend class MediaPoolWidget;

@@ -3,11 +3,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 //
-// Painel Effects — réplica da estrutura do Adobe Premiere Pro:
-// busca no topo + uma árvore única com Presets, Audio Effects,
-// Audio Transitions, Video Effects (por categoria), Video Transitions
-// e Text/Animation. IDs: pierrot_* | frei0r:<nome> | <ofxId> |
-// trans:<tipo> | text:<ação>.
+// Painel Effects — busca no topo + abas por tipo (Vídeo | Áudio | Texto |
+// Plugins), cada uma com sua árvore. Vídeo reúne Video Effects (por
+// categoria), Video Transitions e Presets; Áudio reúne Audio Effects e
+// Audio Transitions; Plugins reúne frei0r e OFX. IDs: pierrot_* |
+// frei0r:<nome> | <ofxId> | trans:<tipo> | text:<ação>.
 
 #pragma once
 
@@ -16,6 +16,7 @@
 #include <QHash>
 
 class QLineEdit;
+class QTabWidget;
 class Project;
 struct Clip;
 struct OfxPluginInfo;
@@ -53,6 +54,7 @@ private slots:
 private:
     void buildTree();
     void filterTree(const QString& text);
+    EffectTree* makeTree();
     static QTreeWidgetItem* addFolder(QTreeWidget* tree, QTreeWidgetItem* parent,
                                       const QString& title);
     // source: "native" (feito no Pierrot), "frei0r" ou "ofx". Define a cor/badge
@@ -63,7 +65,7 @@ private:
 
     Project* m_project = nullptr;
     Clip* m_currentClip = nullptr;
-    EffectTree* m_tree = nullptr;
+    QTabWidget* m_tabs = nullptr;
     QLineEdit* m_searchBox = nullptr;
     QVector<OfxPluginInfo> m_ofxPlugins;
     QVector<Frei0rPluginInfo> m_frei0rPlugins;

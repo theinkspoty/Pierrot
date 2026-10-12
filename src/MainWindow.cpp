@@ -2120,6 +2120,8 @@ void MainWindow::createActions() {
                "Versão ") +
             QString::fromLatin1(PIERROT_VERSION) +
             tr(" — Protótipo 4<br><br>"
+               "<b style='color:#c07800'>Ainda em desenvolvimento:</b> mesa, "
+               "velocidade, pivot, analisador e workspace.<br><br>"
                "Pierrot é um editor de vídeo inspirado em 2 programas \"Sony Vegas 8\" "
                "e \"Final Cut Express 2003\", totalmente escrito pra linux. Para uso "
                "pessoal, baseado nas ferramentas que eu acho úteis.<br><br>"

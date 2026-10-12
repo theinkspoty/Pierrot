@@ -295,8 +295,36 @@ void PoolTree::mousePressEvent(QMouseEvent* e) {
     m_pressPos = e->position().toPoint();
     m_pressItem = itemAt(m_pressPos);
     m_dragging = false;
-    // A base cuida da seleção (Ctrl/Shift estendem a seleção de linhas).
-    QTreeWidget::mousePressEvent(e);
+    m_pressCtrl = (e->modifiers() & Qt::ControlModifier) != 0;
+    m_pressShift = (e->modifiers() & Qt::ShiftModifier) != 0;
+
+    // Evita que um estado de seleção deixado pela base (rubber band/arrasto de
+    // seleção) continue ativo e estenda a seleção durante o movimento do mouse.
+    setState(QAbstractItemView::NoState);
+
+    if (e->button() != Qt::LeftButton || !m_pressItem) {
+        QTreeWidget::mousePressEvent(e);
+        return;
+    }
+
+    const QModelIndex idx = indexFromItem(m_pressItem);
+    m_pressWasSelected = selectionModel()->isSelected(idx);
+    if (m_pressCtrl) {
+        // Ctrl+clique: alterna no release para permitir Ctrl+arrasto do grupo.
+        selectionModel()->setCurrentIndex(idx, QItemSelectionModel::NoUpdate);
+    } else if (m_pressShift) {
+        // Shift+clique: remove da seleção.
+        selectionModel()->select(
+            idx, QItemSelectionModel::Deselect | QItemSelectionModel::Rows);
+        selectionModel()->setCurrentIndex(idx, QItemSelectionModel::NoUpdate);
+    } else {
+        // Clique comum: reduz a seleção ao item pressionado, garantindo que o
+        // arrasto não carregue a seleção anterior ("os de baixo").
+        selectionModel()->select(
+            idx, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+        selectionModel()->setCurrentIndex(idx, QItemSelectionModel::NoUpdate);
+    }
+    e->accept();
 }
 
 void PoolTree::mouseMoveEvent(QMouseEvent* e) {
@@ -305,14 +333,21 @@ void PoolTree::mouseMoveEvent(QMouseEvent* e) {
         && (p - m_pressPos).manhattanLength() >= QApplication::startDragDistance()) {
         const QModelIndex idx = indexFromItem(m_pressItem);
         if (!selectionModel()->isSelected(idx))
-            selectionModel()->select(idx, QItemSelectionModel::ClearAndSelect);
+            selectionModel()->select(
+                idx, (m_pressCtrl ? QItemSelectionModel::Select
+                                  : QItemSelectionModel::ClearAndSelect)
+                         | QItemSelectionModel::Rows);
         m_dragging = true;
         qApp->installEventFilter(this);
         showDragIcon(e->globalPosition().toPoint());
         emit dragHover(e->globalPosition().toPoint());
         return;
     }
-    QTreeWidget::mouseMoveEvent(e);
+    // Com o botão esquerdo pressionado nós cuidamos de tudo (arrasto de mídia);
+    // repassar à base deixaria ela estender a seleção conforme o cursor se move,
+    // o que "levava junto" as mídias abaixo do ponto pressionado.
+    if (!(e->buttons() & Qt::LeftButton))
+        QTreeWidget::mouseMoveEvent(e);
 }
 
 bool PoolTree::eventFilter(QObject* obj, QEvent* ev) {
@@ -347,6 +382,20 @@ void PoolTree::mouseReleaseEvent(QMouseEvent* e) {
         e->accept();
         return;
     }
+    if (e->button() == Qt::LeftButton && m_pressItem) {
+        if (m_pressCtrl) {
+            // Ctrl+clique sem arrasto: alterna o item.
+            const QModelIndex idx = indexFromItem(m_pressItem);
+            selectionModel()->select(
+                idx, (m_pressWasSelected ? QItemSelectionModel::Deselect
+                                         : QItemSelectionModel::Select)
+                         | QItemSelectionModel::Rows);
+        }
+        m_pressItem = nullptr;
+        e->accept();
+        return;
+    }
+    m_pressItem = nullptr;
     QTreeWidget::mouseReleaseEvent(e);
 }
 
@@ -421,10 +470,8 @@ void PoolList::dropEvent(QDropEvent* e) {
 void PoolList::mousePressEvent(QMouseEvent* e) {
     m_pressPos = e->position().toPoint();
     m_pressItem = itemAt(m_pressPos);
-    m_pressWasSelected = m_pressItem
-        ? selectionModel()->isSelected(indexFromItem(m_pressItem))
-        : false;
     m_pressCtrl = (e->modifiers() & Qt::ControlModifier) != 0;
+    m_pressShift = (e->modifiers() & Qt::ShiftModifier) != 0;
     m_dragging = false;
     m_bandActive = false;
     m_bandAdd = m_pressCtrl;
@@ -436,19 +483,20 @@ void PoolList::mousePressEvent(QMouseEvent* e) {
     if (e->button() == Qt::LeftButton) {
         e->accept();
         if (m_pressItem) {
+            const QModelIndex idx = indexFromItem(m_pressItem);
             if (m_pressCtrl) {
                 // Ctrl+clique: o toggle é aplicado no release (e no início do
-                // arrasto, se virar arrasto). Não repassamos o press à base,
-                // para que a mudança de seleção seja única e previsível em
-                // qualquer versão/flags dela. Só atualiza o índice atual.
-                selectionModel()->setCurrentIndex(indexFromItem(m_pressItem),
-                                                  QItemSelectionModel::NoUpdate);
+                // arrasto, se virar arrasto), para poder arrastar o grupo.
+                selectionModel()->setCurrentIndex(idx, QItemSelectionModel::NoUpdate);
+            } else if (m_pressShift) {
+                // Shift+clique: remove o item da seleção.
+                selectionModel()->select(idx, QItemSelectionModel::Deselect);
+                selectionModel()->setCurrentIndex(idx, QItemSelectionModel::NoUpdate);
             } else {
-                // A base cuida da seleção no clique e do índice atual. Um item
-                // já selecionado NÃO muda de seleção no press (command NoUpdate),
-                // então arrastar um item de uma seleção múltipla mantém todos
-                // selecionados.
-                QListWidget::mousePressEvent(e);
+                // Clique comum: reduz a seleção ao item pressionado, para que o
+                // arrasto não carregue a seleção anterior.
+                selectionModel()->select(idx, QItemSelectionModel::ClearAndSelect);
+                selectionModel()->setCurrentIndex(idx, QItemSelectionModel::NoUpdate);
             }
         } else {
             // Clique no vazio: seleção em caixa feita à mão (não chama a base,
@@ -551,7 +599,6 @@ void PoolList::mouseReleaseEvent(QMouseEvent* e) {
         return;
     }
     if (e->button() == Qt::LeftButton) {
-        const bool shift = (e->modifiers() & Qt::ShiftModifier) != 0;
         if (!m_pressItem) {
             // Clique simples no vazio (sem arrastar): limpa a seleção (Ctrl mantém).
             if (!(e->modifiers() & Qt::ControlModifier))
@@ -561,13 +608,8 @@ void PoolList::mouseReleaseEvent(QMouseEvent* e) {
             // selecionar várias mídias de uma em uma.
             selectionModel()->select(indexFromItem(m_pressItem),
                                      QItemSelectionModel::Toggle);
-        } else if (!shift && !m_pressWasSelected) {
-            // Clique num item que não estava selecionado: seleciona só ele.
-            // Se já estava selecionado (veio de uma seleção múltipla), mantém
-            // todos selecionados para poder arrastá-los juntos depois.
-            selectionModel()->select(indexFromItem(m_pressItem),
-                                     QItemSelectionModel::ClearAndSelect);
         }
+        // Clique comum e Shift já foram resolvidos no press.
         e->accept();
         m_pressItem = nullptr;
         return;

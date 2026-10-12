@@ -99,7 +99,24 @@ cat > "$APPDIR/usr/bin/qt.conf" <<'EOF'
 Plugins = ../plugins
 EOF
 
-LD_ARGS=(--verbosity=0 --appdir "$APPDIR" --output appimage)
+# O runtime do AppImage executa o AppRun. Se o AppRun for apenas um symlink
+# para usr/bin/pierrot, o Qt passa a considerar a raiz do AppDir como diretório
+# da aplicação e deixa de achar o usr/bin/qt.conf, abortando com "no Qt platform
+# plugin could be initialized". Um AppRun de verdade, que exporta explicitamente
+# os caminhos de plugins/bibliotecas, resolve isso.
+cat > "$BUILD_DIR/AppRun" <<'EOF'
+#!/bin/sh
+HERE="$(dirname "$(readlink -f "$0")")"
+APPDIR="${APPDIR:-$HERE}"
+export APPDIR
+export QT_PLUGIN_PATH="$APPDIR/usr/plugins${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}"
+export QT_QPA_PLATFORM_PLUGIN_PATH="$APPDIR/usr/plugins/platforms"
+export LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+exec "$APPDIR/usr/bin/pierrot" "$@"
+EOF
+chmod +x "$BUILD_DIR/AppRun"
+
+LD_ARGS=(--verbosity=0 --custom-apprun "$BUILD_DIR/AppRun" --appdir "$APPDIR" --output appimage)
 for d in platforms imageformats iconengines multimedia audio mediaservice; do
     if [ -d "$APPDIR/usr/plugins/$d" ]; then
         LD_ARGS+=(--deploy-deps-only "$APPDIR/usr/plugins/$d")

@@ -295,8 +295,9 @@ em tom claro, volume da faixa atrás de **Shift+V** (como Premiere), seleção
 
 ### Features
 
-- [ ] **Exportação de GIF transparente** — hoje a cadeia força saída opaca;
-  falta caminho `colorkey`/`rgba` + `palettegen` com alpha.
+- [x] **Exportação de GIF transparente** — opção "Fundo transparente" no diálogo
+  de exportação (só GIF): fundo nasce `rgba` com alfa 0 e a paleta reserva a
+  transparência (`palettegen=reserve_transparent` + `paletteuse=alpha_threshold`).
 - [ ] **PNG transparente otimizado** — sem cache/lazy decode de PNG com alpha.
 - [x] **Auto Track** — criação automática de faixas ao soltar clipe em área
   vazia (`findFreeTrack`, 3 níveis).

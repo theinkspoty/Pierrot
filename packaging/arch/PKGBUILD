@@ -1,0 +1,58 @@
+# Maintainer: theinkspoty <theinkspoty@users.noreply.github.com>
+#
+# PKGBUILD do Pierrot para o Arch Linux e derivados (pacman).
+#
+# O CMakeLists.txt instala o binário, o .desktop e o ícone, então o
+# empacotamento é só compilar + instalar em $pkgdir. O binário fica ligado
+# dinamicamente ao Qt6 e ao FFmpeg do sistema (o AppImage é que embute tudo).
+#
+# Build:
+#   cd packaging/arch
+#   makepkg -f            # gera pierrot-0.7-1-x86_64.pkg.tar.zst
+#   makepkg -fi           # ...e instala no sistema
+#
+# Rode como usuário normal — o makepkg não pode ser executado como root.
+
+pkgname=pierrot
+pkgver=0.7
+pkgrel=1
+pkgdesc="Editor de vídeo não-linear estilo Vegas Pro para Linux"
+arch=('x86_64' 'aarch64')
+url="https://github.com/theinkspoty/Pierrot"
+license=('GPL-3.0-or-later')
+depends=(
+    'qt6-base'
+    'qt6-multimedia'
+    'qt6-svg'
+    'ffmpeg'
+)
+makedepends=(
+    'cmake'
+    'gcc'
+    'pkgconf'
+    'qt6-base'
+    'qt6-multimedia'
+    'qt6-svg'
+    'ffmpeg'
+)
+source=("$pkgname-$pkgver.tar.gz")
+sha256sums=('e66511941461eecaab29caff6e74de43d052975c66abf56dca68f51110365ae2')
+
+build() {
+    cmake -S "$pkgname-$pkgver" -B build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr
+    cmake --build build --parallel "$(nproc)"
+}
+
+check() {
+    # Os testes que criam QGuiApplication precisam de um backend sem display.
+    QT_QPA_PLATFORM=offscreen ctest --test-dir build --output-on-failure
+}
+
+package() {
+    DESTDIR="$pkgdir" cmake --install build
+
+    install -Dm644 "$pkgname-$pkgver/LICENSE" \
+        "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

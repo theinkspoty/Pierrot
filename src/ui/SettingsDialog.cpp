@@ -140,7 +140,7 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
     m_themeCombo = new QComboBox(this);
     // A ordem TEM de casar com os valores de AppTheme: o índice do combo é o
     // que vai pro saveTheme().
-    m_themeCombo->addItem(tr("Escuro (Premiere)"));
+    m_themeCombo->addItem(tr("Escuro"));
     m_themeCombo->addItem(tr("Claro (Final Cut)"));
     m_themeCombo->addItem(tr("Ridge Racer (R4)"));
     m_themeCombo->setCurrentIndex(int(savedTheme()));
@@ -184,12 +184,27 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
         themeHint->setStyleSheet(QStringLiteral("color: %1;").arg(themeColors().placeholderText.name()));
         themeHint->setWordWrap(true);
         themeLay->addWidget(themeHint);
+        // Idioma da interface (a versão em inglês chega na 0.7.5).
+        auto* langBox = new QGroupBox(tr("Idioma"), page);
+        auto* langLay = new QFormLayout(langBox);
+        m_langCombo = new QComboBox(page);
+        m_langCombo->addItem(tr("Brasileiro"));
+        m_langCombo->addItem(tr("Inglês (v0.7.5)"));
+        m_langCombo->setCurrentIndex(qBound(0, s.value("language", 0).toInt(),
+                                            m_langCombo->count() - 1));
+        langLay->addRow(tr("Língua:"), m_langCombo);
+        auto* langHint = new QLabel(tr("A interface em inglês será adicionada na versão 0.7.5. "
+                                       "Requer reinício do aplicativo para tomar efeito."), langBox);
+        langHint->setStyleSheet(QStringLiteral("color: %1;").arg(themeColors().placeholderText.name()));
+        langHint->setWordWrap(true);
+        langLay->addWidget(langHint);
         auto* autoBox = new QGroupBox(tr("Salvamento automático"), page);
         auto* autoLay = new QFormLayout(autoBox);
         autoLay->addRow(m_autoSave);
         autoLay->addRow(tr("Intervalo:"), m_autoInterval);
         v->addWidget(mkvBox);
         v->addWidget(themeBox);
+        v->addWidget(langBox);
         v->addWidget(autoBox);
         v->addStretch(1);
         m_stack->addWidget(page);
@@ -549,6 +564,7 @@ void SettingsDialog::accept() {
     s.setValue("exportHwEncode", m_hwEncode->isChecked());
     s.setValue("graphSensitivity", m_graphSens->value());
     saveTheme(static_cast<AppTheme>(m_themeCombo->currentIndex()));
+    s.setValue("language", m_langCombo->currentIndex());
     QStringList ofxPaths;
     for (int i = 0; i < m_ofxPaths->count(); ++i)
         ofxPaths.append(m_ofxPaths->item(i)->text());

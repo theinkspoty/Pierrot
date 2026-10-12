@@ -21,6 +21,8 @@ struct ExportSettings {
     int crf = 18;              // 0–51 (0 = lossless, 51 = pior qualidade)
     int videoBitrateKbps = 0;  // 0 = usar CRF (VBR), >0 = usar -b:v
     int audioBitrateKbps = 192; // bit rate do áudio em kbps
+    // GIF: deixa transparente tudo que não tem clipe por cima (fundo sem cor).
+    bool transparentBackground = false;
 };
 
 namespace ProjectExporter {

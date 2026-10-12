@@ -5,6 +5,7 @@
 
 #include "ExportDialog.h"
 #include "SettingsDialog.h"
+#include "Theme.h"
 #include "colombina/export/LainkaRenderer.h"
 #include "colombina/export/OfxExportRenderer.h"
 #include "colombina/ofx/OfxPluginManager.h"
@@ -14,6 +15,8 @@
 #include <QLineEdit>
 #include <QComboBox>
 #include <QSpinBox>
+#include <QCheckBox>
+#include <QGroupBox>
 #include <QProgressBar>
 #include <QPlainTextEdit>
 #include <QDir>
@@ -38,7 +41,74 @@ ExportDialog::ExportDialog(Project* project, QWidget* parent, Mode mode)
     : QDialog(parent), m_project(project), m_mode(mode) {
     setWindowTitle(mode == Configure ? tr("Configurar exportação")
                                      : tr("Exportar vídeo"));
-    setMinimumWidth(580);
+    setMinimumWidth(620);
+
+    // Estilo no padrão do editor (cores sólidas, caixas estilo Premiere).
+    setStyleSheet(QStringLiteral(R"(
+        QDialog { background: %1; }
+        QLabel { color: %2; }
+        QGroupBox {
+            font-weight: 600;
+            border: 1px solid %3;
+            border-radius: 6px;
+            margin-top: 14px;
+            background: %4;
+            color: %5;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            left: 12px;
+            top: 4px;
+            padding: 0 4px;
+            color: %6;
+        }
+        QLineEdit, QComboBox, QSpinBox {
+            background: %7;
+            border: 1px solid %8;
+            border-radius: 4px;
+            color: %9;
+            padding: 4px 8px;
+            min-height: 18px;
+        }
+        QLineEdit:focus, QComboBox:focus, QSpinBox:focus { border-color: %10; }
+        QComboBox::drop-down { border: none; }
+        QComboBox QAbstractItemView {
+            background: %11;
+            border: 1px solid %12;
+            color: %13;
+            selection-background-color: %14;
+        }
+        QPushButton {
+            background: %15;
+            border: 1px solid %16;
+            border-radius: 4px;
+            color: %17;
+            padding: 5px 14px;
+        }
+        QPushButton:hover { background: %18; border-color: %19; }
+        QPushButton:pressed { background: %20; }
+        QCheckBox { color: %9; }
+    )")
+        .arg(themeColors().window.name())
+        .arg(themeColors().text.name())
+        .arg(themeColors().dockBorder.name())
+        .arg(themeColors().button.name())
+        .arg(themeColors().buttonText.name())
+        .arg(themeColors().accent.name())
+        .arg(themeColors().inputBg.name())
+        .arg(themeColors().inputBorder.name())
+        .arg(themeColors().text.name())
+        .arg(themeColors().inputFocus.name())
+        .arg(themeColors().button.name())
+        .arg(themeColors().inputBorder.name())
+        .arg(themeColors().text.name())
+        .arg(themeColors().highlight.name())
+        .arg(themeColors().button.name())
+        .arg(themeColors().inputBorder.name())
+        .arg(themeColors().buttonText.name())
+        .arg(themeColors().btnHover.name())
+        .arg(themeColors().dockBorder.name())
+        .arg(themeColors().btnActive.name()));
 
     m_outEdit = new QLineEdit(this);
     m_outEdit->setPlaceholderText(tr("Caminho do arquivo de saída…"));
@@ -96,6 +166,10 @@ ExportDialog::ExportDialog(Project* project, QWidget* parent, Mode mode)
     m_abitrateSpin->setSuffix(tr(" kbps"));
     m_abitrateSpin->setToolTip(tr("Bitrate do áudio em kbps.\nTípicos: 128k (WebM), 192k (MP4/MKV)."));
 
+    m_transparentCheck = new QCheckBox(tr("Fundo transparente"), this);
+    m_transparentCheck->setToolTip(tr("GIF: deixa transparente tudo o que não tem clipe\n"
+                                      "por cima (o fundo preto vira alfa 0)."));
+
     // GIF não tem áudio nem CRF/bitrate: desativa os campos irrelevantes.
     const auto fmtChanged = [this]() {
         const bool gif = ((ExportSettings::Format)m_formatCombo->currentData().toInt())
@@ -103,24 +177,50 @@ ExportDialog::ExportDialog(Project* project, QWidget* parent, Mode mode)
         m_crfSpin->setEnabled(!gif);
         m_vbitrateSpin->setEnabled(!gif);
         m_abitrateSpin->setEnabled(!gif);
+        // Fundo transparente só faz sentido para GIF (com alpha).
+        m_transparentCheck->setEnabled(gif);
     };
     connect(m_formatCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, fmtChanged);
     m_formatCombo->setCurrentIndex(0);
+    fmtChanged();
 
     auto* outRow = new QHBoxLayout;
     outRow->setContentsMargins(0, 0, 0, 0);
+    outRow->setSpacing(6);
     outRow->addWidget(m_outEdit, 1);
     outRow->addWidget(browseBtn);
 
-    auto* form = new QFormLayout;
-    form->addRow(tr("Saída:"), outRow);
-    form->addRow(tr("Resolução:"), m_resCombo);
-    form->addRow(tr("Quadros/s:"), m_fpsCombo);
-    form->addRow(tr("Formato:"), m_formatCombo);
-    form->addRow(tr("Qualidade (CRF):"), m_crfSpin);
-    form->addRow(tr("Bitrate vídeo:"), m_vbitrateSpin);
-    form->addRow(tr("Bitrate áudio:"), m_abitrateSpin);
+    auto* outForm = new QFormLayout;
+    outForm->setContentsMargins(12, 18, 12, 12);
+    outForm->setSpacing(8);
+    outForm->addRow(tr("Arquivo:"), outRow);
+    outForm->addRow(tr("Formato:"), m_formatCombo);
+    auto* outBox = new QGroupBox(tr("Saída"), this);
+    outBox->setLayout(outForm);
+
+    auto* vidForm = new QFormLayout;
+    vidForm->setContentsMargins(12, 18, 12, 12);
+    vidForm->setSpacing(8);
+    vidForm->addRow(tr("Resolução:"), m_resCombo);
+    vidForm->addRow(tr("Quadros/s:"), m_fpsCombo);
+    auto* vidBox = new QGroupBox(tr("Vídeo"), this);
+    vidBox->setLayout(vidForm);
+
+    auto* qualForm = new QFormLayout;
+    qualForm->setContentsMargins(12, 18, 12, 12);
+    qualForm->setSpacing(8);
+    qualForm->addRow(tr("Qualidade (CRF):"), m_crfSpin);
+    qualForm->addRow(tr("Bitrate vídeo:"), m_vbitrateSpin);
+    qualForm->addRow(tr("Bitrate áudio:"), m_abitrateSpin);
+    qualForm->addRow(tr("Transparência:"), m_transparentCheck);
+    auto* qualBox = new QGroupBox(tr("Codificação"), this);
+    qualBox->setLayout(qualForm);
+
+    auto* midRow = new QHBoxLayout;
+    midRow->setSpacing(10);
+    midRow->addWidget(vidBox, 1);
+    midRow->addWidget(qualBox, 1);
 
     m_progress = new QProgressBar(this);
     m_progress->setRange(0, 100);
@@ -128,11 +228,13 @@ ExportDialog::ExportDialog(Project* project, QWidget* parent, Mode mode)
 
     m_logEdit = new QPlainTextEdit(this);
     m_logEdit->setReadOnly(true);
-    m_logEdit->setMaximumHeight(120);
+    m_logEdit->setMinimumHeight(120);
 
     m_startBtn = new QPushButton(mode == Configure ? tr("Adicionar à fila")
                                                    : tr("Exportar"), this);
-    auto* cancelBtn = new QPushButton(tr("Fechar"), this);
+    m_startBtn->setProperty("primary", true);
+    auto* cancelBtn = new QPushButton(mode == Configure ? tr("Cancelar")
+                                                        : tr("Fechar"), this);
     connect(cancelBtn, &QPushButton::clicked, this, &ExportDialog::requestCancel);
     if (mode == Configure) {
         // Em modo de configuração não renderiza: apenas aceita (a fila de
@@ -150,17 +252,22 @@ ExportDialog::ExportDialog(Project* project, QWidget* parent, Mode mode)
     connect(copyBtn, &QPushButton::clicked, this, [this]() {
         QApplication::clipboard()->setText(m_logEdit->toPlainText());
     });
+    if (mode == Configure) copyBtn->hide();
 
     auto* btnRow = new QHBoxLayout;
+    btnRow->setSpacing(8);
     btnRow->addWidget(copyBtn);
     btnRow->addStretch();
     btnRow->addWidget(cancelBtn);
     btnRow->addWidget(m_startBtn);
 
     auto* lay = new QVBoxLayout(this);
-    lay->addLayout(form);
+    lay->setContentsMargins(14, 12, 14, 12);
+    lay->setSpacing(10);
+    lay->addWidget(outBox);
+    lay->addLayout(midRow);
     lay->addWidget(m_progress);
-    lay->addWidget(m_logEdit);
+    lay->addWidget(m_logEdit, 1);
     lay->addLayout(btnRow);
 }
 
@@ -235,6 +342,7 @@ ExportSettings ExportDialog::currentSettings() const {
     s.crf = m_crfSpin->value();
     s.videoBitrateKbps = m_vbitrateSpin->value();
     s.audioBitrateKbps = m_abitrateSpin->value();
+    s.transparentBackground = m_transparentCheck->isChecked();
     return s;
 }
 

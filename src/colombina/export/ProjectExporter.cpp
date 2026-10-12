@@ -760,6 +760,9 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     const int W = s.width;
     const int H = s.height;
     const int FPS = s.fps;
+    // GIF com fundo transparente: o que não tiver clipe por cima fica alfa 0.
+    const bool transparent =
+        (s.format == ExportSettings::GIF) && s.transparentBackground;
 
     // Video clips bottom -> top, so the topmost track is composited last (on top).
     // Tracks que pertencem a uma Mesa NÃO viram camadas normais do empilhamento:
@@ -1004,8 +1007,15 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     args << "-y" << "-hide_banner" << "-loglevel" << "info";
 
     // Input 0: background color. Then video clips, then audio clips.
+    // No modo transparente a cor de fundo precisa nascer já em rgba (com alfa 0)
+    // — o `format=rgba` precisa estar DENTRO da entrada lavfi, senão a fonte
+    // negocia para yuv420p e o alfa se perde.
     args << "-f" << "lavfi"
-         << "-i" << QString("color=c=black:s=%1x%2:r=%3:d=%4").arg(W).arg(H).arg(FPS).arg(num(total));
+         << "-i" << (transparent
+                         ? QString("color=c=black@0.0:s=%1x%2:r=%3:d=%4,format=rgba")
+                               .arg(W).arg(H).arg(FPS).arg(num(total))
+                         : QString("color=c=black:s=%1x%2:r=%3:d=%4")
+                               .arg(W).arg(H).arg(FPS).arg(num(total)));
 
     for (int i = 0; i < (int)vclips.size(); ++i) {
         const VideoClipRef& v = vclips[i];
@@ -1235,8 +1245,9 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                 // TRANSPARENTE para não cobrir o que está por baixo. Vídeos/
                 // imagens opacas usam preto (letterbox clássico).
                 const bool alphaMedia = v.m && isImageFile(v.m->filePath);
-                const QString padColor = alphaMedia ? QStringLiteral("black@0")
-                                                    : QStringLiteral("black");
+                const QString padColor = (alphaMedia || transparent)
+                                             ? QStringLiteral("black@0")
+                                             : QStringLiteral("black");
                 if (v.c->hasCrop()) {
                     // Com crop, o conteúdo recortado é encaixado no quadro com
                     // CONTAIN (letterbox), igual ao preview. Antes usávamos
@@ -1817,10 +1828,19 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     // [vout] da composição já chega opaco (fundo preto composto por baixo).
     const bool isGif = (s.format == ExportSettings::GIF);
     if (isGif) {
-        fc << QStringLiteral(
-            "[vout]split=2[gbase1][gbase2];"
-            "[gbase1]palettegen=stats_mode=diff[gpal];"
-            "[gbase2][gpal]paletteuse=dither=bayer:bayer_scale=5[gvout]");
+        if (transparent) {
+            // Fundo transparente: reserva o índice de transparência na paleta e
+            // usa o limiar de alfa no paletteuse para manter o alfa 0.
+            fc << QStringLiteral(
+                "[vout]format=rgba,split=2[gbase1][gbase2];"
+                "[gbase1]palettegen=reserve_transparent=1:stats_mode=diff[gpal];"
+                "[gbase2][gpal]paletteuse=dither=bayer:bayer_scale=5:alpha_threshold=128[gvout]");
+        } else {
+            fc << QStringLiteral(
+                "[vout]split=2[gbase1][gbase2];"
+                "[gbase1]palettegen=stats_mode=diff[gpal];"
+                "[gbase2][gpal]paletteuse=dither=bayer:bayer_scale=5[gvout]");
+        }
     }
     args << "-filter_complex" << fc.join(QLatin1Char(';'));
 

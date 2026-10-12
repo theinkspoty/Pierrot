@@ -16,6 +16,7 @@ class QSpinBox;
 class QProgressBar;
 class QPlainTextEdit;
 class QPushButton;
+class QCheckBox;
 class QProcess;
 class OfxPluginManager;
 class Frei0rPluginManager;
@@ -52,6 +53,7 @@ private:
     QSpinBox* m_crfSpin = nullptr;
     QSpinBox* m_vbitrateSpin = nullptr;
     QSpinBox* m_abitrateSpin = nullptr;
+    QCheckBox* m_transparentCheck = nullptr;
     QProgressBar* m_progress = nullptr;
     QPlainTextEdit* m_logEdit = nullptr;
     QPushButton* m_startBtn = nullptr;
