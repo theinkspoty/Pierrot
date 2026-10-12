@@ -5,6 +5,7 @@
 
 #include "LainkaRenderer.h"
 #include "LainkaFx.h"
+#include "PreRenderSession.h"
 #include "colombina/models/Project.h"
 #include "laartman/FFmpegDecoder.h"
 
@@ -19,15 +20,6 @@
 // Decodifica um frame do vídeo no tempo dado (segundos), retornando QImage RGB.
 static QImage decodeFrame(FFmpegDecoder& dec, double seconds) {
     return dec.frameAt(seconds);
-}
-
-// Escreve um QImage RGBA no pipe do ffmpeg (rawvideo).
-static bool writeFrame(QProcess& ffmpeg, const QImage& img) {
-    if (img.isNull()) return false;
-    // Converte para RGBA32 se necessário (rawvideo espera RGBA).
-    QImage rgba = img.convertToFormat(QImage::Format_RGBA8888);
-    return ffmpeg.write(QByteArray(reinterpret_cast<const char*>(rgba.constBits()),
-                                   rgba.sizeInBytes())) != -1;
 }
 
 QString LainkaRenderer::renderClip(const Project& project,
@@ -94,26 +86,9 @@ QString LainkaRenderer::renderClip(const Project& project,
         QString("lainka_%1.mp4").arg(clipId.left(8)));
 
     // Inicia ffmpeg para codificação via pipe.
-    QProcess ffmpeg;
-    QStringList args;
-    args << "-y"
-         << "-f" << "rawvideo"
-         << "-pixel_format" << "rgba"
-         << "-video_size" << QString("%1x%2").arg(clipW).arg(clipH)
-         << "-framerate" << QString::number(outputFps)
-         << "-i" << "pipe:0"
-         << "-c:v" << "libx264"
-         << "-preset" << "medium"
-         << "-crf" << "18"
-         << "-pix_fmt" << "yuv420p"
-         << "-movflags" << "+faststart"
-         << tmpPath;
-
-    ffmpeg.start("ffmpeg", args);
-    if (!ffmpeg.waitForStarted(5000)) {
-        if (error) *error = "Não foi possível iniciar o ffmpeg para pré-renderização LAINKA";
+    prerender::PreRenderSession session(clipW, clipH, outputFps, tmpPath);
+    if (!session.start(error, "LAINKA"))
         return {};
-    }
 
     // Estado para motion blur (frame anterior).
     QImage prevFrame;
@@ -122,8 +97,7 @@ QString LainkaRenderer::renderClip(const Project& project,
     for (int f = 0; f < totalFrames; ++f) {
         // Verifica cancelamento.
         if (progress && !progress(f, totalFrames)) {
-            ffmpeg.kill();
-            ffmpeg.waitForFinished(3000);
+            session.abort();
             if (error) *error = "Pré-renderização LAINKA cancelada";
             return {};
         }
@@ -170,42 +144,19 @@ QString LainkaRenderer::renderClip(const Project& project,
         if (clip->lainkaMotionBlur > 1e-6 || clip->lainkaOnionSkin > 1e-6)
             prevFrame = frame;
 
-        // Converte para RGBA e escreve no pipe.
-        QImage rgba = frame.convertToFormat(QImage::Format_RGBA8888);
-        if (!writeFrame(ffmpeg, rgba)) {
-            ffmpeg.kill();
-            ffmpeg.waitForFinished(3000);
-            if (error) *error = "Erro ao escrever frame no pipe ffmpeg";
+        // Escreve o frame no pipe.
+        if (!session.writeFrame(frame, error, "LAINKA"))
             return {};
-        }
     }
 
     // Finaliza o ffmpeg.
-    ffmpeg.closeWriteChannel();
-    ffmpeg.waitForFinished(30000);
-
-    if (ffmpeg.exitCode() != 0) {
-        const QString stderr = QString::fromUtf8(ffmpeg.readAllStandardError());
-        if (error) *error = QString("ffmpeg falhou na pré-renderização LAINKA: %1").arg(stderr.left(500));
+    if (!session.finish(error, "LAINKA"))
         return {};
-    }
 
     // Move o arquivo para um local permanente (o QTemporaryDir será destruído).
-    const QString permanentDir = QStandardPaths::writableLocation(
-        QStandardPaths::CacheLocation) + QStringLiteral("/lainka");
-    QDir().mkpath(permanentDir);
-    const QString permanentPath = permanentDir + QStringLiteral("/")
-        + QStringLiteral("lainka_%1.mp4").arg(clipId.left(8));
-    // Remove arquivo anterior se existir.
-    QFile::remove(permanentPath);
-    if (!QFile::rename(tmpPath, permanentPath)) {
-        // Fallback: copia se rename falhar (mesmo filesystem).
-        if (!QFile::copy(tmpPath, permanentPath)) {
-            if (error) *error = QString("Não foi possível mover arquivo LAINKA para %1").arg(permanentPath);
-            return {};
-        }
-    }
-    return permanentPath;
+    return prerender::publishToCache(
+        tmpPath, QStringLiteral("lainka"),
+        QStringLiteral("lainka_%1.mp4").arg(clipId.left(8)), error, "LAINKA");
 }
 
 QHash<QString, QString> LainkaRenderer::renderAll(const Project& project,

@@ -10,7 +10,7 @@
 
 #include <QtTest>
 
-#include "clipattrs.h"
+#include "colombina/models/ClipAttrs.h"
 #include "colombina/models/Project.h"
 
 static Project makeProject() {

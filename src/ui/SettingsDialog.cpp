@@ -536,14 +536,6 @@ bool SettingsDialog::eventFilter(QObject* o, QEvent* e) {
 
 bool SettingsDialog::autoSaveEnabled() const { return m_autoSave->isChecked(); }
 
-bool SettingsDialog::hwDecodeEnabled() {
-    return QSettings().value("hwDecode", true).toBool();
-}
-
-bool SettingsDialog::hwEncodeEnabled() {
-    return QSettings().value("exportHwEncode", false).toBool();
-}
-
 bool SettingsDialog::proxiesEnabled() {
     return QSettings().value("proxiesEnabled", true).toBool();
 }

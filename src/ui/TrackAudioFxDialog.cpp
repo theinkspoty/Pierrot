@@ -4,55 +4,18 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "TrackAudioFxDialog.h"
+#include "AudioFxHelpers.h"
 
 #include <QFormLayout>
 #include <QVBoxLayout>
-#include <QHBoxLayout>
 #include <QSlider>
 #include <QLabel>
 #include <QCheckBox>
 #include <QDialogButtonBox>
 
-#include <algorithm>
 #include <cmath>
 
-namespace {
-
-QSlider* makeDbSlider(QWidget* parent, double v, QLabel** label) {
-    auto* s = new QSlider(Qt::Horizontal, parent);
-    s->setRange(-12, 12);
-    s->setValue((int)llround(v));
-    *label = new QLabel(parent);
-    QObject::connect(s, &QSlider::valueChanged, parent, [label](int val) {
-        QString t = QString("%1 dB").arg(val);
-        if (val > 0) t.prepend('+');
-        (*label)->setText(t);
-    });
-    QString t = QString("%1 dB").arg(s->value());
-    if (s->value() > 0) t.prepend('+');
-    (*label)->setText(t);
-    (*label)->setMinimumWidth(56);
-    (*label)->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    return s;
-}
-
-QHBoxLayout* makeRow(QSlider* s, QLabel* l) {
-    auto* r = new QHBoxLayout;
-    r->addWidget(s, 1);
-    r->addWidget(l);
-    return r;
-}
-
-QSlider* makePct(QWidget* parent, int v, const QString& text) {
-    auto* s = new QSlider(Qt::Horizontal, parent);
-    s->setRange(0, 100);
-    s->setValue(v);
-    s->setToolTip(text);
-    s->setMinimumWidth(120);
-    return s;
-}
-
-} // namespace
+using namespace audiofx;
 
 TrackAudioFxDialog::TrackAudioFxDialog(Track* track, QWidget* parent)
     : QDialog(parent), m_track(track) {

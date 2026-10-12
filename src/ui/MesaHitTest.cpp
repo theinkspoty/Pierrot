@@ -272,16 +272,6 @@ MesaWidget::HitZone MesaWidget::hitTest(const QPointF& sp, int& outTrackIdx) con
     return HitNone;
 }
 
-int MesaWidget::trackAt(const QPointF& sp) const {
-    int idx = -1;
-    HitZone hz = hitTest(sp, idx);
-    if (hz == HitBody || hz == HitCornerTL || hz == HitCornerTR ||
-        hz == HitCornerBL || hz == HitCornerBR || hz == HitEdgeT ||
-        hz == HitEdgeB || hz == HitEdgeL || hz == HitEdgeR || hz == HitRotate)
-        return idx;
-    return -1;
-}
-
 void MesaWidget::cameraCornerPoints(QPointF out[4]) const {
     MesaComposition* mc = currentMesa();
     if (!mc) { out[0] = out[1] = out[2] = out[3] = {}; return; }

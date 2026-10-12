@@ -391,11 +391,6 @@ bool OfxPluginManager::loadOfxLibrary(const QString& libPath, const QString& fal
     return anyLoaded;
 }
 
-void OfxPluginManager::describePlugin(OfxPluginInfo& info) {
-    // Chamado pelo loadOfxLibrary — já integrado acima
-    Q_UNUSED(info);
-}
-
 QString OfxPluginManager::resolveIconPath(const QString& libPath,
                                            const QString& relPath) const {
     // O ícone OFX é relativo à pasta Resources do bundle. O bundle segue o
@@ -441,11 +436,6 @@ const OfxPluginInfo* OfxPluginManager::findPlugin(const QString& id) const
 const OfxPluginLib* OfxPluginManager::pluginLib(const QString& pluginId) const {
     auto it = m_libs.find(pluginId);
     return (it != m_libs.end()) ? &it.value() : nullptr;
-}
-
-void* OfxPluginManager::libraryHandle(const QString& pluginId) const {
-    const auto* lib = pluginLib(pluginId);
-    return lib ? lib->handle : nullptr;
 }
 
 // ── Serialização ─────────────────────────────────────────────────────────

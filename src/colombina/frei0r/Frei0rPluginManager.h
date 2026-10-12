@@ -135,7 +135,6 @@ private:
     void cleanupLibs();
     bool loadLibrary(const QString& path);
     const LibEntry* libForPlugin(const QString& pluginName) const;
-    static QString defaultCMakeHint();
 
     QVector<Frei0rPluginInfo> m_plugins;
     QVector<LibEntry> m_libs;

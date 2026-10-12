@@ -4,6 +4,7 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "OfxExportRenderer.h"
+#include "PreRenderSession.h"
 #include "colombina/ofx/OfxRenderer.h"
 #include "colombina/ofx/OfxPluginManager.h"
 #include "colombina/ofx/OfxHost.h"
@@ -19,13 +20,6 @@
 // Decodifica um frame do vídeo no tempo dado (segundos), retornando QImage.
 static QImage decodeFrame(FFmpegDecoder& dec, double seconds) {
     return dec.frameAt(seconds);
-}
-
-// Escreve um QImage RGBA no pipe do ffmpeg (rawvideo).
-static bool writeFrame(QProcess& ffmpeg, const QImage& img) {
-    QImage rgba = img.convertToFormat(QImage::Format_RGBA8888);
-    const qint64 sz = rgba.sizeInBytes();
-    return ffmpeg.write(reinterpret_cast<const char*>(rgba.constBits()), sz) == sz;
 }
 
 QString OfxExportRenderer::renderClip(const Project& project,
@@ -77,34 +71,16 @@ QString OfxExportRenderer::renderClip(const Project& project,
         + QString("/pierrot-ofx-%1.mp4").arg(clipId.left(8));
 
     // Inicia ffmpeg para escrever o arquivo.
-    QProcess ffmpeg;
-    QStringList args;
-    args << "-y"
-         << "-f" << "rawvideo"
-         << "-pixel_format" << "rgba"
-         << "-video_size" << QString("%1x%2").arg(clipW).arg(clipH)
-         << "-framerate" << QString::number(outputFps)
-         << "-i" << "pipe:0"
-         << "-c:v" << "libx264"
-         << "-preset" << "medium"
-         << "-crf" << "18"
-         << "-pix_fmt" << "yuv420p"
-         << "-movflags" << "+faststart"
-         << tmpPath;
-
-    ffmpeg.start("ffmpeg", args);
-    if (!ffmpeg.waitForStarted(5000)) {
-        if (error) *error = "Não foi possível iniciar o ffmpeg para pré-renderização OFX";
+    prerender::PreRenderSession session(clipW, clipH, outputFps, tmpPath);
+    if (!session.start(error, "OFX"))
         return {};
-    }
 
     // Decodifica e processa frame a frame.
     for (int f = 0; f < totalFrames; ++f) {
         // Verifica cancelamento (via progress lambda OU abort direto).
         if (OfxHostImpl::abortRequested() ||
             (progress && !progress(f, totalFrames))) {
-            ffmpeg.kill();
-            ffmpeg.waitForFinished(3000);
+            session.abort();
             if (error) *error = "Pré-renderização OFX cancelada";
             return {};
         }
@@ -130,40 +106,19 @@ QString OfxExportRenderer::renderClip(const Project& project,
         // Aplica efeitos OFX.
         frame = OfxRenderer::applyOfxEffects(frame, clip->ofxFx, ofxManager, timelineT);
 
-        // Converte para RGBA e escreve no pipe.
-        QImage rgba = frame.convertToFormat(QImage::Format_RGBA8888);
-        if (!writeFrame(ffmpeg, rgba)) {
-            ffmpeg.kill();
-            ffmpeg.waitForFinished(3000);
-            if (error) *error = "Erro ao escrever frame no pipe ffmpeg";
+        // Escreve o frame no pipe.
+        if (!session.writeFrame(frame, error, "OFX"))
             return {};
-        }
     }
 
     // Finaliza o ffmpeg.
-    ffmpeg.closeWriteChannel();
-    ffmpeg.waitForFinished(30000);
-
-    if (ffmpeg.exitCode() != 0) {
-        const QString stderr = QString::fromUtf8(ffmpeg.readAllStandardError());
-        if (error) *error = QString("ffmpeg falhou na pré-renderização OFX: %1").arg(stderr.left(500));
+    if (!session.finish(error, "OFX"))
         return {};
-    }
 
     // Move para local permanente.
-    const QString permanentDir = QStandardPaths::writableLocation(
-        QStandardPaths::CacheLocation) + QStringLiteral("/ofx");
-    QDir().mkpath(permanentDir);
-    const QString permanentPath = permanentDir + QStringLiteral("/")
-        + QStringLiteral("ofx_%1.mp4").arg(clipId.left(8));
-    QFile::remove(permanentPath);
-    if (!QFile::rename(tmpPath, permanentPath)) {
-        // Tenta copiar se rename falhar (filesystems diferentes).
-        QFile::copy(tmpPath, permanentPath);
-        QFile::remove(tmpPath);
-    }
-
-    return permanentPath;
+    return prerender::publishToCache(
+        tmpPath, QStringLiteral("ofx"),
+        QStringLiteral("ofx_%1.mp4").arg(clipId.left(8)), error, "OFX");
 }
 
 QHash<QString, QString> OfxExportRenderer::renderAll(const Project& project,

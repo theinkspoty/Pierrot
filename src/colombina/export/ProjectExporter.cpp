@@ -7,6 +7,7 @@
 #include "colombina/util.h"
 #include "colombina/generators.h"
 #include "colombina/render/MesaRenderer.h"
+#include "colombina/render/TextRender.h"
 #include "laartman/FFmpegDecoder.h"
 #include "colombina/frei0r/Frei0rPluginManager.h"
 #include "colombina/fx/ColorGrade.h"
@@ -232,56 +233,12 @@ static QString renderVelocitySequence(const Clip& c, const QString& filePath,
 QImage renderTextImage(const TextStyle& st, int W, int H) {
     QImage img(W, H, QImage::Format_ARGB32);
     img.fill(Qt::transparent);
-    if (st.text.trimmed().isEmpty()) return img;
-    const double sizeFrac = st.textSize > 0.0 ? st.textSize : (1.0 / 18.0);
-    const int pxSize = qMax(4, (int)qRound(sizeFrac * H));
-    QFont font;
-    if (!st.fontFamily.isEmpty()) font.setFamily(st.fontFamily);
-    font.setPixelSize(pxSize);
-    font.setBold(st.textBold);
-    const QFontMetricsF fm(font);
-
-    // Quebra em linhas dentro de 90% da largura.
-    const double maxW = W * 0.9;
-    QStringList wrapped;
-    for (const QString& raw : st.text.split(QLatin1Char('\n'))) {
-        if (raw.isEmpty()) { wrapped << QString(); continue; }
-        QString cur;
-        const QStringList words = raw.split(QLatin1Char(' '));
-        for (const QString& w : words) {
-            const QString trial = cur.isEmpty() ? w : cur + QLatin1Char(' ') + w;
-            if (fm.horizontalAdvance(trial) <= maxW || cur.isEmpty())
-                cur = trial;
-            else { wrapped << cur; cur = w; }
-        }
-        wrapped << cur;
-    }
-    double tw = 0.0;
-    for (const QString& l : wrapped) tw = qMax(tw, fm.horizontalAdvance(l));
-    const double th = wrapped.size() * fm.height();
-    const double pad = pxSize * 0.25;
-    const double bw = tw + 2.0 * pad;
-    const double bh = th + 2.0 * pad;
-    double x;
-    if (st.textAlign == 1) x = st.textX * W;
-    else if (st.textAlign == 2) x = st.textX * W - bw;
-    else x = st.textX * W - bw / 2.0;
-    const double y = st.textY * H - bh / 2.0;
-    const QRectF box(x, y, bw, bh);
+    const textrender::Layout L = textrender::layout(st, W, H);
+    const QRectF box = textrender::absoluteBox(st, L, W, H);
 
     QPainter p(&img);
     p.setRenderHint(QPainter::Antialiasing);
-    if (st.textBackground) p.fillRect(box, st.textBackgroundColor);
-    QPainterPath path;
-    const double baseline = box.top() + pad + fm.ascent();
-    for (int i = 0; i < wrapped.size(); ++i)
-        path.addText(QPointF(box.left() + pad, baseline + i * fm.height()), font, wrapped[i]);
-    if (st.textOutline > 0.0) {
-        QPen pen(st.textOutlineColor, qMax(1.0, st.textOutline * H),
-                 Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-        p.strokePath(path, pen);
-    }
-    p.fillPath(path, st.textColor);
+    textrender::paint(p, st, L, box, H);
     return img;
 }
 
@@ -466,7 +423,6 @@ QStringList opacityFades(const QVector<Keyframe>& keys, double base, double pos,
         // Adiciona valor base antes do primeiro keyframe e depois do último.
         const double tStart = pos;
         const double tEnd = pos + sorted.last().time;
-        const double baseV = std::clamp(base, 0.0, 1.0);
 
         // Amostra a cada ~2 frames para suavidade (mínimo 8 amostras).
         const double fps = 30.0;

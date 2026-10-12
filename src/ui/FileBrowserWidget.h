@@ -23,7 +23,6 @@ class FileBrowserWidget : public QWidget {
     Q_OBJECT
 public:
     explicit FileBrowserWidget(QWidget* parent = nullptr);
-    void goTo(const QString& path);
 signals:
     void filesImportRequested(const QStringList& files);
 private:

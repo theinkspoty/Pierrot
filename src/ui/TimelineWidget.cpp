@@ -6,7 +6,7 @@
 #include "TimelineWidget.h"
 #include "TimelineCommands.h"
 #include "colombina/util.h"
-#include "clipattrs.h"
+#include "colombina/models/ClipAttrs.h"
 
 #include "colombina/ffmpeg/MediaCache.h"
 #include "laartman/FFmpegDecoder.h"
@@ -101,45 +101,6 @@ double mediaInsertDur(const MediaItem& m) {
     return m.duration > 0 ? m.duration : 1.0;
 }
 
-QString fmtRuler(double t) {
-    const int total = (int)std::floor(t);
-    return QString("%1:%2")
-        .arg(total / 60, 2, 10, QLatin1Char('0'))
-        .arg(total % 60, 2, 10, QLatin1Char('0'));
-}
-
-// Remove os clipes selecionados de uma faixa e desloca os que estão à
-// direita da lacuna removida para a esquerda (edição ripple).
-void rippleDeleteInTrack(Track& t, const QStringList& sel) {
-    QVector<Clip> keep;
-    QVector<QPair<double, double>> removed;
-    for (Clip& c : t.clips) {
-        if (sel.contains(c.id))
-            removed.append(qMakePair(c.pos, c.pos + c.dur));
-        else
-            keep.append(c);
-    }
-    if (removed.isEmpty()) {
-        t.clips = keep;
-        return;
-    }
-    std::sort(removed.begin(), removed.end());
-    QVector<QPair<double, double>> merged;
-    for (const auto& iv : removed) {
-        if (merged.isEmpty() || iv.first > merged.last().second + 1e-6)
-            merged.append(iv);
-        else
-            merged.last().second = std::max(merged.last().second, iv.second);
-    }
-    for (Clip& c : keep) {
-        double shift = 0.0;
-        for (const auto& iv : merged)
-            if (c.pos >= iv.second - 1e-6)
-                shift += iv.second - iv.first;
-        c.pos = std::max(0.0, c.pos - shift);
-    }
-    t.clips = keep;
-}
 }
 
 TimelineWidget::TimelineWidget(QWidget* parent) : QWidget(parent) {
@@ -710,11 +671,6 @@ void TimelineWidget::openTextEditorForClip(const QString& clipId) {
     Clip* c = findClipById(clipId);
     if (!c) return;
     showTextEditorDialog(c);
-}
-
-void TimelineWidget::openPivotForClip(const QString& clipId) {
-    // Sinal para o MainWindow abrir o dock Pivot com este clipe.
-    emit pivotRequested(clipId);
 }
 
 // ── Multicâmera ──────────────────────────────────────────────────────────
@@ -3381,55 +3337,6 @@ void TimelineWidget::showAudioEffectsDialog(Clip* c) {
     emit modified();
 }
 
-// Menu dropdown do chip FX no cabeçalho de uma faixa de áudio (estilo Vegas):
-// liga/desliga efeitos rapidamente ou abre o diálogo de ajustes.
-void TimelineWidget::trackFxMenu(Track* track, const QPoint& at) {
-    if (!track || !m_project) return;
-    QMenu menu(this);
-    QAction* denoise = menu.addAction(tr("Redução de ruído"));
-    denoise->setCheckable(true);
-    denoise->setChecked(track->denoise);
-    QAction* reverb = menu.addAction(tr("Reverb EX"));
-    reverb->setCheckable(true);
-    reverb->setChecked(track->reverb);
-    QAction* invert = menu.addAction(tr("Inverter fase"));
-    invert->setCheckable(true);
-    invert->setChecked(track->invertPhase);
-    menu.addSeparator();
-    QAction* adjust = menu.addAction(tr("Ajustes de EQ / Reverb…"));
-    QAction* clear = menu.addAction(tr("Limpar efeitos"));
-
-    const QAction* chosen = menu.exec(at);
-    if (!chosen) return;
-    if (chosen == adjust) {
-        TrackAudioFxDialog dlg(track, this);
-        // O diálogo só escreve na faixa em accept(); emitenos o undo depois.
-        if (dlg.exec() != QDialog::Accepted) return;
-        emit editStart();
-        update();
-        emit modified();
-        return;
-    }
-    emit editStart();
-    if (chosen == denoise) {
-        track->denoise = !track->denoise;
-        if (track->denoise && track->denoiseAmount < 1.0) track->denoiseAmount = 12.0;
-    } else if (chosen == reverb) {
-        track->reverb = !track->reverb;
-    } else if (chosen == invert) {
-        track->invertPhase = !track->invertPhase;
-    } else if (chosen == clear) {
-        track->eqLow = track->eqMid = track->eqHigh = 0.0;
-        track->denoise = false;
-        track->invertPhase = false;
-        track->reverb = false;
-        track->reverbMix = 0.35;
-        track->reverbSize = 0.5;
-    }
-    update();
-    emit modified();
-}
-
 void TimelineWidget::showTextEditorDialog(Clip* c) {
     if (!c) return;
     TextEditorDialog dlg(m_project, c, this);
@@ -3614,16 +3521,6 @@ void TimelineWidget::applyZoomRect(double t0, double t1) {
 }
 
 // ---- Novas ferramentas de edição (Kdenlive + Premiere Pro) ----
-
-Clip* TimelineWidget::clipAtTime(int row, bool audio, double t) const {
-    if (!m_project || row < 0) return nullptr;
-    const Track& tr = audio ? m_project->audioTracks[row] : m_project->videoTracks[row];
-    for (const Clip& c : tr.clips) {
-        if (t >= c.pos && t < c.pos + c.dur)
-            return const_cast<Clip*>(&c);
-    }
-    return nullptr;
-}
 
 QPair<Clip*, Clip*> TimelineWidget::adjacentClips(Clip* c) {
     if (!c || !m_project) return {nullptr, nullptr};

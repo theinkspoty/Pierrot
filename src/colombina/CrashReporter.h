@@ -24,8 +24,6 @@ namespace CrashReporter {
 // Instala os handlers de sinal. Idempotente.
 void install();
 
-// Caminho do próximo arquivo de relatório de crash.
-QString nextReportPath();
 // Lista os arquivos de relatório de crash existentes (para avisar o usuário).
 QStringList existingReports();
 

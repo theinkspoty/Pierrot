@@ -490,7 +490,6 @@ bool MesaRenderer::drawTrackLayer(QPainter& acc, const Track& track,
         // canvas da Mesa mostrar uma mancha cinza enquanto o Preview e o
         // export mostravam a malha texturizada. Agora usa a mesma projeção
         // (câmera + perspectiva por vértice + ordenação por Z) do renderMeshLayer.
-        const double kPi = 3.14159265358979323846;
         double focal = 1.0;
         double camDist = 300.0;
         if (mesa.mesa3d) {

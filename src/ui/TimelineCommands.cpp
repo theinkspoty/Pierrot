@@ -541,8 +541,6 @@ void TimelineCommands::slideEdit(TimelineWidget* tl, Clip* c, double origPos,
 
     // Ajusta clipe seguinte.
     if (origDurNext > 0) {
-        const double nextNewPos = c->pos + c->dur;
-        const double shift = nextNewPos - origPosNext;
         // Caller ajusta o próximo clipe.
     }
 }

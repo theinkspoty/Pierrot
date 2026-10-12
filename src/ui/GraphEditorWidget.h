@@ -95,7 +95,6 @@ public:
 public slots:
     void resetZoom();
     void setSnap(bool on);
-    bool snapEnabled() const;
     // Easy Ease (varinha do After Effects/Premiere): converte os keyframes
     // selecionados para Bezier com handles horizontais (suaviza entrada e/ou
     // saída). mode: 0=ambos, 1=só easy in, 2=só easy out.

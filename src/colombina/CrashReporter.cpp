@@ -239,11 +239,6 @@ void CrashReporter::setActivity(const char* activity) {
     if (t_slot) t_slot->activity.store(activity, std::memory_order_relaxed);
 }
 
-QString CrashReporter::nextReportPath() {
-    return QDir::homePath() + "/Pierrot-crash-" +
-           QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss") + ".txt";
-}
-
 QStringList CrashReporter::existingReports() {
     const QString dir = QDir::homePath().isEmpty() ? QDir::tempPath() : QDir::homePath();
     QStringList files;

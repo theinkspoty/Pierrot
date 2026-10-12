@@ -1583,10 +1583,6 @@ void GraphCanvas::setSnap(bool on) {
     update();
 }
 
-bool GraphCanvas::snapEnabled() const {
-    return m_snap;
-}
-
 void GraphCanvas::contextMenuEvent(QContextMenuEvent* e) {
     if (!hasData()) { QWidget::contextMenuEvent(e); return; }
     QVector<Keyframe>& K = *keys();

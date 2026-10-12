@@ -106,7 +106,6 @@ private:
                    HitEdgeT, HitEdgeB, HitEdgeL, HitEdgeR, HitRotate,
                    HitCamera, HitCameraCorner };
     HitZone hitTest(const QPointF& screenPos, int& outTrackIdx) const;
-    int trackAt(const QPointF& screenPos) const;
     int cameraCornerAt(const QPointF& screenPos) const;
     void cameraCornerPoints(QPointF out[4]) const;
 
@@ -176,7 +175,6 @@ private:
 
     // Mini-timeline helpers
     double mesaDuration() const;
-    double contentStartTime() const;
     int timeToX(double t, int rulerW) const;
     double xToTime(int x, int rulerW) const;
     bool isInMiniTimeline(const QPoint& p) const;

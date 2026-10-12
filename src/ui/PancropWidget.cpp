@@ -7,6 +7,7 @@
 #include "ui/Theme.h"
 #include "colombina/ffmpeg/ProxyManager.h"
 #include "colombina/generators.h"
+#include "colombina/render/TextRender.h"
 
 #include <QPainter>
 #include <QPainterPath>
@@ -52,60 +53,14 @@ void renderTextStyleFrame(QImage& img, const TextStyle& st,
                           double sX = 1.0, double sY = 1.0) {
     const double W = img.width();
     const double H = img.height();
-    const double sizeFrac = st.textSize > 0.0 ? st.textSize : (1.0 / 18.0);
-    const int pxSize = qMax(4, (int)qRound(sizeFrac * H));
-    QFont font;
-    if (!st.fontFamily.isEmpty()) font.setFamily(st.fontFamily);
-    font.setPixelSize(pxSize);
-    font.setBold(st.textBold);
-    const QFontMetricsF fm(font);
-
-    const double maxW = W * 0.9;
-    QStringList wrapped;
-    for (const QString& raw : st.text.split(QLatin1Char('\n'))) {
-        if (raw.isEmpty()) { wrapped << QString(); continue; }
-        QString cur;
-        const QStringList words = raw.split(QLatin1Char(' '));
-        for (const QString& w : words) {
-            const QString trial = cur.isEmpty() ? w : cur + QLatin1Char(' ') + w;
-            if (fm.horizontalAdvance(trial) <= maxW || cur.isEmpty())
-                cur = trial;
-            else { wrapped << cur; cur = w; }
-        }
-        wrapped << cur;
-    }
-
-    double tw = 0.0;
-    for (const QString& l : wrapped) tw = qMax(tw, fm.horizontalAdvance(l));
-    const double th = wrapped.size() * fm.height();
-    const double pad = pxSize * 0.25;
-    const double bw = tw + 2.0 * pad;
-    const double bh = th + 2.0 * pad;
-
-    // Posição RELATIVA ao centro do quadro (o transform translada para o
-    // centro + pan). textX=0.5 → x=0 → centralizado.
-    double x;
-    if (st.textAlign == 1) x = st.textX * W - W / 2.0;
-    else if (st.textAlign == 2) x = st.textX * W - bw - W / 2.0;
-    else x = st.textX * W - bw / 2.0 - W / 2.0;
-    const double y = st.textY * H - bh / 2.0 - H / 2.0;
-    const QRectF box(x, y, bw, bh);
+    const textrender::Layout L = textrender::layout(st, W, H);
+    const QRectF box = textrender::centeredBox(st, L, W, H);
 
     QPainter p(&img);
     p.translate(W / 2.0 + tx, H / 2.0 + ty);
     p.rotate(rotDeg);
     p.scale(s * sX, s * sY);
-    if (st.textBackground) p.fillRect(box, st.textBackgroundColor);
-    QPainterPath path;
-    const double baseline = box.top() + pad + fm.ascent();
-    for (int i = 0; i < wrapped.size(); ++i)
-        path.addText(QPointF(box.left() + pad, baseline + i * fm.height()), font, wrapped[i]);
-    if (st.textOutline > 0.0) {
-        QPen pen(st.textOutlineColor, qMax(1.0, st.textOutline * H),
-                 Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-        p.strokePath(path, pen);
-    }
-    p.fillPath(path, st.textColor);
+    textrender::paint(p, st, L, box, H);
 }
 constexpr int kRotStep = 5;    // graus por tick da roda (Alt+roda)
 
@@ -116,14 +71,6 @@ struct CollapsibleSection {
     QWidget* body = nullptr;
     QToolButton* header = nullptr;
     QGridLayout* grid = nullptr;
-    void setCollapsed(bool c, bool animate = false) {
-        body->setVisible(!c);
-        if (header) {
-            header->setArrowType(c ? Qt::RightArrow : Qt::DownArrow);
-            header->setChecked(!c);
-        }
-        Q_UNUSED(animate);
-    }
 };
 
 // Presets de suavização "estilo Vegas" aplicados ao segmento que sai do
@@ -2068,7 +2015,7 @@ void PancropWidget::stripContextMenu(QWidget* view, QContextMenuEvent* e) {
     const double t = times[bestIdx];
 
     QMenu menu(view);
-    QAction* lin = menu.addAction(tr("Linear (padrão)"));
+    menu.addAction(tr("Linear (padrão)"));
     QAction* suave = menu.addAction(tr("Suave"));
     QAction* rapido = menu.addAction(tr("Rápido"));
     QAction* lento = menu.addAction(tr("Lento"));

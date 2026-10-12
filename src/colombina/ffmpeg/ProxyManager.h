@@ -43,7 +43,6 @@ public:
     // (e estiver habilitado), senão o original. Determinístico (mesmo src →
     // mesmo proxy), para evitar cache keys inconsistentes.
     QString resolveVideo(const QString& srcPath) const;
-    bool hasProxy(const QString& srcPath) const;
 
     // Programa a geração de proxy para `srcPath` se a mídia for grande e
     // ainda não houver proxy. Não bloqueia; roda em background.
@@ -59,7 +58,6 @@ public:
     // Ao voltar para TRUE, re-enfileira a geração das fontes conhecidas que
     // ainda não têm proxy (os proxies antigos continuam em cache).
     void setProjectUsesProxies(bool on);
-    bool projectUsesProxies() const;
 
     // Há geração em andamento (na fila ou no job ativo)? Usado pelo harness de
     // A/B para só medir depois que os proxies ficaram prontos.

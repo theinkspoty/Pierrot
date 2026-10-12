@@ -17,7 +17,9 @@
 #include "ui/ScopeWidget.h"
 #include "colombina/export/LainkaFx.h"
 #include "ui/Theme.h"
+#include "ui/MonitorUtils.h"
 #include "colombina/generators.h"
+#include "colombina/render/TextRender.h"
 #ifdef PIERROT_ENABLE_RUST
 #include "AudioFxBridge.h"
 #endif
@@ -1573,100 +1575,6 @@ private:
 
 namespace {
 
-// Timecode estilo Vegas/DaVinci: HH:MM:SS:FF (frames, no fps do projeto).
-QString fmtTimecode(double t, double fps) {
-    const int fr = qMax(1, (int)std::llround(fps));
-    int ff = (int)std::llround(t * fr);
-    const int h = ff / (3600 * fr); ff %= 3600 * fr;
-    const int m = ff / (60 * fr);   ff %= 60 * fr;
-    const int s = ff / fr;          ff %= fr;
-    return QString("%1:%2:%3:%4")
-        .arg(h, 2, 10, QLatin1Char('0'))
-        .arg(m, 2, 10, QLatin1Char('0'))
-        .arg(s, 2, 10, QLatin1Char('0'))
-        .arg(ff, 2, 10, QLatin1Char('0'));
-}
-
-// Glifos monocromáticos do transporte do monitor (como o Premiere desenha os
-// botões planos do Program Monitor: setas, play/pausa, loop e margens).
-enum MonitorGlyph { MStepBack, MPlay, MPause, MStepFwd, MLoop, MSafe, MFullscreen };
-
-static QIcon makeMonitorIcon(MonitorGlyph g, const QColor& color) {
-    auto draw = [g](QPainter& p, const QColor& c) {
-        QPen pen(c, 1.7, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-        p.setPen(pen);
-        p.setBrush(Qt::NoBrush);
-        switch (g) {
-        case MStepBack:
-            p.setPen(Qt::NoPen);
-            p.setBrush(c);
-            { QPolygonF t; t << QPointF(4.5, 8.0) << QPointF(10.5, 3.5) << QPointF(10.5, 12.5);
-              p.drawPolygon(t); }
-            p.drawRect(QRectF(11.4, 4.0, 2.2, 8.0));
-            break;
-        case MPlay:
-            p.setPen(Qt::NoPen);
-            p.setBrush(c);
-            { QPolygonF t; t << QPointF(5.5, 3.8) << QPointF(13.0, 8.0) << QPointF(5.5, 12.2);
-              p.drawPolygon(t); }
-            break;
-        case MPause:
-            p.setPen(Qt::NoPen);
-            p.setBrush(c);
-            p.drawRect(QRectF(5.0, 3.8, 2.6, 8.4));
-            p.drawRect(QRectF(9.0, 3.8, 2.6, 8.4));
-            break;
-        case MStepFwd:
-            p.setPen(Qt::NoPen);
-            p.setBrush(c);
-            { QPolygonF t; t << QPointF(11.5, 8.0) << QPointF(5.5, 3.5) << QPointF(5.5, 12.5);
-              p.drawPolygon(t); }
-            p.drawRect(QRectF(2.4, 4.0, 2.2, 8.0));
-            break;
-        case MLoop:
-            // Seta circular (retorno/loop): arco + cabeça de seta na ponta.
-            p.drawArc(QRectF(3.0, 3.5, 10.0, 9.0), -40 * 16, -240 * 16);
-            p.setPen(Qt::NoPen);
-            p.setBrush(c);
-            { QPolygonF h; h << QPointF(12.4, 3.0) << QPointF(13.6, 7.2) << QPointF(15.6, 5.4);
-              p.drawPolygon(h); }
-            break;
-        case MSafe:
-            // Margens de segurança: retângulo com marcas centrais.
-            p.setPen(pen);
-            p.setBrush(Qt::NoBrush);
-            p.drawRect(QRectF(3.0, 3.0, 10.0, 10.0));
-            p.drawLine(QPointF(8.0, 3.0), QPointF(8.0, 3.9));
-            p.drawLine(QPointF(8.0, 12.1), QPointF(8.0, 13.0));
-            p.drawLine(QPointF(3.0, 8.0), QPointF(3.9, 8.0));
-            p.drawLine(QPointF(12.1, 8.0), QPointF(13.0, 8.0));
-            break;
-        case MFullscreen:
-            // Expandi: quatro cantos apontando para fora, como o botão de
-            // fullscreen do Premiere.
-            p.setPen(Qt::NoPen);
-            p.setBrush(c);
-            { QPolygonF c1; c1 << QPointF(3.0, 7.0) << QPointF(3.0, 3.0) << QPointF(7.0, 3.0); p.drawPolygon(c1); }
-            { QPolygonF c2; c2 << QPointF(13.0, 3.0) << QPointF(9.0, 3.0) << QPointF(13.0, 7.0); p.drawPolygon(c2); }
-            { QPolygonF c3; c3 << QPointF(3.0, 9.0) << QPointF(3.0, 13.0) << QPointF(7.0, 13.0); p.drawPolygon(c3); }
-            { QPolygonF c4; c4 << QPointF(13.0, 13.0) << QPointF(13.0, 9.0) << QPointF(9.0, 13.0); p.drawPolygon(c4); }
-            break;
-        }
-    };
-    QIcon icon;
-    for (int s : {1, 2}) {
-        QPixmap pm(16 * s, 16 * s);
-        pm.setDevicePixelRatio(s);
-        pm.fill(Qt::transparent);
-        QPainter p(&pm);
-        p.setRenderHint(QPainter::Antialiasing, true);
-        draw(p, color);
-        p.end();
-        icon.addPixmap(pm);
-    }
-    return icon;
-}
-
 double projFps(const Project* p) {
     return (p && p->fps > 0.0) ? p->fps : 30.0;
 }
@@ -1725,13 +1633,13 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     hoverBg.setAlpha(70);
     QColor checkBg = themeColors().accent;
     checkBg.setAlpha(55);
-    m_playIcon = makeMonitorIcon(MPlay, glyph);
-    m_pauseIcon = makeMonitorIcon(MPause, glyph);
+    m_playIcon = makeMonitorIcon(MonitorGlyph::Play, glyph);
+    m_pauseIcon = makeMonitorIcon(MonitorGlyph::Pause, glyph);
 
     // Transporte do monitor, espelhado no Program Monitor do Premiere: botões
     // planos no topo — quadro anterior, play/pausa, quadro seguinte e loop.
     m_stepBackBtn = new QToolButton(this);
-    m_stepBackBtn->setIcon(makeMonitorIcon(MStepBack, glyph));
+    m_stepBackBtn->setIcon(makeMonitorIcon(MonitorGlyph::StepBack, glyph));
     m_stepBackBtn->setIconSize(QSize(18, 18));
     m_stepBackBtn->setFixedSize(30, 26);
     m_stepBackBtn->setToolTip(tr("Quadro anterior"));
@@ -1748,7 +1656,7 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     m_playBtn->setCursor(Qt::PointingHandCursor);
 
     m_stepFwdBtn = new QToolButton(this);
-    m_stepFwdBtn->setIcon(makeMonitorIcon(MStepFwd, glyph));
+    m_stepFwdBtn->setIcon(makeMonitorIcon(MonitorGlyph::StepFwd, glyph));
     m_stepFwdBtn->setIconSize(QSize(18, 18));
     m_stepFwdBtn->setFixedSize(30, 26);
     m_stepFwdBtn->setToolTip(tr("Quadro seguinte"));
@@ -1756,7 +1664,7 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     connect(m_stepFwdBtn, &QToolButton::clicked, this, [this]() { stepFrame(1); });
 
     m_loopBtn = new QToolButton(this);
-    m_loopBtn->setIcon(makeMonitorIcon(MLoop, glyph));
+    m_loopBtn->setIcon(makeMonitorIcon(MonitorGlyph::Loop, glyph));
     m_loopBtn->setIconSize(QSize(18, 18));
     m_loopBtn->setFixedSize(30, 26);
     m_loopBtn->setCheckable(true);
@@ -1792,7 +1700,7 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     // Fullscreen do monitor (o Premiere expande o Program para tela cheia;
     // Esc sai).
     m_fullscreenBtn = new QToolButton(this);
-    m_fullscreenBtn->setIcon(makeMonitorIcon(MFullscreen, glyph));
+    m_fullscreenBtn->setIcon(makeMonitorIcon(MonitorGlyph::Fullscreen, glyph));
     m_fullscreenBtn->setIconSize(QSize(18, 18));
     m_fullscreenBtn->setFixedSize(30, 26);
     m_fullscreenBtn->setToolTip(tr("Tela cheia (Esc para sair)"));
@@ -1889,7 +1797,7 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     // alterna). No Premiere não existe grade NxN no Program Monitor — o que
     // aparece são os dois retângulos concêntricos de segurança.
     m_gridBtn = new QToolButton(this);
-    m_gridBtn->setIcon(makeMonitorIcon(MSafe, themeColors().monitorLabel));
+    m_gridBtn->setIcon(makeMonitorIcon(MonitorGlyph::Safe, themeColors().monitorLabel));
     m_gridBtn->setIconSize(QSize(18, 18));
     m_gridBtn->setFixedSize(30, 26);
     m_gridBtn->setCheckable(true);
@@ -2610,47 +2518,8 @@ void PreviewWidget::drawClipText(QPainter& p, const QRect& canvas, const Clip* c
         }
     }
 
-    const double sizeFrac = st.textSize > 0.0 ? st.textSize : (1.0 / 18.0);
-    const int pxSize = qMax(4, (int)qRound(sizeFrac * H)); // px de projeto
-    QFont font;
-    if (!st.fontFamily.isEmpty()) font.setFamily(st.fontFamily);
-    font.setPixelSize(pxSize);
-    font.setBold(st.textBold);
-    const QFontMetricsF fm(font);
-
-    // Quebra em linhas dentro de 90% da largura do projeto.
-    const double maxW = W * 0.9;
-    QStringList wrapped;
-    for (const QString& raw : st.text.split(QLatin1Char('\n'))) {
-        if (raw.isEmpty()) { wrapped << QString(); continue; }
-        QString cur;
-        const QStringList words = raw.split(QLatin1Char(' '));
-        for (const QString& w : words) {
-            const QString trial = cur.isEmpty() ? w : cur + QLatin1Char(' ') + w;
-            if (fm.horizontalAdvance(trial) <= maxW || cur.isEmpty())
-                cur = trial;
-            else { wrapped << cur; cur = w; }
-        }
-        wrapped << cur;
-    }
-
-    double tw = 0.0;
-    for (const QString& l : wrapped) tw = qMax(tw, fm.horizontalAdvance(l));
-    const double th = wrapped.size() * fm.height();
-    const double pad = pxSize * 0.25;
-    const double bw = tw + 2.0 * pad;
-    const double bh = th + 2.0 * pad;
-
-    // Posição do texto RELATIVA ao centro do quadro (a origem do transform é
-    // o centro + pan). textX=0.5 → x=0 → texto centralizado. Antes desenhávamos
-    // em coordenadas absolutas (0.5W) E transladávamos por W/2: o texto caía
-    // em 0.5W+0.5W = W (canto inferior direito, fora da tela).
-    double x;
-    if (st.textAlign == 1) x = st.textX * W - W / 2.0;
-    else if (st.textAlign == 2) x = st.textX * W - bw - W / 2.0;
-    else x = st.textX * W - bw / 2.0 - W / 2.0;
-    const double y = st.textY * H - bh / 2.0 - H / 2.0;
-    const QRectF box(x, y, bw, bh);
+    const textrender::Layout L = textrender::layout(st, W, H);
+    const QRectF box = textrender::centeredBox(st, L, W, H);
 
     p.save();
     p.setClipRect(canvas);
@@ -2667,21 +2536,7 @@ void PreviewWidget::drawClipText(QPainter& p, const QRect& canvas, const Clip* c
             kfValue(clip->kfScale, clip->scale, rel) * jtScale
                 * kfValue(clip->kfScaleY, clip->scaleY, rel));
 
-    if (st.textBackground) {
-        p.fillRect(box, st.textBackgroundColor);
-    }
-
-    QPainterPath path;
-    const double baseline = box.top() + pad + fm.ascent();
-    for (int i = 0; i < wrapped.size(); ++i)
-        path.addText(QPointF(box.left() + pad, baseline + i * fm.height()), font, wrapped[i]);
-
-    if (st.textOutline > 0.0) {
-        const double ow = qMax(1.0, st.textOutline * H);
-        QPen pen(st.textOutlineColor, ow, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-        p.strokePath(path, pen);
-    }
-    p.fillPath(path, st.textColor);
+    textrender::paint(p, st, L, box, H);
 
     p.restore();
 }
@@ -2875,41 +2730,6 @@ void PreviewWidget::setPreviewQuality(int width) {
         }
     update();
     updateFrame();
-}
-
-
-// Clipe de vídeo (com mídia) no topo em `t`. Clipes de texto independentes são
-// ignorados aqui (não têm quadro para decodificar); o texto é desenhado por
-// cima do vídeo no paintEvent.
-const Clip* PreviewWidget::clipAt(double t) const {
-    if (!m_project) return nullptr;
-    // Empilhamento: a faixa de índice 0 é a de TOPO (como V1 no Premiere), e
-    // o paintEvent compõe de baixo para cima percorrendo size()-1 → 0. Por isso
-    // o PRIMEIRO match vence: ele é o clipe visualmente mais alto.
-    //
-    // Já houve aqui um `return` no último match, achando que índice maior era
-    // o topo. É o contrário — e o efeito era o Preview escolher o clipe do
-    // rodapé. Não voltar a isso: para trocar a ordem de composição, o lugar
-    // é o paintEvent, não o clipAt.
-    for (int tr = 0; tr < (int)m_project->videoTracks.size(); ++tr) {
-        const Track& track = m_project->videoTracks[tr];
-        if (!track.visible) continue;   // faixa oculta (olho)
-        // Faixa de efeitos renderiza mídia normal (o efeito entra no próprio
-        // clipe ao entrar na faixa); ela é o topo da pilha como qualquer outra.
-        // Track de Mesa gera quadro mesmo sem mídia própria (a composição é a
-        // fonte de vídeo).
-        const bool mesaTrack = m_project->findMesaForTrack(track.id) != nullptr;
-        const Clip* best = nullptr;
-        for (const Clip& c : track.clips) {
-            if (t >= c.pos && t < c.pos + c.dur && !c.isText) {
-                const MediaItem* m = m_project->findMedia(c.mediaIdAt(t - c.pos));
-                const bool hasVideo = mesaTrack || (m && m->hasVideo);
-                if (hasVideo && (!best || c.pos > best->pos)) best = &c;
-            }
-        }
-        if (best) return best;
-    }
-    return nullptr;
 }
 
 bool PreviewWidget::tryRenderMesa(const Clip* clip) {
@@ -4298,7 +4118,6 @@ void PreviewWidget::applyBasicEffectsOn(QImage& img, const Clip& c, double rel) 
         // duro — e aumentar a similaridade estrangulava a suavidade.
         const double coreRange = sim * 255.0;
         const double fullRange = coreRange + soft * 255.0;
-        const double coreSq = coreRange * coreRange;
         const double fullSq = fullRange * fullRange;
 
         // Canal dominante da cor-chave: define qual componente o spill remove.

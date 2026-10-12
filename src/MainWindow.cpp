@@ -1420,7 +1420,7 @@ bool MainWindow::confirmDiscardChanges() {
     box.setIcon(QMessageBox::Question);
     box.setText(tr("O projeto tem alterações não salvas. Deseja salvá-las antes de continuar?"));
     QPushButton* saveBtn = box.addButton(tr("Salvar"), QMessageBox::AcceptRole);
-    QPushButton* discardBtn = box.addButton(tr("Descartar"), QMessageBox::DestructiveRole);
+    box.addButton(tr("Descartar"), QMessageBox::DestructiveRole);
     QPushButton* cancelBtn = box.addButton(tr("Cancelar"), QMessageBox::RejectRole);
     box.setDefaultButton(saveBtn);
     box.exec();

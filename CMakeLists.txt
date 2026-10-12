@@ -56,6 +56,7 @@ set(COLOMBINA_SOURCES
     src/colombina/export/ProjectExporter.cpp
     src/colombina/export/LainkaRenderer.cpp
     src/colombina/export/OfxExportRenderer.cpp
+    src/colombina/export/PreRenderSession.cpp
     src/colombina/export/NleInterchange.cpp
     src/colombina/ofx/OfxPluginManager.cpp
     src/colombina/ofx/OfxHost.cpp
@@ -69,12 +70,14 @@ set(COLOMBINA_SOURCES
 
 set(COLOMBINA_HEADERS
     src/colombina/models/Project.h
+    src/colombina/models/ClipAttrs.h
     src/colombina/ffmpeg/MediaCache.h
     src/colombina/ffmpeg/ProxyManager.h
     src/colombina/export/ProjectExporter.h
     src/colombina/export/LainkaFx.h
     src/colombina/export/LainkaRenderer.h
     src/colombina/export/OfxExportRenderer.h
+    src/colombina/export/PreRenderSession.h
     src/colombina/export/NleInterchange.h
     src/colombina/ofx/OfxPluginManager.h
     src/colombina/ofx/OfxHost.h
@@ -85,6 +88,7 @@ set(COLOMBINA_HEADERS
     src/colombina/fx/ColorGrade.h
     src/colombina/render/MesaRenderer.h
     src/colombina/render/Math3D.h
+    src/colombina/render/TextRender.h
     src/colombina/generators.h
     src/colombina/util.h
     src/colombina/CrashReporter.h
@@ -130,7 +134,6 @@ set(PIERROT_APP_SOURCES
     src/ui/PreviewMonitor.cpp
     src/ui/FileBrowserWidget.cpp
     src/ui/MixerWidget.cpp
-    src/ui/TitleBar.cpp
     src/ui/MesaWidget.cpp
     src/ui/MesaHitTest.cpp
     src/ui/MesaInputHandler.cpp
@@ -142,7 +145,6 @@ set(PIERROT_APP_SOURCES
 set(PIERROT_APP_HEADERS
     src/MainWindow.h
     src/Bench.h
-    src/clipattrs.h
     src/version.h
     src/ui/TrimmerDialog.h
     src/ui/SourceMonitorWidget.h
@@ -156,6 +158,7 @@ set(PIERROT_APP_HEADERS
     src/ui/PreviewWidget.h
     src/ui/PlaybackEngine.h
     src/ui/PreviewMonitor.h
+    src/ui/MonitorUtils.h
     src/ui/PancropWidget.h
     src/ui/ExportDialog.h
     src/ui/ProjectSettingsDialog.h
@@ -165,6 +168,7 @@ set(PIERROT_APP_HEADERS
     src/ui/MaskEditorDialog.h
     src/ui/AudioEffectsDialog.h
     src/ui/TrackAudioFxDialog.h
+    src/ui/AudioFxHelpers.h
     src/ui/TextEditorDialog.h
     src/ui/WelcomeWindow.h
     src/ui/GraphEditorWidget.h
@@ -174,7 +178,6 @@ set(PIERROT_APP_HEADERS
     src/ui/ExpressWidget.h
     src/ui/FileBrowserWidget.h
     src/ui/MixerWidget.h
-    src/ui/TitleBar.h
     src/ui/MesaWidget.h
 )
 

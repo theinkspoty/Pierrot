@@ -34,11 +34,6 @@ public:
     static bool trimmerEnabled();
     // Sensibilidade do arraste vertical no editor de curvas (1.0 = padrão).
     static double graphSensitivity();
-    // Decodificação de vídeo por hardware (VAAPI). Lida pelos decoders.
-    static bool hwDecodeEnabled();
-    // Codificação de vídeo por hardware no export (h264_nvenc/h264_vaapi),
-    // com retorno automático ao libx264 quando não houver encoders disponíveis.
-    static bool hwEncodeEnabled();
     // Versões leves de vídeo (proxies) para preview e thumbs em alta resolução.
     static bool proxiesEnabled();
     // Caminhos extras de plugins OFX configurados pelo usuário.

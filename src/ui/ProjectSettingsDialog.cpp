@@ -40,70 +40,7 @@ ProjectSettingsDialog::ProjectSettingsDialog(int width, int height, int fps,
     setWindowTitle(tr("Configurações do projeto"));
     setMinimumWidth(480);
 
-    setStyleSheet(QStringLiteral(R"(
-        QDialog { background: %1; }
-        QLabel { color: %2; }
-        QGroupBox {
-            font-weight: 600;
-            border: 1px solid %3;
-            border-radius: 6px;
-            margin-top: 14px;
-            background: %4;
-            color: %5;
-        }
-        QGroupBox::title {
-            subcontrol-origin: margin;
-            left: 12px;
-            top: 4px;
-            padding: 0 4px;
-            color: %6;
-        }
-        QSpinBox, QComboBox {
-            background: %7;
-            border: 1px solid %8;
-            border-radius: 4px;
-            color: %9;
-            padding: 4px 8px;
-            min-height: 18px;
-        }
-        QSpinBox:focus, QComboBox:focus { border-color: %10; }
-        QComboBox::drop-down { border: none; }
-        QComboBox QAbstractItemView {
-            background: %11;
-            border: 1px solid %12;
-            color: %13;
-            selection-background-color: %14;
-        }
-        QDialogButtonBox QPushButton {
-            background: %15;
-            border: 1px solid %16;
-            border-radius: 4px;
-            color: %17;
-            padding: 5px 14px;
-        }
-        QDialogButtonBox QPushButton:hover { background: %18; border-color: %19; }
-        QDialogButtonBox QPushButton:pressed { background: %20; }
-    )")
-        .arg(themeColors().window.name())
-        .arg(themeColors().text.name())
-        .arg(themeColors().dockBorder.name())
-        .arg(themeColors().button.name())
-        .arg(themeColors().buttonText.name())
-        .arg(themeColors().accent.name())
-        .arg(themeColors().inputBg.name())
-        .arg(themeColors().inputBorder.name())
-        .arg(themeColors().text.name())
-        .arg(themeColors().inputFocus.name())
-        .arg(themeColors().button.name())
-        .arg(themeColors().inputBorder.name())
-        .arg(themeColors().text.name())
-        .arg(themeColors().highlight.name())
-        .arg(themeColors().button.name())
-        .arg(themeColors().inputBorder.name())
-        .arg(themeColors().buttonText.name())
-        .arg(themeColors().btnHover.name())
-        .arg(themeColors().dockBorder.name())
-        .arg(themeColors().btnActive.name()));
+    setStyleSheet(dialogStyleSheet());
 
     m_preset = new QComboBox(this);
     for (const ProjectPreset& p : kPresets)

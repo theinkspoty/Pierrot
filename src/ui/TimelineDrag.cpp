@@ -338,8 +338,6 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
                 bool eaudio;
                 const int kfi = trackEnvKfAt(e->pos(), erow, eaudio);
                 if (kfi >= 0) {
-                    Track& tr = eaudio ? m_project->audioTracks[erow]
-                                       : m_project->videoTracks[erow];
                     emit editStart();
                     m_dragMode = TrackEnvVol;
                     m_envRow = erow;

@@ -67,7 +67,6 @@ public:
 
     // Acesso ao runtime do plugin (para ofxHost)
     const OfxPluginLib* pluginLib(const QString& pluginId) const;
-    void* libraryHandle(const QString& pluginId) const;
 
     // Callbacks para descrever e extrair parâmetros
     using DescribeCallback = std::function<void(const QString& pluginId,
@@ -91,7 +90,6 @@ private:
     void scanDirectory(const QString& dir);
     bool loadPluginBundle(const QString& bundlePath);
     bool loadOfxLibrary(const QString& libPath, const QString& pluginId);
-    void describePlugin(OfxPluginInfo& info);
     void cleanupLibs();
 
     // kOfxPropIcon traz um caminho RELATIVO à pasta Resources do bundle.

@@ -158,16 +158,6 @@ int PreviewProfiler::cuts() const {
     return int(m_cuts);
 }
 
-int PreviewProfiler::compositeHits() const {
-    QMutexLocker l(&m_mutex);
-    return int(m_compHits);
-}
-
-int PreviewProfiler::compositeMisses() const {
-    QMutexLocker l(&m_mutex);
-    return int(m_compMiss);
-}
-
 double PreviewProfiler::playbackSpan() const {
     QMutexLocker l(&m_mutex);
     return m_spanStart < 0.0 ? 0.0 : m_spanEnd - m_spanStart;

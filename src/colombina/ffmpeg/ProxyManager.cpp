@@ -160,13 +160,6 @@ QString ProxyManager::resolveVideo(const QString& srcPath) const {
     return out;
 }
 
-bool ProxyManager::hasProxy(const QString& srcPath) const {
-    QMutexLocker l(&m_mutex);
-    if (srcPath.isEmpty()) return false;
-    const QString proxy = proxyPathFor(srcPath);
-    return m_map.value(srcPath) == proxy && QFile::exists(proxy);
-}
-
 void ProxyManager::probeAndQueue(const QString& srcPath) {
     QMutexLocker l(&m_mutex);
     if (!m_enabled) { return; }
@@ -222,11 +215,6 @@ void ProxyManager::setProjectUsesProxies(bool on) {
     }
     for (const QString& s : toQueue)
         probeAndQueue(s);
-}
-
-bool ProxyManager::projectUsesProxies() const {
-    QMutexLocker l(&m_mutex);
-    return m_projectUsesProxies;
 }
 
 bool ProxyManager::busy() const {

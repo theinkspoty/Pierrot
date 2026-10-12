@@ -172,3 +172,9 @@ QString globalStyleSheet(AppTheme theme);
 // Retorna o stylesheet flat estilo Premiere para os controles padrão
 // (botões, campos, combos, menus, tabs, scrollbars...) aplicado ao app.
 QString flatControlStyleSheet(AppTheme theme);
+
+// Folha de estilo padrão das caixas de diálogo do editor (group boxes,
+// entradas, combos e botões OK/Cancelar), preenchida com as cores do tema.
+// Reutilizada pelos dialogs com a cara "casa" (Configurações do projeto,
+// Exportação…).
+QString dialogStyleSheet();

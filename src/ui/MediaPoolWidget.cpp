@@ -327,6 +327,23 @@ void PoolTree::mousePressEvent(QMouseEvent* e) {
     e->accept();
 }
 
+void PoolTree::mouseDoubleClickEvent(QMouseEvent* e) {
+    // A base só emite itemDoubleClicked quando o pressedIndex coincide com o
+    // item; como o nosso mousePressEvent não passa pela base, disparamos o
+    // sinal à mão.
+    if (e->button() == Qt::LeftButton) {
+        e->accept();
+        if (QTreeWidgetItem* it = itemAt(e->position().toPoint())) {
+            const QString id = it->data(0, Qt::UserRole).toString();
+            if (!id.isEmpty()) {
+                emit mediaActivated(id);
+                return;
+            }
+        }
+    }
+    QTreeWidget::mouseDoubleClickEvent(e);
+}
+
 void PoolTree::mouseMoveEvent(QMouseEvent* e) {
     const QPoint p = e->position().toPoint();
     if ((e->buttons() & Qt::LeftButton) && !m_dragging && m_pressItem
@@ -509,6 +526,23 @@ void PoolList::mousePressEvent(QMouseEvent* e) {
         return;
     }
     QListWidget::mousePressEvent(e);
+}
+
+void PoolList::mouseDoubleClickEvent(QMouseEvent* e) {
+    // A base só emite itemDoubleClicked quando o pressedIndex coincide com o
+    // item; como o nosso mousePressEvent não passa pela base, disparamos o
+    // sinal à mão.
+    if (e->button() == Qt::LeftButton) {
+        e->accept();
+        if (QListWidgetItem* it = itemAt(e->position().toPoint())) {
+            const QString id = it->data(Qt::UserRole).toString();
+            if (!id.isEmpty()) {
+                emit mediaActivated(id);
+                return;
+            }
+        }
+    }
+    QListWidget::mouseDoubleClickEvent(e);
 }
 
 void PoolList::mouseMoveEvent(QMouseEvent* e) {
@@ -738,12 +772,8 @@ MediaPoolWidget::MediaPoolWidget(QWidget* parent) : QWidget(parent) {
     // Duplo clique em qualquer visualização: abre no Source Monitor (fluxo
     // Premiere — In/Out + Insert/Overwrite). Inserir direto no playhead
     // continua no menu de contexto e no arrasto para a timeline.
-    connect(m_list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* it) {
-        if (it) emit mediaToSource(it->data(Qt::UserRole).toString());
-    });
-    connect(m_tree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* it, int) {
-        if (it) emit mediaToSource(it->data(0, Qt::UserRole).toString());
-    });
+    connect(m_list, &PoolList::mediaActivated, this, &MediaPoolWidget::mediaToSource);
+    connect(m_tree, &PoolTree::mediaActivated, this, &MediaPoolWidget::mediaToSource);
     m_list->setContextMenuPolicy(Qt::CustomContextMenu);
     m_tree->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_list, &QWidget::customContextMenuRequested, this,

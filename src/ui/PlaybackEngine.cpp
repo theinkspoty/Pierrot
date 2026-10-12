@@ -475,6 +475,15 @@ void PlaybackEngine::tickImpl() {
 // Clipe de vídeo (com mídia) no topo em `t`. Clipes de texto independentes são
 // ignorados aqui (não têm quadro para decodificar); o texto é desenhado por
 // cima do vídeo no paintEvent.
+// Clipe de vídeo (com mídia) no topo em `t`. Clipes de texto independentes são
+// ignorados aqui (não têm quadro para decodificar); o texto é desenhado por
+// cima do vídeo no paintEvent do Preview.
+//
+// Empilhamento: a faixa de índice 0 é a de TOPO (como V1 no Premiere), e o
+// paintEvent compõe de baixo para cima percorrendo size()-1 → 0. Por isso o
+// PRIMEIRO match vence: ele é o clipe visualmente mais alto. Já houve aqui um
+// `return` no último match, achando que índice maior era o topo — é o
+// contrário. Para trocar a ordem de composição, o lugar é o paintEvent.
 const Clip* PlaybackEngine::clipAt(double t) const {
     if (!m_project) return nullptr;
     for (int tr = 0; tr < (int)m_project->videoTracks.size(); ++tr) {

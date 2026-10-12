@@ -405,10 +405,6 @@ FileBrowserWidget::FileBrowserWidget(QWidget* parent) : QWidget(parent) {
     setCurrentPath(QDir::homePath());
 }
 
-void FileBrowserWidget::goTo(const QString& path) {
-    setCurrentPath(path);
-}
-
 void FileBrowserWidget::populatePlaces() {
     if (!m_places) return;
     m_places->clear();

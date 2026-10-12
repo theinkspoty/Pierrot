@@ -4,6 +4,7 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "Project.h"
+#include "ClipAttrs.h"
 
 #include <QJsonArray>
 #include <QJsonValue>
@@ -236,7 +237,11 @@ static MesaComposition mesaFromJson(const QJsonObject& o) {
 }
 
 static QJsonObject clipToJson(const Clip& c) {
-    QJsonObject o;
+    // Atributos "coláveis" (volume, cor, transform, efeitos, keyframes, ...):
+    // mesma serialização usada pelos presets (ClipAttrs.h).
+    QJsonObject o = clipattrs::toJson(c);
+
+    // ── Identidade e campos próprios do clipe (não entram em presets) ────
     o["id"] = c.id;
     o["mediaId"] = c.mediaId;
     o["groupId"] = c.groupId;
@@ -253,49 +258,10 @@ static QJsonObject clipToJson(const Clip& c) {
     o["in"] = c.in;
     o["dur"] = c.dur;
     o["name"] = c.name;
-    o["transitionType"] = c.transitionType;
     o["audioStreamIndex"] = c.audioStreamIndex;
-    o["volume"] = c.volume;
-    o["opacity"] = c.opacity;
-    o["fadeIn"] = c.fadeIn;
-    o["fadeOut"] = c.fadeOut;
-    o["speed"] = c.speed;
     o["isText"] = c.isText;
     o["textResourceId"] = c.textResourceId;
     o["textStyle"] = textStyleToJson(c.text);
-    o["brightness"] = c.brightness;
-    o["contrast"] = c.contrast;
-    o["saturation"] = c.saturation;
-    o["blur"] = c.blur;
-    o["grayscale"] = c.grayscale;
-    o["chromaKey"] = c.chromaKey;
-    o["chromaKeyColor"] = c.chromaKeyColor.name();
-    o["chromaKeySimilarity"] = c.chromaKeySimilarity;
-    o["chromaKeySoftness"] = c.chromaKeySoftness;
-    o["chromaKeySpillSuppress"] = c.chromaKeySpillSuppress;
-    o["psxEnabled"] = c.psxEnabled;
-    o["psxDither"] = c.psxDither;
-    o["psxBits"] = c.psxBits;
-    o["liftR"] = c.liftR; o["liftG"] = c.liftG; o["liftB"] = c.liftB;
-    o["gammaR"] = c.gammaR; o["gammaG"] = c.gammaG; o["gammaB"] = c.gammaB;
-    o["gainR"] = c.gainR; o["gainG"] = c.gainG; o["gainB"] = c.gainB;
-    o["cgExposure"] = c.cgExposure;
-    o["cgContrast"] = c.cgContrast;
-    o["cgHighlights"] = c.cgHighlights;
-    o["cgShadows"] = c.cgShadows;
-    o["cgWhites"] = c.cgWhites;
-    o["cgBlacks"] = c.cgBlacks;
-    o["cgSaturation"] = c.cgSaturation;
-    o["cgVibrance"] = c.cgVibrance;
-    o["cgTemperature"] = c.cgTemperature;
-    o["cgTint"] = c.cgTint;
-    o["cgFadedFilm"] = c.cgFadedFilm;
-    o["cgSharpen"] = c.cgSharpen;
-    o["cgVignette"] = c.cgVignette;
-    o["cgVignetteFeather"] = c.cgVignetteFeather;
-    o["cgBlend"] = c.cgBlend;
-    o["cgLutStrength"] = c.cgLutStrength;
-    o["cgLutPath"] = c.cgLutPath;
     o["cgMasterCurve"] = QJsonArray::fromStringList([&]() {
         QStringList s;
         for (const QPointF& p : c.cgMasterCurve)
@@ -320,105 +286,15 @@ static QJsonObject clipToJson(const Clip& c) {
             s << QStringLiteral("%1,%2").arg(p.x()).arg(p.y());
         return s;
     }());
-    o["lainkaEnabled"] = c.lainkaEnabled;
-    o["lainkaSkip"] = c.lainkaSkip;
-    o["lainkaJitterPos"] = c.lainkaJitterPos;
-    o["lainkaJitterRot"] = c.lainkaJitterRot;
-    o["lainkaJitterScale"] = c.lainkaJitterScale;
-    o["lainkaFlicker"] = c.lainkaFlicker;
-    o["lainkaFlickerSpeed"] = c.lainkaFlickerSpeed;
-    o["lainkaWarpAmount"] = c.lainkaWarpAmount;
-    o["lainkaWarpSpeed"] = c.lainkaWarpSpeed;
-    o["lainkaWarpGrid"] = c.lainkaWarpGrid;
-    o["lainkaOnionSkin"] = c.lainkaOnionSkin;
-    o["lainkaDustAmount"] = c.lainkaDustAmount;
-    o["lainkaScratchAmount"] = c.lainkaScratchAmount;
-    o["lainkaTargetFps"] = c.lainkaTargetFps;
-    o["lainkaMotionBlur"] = c.lainkaMotionBlur;
-    o["lainkaOpacity"] = c.lainkaOpacity;
-    o["lainkaAntialias"] = c.lainkaAntialias;
-    o["motionEnabled"] = c.motionEnabled;
-    o["motionAmount"] = c.motionAmount;
-    o["motionAngle"] = c.motionAngle;
-    o["motionSamples"] = c.motionSamples;
-    o["tx"] = c.tx;
-    o["ty"] = c.ty;
-    o["scale"] = c.scale;
-    o["scaleX"] = c.scaleX;
-    o["scaleY"] = c.scaleY;
-    o["rotation"] = c.rotation;
-    o["anchorX"] = c.anchorX;
-    o["anchorY"] = c.anchorY;
-    o["cropL"] = c.cropL;
-    o["cropR"] = c.cropR;
-    o["cropT"] = c.cropT;
-    o["cropB"] = c.cropB;
     o["clipZ"] = c.clipZ;
     o["clipRotX"] = c.clipRotX;
     o["clipRotY"] = c.clipRotY;
     o["kfClipZ"] = kfToJson(c.kfClipZ);
     o["kfClipRotX"] = kfToJson(c.kfClipRotX);
     o["kfClipRotY"] = kfToJson(c.kfClipRotY);
-    o["eqLow"] = c.eqLow;
-    o["eqMid"] = c.eqMid;
-    o["eqHigh"] = c.eqHigh;
-    o["denoise"] = c.denoise;
-    o["denoiseAmount"] = c.denoiseAmount;
-    o["normalize"] = c.normalize;
-    o["invertPhase"] = c.invertPhase;
     o["reverb"] = c.reverb;
     o["reverbMix"] = c.reverbMix;
     o["reverbSize"] = c.reverbSize;
-    o["kfOpacity"] = kfToJson(c.kfOpacity);
-    o["kfVolume"] = kfToJson(c.kfVolume);
-    o["kfTx"] = kfToJson(c.kfTx);
-    o["kfTy"] = kfToJson(c.kfTy);
-    o["kfScale"] = kfToJson(c.kfScale);
-    o["kfScaleX"] = kfToJson(c.kfScaleX);
-    o["kfScaleY"] = kfToJson(c.kfScaleY);
-    o["kfRotation"] = kfToJson(c.kfRotation);
-    o["kfAnchorX"] = kfToJson(c.kfAnchorX);
-    o["kfAnchorY"] = kfToJson(c.kfAnchorY);
-    o["kfCropL"] = kfToJson(c.kfCropL);
-    o["kfCropR"] = kfToJson(c.kfCropR);
-    o["kfCropT"] = kfToJson(c.kfCropT);
-    o["kfCropB"] = kfToJson(c.kfCropB);
-    o["kfSpeed"] = kfToJson(c.kfSpeed);
-    // ── Efeitos OFX ─────────────────────────────────────────────────────
-    QJsonArray ofxArr;
-    for (const OfxPluginInstance& fx : c.ofxFx) {
-        QJsonObject fxo;
-        fxo["pluginId"] = fx.pluginId;
-        fxo["enabled"] = fx.enabled;
-        QJsonArray pArr;
-        for (const OfxParam& p : fx.params) {
-            QJsonObject po;
-            po["key"] = p.key;
-                if (p.value.metaType().id() == QMetaType::QColor)
-                po["value"] = p.value.value<QColor>().name(QColor::HexArgb);
-            else
-                po["value"] = QJsonValue::fromVariant(p.value);
-            pArr.append(po);
-        }
-        fxo["params"] = pArr;
-        ofxArr.append(fxo);
-    }
-    o["ofxFx"] = ofxArr;
-    // ── Efeitos frei0r ───────────────────────────────────────────────────
-    QJsonArray f0rArr;
-    for (const Frei0rEffect& fx : c.frei0rFx) {
-        QJsonObject fxo;
-        fxo["pluginName"] = fx.pluginName;
-        fxo["enabled"] = fx.enabled;
-        QJsonArray vArr;
-        for (double v : fx.values) vArr.append(v);
-        fxo["values"] = vArr;
-        QJsonArray cArr;
-        for (const QColor& col : fx.colors) cArr.append(col.name(QColor::HexArgb));
-        fxo["colors"] = cArr;
-        f0rArr.append(fxo);
-    }
-    o["frei0rFx"] = f0rArr;
     // Efeitos copiados da faixa de efeitos (origem da faixa, removidos ao sair).
     o["fromFxTrack"] = QJsonArray::fromStringList(c.fromFxTrack);
     // ── Máscaras ─────────────────────────────────────────────────────────
@@ -456,6 +332,8 @@ static QJsonObject clipToJson(const Clip& c) {
 
 static Clip clipFromJson(const QJsonObject& o) {
     Clip c;
+
+    // ── Identidade e campos próprios do clipe ────────────────────────────
     c.id = o["id"].toString();
     c.mediaId = o["mediaId"].toString();
     c.groupId = o["groupId"].toString();
@@ -470,13 +348,7 @@ static Clip clipFromJson(const QJsonObject& o) {
     c.in = o["in"].toDouble();
     c.dur = o["dur"].toDouble();
     c.name = o["name"].toString();
-    c.transitionType = o["transitionType"].toString();
     c.audioStreamIndex = o["audioStreamIndex"].toInt(0);
-    c.volume = o["volume"].toDouble(1.0);
-    c.opacity = o["opacity"].toDouble(1.0);
-    c.fadeIn = o["fadeIn"].toDouble(0.0);
-    c.fadeOut = o["fadeOut"].toDouble(0.0);
-    c.speed = o["speed"].toDouble(1.0);
     c.isText = o["isText"].toBool(false);
     c.textResourceId = o["textResourceId"].toString();
     const QJsonObject ts = o["textStyle"].toObject();
@@ -486,46 +358,10 @@ static Clip clipFromJson(const QJsonObject& o) {
         // Projeto antigo: texto simples no campo único "text".
         c.text.text = o["text"].toString();
     }
-    c.brightness = o["brightness"].toDouble(0.0);
-    c.contrast = o["contrast"].toDouble(1.0);
-    c.saturation = o["saturation"].toDouble(1.0);
-    c.blur = o["blur"].toDouble(0.0);
-    c.grayscale = o["grayscale"].toBool();
-    c.chromaKey = o["chromaKey"].toBool();
-    const QString ckc = o["chromaKeyColor"].toString();
-    if (QColor::isValidColorName(ckc)) c.chromaKeyColor = QColor(ckc);
-    c.chromaKeySimilarity = o["chromaKeySimilarity"].toDouble(0.15);
-    c.chromaKeySoftness = o["chromaKeySoftness"].toDouble(0.10);
-    c.chromaKeySpillSuppress = o["chromaKeySpillSuppress"].toDouble(0.5);
-    c.psxEnabled = o["psxEnabled"].toBool(false);
-    c.psxDither = o["psxDither"].toDouble(1.0);
-    c.psxBits = o["psxBits"].toInt(5);
-    c.liftR = o["liftR"].toDouble(0.0);
-    c.liftG = o["liftG"].toDouble(0.0);
-    c.liftB = o["liftB"].toDouble(0.0);
-    c.gammaR = o["gammaR"].toDouble(1.0);
-    c.gammaG = o["gammaG"].toDouble(1.0);
-    c.gammaB = o["gammaB"].toDouble(1.0);
-    c.gainR = o["gainR"].toDouble(0.0);
-    c.gainG = o["gainG"].toDouble(0.0);
-    c.gainB = o["gainB"].toDouble(0.0);
-    c.cgExposure = o["cgExposure"].toDouble(0.0);
-    c.cgContrast = o["cgContrast"].toDouble(0.0);
-    c.cgHighlights = o["cgHighlights"].toDouble(0.0);
-    c.cgShadows = o["cgShadows"].toDouble(0.0);
-    c.cgWhites = o["cgWhites"].toDouble(0.0);
-    c.cgBlacks = o["cgBlacks"].toDouble(0.0);
-    c.cgSaturation = o["cgSaturation"].toDouble(0.0);
-    c.cgVibrance = o["cgVibrance"].toDouble(0.0);
-    c.cgTemperature = o["cgTemperature"].toDouble(0.0);
-    c.cgTint = o["cgTint"].toDouble(0.0);
-    c.cgFadedFilm = o["cgFadedFilm"].toDouble(0.0);
-    c.cgSharpen = o["cgSharpen"].toDouble(0.0);
-    c.cgVignette = o["cgVignette"].toDouble(0.0);
-    c.cgVignetteFeather = o["cgVignetteFeather"].toDouble(50.0);
-    c.cgBlend = o["cgBlend"].toDouble(1.0);
-    c.cgLutStrength = o["cgLutStrength"].toDouble(1.0);
-    c.cgLutPath = o["cgLutPath"].toString();
+
+    // ── Atributos "coláveis" compartilhados com os presets (ClipAttrs.h) ─
+    clipattrs::applyJson(c, o);
+
     auto curveFrom = [](const QJsonValue& v) {
         QVector<QPointF> pts;
         for (const QJsonValue& sv : v.toArray()) {
@@ -539,113 +375,15 @@ static Clip clipFromJson(const QJsonObject& o) {
     c.cgRCurve = curveFrom(o["cgRCurve"]);
     c.cgGCurve = curveFrom(o["cgGCurve"]);
     c.cgBCurve = curveFrom(o["cgBCurve"]);
-    c.lainkaEnabled = o["lainkaEnabled"].toBool(false);
-    c.lainkaSkip = o["lainkaSkip"].toInt(2);
-    c.lainkaJitterPos = o["lainkaJitterPos"].toDouble(0.0);
-    c.lainkaJitterRot = o["lainkaJitterRot"].toDouble(0.0);
-    c.lainkaJitterScale = o["lainkaJitterScale"].toDouble(0.0);
-    c.lainkaFlicker = o["lainkaFlicker"].toDouble(0.0);
-    c.lainkaFlickerSpeed = o["lainkaFlickerSpeed"].toDouble(50.0);
-    c.lainkaWarpAmount = o["lainkaWarpAmount"].toDouble(0.0);
-    c.lainkaWarpSpeed = o["lainkaWarpSpeed"].toDouble(50.0);
-    c.lainkaWarpGrid = o["lainkaWarpGrid"].toInt(8);
-    c.lainkaOnionSkin = o["lainkaOnionSkin"].toDouble(0.0);
-    c.lainkaDustAmount = o["lainkaDustAmount"].toDouble(0.0);
-    c.lainkaScratchAmount = o["lainkaScratchAmount"].toDouble(0.0);
-    c.lainkaTargetFps = o["lainkaTargetFps"].toInt(8);
-    c.lainkaMotionBlur = o["lainkaMotionBlur"].toDouble(0.0);
-    c.lainkaOpacity = o["lainkaOpacity"].toDouble(100.0);
-    c.lainkaAntialias = o["lainkaAntialias"].toInt(1);
-    c.motionEnabled = o["motionEnabled"].toBool(false);
-    c.motionAmount = o["motionAmount"].toDouble(0.0);
-    c.motionAngle = o["motionAngle"].toDouble(0.0);
-    c.motionSamples = o["motionSamples"].toInt(8);
-    c.tx = o["tx"].toDouble(0.0);
-    c.ty = o["ty"].toDouble(0.0);
-    c.scale = o["scale"].toDouble(1.0);
-    c.scaleX = o["scaleX"].toDouble(1.0);
-    c.scaleY = o["scaleY"].toDouble(1.0);
-    c.rotation = o["rotation"].toDouble(0.0);
-    c.anchorX = o["anchorX"].toDouble(0.0);
-    c.anchorY = o["anchorY"].toDouble(0.0);
-    c.cropL = o["cropL"].toDouble(0.0);
-    c.cropR = o["cropR"].toDouble(0.0);
-    c.cropT = o["cropT"].toDouble(0.0);
-    c.cropB = o["cropB"].toDouble(0.0);
     c.clipZ = o["clipZ"].toDouble(0.0);
     c.clipRotX = o["clipRotX"].toDouble(0.0);
     c.clipRotY = o["clipRotY"].toDouble(0.0);
     c.kfClipZ = kfFromJson(o["kfClipZ"]);
     c.kfClipRotX = kfFromJson(o["kfClipRotX"]);
     c.kfClipRotY = kfFromJson(o["kfClipRotY"]);
-    c.eqLow = o["eqLow"].toDouble(0.0);
-    c.eqMid = o["eqMid"].toDouble(0.0);
-    c.eqHigh = o["eqHigh"].toDouble(0.0);
-    c.denoise = o["denoise"].toBool();
-    c.denoiseAmount = o["denoiseAmount"].toDouble(12.0);
-    c.normalize = o["normalize"].toBool();
-    c.invertPhase = o["invertPhase"].toBool();
     c.reverb = o["reverb"].toBool();
     c.reverbMix = o["reverbMix"].toDouble(0.35);
     c.reverbSize = o["reverbSize"].toDouble(0.5);
-    c.kfOpacity = kfFromJson(o["kfOpacity"]);
-    c.kfVolume = kfFromJson(o["kfVolume"]);
-    c.kfTx = kfFromJson(o["kfTx"]);
-    c.kfTy = kfFromJson(o["kfTy"]);
-    c.kfScale = kfFromJson(o["kfScale"]);
-    c.kfScaleX = kfFromJson(o["kfScaleX"]);
-    c.kfScaleY = kfFromJson(o["kfScaleY"]);
-    c.kfRotation = kfFromJson(o["kfRotation"]);
-    c.kfAnchorX = kfFromJson(o["kfAnchorX"]);
-    c.kfAnchorY = kfFromJson(o["kfAnchorY"]);
-    c.kfCropL = kfFromJson(o["kfCropL"]);
-    c.kfCropR = kfFromJson(o["kfCropR"]);
-    c.kfCropT = kfFromJson(o["kfCropT"]);
-    c.kfCropB = kfFromJson(o["kfCropB"]);
-    c.kfSpeed = kfFromJson(o["kfSpeed"]);
-    // ── Efeitos OFX ─────────────────────────────────────────────────────
-    const QJsonArray ofxArr = o["ofxFx"].toArray();
-    for (const QJsonValue& v : ofxArr) {
-        const QJsonObject fxo = v.toObject();
-        OfxPluginInstance fx;
-        fx.pluginId = fxo["pluginId"].toString();
-        fx.enabled = fxo["enabled"].toBool(true);
-        const QJsonArray pArr = fxo["params"].toArray();
-        for (const QJsonValue& pv : pArr) {
-            const QJsonObject po = pv.toObject();
-            OfxParam p;
-            p.key = po["key"].toString();
-            const QJsonValue val = po["value"];
-            if (val.isString()) {
-                const QString s = val.toString();
-                if (QColor::isValidColorName(s) && s.startsWith('#') && s.length() == 9)
-                    p.value = QColor(s);  // HexArgb
-                else
-                    p.value = s;
-            } else if (val.isDouble()) {
-                p.value = val.toDouble();
-            } else if (val.isBool()) {
-                p.value = val.toBool();
-            }
-            fx.params.append(p);
-        }
-        c.ofxFx.append(fx);
-    }
-    // ── Efeitos frei0r ───────────────────────────────────────────────────
-    const QJsonArray f0rArr = o["frei0rFx"].toArray();
-    for (const QJsonValue& v : f0rArr) {
-        const QJsonObject fxo = v.toObject();
-        Frei0rEffect fx;
-        fx.pluginName = fxo["pluginName"].toString();
-        fx.enabled = fxo["enabled"].toBool(true);
-        for (const QJsonValue& vv : fxo["values"].toArray())
-            fx.values.append(vv.toDouble(0.0));
-        for (const QJsonValue& cv : fxo["colors"].toArray()) {
-            const QString s = cv.toString();
-            fx.colors.append(QColor::isValidColorName(s) ? QColor(s) : QColor());
-        }
-        c.frei0rFx.append(fx);
-    }
     // Efeitos copiados da faixa de efeitos (origem da faixa).
     if (o["fromFxTrack"].isArray()) {
         for (const QJsonValue& v : o["fromFxTrack"].toArray())

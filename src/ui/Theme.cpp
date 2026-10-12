@@ -704,3 +704,59 @@ QString flatControlStyleSheet(AppTheme theme) {
      accent, titleTxt, alt, scBg, scH, scHo,
      fneut, div, tabSel);
 }
+
+QString dialogStyleSheet() {
+    const auto& c = themeColors();
+    return QStringLiteral(R"(
+        QDialog { background: %1; }
+        QLabel { color: %2; }
+        QGroupBox {
+            font-weight: 600;
+            border: 1px solid %3;
+            border-radius: 6px;
+            margin-top: 14px;
+            background: %4;
+            color: %5;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            left: 12px;
+            top: 4px;
+            padding: 0 4px;
+            color: %6;
+        }
+        QLineEdit, QComboBox, QSpinBox {
+            background: %7;
+            border: 1px solid %8;
+            border-radius: 4px;
+            color: %9;
+            padding: 4px 8px;
+            min-height: 18px;
+        }
+        QLineEdit:focus, QComboBox:focus, QSpinBox:focus { border-color: %10; }
+        QComboBox::drop-down { border: none; }
+        QComboBox QAbstractItemView {
+            background: %11;
+            border: 1px solid %12;
+            color: %13;
+            selection-background-color: %14;
+        }
+        QPushButton {
+            background: %15;
+            border: 1px solid %16;
+            border-radius: 4px;
+            color: %17;
+            padding: 5px 14px;
+        }
+        QPushButton:hover { background: %18; border-color: %19; }
+        QPushButton:pressed { background: %20; }
+        QCheckBox { color: %9; }
+    )")
+        .arg(c.window.name(), c.text.name(), c.dockBorder.name(),
+             c.button.name(), c.buttonText.name(), c.accent.name(),
+             c.inputBg.name(), c.inputBorder.name(), c.text.name(),
+             c.inputFocus.name(), c.button.name(), c.inputBorder.name(),
+             c.text.name(), c.highlight.name(), c.button.name(),
+             c.inputBorder.name(), c.buttonText.name(), c.btnHover.name(),
+             c.dockBorder.name(), c.btnActive.name());
+}

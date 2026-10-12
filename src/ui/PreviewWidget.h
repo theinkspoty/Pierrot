@@ -113,7 +113,6 @@ protected:
     void mousePressEvent(QMouseEvent*) override;
     void mouseMoveEvent(QMouseEvent*) override;
     void mouseReleaseEvent(QMouseEvent*) override;
-    const Clip* clipAt(double t) const override;
     double audioClockSec() const override;
  private:
     // A thread de vídeo (FrameWorker) precisa chamar os estáticos de efeito

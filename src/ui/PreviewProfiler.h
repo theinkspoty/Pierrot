@@ -105,8 +105,6 @@ public:
     bool wroteProxy() const;     // algum quadro veio de proxy?
     int proxyFrames() const;
     int cuts() const;
-    int compositeHits() const;
-    int compositeMisses() const;
     double playbackSpan() const; // tempo coberto pelos registros (s)
     QString label() const;
     double projectFps() const;

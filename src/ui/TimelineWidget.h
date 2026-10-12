@@ -176,8 +176,6 @@ public slots:
     // Painel Effects (Premiere): abrir diálogos de cor/texto do clipe.
     void openGradingForClip(const QString& clipId);
     void openTextEditorForClip(const QString& clipId);
-    // Abre o dock Pivot (edição 3D do clipe).
-    void openPivotForClip(const QString& clipId);
     // Cria um clipe independente de texto (animável) numa faixa de vídeo.
     void addTextClipAt(int row, double t);
     // Cria um clipe Mesa (composição 2D) numa faixa de vídeo.
@@ -333,9 +331,6 @@ private:
     void drawVideoThumbs(QPainter& p, const QRect& r, const Clip& c, const QString& path);
     void drawFadeCorners(QPainter& p, const QRect& r, const Clip& c);
     void drawOpacityHandle(QPainter& p, const QRect& r, const Clip& c);
-    // Banda de velocidade no clipe (Time Remapping do Premiere): curva,
-    // keyframes e rótulos rápido/baixo.
-    void drawSpeedEnvelope(QPainter& p, const QRect& r, const Clip& c);
     void drawTransitionIndicator(QPainter& p, const QRect& r, const QString& type);
     void drawKeyframeDiamonds(QPainter& p, const QRect& r, const Clip& c, bool audio);
     void drawEnvelope(QPainter& p, const QRect& r, const Clip& c, bool audio);
@@ -351,7 +346,6 @@ private:
     void slipEdit(Clip* c, double delta);
     void slideEdit(Clip* c, double delta);
     void rateStretch(Clip* c, double newSpeed);
-    Clip* clipAtTime(int row, bool audio, double t) const;
     QPair<Clip*, Clip*> adjacentClips(Clip* c);
     void envelopePress(Clip* c, double t);
     void trackEnvelopePress(int row, bool audio, double t);
@@ -362,7 +356,6 @@ private:
     void showTextEditorDialog(Clip* c);
     void showTransformDialog(Clip* c);
     void showAudioEffectsDialog(Clip* c);
-    void trackFxMenu(Track* tr, const QPoint& at);
     void drawTrackHeader(QPainter& p, int y, int rowH, const Track& tr, int index, bool selected);
     // ── Faixa de efeitos expandida (painel de efeitos, estilo AE) ────────
     // O painel lista os EFEITOS DA FAIXA (Track::fxEffects): barra "Efeitos"

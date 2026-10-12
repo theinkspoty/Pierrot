@@ -44,8 +44,13 @@ signals:
     void mediaDropped(const QStringList& mediaIds, const QPoint& globalPos);
     // Arquivos arrastados do sistema para importar no painel.
     void filesDropped(const QStringList& files);
+    // Duplo clique: abre a mídia (fluxo Source Monitor). Emitido por nós porque
+    // o mousePressEvent sobrescrito não seta o pressedIndex da base, o que
+    // impediria o itemDoubleClicked nativo de disparar.
+    void mediaActivated(const QString& mediaId);
 protected:
     void mousePressEvent(QMouseEvent* e) override;
+    void mouseDoubleClickEvent(QMouseEvent* e) override;
     void mouseMoveEvent(QMouseEvent* e) override;
     void mouseReleaseEvent(QMouseEvent* e) override;
     bool eventFilter(QObject* obj, QEvent* ev) override;
@@ -87,8 +92,13 @@ signals:
     void dragHoverCleared();
     void mediaDropped(const QStringList& mediaIds, const QPoint& globalPos);
     void filesDropped(const QStringList& files);
+    // Duplo clique: abre a mídia (fluxo Source Monitor). Emitido por nós porque
+    // o mousePressEvent sobrescrito não seta o pressedIndex da base, o que
+    // impediria o itemDoubleClicked nativo de disparar.
+    void mediaActivated(const QString& mediaId);
 protected:
     void mousePressEvent(QMouseEvent* e) override;
+    void mouseDoubleClickEvent(QMouseEvent* e) override;
     void mouseMoveEvent(QMouseEvent* e) override;
     void mouseReleaseEvent(QMouseEvent* e) override;
     bool eventFilter(QObject* obj, QEvent* ev) override;

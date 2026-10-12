@@ -174,11 +174,6 @@ double MesaWidget::mesaDuration() const {
     return qMax(5.0, (maxT - minT) + 2.0);
 }
 
-double MesaWidget::contentStartTime() const {
-    mesaDuration();  // ensure m_contentStart is computed
-    return m_contentStart;
-}
-
 int MesaWidget::timeToX(double t, int rulerW) const {
     const double dur = mesaDuration();
     const double start = m_contentStart;
