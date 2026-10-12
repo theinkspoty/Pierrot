@@ -120,12 +120,19 @@ private:
     double m_lastFrameSec = -1.0;
     double m_nextFrameSec = -1.0;
 
-    // Áudio: contexto separado, para decodificar em outra thread sem
-    // disputar o demuxer de vídeo.
-    void* m_aCtx = nullptr;    // AVFormatContext* (áudio)
+    // Áudio: MESMO AVFormatContext do vídeo (m_ctx), reaproveitado para não
+    // reabrir/re-probar o arquivo. Como o demuxer é único, seekAudio() e
+    // decodeAudio() também pegam m_mutex (antes de m_audioMutex): uma instância
+    // NÃO deve decodificar áudio e vídeo em threads concorrentes — para isso,
+    // use instâncias separadas (é o que o AudioConformCache já faz).
+    void* m_aCtx = nullptr;    // AVFormatContext* (== m_ctx)
     void* m_aCodec = nullptr;  // AVCodecContext* (áudio)
     void* m_swr = nullptr;     // SwrContext*
     int m_audioStream = -1;
+    // Faixa de áudio PEDIDA no open() (índice k-ésimo, -1 = melhor stream).
+    // Guardada porque o atalho de reabertura precisa compará-la: sem isto,
+    // abrir o mesmo arquivo pedindo outra faixa devolvia true sem reabrir.
+    int m_requestedAudioStream = -1;
     int m_audioOutRate = 48000;
     int m_audioOutCh = 2;
     // Após seekAudio(), descarta os primeiros N frames decodificados

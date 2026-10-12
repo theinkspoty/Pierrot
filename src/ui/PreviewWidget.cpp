@@ -1934,6 +1934,7 @@ void PreviewWidget::setProject(Project* p) {
     m_underT = -1.0;
     m_underW = -1;
     m_underRequested = false;
+    m_underPending = false;
     m_transAlpha = -1.0;
     m_transType.clear();
     {
@@ -2790,7 +2791,10 @@ double previewClipAudioVol(const Track& tr, const Clip& c, double t) {
     if (c.fadeIn > 1e-6) vol *= std::min(1.0, rel / c.fadeIn);
     if (c.fadeOut > 1e-6) vol *= std::min(1.0, (c.dur - rel) / c.fadeOut);
     // Crossfade de transição: sobreposição com vizinho da MESMA faixa vira
-    // fade-in (da frente) / fade-out (de trás).
+    // fade-in (da frente) / fade-out (de trás), em POTÊNCIA CONSTANTE
+    // (equal-power): in = sin(π/2·p) e out = cos(π/2·p), cujos quadrados somam
+    // 1 e mantêm a energia no meio da sobreposição. O linear afundava ~3 dB no
+    // centro. Espelha o `afade=...:curve=qsin` do export (ProjectExporter).
     double transIn = 0.0, transOut = 0.0;
     for (const Clip& o : tr.clips) {
         if (o.id == c.id) continue;
@@ -2799,8 +2803,13 @@ double previewClipAudioVol(const Track& tr, const Clip& c, double t) {
         if (o.pos > c.pos + 1e-6 && o.pos < c.pos + c.dur - 1e-6)
             transOut = std::max(transOut, c.pos + c.dur - o.pos);
     }
-    if (transIn > 1e-6) vol *= std::clamp(rel / transIn, 0.0, 1.0);
-    if (transOut > 1e-6) vol *= std::clamp((c.dur - rel) / transOut, 0.0, 1.0);
+    // O fade-in não pode durar mais que o clipe (senão o ganho nunca chega a 1);
+    // o export clampa igual (min(d, dur)).
+    transIn = std::min(transIn, c.dur);
+    constexpr double kHalfPi = 1.5707963267948966; // π/2
+    if (transIn > 1e-6) vol *= std::sin(kHalfPi * std::clamp(rel / transIn, 0.0, 1.0));
+    if (transOut > 1e-6)
+        vol *= std::sin(kHalfPi * std::clamp((c.dur - rel) / transOut, 0.0, 1.0));
     return std::clamp(vol, 0.0, 2.0);
 }
 } // namespace
@@ -3122,13 +3131,15 @@ QString PreviewWidget::resolvePreviewVideo(const QString& srcPath) {
 
 void PreviewWidget::updateFrame() {
     m_timeLabel->setText(fmtTimecode(m_playhead, projFps(m_project)));
-    if (!m_project) { m_frame = QImage(); m_transAlpha = -1.0; m_underFrame = QImage(); m_clipMasks.clear(); update(); return; }
+    if (!m_project) { m_frame = QImage(); m_transAlpha = -1.0; m_underFrame = QImage(); m_underRequested = false; m_underPending = false; m_clipMasks.clear(); update(); return; }
 
     const Clip* clip = clipAt(m_playhead);
     if (!clip) {
         m_frame = QImage();
         m_transAlpha = -1.0;
         m_underFrame = QImage();
+        m_underRequested = false;
+        m_underPending = false;
         m_clipLainkaEnabled = false;
         m_clipOfxFx.clear();
     m_clipMasks.clear();
@@ -3146,6 +3157,7 @@ void PreviewWidget::updateFrame() {
         requestLowerLayers(decW);
         m_underFrame = QImage();
         m_underRequested = false;
+        m_underPending = false;
         m_transAlpha = -1.0;
         m_clipLainkaEnabled = false;
         m_clipOfxFx.clear();
@@ -3159,6 +3171,8 @@ void PreviewWidget::updateFrame() {
         m_frame = QImage();
         m_transAlpha = -1.0;
         m_underFrame = QImage();
+        m_underRequested = false;
+        m_underPending = false;
         m_clipLainkaEnabled = false;
         m_clipOfxFx.clear();
     m_clipMasks.clear();
@@ -3256,6 +3270,7 @@ void PreviewWidget::updateFrame() {
         m_transAlpha = -1.0;
         m_underFrame = QImage();
         m_underRequested = false;
+        m_underPending = false;
         update();
         return;
     }
@@ -3290,7 +3305,11 @@ void PreviewWidget::updateFrame() {
                 under = &o;
         break;
     }
-    if (under) overlap = under->pos + under->dur - clip->pos;
+    // A transição não pode durar mais que o clipe da frente (paridade com o
+    // clamp do export): se a sobreposição passar da duração dele, a transição
+    // completa no fim do clipe em vez de nunca chegar a 100%.
+    if (under)
+        overlap = std::min(under->pos + under->dur - clip->pos, clip->dur);
     if (under && overlap > 1e-6 && m_playhead < clip->pos + overlap - 1e-9) {
         m_transAlpha = std::clamp((m_playhead - clip->pos) / overlap, 0.0, 1.0);
         m_transType = isTransition(under->transitionType)
@@ -3310,17 +3329,32 @@ void PreviewWidget::updateFrame() {
             const QString uvpath = resolvePreviewVideo(um->filePath);
             const double uSrcT = clipSrcTime(*under, m_playhead - under->pos);
             QMutexLocker l(&m_frameMutex);
-            const bool already = m_underRequested && m_underPath == uvpath
-                                 && m_underW == decW
-                                 && std::fabs(m_underT - uSrcT) <= 0.5 / projFps(m_project)
-                                 && !m_underFrame.isNull();
-            if (!already) {
+            // Mesmo alvo (clipe/ largura / tempo) que o quadro atual.
+            const bool sameTarget = m_underRequested && m_underPath == uvpath
+                                    && m_underW == decW
+                                    && std::fabs(m_underT - uSrcT)
+                                       <= 0.5 / projFps(m_project);
+            if (m_underPending) {
+                // Já há um decode em voo: não emite outro. O resultado em
+                // onPrefetchReady limpa o flag; se o playhead andou muito
+                // (sameTarget falso), o próximo tick re-mira o alvo.
+            } else if (sameTarget && !m_underFrame.isNull()) {
+                // Quadro atual serve (até ~0.5 frame de atraso): nada a fazer.
+            } else {
+                // Numa transição longa o playhead avança a cada frame, então o
+                // alvo (uSrcT) muda continuamente. Zerar o quadro aqui fazia o
+                // clipe de trás desaparecer até o decode chegar → "piscada" no
+                // meio do dissolve. Mantém o quadro anterior na tela enquanto o
+                // novo é decodificado; só descarta quando o alvo muda de clipe
+                // (path ou largura), aí o quadro antigo não serve mais.
+                if (m_underPath != uvpath || m_underW != decW)
+                    m_underFrame = QImage();
                 m_underPath = uvpath;
                 m_underT = uSrcT;
                 m_underW = decW;
                 m_underCropL = m_underCropR = m_underCropT = m_underCropB = 0; // recortado no onFrame
                 m_underRequested = true;
-                m_underFrame = QImage();
+                m_underPending = true;
                 QMetaObject::invokeMethod(m_frameWorker, "decodePrefetch", Qt::QueuedConnection,
                                           Q_ARG(QString, uvpath),
                                           Q_ARG(double, uSrcT),
@@ -3332,6 +3366,7 @@ void PreviewWidget::updateFrame() {
         m_transAlpha = -1.0;
         m_underFrame = QImage();
         m_underRequested = false;
+        m_underPending = false;
     }
 
     // Snapshot do caminho rápido: clipes sem efeitos temporais levam crop +
@@ -3797,11 +3832,16 @@ void PreviewWidget::onPrefetchReady(const QString& path, double t, int maxW, con
     QMutexLocker l(&m_frameMutex);
     if (latNs > 0) m_perf.prefetchLatMs = latNs / 1000000;
     m_perfPrefetchStartNs = 0;
-    // Quadro do clipe de trás (transição ativa).
-    if (m_underRequested && m_underPath == path
-        && std::fabs(m_underT - t) < 1e-4 && m_underW == maxW) {
-        m_underFrame = img.isNull() ? QImage() : applyCropTo(img, m_underCropL, m_underCropR,
-                                                             m_underCropT, m_underCropB);
+    // Quadro do clipe de trás (transição ativa). Resposta do pedido em voo:
+    // limpa o flag mesmo se for descartada (largura/tempo divergente), para o
+    // próximo tick poder re-mirar o alvo.
+    if (m_underRequested && m_underPath == path) {
+        m_underPending = false;
+        if (std::fabs(m_underT - t) < 1e-4 && m_underW == maxW)
+            m_underFrame = img.isNull() ? QImage() : applyCropTo(img, m_underCropL,
+                                                                  m_underCropR,
+                                                                  m_underCropT,
+                                                                  m_underCropB);
     }
     if (m_prefetch.requested && m_prefetch.path == path
         && std::fabs(m_prefetch.t - t) < 1e-4 && m_prefetch.maxW == maxW) {

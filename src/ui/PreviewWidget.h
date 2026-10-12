@@ -376,6 +376,11 @@ protected:
     double m_underT = -1.0;
     int m_underW = -1;
     bool m_underRequested = false;
+    // Há uma requisição de decode do clipe de trás em voo. Evita emitir outra
+    // enquanto o playhead anda dentro da mesma transição (senão o resultado do
+    // pedido anterior chegaria com o tempo alvo já trocado e seria descartado,
+    // congelando o quadro do clipe de trás).
+    bool m_underPending = false;
     int m_underCropL = 0, m_underCropR = 0, m_underCropT = 0, m_underCropB = 0;
     double m_transAlpha = -1.0;
     QString m_transType;

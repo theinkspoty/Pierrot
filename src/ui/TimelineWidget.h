@@ -332,6 +332,7 @@ private:
     void drawFadeCorners(QPainter& p, const QRect& r, const Clip& c);
     void drawOpacityHandle(QPainter& p, const QRect& r, const Clip& c);
     void drawTransitionIndicator(QPainter& p, const QRect& r, const QString& type);
+    void drawAudioCrossfade(QPainter& p, const QRect& r);
     void drawKeyframeDiamonds(QPainter& p, const QRect& r, const Clip& c, bool audio);
     void drawEnvelope(QPainter& p, const QRect& r, const Clip& c, bool audio);
     void finishDrop(const QStringList& mediaIds, const QPoint& dropPos);

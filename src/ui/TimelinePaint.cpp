@@ -656,26 +656,44 @@ void TimelineWidget::renderScene(QPainter& p) {
             drawFxPanel(p, tr, rowY(i, -1), trackH(i, false));
     }
 
-    for (int i = 0; i < (int)m_project->videoTracks.size(); ++i) {
-        if (!trackVisible(i, false)) continue;
-        const QVector<Clip>& clips = m_project->videoTracks[i].clips;
-        const int y = rowY(i, -1);
-        const int rowH = trackH(i, false);
-        for (int k = 1; k < (int)clips.size(); ++k) {
-            const Clip& prev = clips[k - 1];
-            const Clip& cur = clips[k];
-            const double end = prev.pos + prev.dur;
-            if (cur.pos >= end - 1e-6) continue;
-            const int x0 = (int)(H + (cur.pos - m_viewStart) * m_pps);
-            const int x1 = (int)(H + (end - m_viewStart) * m_pps);
-            if (x1 < H || x0 > width()) continue;
-            const QRect r(x0 + 1, y + 4, std::max(2, x1 - x0 - 2), rowH - 8);
-            const QString type = isTransition(prev.transitionType)
-                                     ? prev.transitionType
-                                     : QStringLiteral("dissolve");
-            drawTransitionIndicator(p, r, type);
+    // Sobreposições (vira transição/crossfade): percorre os pares adjacentes
+    // ORDENADOS por posição, pois a lista de clipes pode não estar em ordem
+    // cronológica. Vale para vídeo (indicador de transição) e áudio (rampas de
+    // crossfade em X sobre a waveform).
+    auto forEachOverlap = [&](const QVector<Track>& tracks, bool audio, auto&& fn) {
+        for (int i = 0; i < (int)tracks.size(); ++i) {
+            if (!trackVisible(i, audio)) continue;
+            QVector<const Clip*> sorted;
+            sorted.reserve(tracks[i].clips.size());
+            for (const Clip& c : tracks[i].clips) sorted.append(&c);
+            std::sort(sorted.begin(), sorted.end(),
+                      [](const Clip* a, const Clip* b) { return a->pos < b->pos; });
+            const int y = audio ? rowY(-1, i) : rowY(i, -1);
+            const int rowH = audio ? trackH(i, true) : trackH(i, false);
+            for (int k = 1; k < (int)sorted.size(); ++k) {
+                const Clip& prev = *sorted[k - 1];
+                const Clip& cur = *sorted[k];
+                const double end = prev.pos + prev.dur;
+                if (cur.pos >= end - 1e-6) continue;
+                const int x0 = (int)(H + (cur.pos - m_viewStart) * m_pps);
+                const int x1 = (int)(H + (end - m_viewStart) * m_pps);
+                if (x1 < H || x0 > width()) continue;
+                const QRect r(x0 + 1, y + 4, std::max(2, x1 - x0 - 2), rowH - 8);
+                fn(prev, cur, r);
+            }
         }
-    }
+    };
+    forEachOverlap(m_project->videoTracks, false,
+                   [&](const Clip& prev, const Clip&, const QRect& r) {
+                       const QString type = isTransition(prev.transitionType)
+                                                ? prev.transitionType
+                                                : QStringLiteral("dissolve");
+                       drawTransitionIndicator(p, r, type);
+                   });
+    forEachOverlap(m_project->audioTracks, true,
+                   [&](const Clip&, const Clip&, const QRect& r) {
+                       drawAudioCrossfade(p, r);
+                   });
 
     // Emenda nos cortes: borda entre clipes adjacentes (mesma faixa, sem
     // sobreposição) — indica onde o clipe foi dividido. Vídeo, áudio e
@@ -1537,6 +1555,50 @@ void TimelineWidget::drawTransitionIndicator(QPainter& p, const QRect& r,
         p.setPen(QColor(255, 255, 255, 220));
         p.drawText(labelRect, Qt::AlignCenter, label);
     }
+}
+
+// Indicador de sobreposição em faixa de ÁUDIO: rampas de fade em X sobre a
+// waveform, mostrando o crossfade em potência constante (o clipe de trás cai
+// cos(π/2·p) e o da frente sobe sin(π/2·p) — os quadrados somam 1). Sem label,
+// para não poluir a onda; as duas curvas cruzam no centro (X).
+void TimelineWidget::drawAudioCrossfade(QPainter& p, const QRect& r) {
+    if (r.width() < 3 || r.height() < 4) return;
+
+    constexpr double kHalfPi = 1.5707963267948966; // π/2
+    p.save();
+    p.setClipRect(r, Qt::IntersectClip);
+
+    // Banda de sobreposição: escurece levemente a região do crossfade para
+    // destacá-la da waveform.
+    p.fillRect(r, QColor(0, 0, 0, 55));
+
+    const int n = std::max(2, r.width());
+    const double h = r.height() - 1.0;
+    QPainterPath outCurve; // clipe de trás: gain 1 → 0
+    QPainterPath inCurve;  // clipe da frente: gain 0 → 1
+    for (int i = 0; i <= n; ++i) {
+        const double pr = (double)i / n;
+        const int x = r.left() + (int)std::lround(pr * (r.width() - 1));
+        const int yOut = r.bottom() - (int)std::lround(std::cos(kHalfPi * pr) * h);
+        const int yIn = r.bottom() - (int)std::lround(std::sin(kHalfPi * pr) * h);
+        if (i == 0) { outCurve.moveTo(x, yOut); inCurve.moveTo(x, yIn); }
+        else { outCurve.lineTo(x, yOut); inCurve.lineTo(x, yIn); }
+    }
+    p.setBrush(Qt::NoBrush);
+    // Sombra sutil embaixo de cada curva para leitura sobre waveform clara.
+    p.setPen(QPen(QColor(0, 0, 0, 150), 2.6));
+    p.drawPath(outCurve);
+    p.drawPath(inCurve);
+    p.setPen(QPen(QColor(255, 214, 130, 235), 1.4)); // saída (quente)
+    p.drawPath(outCurve);
+    p.setPen(QPen(QColor(140, 220, 255, 235), 1.4)); // entrada (fria)
+    p.drawPath(inCurve);
+
+    // Bordas verticais delimitando a sobreposição.
+    p.setPen(QPen(QColor(255, 255, 255, 70), 1));
+    p.drawLine(r.left(), r.top(), r.left(), r.bottom());
+    p.drawLine(r.right(), r.top(), r.right(), r.bottom());
+    p.restore();
 }
 
 void TimelineWidget::drawKeyframeDiamonds(QPainter& p, const QRect& r,

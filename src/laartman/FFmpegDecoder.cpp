@@ -135,6 +135,26 @@ static enum AVPixelFormat hwVaapiGetFormat(AVCodecContext* s,
     return AV_PIX_FMT_NONE;
 }
 
+// Threading do decode por SOFTWARE. O padrão é frame-threading (pipeline entre
+// quadros, melhor vazão em playback). Slice-threading produz o MESMO quadro
+// (decode é determinístico) mas entrega o 1º com menos latência — o gargalo do
+// scrub/corte — ao custo de vazão em resoluções altas. O trade-off depende do
+// perfil, então fica por switch para medir no Bench: PIERROT_DEC_THREAD=slice.
+static int decThreadType() {
+    static const bool slice =
+        QString::fromLatin1(qgetenv("PIERROT_DEC_THREAD")).trimmed()
+            .compare(QLatin1String("slice"), Qt::CaseInsensitive) == 0;
+    return slice ? FF_THREAD_SLICE : FF_THREAD_FRAME;
+}
+
+// AV_CODEC_FLAG2_FAST libera atalhos "não conformes" do decoder (mais rápido,
+// robustez/qualidade levemente menores em fluxos quebrados). Desligado por
+// padrão para não afetar a exportação; ligue com PIERROT_DEC_FAST=1 para medir.
+static bool fastDecode() {
+    static const bool on = qEnvironmentVariableIsSet("PIERROT_DEC_FAST");
+    return on;
+}
+
 FFmpegDecoder::FFmpegDecoder() {
     installLogFilter();
     m_pkt = av_packet_alloc();
@@ -403,6 +423,29 @@ FFmpegAudioPeaks FFmpegDecoder::audioPeaks(const QString& filePath, int bucketsP
     const double timeBase = av_q2d(fmt->streams[idx]->time_base);
     const double sampleRate = cc->sample_rate > 0 ? cc->sample_rate : 44100.0;
 
+    // Duração estimada (para limitar a resolução em arquivos longos).
+    double duration = 0.0;
+    if (fmt->duration != AV_NOPTS_VALUE && fmt->duration > 0)
+        duration = fmt->duration / (double)AV_TIME_BASE;
+    else if (fmt->streams[idx]->duration != AV_NOPTS_VALUE
+             && fmt->streams[idx]->duration > 0)
+        duration = fmt->streams[idx]->duration * timeBase;
+
+    // Teto de buckets: a 1000 buckets/s, 3 h dariam ~10,8 M buckets × 2 floats
+    // ≈ 86 MB — e o vetor só cresce. Acima do teto reduz a RESOLUÇÃO efetiva
+    // (reportada em result.bucketsPerSecond, que é o que o pintor da timeline
+    // usa para mapear tempo→bucket) em vez de estourar a memória.
+    constexpr int kMaxBuckets = 2'000'000; // ~16 MB (min+máx)
+    int effectiveBps = bucketsPerSecond;
+    if (duration > 0.0 && duration * effectiveBps > kMaxBuckets)
+        effectiveBps = std::max(1, (int)(kMaxBuckets / duration));
+    if (duration > 0.0) {
+        const int est = (int)std::min<double>(duration * effectiveBps + 1.0,
+                                              (double)kMaxBuckets + 2.0);
+        result.min.reserve(est);
+        result.max.reserve(est);
+    }
+
     const float sentinelMin = FLT_MAX; // bucket vazio
     const float sentinelMax = -FLT_MAX;
 
@@ -424,7 +467,7 @@ FFmpegAudioPeaks FFmpegDecoder::audioPeaks(const QString& filePath, int bucketsP
                         t = elapsed;
                     elapsed = t + frame->nb_samples / sampleRate;
 
-                    int bucket = (int)std::llround(t * bucketsPerSecond);
+                    int bucket = (int)std::llround(t * effectiveBps);
                     if (bucket < 0) bucket = 0;
 
                     if (result.min.size() <= bucket) {
@@ -459,7 +502,7 @@ FFmpegAudioPeaks FFmpegDecoder::audioPeaks(const QString& filePath, int bucketsP
             result.max[i] = 0.0f;
         }
     }
-    result.bucketsPerSecond = bucketsPerSecond;
+    result.bucketsPerSecond = effectiveBps;
     return result;
 }
 
@@ -470,7 +513,8 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
     // causava use-after-free na troca de clipe durante a reprodução.
     QMutexLocker vlock(&m_mutex);
     QMutexLocker alock(&m_audioMutex);
-    if (m_ctx && m_source == filePath) return true;
+    if (m_ctx && m_source == filePath && m_requestedAudioStream == audioStream)
+        return true;
     // Só conta/temporiza abertura FRIA (o atalho acima, arquivo já aberto, sai
     // antes). commitOpen() é chamado em todo retorno real, inclusive falhas.
     const auto openT0 = std::chrono::steady_clock::now();
@@ -498,6 +542,7 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
     }
     m_ctx = fmt;
     m_source = filePath;
+    m_requestedAudioStream = audioStream;
     m_lastPtsSec = -1.0;
 
     // Vídeo é opcional: arquivos só-áudio (mp3/wav) ainda abrem para o
@@ -513,7 +558,7 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
                     cc = nullptr;
                 }
                 if (cc) {
-                    cc->thread_type = FF_THREAD_FRAME;
+                    cc->thread_type = decThreadType();
                     AVBufferRef* hwDev = (hwDisabled() || !m_hwAllowed) ? nullptr : vaapiDevice();
                     if (hwDev) {
                         cc->hw_device_ctx = av_buffer_ref(hwDev);
@@ -549,6 +594,7 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
                         }
                     } else {
                         cc->thread_count = qMin(4, QThread::idealThreadCount());
+                        if (fastDecode()) cc->flags2 |= AV_CODEC_FLAG2_FAST;
                     }
                     int openErr = avcodec_open2(cc, codec, nullptr);
                     if (openErr != 0 && hwDev) {
@@ -562,7 +608,8 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
                                 cc = nullptr;
                             } else {
                                 cc->thread_count = qMin(4, QThread::idealThreadCount());
-                                cc->thread_type = FF_THREAD_FRAME;
+                                cc->thread_type = decThreadType();
+                                if (fastDecode()) cc->flags2 |= AV_CODEC_FLAG2_FAST;
                                 openErr = avcodec_open2(cc, codec, nullptr);
                                 if (openErr != 0) {
                                     avcodec_free_context(&cc);
@@ -716,6 +763,7 @@ void FFmpegDecoder::freeAllLocked() {
     m_stream = -1;
     m_isImage = false;
     m_audioStream = -1;
+    m_requestedAudioStream = -1;
     m_audioSkipFrames = 0;
     m_audioSeekTargetSec = -1.0;
     m_audioFinished = false;
@@ -1257,6 +1305,10 @@ bool FFmpegDecoder::audioFinished() const {
 }
 
 void FFmpegDecoder::seekAudio(double seconds) {
+    // m_aCtx == m_ctx (demuxer único compartilhado com o vídeo): pega m_mutex
+    // ANTES de mexer no demuxer, para não correr com frameAt(). Ordem fixa
+    // m_mutex → m_audioMutex, a mesma de open()/close(): sem AB-BA.
+    QMutexLocker vlock(&m_mutex);
     QMutexLocker locker(&m_audioMutex);
     if (audioDbg()) qDebug() << "[audio] seek" << seconds << "stream=" << m_audioStream;
     if (!m_aCtx || m_audioStream < 0) return;
@@ -1282,6 +1334,9 @@ void FFmpegDecoder::seekAudio(double seconds) {
 }
 
 int FFmpegDecoder::decodeAudio(void* outBuf, int maxBytes) {
+    // Mesmo demuxer do vídeo (m_aCtx == m_ctx): m_mutex primeiro (ordem fixa
+    // m_mutex → m_audioMutex) para não correr com frameAt().
+    QMutexLocker vlock(&m_mutex);
     QMutexLocker locker(&m_audioMutex);
     if (!m_aCtx || m_audioStream < 0 || !outBuf || maxBytes <= 0) return 0;
     if (!m_audioPkt || !m_audioFrame) return 0;
@@ -1321,16 +1376,19 @@ int FFmpegDecoder::decodeAudio(void* outBuf, int maxBytes) {
             continue;
         }
         if (recv == AVERROR_EOF) {
-            // Drena o resampler (atraso interno no fim) e marca o FIM do
-            // arquivo: o consumidor (AudioConformCache) pode parar em vez de
-            // re-pedir enquanto decodeAudio devolver 0 bytes.
-            m_audioFinished = true;
+            // Drena o atraso interno do resampler no fim do arquivo. Só marca
+            // FIM quando o swr PARAR de devolver amostras: marcar cedo fazia o
+            // consumidor (AudioConformCache) largar a cauda que ainda restava
+            // no resampler quando o buffer pedido era menor que o atraso.
             const int cap = (maxBytes - produced) / bytesPerSample;
             if (cap <= 0) break;
             const int got = swr_convert(swr, &out, cap, nullptr, 0);
-            if (got <= 0) break;
-            produced += got * bytesPerSample;
-            out += got * bytesPerSample;
+            if (got > 0) {
+                produced += got * bytesPerSample;
+                out += got * bytesPerSample;
+            } else {
+                m_audioFinished = true; // resampler esvaziou de vez
+            }
             break;
         }
         if (recv < 0) break;

@@ -913,7 +913,11 @@ QStringList ProjectExporter::buildCommand(const Project& project,
         for (int i = 1; i < (int)sorted.size(); ++i) {
             const Clip* prev = sorted[i - 1];
             const Clip* cur = sorted[i];
-            const double d = prev->pos + prev->dur - cur->pos;
+            // A sobreposição vira a duração da transição, mas nunca pode passar
+            // da duração de nenhum dos dois clipes (senão o `fade` do ffmpeg
+            // estoura o material do clipe). Mesmo clamp do áudio acima.
+            double d = prev->pos + prev->dur - cur->pos;
+            d = std::min(d, std::min(prev->dur, cur->dur));
             if (d > 1e-6) {
                 const QString type = isTransition(prev->transitionType)
                                          ? prev->transitionType
@@ -1594,13 +1598,15 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                                      .arg(num(dur - fadeOut)).arg(num(fadeOut)));
             // Crossfade de transição: fade-in no clipe da frente e fade-out no
             // de trás, sobre a sobreposição com o vizinho da mesma faixa.
+            // `curve=qsin` = potência constante (in = sin(π/2·p), out =
+            // cos(π/2·p)); o linear (default) afundava ~3 dB no centro.
             const auto afIt = audioFades.find(c->id);
             if (afIt != audioFades.end()) {
                 if (afIt->first > 0.0)
-                    fc.last().append(QStringLiteral(",afade=t=in:st=0:d=%1")
+                    fc.last().append(QStringLiteral(",afade=t=in:st=0:d=%1:curve=qsin")
                                          .arg(num(afIt->first)));
                 if (afIt->second > 0.0)
-                    fc.last().append(QStringLiteral(",afade=t=out:st=%1:d=%2")
+                    fc.last().append(QStringLiteral(",afade=t=out:st=%1:d=%2:curve=qsin")
                                          .arg(num(dur - afIt->second))
                                          .arg(num(afIt->second)));
             }

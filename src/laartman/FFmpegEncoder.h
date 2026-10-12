@@ -21,8 +21,16 @@ struct AVPacket;
 //
 // Simétrico ao FFmpegDecoder: recebe quadros RGBA (QImage) já compostos e
 // escreve um arquivo de vídeo com o codec/container escolhidos, sem depender
-// do binário `ffmpeg`. Hoje é VÍDEO-APENAS (o áudio da exportação continua
-// fora deste motor — misturado no pipeline que chamar).
+// do binário `ffmpeg`. É VÍDEO-APENAS.
+//
+// ESCOPO (decisão do C da frente LaArtman): este motor NÃO é o caminho de
+// exportação do Pierrot. A exportação continua no `ffmpeg` CLI (ProjectExporter)
+// porque o grafo de composição (blend, chromakey, colorgrade, transições),
+// a mixagem de áudio e os encoders de hardware (h264_nvenc/h264_vaapi) vivem
+// lá; trazer tudo para cá seria reimplementar o grafo inteiro + mux de áudio.
+// O FFmpegEncoder fica como BLOCO DE BASE (encode de uma sequência de quadros,
+// sem o binário) validado pelo tst_encoder e disponível para futuros caminhos
+// rápidos in-process — não é código morto, é intencionalmente fora do export.
 //
 // Uso:
 //   FFmpegEncoder enc;
