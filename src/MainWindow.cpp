@@ -18,6 +18,7 @@
 #include "ui/ExpressWidget.h"
 #include "ui/FileBrowserWidget.h"
 #include "ui/MixerWidget.h"
+#include "ui/EqualizerWidget.h"
 #include "ui/MesaWidget.h"
 #include "ui/SourceMonitorWidget.h"
 #include "ui/VelocityEditorWidget.h"
@@ -622,12 +623,20 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_timeline, &TimelineWidget::modified, this, [this]() {
         m_preview->refreshView();
         if (m_mixer) m_mixer->refresh();
+        if (m_equalizer) m_equalizer->refresh();
         if (m_mesa) m_mesa->refresh();
     });
     connect(m_timeline, &TimelineWidget::modified, this, &MainWindow::setModified);
     connect(m_mixer, &MixerWidget::modified, this, &MainWindow::pushUndo);
     connect(m_mixer, &MixerWidget::modified, this, &MainWindow::setModified);
     connect(m_mixer, &MixerWidget::modified, this, [this]() {
+        m_preview->refreshView();
+    });
+    // Equalizador (gráfico + paramétrico): uma entrada de undo por rajada de
+    // edição; mudanças em vivo atualizam preview/timeline.
+    connect(m_equalizer, &EqualizerWidget::editStart, this, &MainWindow::pushUndo);
+    connect(m_equalizer, &EqualizerWidget::modified, this, &MainWindow::setModified);
+    connect(m_equalizer, &EqualizerWidget::modified, this, [this]() {
         m_preview->refreshView();
     });
     connect(m_mesa, &MesaWidget::modified, this, &MainWindow::setModified);
@@ -1654,6 +1663,16 @@ void MainWindow::createDocks() {
     splitDockWidget(m_timelineDock, m_mixerDock, Qt::Vertical);
     m_mixerDock->hide();
 
+    // Equalizador (gráfico + paramétrico, master + faixas de áudio) — dock
+    // tabificado com o Mixer.
+    m_equalizer = new EqualizerWidget(this);
+    m_equalizer->setProject(&m_project);
+    m_equalizerDock = makeDock(QStringLiteral("equalizerDock"),
+                               tr("Equalizador"), m_equalizer,
+                               Qt::BottomDockWidgetArea);
+    tabifyDockWidget(m_mixerDock, m_equalizerDock);
+    m_equalizerDock->hide();
+
     // Mesa (composição 2D) — dock ao lado do preview.
     m_mesa = new MesaWidget(this);
     m_mesa->setProject(&m_project);
@@ -2212,7 +2231,10 @@ void MainWindow::createActions() {
     m_snapAction = new QAction(iconMagnet(), tr("Snap (ímã)"), this);
     m_snapAction->setCheckable(true);
     m_snapAction->setChecked(true);
-    m_snapAction->setToolTip(tr("Encaixar no grid e nas bordas dos clipes"));
+    m_snapAction->setShortcut(appKey("snap", QKeySequence(Qt::Key_T)));
+    m_snapAction->setToolTip(tr("Encaixar no grid e nas bordas dos clipes (T). "
+                                "Desligar o ímã também desativa o auto-juntar "
+                                "(ripple) ao cortar/excluir."));
     connect(m_snapAction, &QAction::triggered, m_timeline, &TimelineWidget::setSnap);
     toolTb->addAction(m_snapAction);
     toolTb->addSeparator();
@@ -2224,7 +2246,8 @@ void MainWindow::createActions() {
     rippleTb->setCheckable(true);
     rippleTb->setChecked(SettingsDialog::rippleDeleteEnabled());
     rippleTb->setToolTip(tr("Fechar o vão automaticamente ao excluir (ripple). "
-                            "Desligue para deixar o espaço vazio."));
+                            "Desligue para deixar o espaço vazio. "
+                            "Inativo quando o ímã está desligado."));
     connect(rippleTb, &QAction::toggled, this, [](bool on) {
         QSettings s;
         s.setValue("timelineRippleDelete", on);
@@ -2865,6 +2888,7 @@ void MainWindow::applyUndoState() {
     m_props->refresh();
     m_preview->refreshView();
     m_mixer->refresh();
+    m_equalizer->refresh();
     m_mesa->refresh();
     m_mesa->autoSelectMesa();
     updateUndoActions();

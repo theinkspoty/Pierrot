@@ -657,6 +657,35 @@ struct TrackFx {
     bool enabled = true;
 };
 
+// ── Equalizador paramétrico ───────────────────────────────────────────
+// Uma banda por ponto na curva. Bell (peaking) usa freq+ganho+Q; Low/High
+// Shelf usam freq+ganho (Q ignorado; slope fixo).
+enum EqBandType { EqBell = 0, EqLowShelf = 1, EqHighShelf = 2 };
+
+struct ParametricBand {
+    bool enabled = true;
+    int type = EqBell;
+    double freq = 1000.0; // Hz
+    double gain = 0.0;    // dB
+    double q = 1.0;       // Bell apenas
+};
+
+inline constexpr double kParamEqMaxGain = 24.0;
+inline constexpr double kParamEqMinFreq = 20.0;
+inline constexpr double kParamEqMaxFreq = 20000.0;
+
+// Conjunto padrão sugerido (5 bandas bell) para o botão "Padrão".
+inline QVector<ParametricBand> defaultParametricEq() {
+    QVector<ParametricBand> v;
+    const double f[5] = { 100.0, 300.0, 1000.0, 3000.0, 8000.0 };
+    for (double x : f) {
+        ParametricBand b;
+        b.freq = x;
+        v.append(b);
+    }
+    return v;
+}
+
 struct Track {
     QString id;                // id único da track (para referência em MesaComposition)
     QString name;
@@ -679,6 +708,11 @@ struct Track {
     double eqLow = 0.0;
     double eqMid = 0.0;
     double eqHigh = 0.0;
+    // Equalizador gráfico de 10 bandas da faixa (ganhos em dB, -12..+12;
+    // vazio = neutro). Frequências em `graphicEqFrequencies()`.
+    QVector<double> graphicEq;
+    // Equalizador paramétrico da faixa (curva de nós). Vazio = neutro.
+    QVector<ParametricBand> parametricEq;
     bool denoise = false;
     double denoiseAmount = 12.0;
     bool invertPhase = false;
@@ -688,6 +722,16 @@ struct Track {
     bool hasAudioFx() const {
         return std::fabs(eqLow) > 0.01 || std::fabs(eqMid) > 0.01
             || std::fabs(eqHigh) > 0.01 || denoise || invertPhase || reverb;
+    }
+    bool hasGraphicEq() const {
+        for (double g : graphicEq)
+            if (std::fabs(g) > 0.01) return true;
+        return false;
+    }
+    bool hasParametricEq() const {
+        for (const ParametricBand& b : parametricEq)
+            if (b.enabled && std::fabs(b.gain) > 0.01) return true;
+        return false;
     }
     // ── Automação de áudio (mixer) ─────────────────────────────────────
     // Envelopes de áudio por faixa (tempos em segundos da timeline, absolutos).
@@ -789,6 +833,16 @@ inline QColor recordingTrackColor() { return QColor(198, 62, 58); }
 // para timeline e exportação usarem o mesmo valor.
 inline QColor fxTrackColor() { return QColor(58, 122, 198); }
 
+// Equalizador gráfico de 10 bandas (master e por faixa de áudio). As
+// frequências centrais são compartilhadas pela UI, pelo preview e pelo export.
+inline constexpr int kGraphicEqBands = 10;
+inline const double* graphicEqFrequencies() {
+    static const double f[kGraphicEqBands] = { 31.0,  62.0,   125.0,  250.0,
+                                               500.0, 1000.0, 2000.0, 4000.0,
+                                               8000.0, 16000.0 };
+    return f;
+}
+
 class Project {
 public:
     QString name;
@@ -797,6 +851,11 @@ public:
     int fps = 30;
     double audioRate = 48000.0;
     double masterVolume = 1.0;
+    // Equalizador gráfico de 10 bandas do master (ganhos em dB, -12..+12;
+    // vazio = neutro). Frequências em `graphicEqFrequencies()`.
+    QVector<double> masterGraphicEq;
+    // Equalizador paramétrico do master (curva de nós). Vazio = neutro.
+    QVector<ParametricBand> masterParametricEq;
     // Preferência do projeto: usar proxies (transcode leve de 2K+) no preview
     // e thumbs. TRUE = editar com proxy (rápido); FALSE = qualidade original
     // cheia no preview. A exportação SEMPRE usa o original, independente disto.

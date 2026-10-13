@@ -439,6 +439,36 @@ static Marker markerFromJson(const QJsonObject& o) {
     return m;
 }
 
+static QJsonObject paramBandToJson(const ParametricBand& b) {
+    QJsonObject o;
+    o["on"] = b.enabled;
+    o["type"] = b.type;
+    o["f"] = b.freq;
+    o["g"] = b.gain;
+    o["q"] = b.q;
+    return o;
+}
+
+static QJsonArray paramEqToJson(const QVector<ParametricBand>& v) {
+    QJsonArray a;
+    for (const ParametricBand& b : v) a.append(paramBandToJson(b));
+    return a;
+}
+
+static void paramEqFromJson(const QJsonArray& a, QVector<ParametricBand>& v) {
+    v.clear();
+    for (const QJsonValue& val : a) {
+        const QJsonObject o = val.toObject();
+        ParametricBand b;
+        b.enabled = o["on"].toBool(true);
+        b.type = o["type"].toInt(EqBell);
+        b.freq = o["f"].toDouble(1000.0);
+        b.gain = o["g"].toDouble(0.0);
+        b.q = o["q"].toDouble(1.0);
+        v.append(b);
+    }
+}
+
 static QJsonObject trackToJson(const Track& t) {
     QJsonObject o;
     o["id"] = t.id;
@@ -452,6 +482,13 @@ static QJsonObject trackToJson(const Track& t) {
     o["eqLow"] = t.eqLow;
     o["eqMid"] = t.eqMid;
     o["eqHigh"] = t.eqHigh;
+    if (!t.graphicEq.isEmpty()) {
+        QJsonArray ge;
+        for (double g : t.graphicEq) ge.append(g);
+        o["graphicEq"] = ge;
+    }
+    if (!t.parametricEq.isEmpty())
+        o["parametricEq"] = paramEqToJson(t.parametricEq);
     o["denoise"] = t.denoise;
     o["denoiseAmount"] = t.denoiseAmount;
     o["invertPhase"] = t.invertPhase;
@@ -527,6 +564,10 @@ static Track trackFromJson(const QJsonObject& o, bool audio) {
     t.eqLow = o["eqLow"].toDouble(0.0);
     t.eqMid = o["eqMid"].toDouble(0.0);
     t.eqHigh = o["eqHigh"].toDouble(0.0);
+    t.graphicEq.clear();
+    for (const QJsonValue& v : o["graphicEq"].toArray())
+        t.graphicEq.append(v.toDouble(0.0));
+    paramEqFromJson(o["parametricEq"].toArray(), t.parametricEq);
     t.denoise = o["denoise"].toBool();
     t.denoiseAmount = o["denoiseAmount"].toDouble(12.0);
     t.invertPhase = o["invertPhase"].toBool();
@@ -593,6 +634,13 @@ QJsonObject Project::toJson() const {
     o["fps"] = fps;
     o["audioRate"] = audioRate;
     o["masterVolume"] = masterVolume;
+    if (!masterGraphicEq.isEmpty()) {
+        QJsonArray mge;
+        for (double g : masterGraphicEq) mge.append(g);
+        o["masterGraphicEq"] = mge;
+    }
+    if (!masterParametricEq.isEmpty())
+        o["masterParametricEq"] = paramEqToJson(masterParametricEq);
     o["useProxies"] = useProxies;
 
     QJsonArray mediaArr;
@@ -655,6 +703,10 @@ void Project::fromJson(const QJsonObject& o) {
     fps = o["fps"].toInt(30);
     audioRate = o["audioRate"].toDouble(48000.0);
     masterVolume = o["masterVolume"].toDouble(1.0);
+    masterGraphicEq.clear();
+    for (const QJsonValue& v : o["masterGraphicEq"].toArray())
+        masterGraphicEq.append(v.toDouble(0.0));
+    paramEqFromJson(o["masterParametricEq"].toArray(), masterParametricEq);
     useProxies = o["useProxies"].toBool(true);
 
     media.clear();

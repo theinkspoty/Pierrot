@@ -307,6 +307,10 @@ private:
     QStringList expandToGroups(const QStringList& ids);
     double snapTime(double t) const;
     double snapToEdges(double t, const QString& excludeId = QString()) const;
+    // Igual, mas ignora um CONJUNTO de clipes. Necessário no ripple: os clipes
+    // que acompanham o arraste não podem servir de alvo de snap, senão o alvo se
+    // move junto e o encaixe oscila.
+    double snapToEdges(double t, const QSet<QString>& excludeIds) const;
     double clampPosToTrack(Clip* c, double newPos, const QSet<QString>& moving) const;
     bool clipTrackIndex(const QString& id, int& row, bool& audio) const;
     bool moveClipToTrack(const QString& id, int row, bool audio);
@@ -413,6 +417,14 @@ private:
     void cutSelected();
     void pasteClips();
     void pasteAttributes();
+    // Acha uma faixa livre (sem clipe sobrepondo [pos, pos+dur)) na seção de
+    // vídeo (`audio=false`) ou áudio (`audio=true`). Prefere `prefer`; senão a
+    // faixa livre mais próxima (para cima/baixo); senão cria uma faixa nova.
+    // Nunca devolve -1 com projeto válido.
+    int findFreeTrackFor(bool audio, double pos, double dur, int prefer);
+    // Excluir/cortar fecha o vão automaticamente (ripple) apenas com o ímã
+    // ligado E o botão Ripple ativo. Ímã desligado = nunca junta (deixa o vão).
+    bool rippleCloseEnabled() const;
     void saveClipPreset();
     void applyClipPreset();
     void duplicateSelected();

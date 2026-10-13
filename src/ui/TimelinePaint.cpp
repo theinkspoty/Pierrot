@@ -229,19 +229,19 @@ Clip* TimelineWidget::clipAt(int row, bool audio, double t) const {
         : (row >= 0 && row < (int)m_project->videoTracks.size()
            ? m_project->videoTracks[row].clips : QVector<Clip>{});
     if (clips.isEmpty()) return nullptr;
-    // Busca binária: clips são ordenados por pos. Encontra o último cujo
-    // início é <= t.
-    int lo = 0, hi = clips.size() - 1;
-    while (lo <= hi) {
-        const int mid = (lo + hi) / 2;
-        if (clips[mid].pos <= t) lo = mid + 1;
-        else hi = mid - 1;
+    // A lista de clipes NÃO é garantidamente ordenada por pos: colar/duplicar
+    // empilham no fim do vetor (push_back). A busca binária antiga assumia
+    // ordem cronológica e, com a lista desordenada, errava o alvo — o clipe
+    // colado ficava visível mas não respondia a clique/arraste (não dava para
+    // selecionar nem mover). Varre e devolve o de maior pos que contém t (em
+    // sobreposição de transição, o clipe da frente é o que começa depois).
+    Clip* best = nullptr;
+    for (const Clip& c : clips) {
+        if (t >= c.pos && t < c.pos + c.dur) {
+            if (!best || c.pos > best->pos) best = const_cast<Clip*>(&c);
+        }
     }
-    if (hi >= 0 && hi < clips.size()) {
-        Clip& c = const_cast<Clip&>(clips[hi]);
-        if (t >= c.pos && t < c.pos + c.dur) return &c;
-    }
-    return nullptr;
+    return best;
 }
 
 int TimelineWidget::volLineY(int row, bool audio, const Track& tr) const {

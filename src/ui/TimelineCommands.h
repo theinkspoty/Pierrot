@@ -26,7 +26,7 @@ void splitClipAt(TimelineWidget* tl, Clip* c, double t, QStringList* newIds);
 void cutAtPlayhead(TimelineWidget* tl);
 
 // Corta e deleta os clipes da direita numa única operação undo (S+D).
-void cutAndDelete(TimelineWidget* tl);
+void cutAndDelete(TimelineWidget* tl, bool ripple);
 
 // Divide clipes na posição t (ferramenta tesoura).
 void razorSplitAt(TimelineWidget* tl, double t);

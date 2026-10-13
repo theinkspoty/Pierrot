@@ -134,6 +134,8 @@ set(PIERROT_APP_SOURCES
     src/ui/PreviewMonitor.cpp
     src/ui/FileBrowserWidget.cpp
     src/ui/MixerWidget.cpp
+    src/ui/EqualizerWidget.cpp
+    src/ui/EqCurveView.cpp
     src/ui/MesaWidget.cpp
     src/ui/MesaHitTest.cpp
     src/ui/MesaInputHandler.cpp
@@ -178,6 +180,8 @@ set(PIERROT_APP_HEADERS
     src/ui/ExpressWidget.h
     src/ui/FileBrowserWidget.h
     src/ui/MixerWidget.h
+    src/ui/EqualizerWidget.h
+    src/ui/EqCurveView.h
     src/ui/MesaWidget.h
 )
 

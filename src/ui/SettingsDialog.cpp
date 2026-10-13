@@ -58,6 +58,7 @@ const ShortcutDef kShortcutDefs[] = {
     { "tool7",   "Slip",                "Y",                 "Ferramentas" },
     { "tool8",   "Slide",               "Ctrl+U",            "Ferramentas" },
     { "tool9",   "Esticar Velocidade",  "W",                 "Ferramentas" },
+    { "snap",    "Snap (ímã)",          "T",                 "Ferramentas" },
     { "play",    "Reproduzir/Pausar",   "Space",             "Reprodução" },
     { "shuttleRev", "Retroceder (JKL)",  "J",                 "Reprodução" },
     { "shuttleFwd", "Avançar (JKL)",     "L",                 "Reprodução" },
@@ -73,7 +74,7 @@ constexpr int kShortcutCount = (int)(sizeof(kShortcutDefs) / sizeof(kShortcutDef
 
 static QString shortcutText(const ShortcutDef& sd) {
     const QString v = QSettings().value(QString("shortcuts/%1").arg(QLatin1String(sd.id))).toString();
-    return v.isEmpty() ? QKeySequence(QString::fromLatin1(sd.def)).toString() : v;
+    return v.isEmpty() ? QKeySequence(QString::fromUtf8(sd.def)).toString() : v;
 }
 }
 
@@ -502,7 +503,7 @@ void SettingsDialog::refreshShortcutRow() {
         if (QString::fromLatin1(kShortcutDefs[i].id) == id) {
             const QString v = m_shortcutMap.value(id);
             it->setText(1, v.isEmpty()
-                            ? QKeySequence(QString::fromLatin1(kShortcutDefs[i].def)).toString()
+                            ? QKeySequence(QString::fromUtf8(kShortcutDefs[i].def)).toString()
                             : v);
             break;
         }

@@ -1202,9 +1202,19 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                             }
                         }
                     }
+                    // Conjunto de clipes que se movem neste arraste (grupo +
+                    // vizinhos do ripple). Excluído do snap: um alvo que se move
+                    // junto faz o encaixe oscilar (o clipe "gruda" e treme).
+                    QSet<QString> moving;
+                    for (auto it = m_dragOrig.begin(); it != m_dragOrig.end(); ++it)
+                        moving.insert(it.key());
+                    if (m_rippleMove)
+                        for (auto it = m_rippleMoveOrig.constBegin();
+                             it != m_rippleMoveOrig.constEnd(); ++it)
+                            moving.insert(it.key());
                     const double raw = m_dragOrigPos + dt;
                     const double grid = snapTime(raw);
-                    const double snapped = snapToEdges(grid, m_dragClip);
+                    const double snapped = snapToEdges(grid, moving);
                     // Guia de alinhamento: só marca snap de BORDA. Comparar com
                     // `grid` e não com `raw` é o que importa — `snapTime()`
                     // quantiza para a grade de frames quase sempre, então
@@ -1214,9 +1224,6 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                     else
                         m_snapLineX = -1.0;
                     const double delta = snapped - m_dragOrigPos;
-                    QSet<QString> moving;
-                    for (auto it = m_dragOrig.begin(); it != m_dragOrig.end(); ++it)
-                        moving.insert(it.key());
                     for (auto it = m_dragOrig.begin(); it != m_dragOrig.end(); ++it) {
                         Clip* sc = findClipById(it.key());
                         if (sc)
@@ -1255,8 +1262,13 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                             sc->dur = it.value().dur;
                         }
                     }
+                    // Snap ignora a faixa inteira do ripple (o próprio clipe e os
+                    // vizinhos que serão deslocados): alvo móvel faz oscilar.
+                    QSet<QString> ripIds;
+                    for (auto it = m_rippleOrig.constBegin(); it != m_rippleOrig.constEnd(); ++it)
+                        ripIds.insert(it.key());
                     const double minEnd = std::max(0.0, m_dragOrigPos + m_dragOrigDur - kMinDur);
-                    const double np = std::clamp(snapToEdges(snapTime(m_dragOrigPos + dt)),
+                    const double np = std::clamp(snapToEdges(snapTime(m_dragOrigPos + dt), ripIds),
                                                  0.0, minEnd);
                     const double delta = np - m_dragOrigPos;
                     m_snapLineX = -1.0;
@@ -1272,7 +1284,10 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                             sc->dur = it.value().dur;
                         }
                     }
-                    const double end = snapToEdges(snapTime(m_dragOrigPos + m_dragOrigDur + dt));
+                    QSet<QString> ripIds;
+                    for (auto it = m_rippleOrig.constBegin(); it != m_rippleOrig.constEnd(); ++it)
+                        ripIds.insert(it.key());
+                    const double end = snapToEdges(snapTime(m_dragOrigPos + m_dragOrigDur + dt), ripIds);
                     const double newDur = std::max(kMinDur, end - clip->pos);
                     m_snapLineX = -1.0;
                     markTrimEdge(end, /*ripple=*/true);
@@ -1985,6 +2000,13 @@ void TimelineWidget::finishTrackDrag() {
 // ── Snap e posicionamento ───────────────────────────────────────────────
 
 double TimelineWidget::snapToEdges(double t, const QString& excludeId) const {
+    if (excludeId.isEmpty()) return snapToEdges(t, QSet<QString>());
+    QSet<QString> ids;
+    ids.insert(excludeId);
+    return snapToEdges(t, ids);
+}
+
+double TimelineWidget::snapToEdges(double t, const QSet<QString>& excludeIds) const {
     if (!m_snap) return t;
     const double thresh = 8.0 / m_pps;
     double best = t;
@@ -1996,7 +2018,7 @@ double TimelineWidget::snapToEdges(double t, const QString& excludeId) const {
     consider(0.0);
     consider(m_playhead);
     auto considerClip = [&](const Clip& c) {
-        if (c.id == excludeId) return;
+        if (excludeIds.contains(c.id)) return;
         consider(c.pos);
         consider(c.pos + c.dur);
     };

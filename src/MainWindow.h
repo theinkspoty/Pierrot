@@ -34,6 +34,7 @@ class ClipPropertiesWidget;
 class TextEditorWidget;
 class FileBrowserWidget;
 class MixerWidget;
+class EqualizerWidget;
 class MesaWidget;
 class SourceMonitorWidget;
 class VelocityEditorWidget;
@@ -242,6 +243,7 @@ private:
     ClipPropertiesWidget* m_props = nullptr;
     FileBrowserWidget* m_fileBrowser = nullptr;
     MixerWidget* m_mixer = nullptr;
+    EqualizerWidget* m_equalizer = nullptr; // EQ gráfico + paramétrico (dock)
     MesaWidget* m_mesa = nullptr;
     SourceMonitorWidget* m_source = nullptr; // Source Monitor (dock, Premiere)
     TextEditorWidget* m_textEditor = nullptr; // Editor de Texto (dock, live)
@@ -258,6 +260,7 @@ private:
     QDockWidget* m_expressDock = nullptr;
     QDockWidget* m_fileBrowserDock = nullptr;
     QDockWidget* m_mixerDock = nullptr;
+    QDockWidget* m_equalizerDock = nullptr; // EQ gráfico + paramétrico (dock)
     QDockWidget* m_mesaDock = nullptr;
     ScopeWidget* m_scopes = nullptr;      // analisadores (waveform/histograma/vectorscope)
     QComboBox* m_scopeMode = nullptr;

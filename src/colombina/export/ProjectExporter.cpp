@@ -292,6 +292,50 @@ QString num(double v) {
     return QString::number(v, 'f', 3);
 }
 
+// Cadeia de filtros `equalizer` (um por banda com ganho não nulo) que
+// reproduz o EQ gráfico de 10 bandas do modelo. Bandas de 1 oitava
+// (width_type=o), casando com os biquads peaking do preview (Q≈1,414).
+QString graphicEqFilters(const QVector<double>& gains) {
+    if (gains.isEmpty()) return QString();
+    QStringList out;
+    const double* f = graphicEqFrequencies();
+    for (int b = 0; b < kGraphicEqBands; ++b) {
+        const double g =
+            b < gains.size() ? std::clamp(gains[b], -12.0, 12.0) : 0.0;
+        if (std::fabs(g) <= 0.01) continue;
+        out << QStringLiteral("equalizer=f=%1:width_type=o:width=1:g=%2")
+                   .arg(num(f[b]))
+                   .arg(num(g));
+    }
+    return out.join(QLatin1Char(','));
+}
+
+// Cadeia de filtros do EQ paramétrico: `equalizer` (Bell), `lowshelf` /
+// `highshelf` (Shelf, slope 1). Espelha os biquads do preview (EqBiquad.h).
+QString parametricEqFilters(const QVector<ParametricBand>& bands) {
+    if (bands.isEmpty()) return QString();
+    QStringList out;
+    for (const ParametricBand& b : bands) {
+        if (!b.enabled || std::fabs(b.gain) <= 0.01) continue;
+        const double f = std::clamp(b.freq, kParamEqMinFreq, kParamEqMaxFreq);
+        const double g = std::clamp(b.gain, -kParamEqMaxGain, kParamEqMaxGain);
+        if (b.type == EqLowShelf)
+            out << QStringLiteral("lowshelf=f=%1:width_type=s:width=1:g=%2")
+                       .arg(num(f))
+                       .arg(num(g));
+        else if (b.type == EqHighShelf)
+            out << QStringLiteral("highshelf=f=%1:width_type=s:width=1:g=%2")
+                       .arg(num(f))
+                       .arg(num(g));
+        else
+            out << QStringLiteral("equalizer=f=%1:width_type=q:width=%2:g=%3")
+                       .arg(num(f))
+                       .arg(num(std::clamp(b.q, 0.1, 30.0)))
+                       .arg(num(g));
+    }
+    return out.join(QLatin1Char(','));
+}
+
 constexpr double kPi = 3.14159265358979323846;
 
 // Expressão ffmpeg em `t` (tempo absoluto da timeline) que reproduz a
@@ -1730,6 +1774,10 @@ QStringList ProjectExporter::buildCommand(const Project& project,
             if (std::fabs(tr.eqHigh) > 0.01)
                 fx << QStringLiteral("equalizer=f=6000:width_type=q:width=1:g=%1")
                           .arg(num(std::clamp(tr.eqHigh, -12.0, 12.0)));
+            const QString trGe = graphicEqFilters(tr.graphicEq);
+            if (!trGe.isEmpty()) fx << trGe;
+            const QString trPe = parametricEqFilters(tr.parametricEq);
+            if (!trPe.isEmpty()) fx << trPe;
             if (tr.invertPhase)
                 fx << QStringLiteral("aeval=-val(0)|-val(1)");
             QString preLbl = bus;
@@ -1781,6 +1829,20 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                     .arg(num(std::clamp(project.masterVolume, 0.0, 2.0)))
                     .arg(masterLbl);
             aout = QStringLiteral("[%1]").arg(masterLbl);
+        }
+        // EQ gráfico do master no sinal final (após o volume master).
+        const QString mGe = graphicEqFilters(project.masterGraphicEq);
+        if (!mGe.isEmpty()) {
+            const QString geLbl = QStringLiteral("amge");
+            fc << aout + mGe + QStringLiteral("[%1]").arg(geLbl);
+            aout = QStringLiteral("[%1]").arg(geLbl);
+        }
+        // EQ paramétrico do master.
+        const QString mPe = parametricEqFilters(project.masterParametricEq);
+        if (!mPe.isEmpty()) {
+            const QString peLbl = QStringLiteral("ampe");
+            fc << aout + mPe + QStringLiteral("[%1]").arg(peLbl);
+            aout = QStringLiteral("[%1]").arg(peLbl);
         }
     }
 

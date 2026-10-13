@@ -10,6 +10,7 @@
 #include "colombina/CrashReporter.h"
 #include "colombina/ffmpeg/ProxyManager.h"
 #include "colombina/ffmpeg/AudioConformCache.h"
+#include "colombina/audio/EqBiquad.h"
 #include "colombina/ofx/OfxRenderer.h"
 #include "colombina/ofx/OfxPluginManager.h"
 #include "colombina/frei0r/Frei0rPluginManager.h"
@@ -928,6 +929,126 @@ private:
     SpectralDenoise dn;
 };
 
+// Equalizador gráfico de 10 bandas: cadeia de biquads peaking em série, por
+// canal. Os ganhos são em dB (-12..+12) e casam com as bandas de
+// `graphicEqFrequencies()` (modelo). Usado tanto no barramento de cada faixa de
+// áudio quanto no master. Não depende do kernel Rust (DSP próprio, simples).
+class GraphicEq {
+public:
+    // `gainsDb` deve ter kGraphicEqBands entradas; faltantes = 0 dB (neutro).
+    void setGains(const QVector<double>& gainsDb) {
+        int key = 0;
+        for (int i = 0; i < kGraphicEqBands; ++i) {
+            const double v =
+                std::clamp(i < gainsDb.size() ? gainsDb[i] : 0.0, -12.0, 12.0);
+            m_gain[i] = v;
+            key = key * 31 + (int)std::lround(v * 10.0);
+        }
+        if (key == m_key) return; // parâmetros inalterados: mantém o estado
+        m_key = key;
+        const double* f = graphicEqFrequencies();
+        for (int ch = 0; ch < 2; ++ch)
+            for (int b = 0; b < kGraphicEqBands; ++b)
+                m_bands[ch][b].peaking(f[b], 1.414, m_gain[b], kSampleRate);
+        reset();
+    }
+
+    void reset() {
+        for (int ch = 0; ch < 2; ++ch)
+            for (int b = 0; b < kGraphicEqBands; ++b) m_bands[ch][b].reset();
+    }
+
+    // Processa `frames` amostras estéreo interleaved S16 no próprio buffer.
+    void process(int16_t* buf, int frames) {
+        if (m_key == 0) return; // tudo neutro: não gasta DSP
+        for (int fr = 0; fr < frames; ++fr) {
+            double l = buf[2 * fr] / 32768.0;
+            double r = buf[2 * fr + 1] / 32768.0;
+            for (int b = 0; b < kGraphicEqBands; ++b) {
+                l = m_bands[0][b].tick(l);
+                r = m_bands[1][b].tick(r);
+            }
+            buf[2 * fr] = (int16_t)std::lround(std::clamp(l, -1.0, 1.0) * 32768.0);
+            buf[2 * fr + 1] =
+                (int16_t)std::lround(std::clamp(r, -1.0, 1.0) * 32768.0);
+        }
+    }
+
+    static constexpr double kSampleRate = 48000.0;
+
+private:
+    double m_gain[kGraphicEqBands] = { 0.0 };
+    int m_key = 0;
+    AudioFxFallback::Biquad m_bands[2][kGraphicEqBands];
+};
+
+// Equalizador paramétrico: cadeia de biquads (Bell/Shelf) por canal, definida
+// por um vetor de `ParametricBand` do modelo. Mesmas fórmulas usadas para
+// desenhar a curva na UI (EqBiquad.h) e, conceitualmente, pelo export.
+class ParametricEqDsp {
+public:
+    void setBands(const QVector<ParametricBand>& bands) {
+        int key = 0;
+        bool active = false;
+        for (const ParametricBand& b : bands) {
+            key = key * 31 + (b.enabled ? 1 : 0);
+            key = key * 31 + b.type;
+            key = key * 31 + (int)std::lround(b.freq * 10.0);
+            key = key * 31 + (int)std::lround(b.gain * 10.0);
+            key = key * 31 + (int)std::lround(b.q * 100.0);
+            if (b.enabled && std::fabs(b.gain) > 0.01) active = true;
+        }
+        if (key == m_key && bands.size() == m_n) return; // inalterado
+        m_key = key;
+        m_n = bands.size();
+        m_active = active;
+        for (int ch = 0; ch < 2; ++ch) {
+            m_bands[ch].resize(bands.size());
+            for (int i = 0; i < bands.size(); ++i) {
+                const ParametricBand& b = bands[i];
+                EqBiquad& q = m_bands[ch][i];
+                if (b.enabled) {
+                    if (b.type == EqLowShelf)
+                        q.lowShelf(b.freq, b.gain, kSampleRate);
+                    else if (b.type == EqHighShelf)
+                        q.highShelf(b.freq, b.gain, kSampleRate);
+                    else
+                        q.peaking(b.freq, b.q, b.gain, kSampleRate);
+                } else {
+                    q = EqBiquad(); // identidade
+                }
+            }
+        }
+        reset();
+    }
+
+    void reset() {
+        for (int ch = 0; ch < 2; ++ch)
+            for (EqBiquad& q : m_bands[ch]) q.reset();
+    }
+
+    void process(int16_t* buf, int frames) {
+        if (!m_active || m_n <= 0) return;
+        for (int fr = 0; fr < frames; ++fr) {
+            double l = buf[2 * fr] / 32768.0;
+            double r = buf[2 * fr + 1] / 32768.0;
+            for (EqBiquad& q : m_bands[0]) l = q.tick(l);
+            for (EqBiquad& q : m_bands[1]) r = q.tick(r);
+            buf[2 * fr] = (int16_t)std::lround(std::clamp(l, -1.0, 1.0) * 32768.0);
+            buf[2 * fr + 1] =
+                (int16_t)std::lround(std::clamp(r, -1.0, 1.0) * 32768.0);
+        }
+    }
+
+    static constexpr double kSampleRate = 48000.0;
+
+private:
+    int m_key = -1;
+    int m_n = -1;
+    bool m_active = false;
+    QVector<EqBiquad> m_bands[2];
+};
+
 // O DSP dos efeitos vive no kernel Rust (lib pierrot_audiofx) quando o build
 // é feito com -DPIERROT_ENABLE_RUST=ON; senão uso o fallback C++ acima. A
 // interface (configure/resetState/process) é idêntica, então o resto do
@@ -969,6 +1090,10 @@ public:
         double trackFxEqLow = 0.0;
         double trackFxEqMid = 0.0;
         double trackFxEqHigh = 0.0;
+        // Ganhos do equalizador gráfico de 10 bandas da faixa (dB, -12..+12).
+        QVector<double> trackGraphicEq;
+        // Bandas do equalizador paramétrico da faixa.
+        QVector<ParametricBand> trackParametricEq;
         bool trackFxDenoise = false;
         double trackFxDenoiseAmount = 12.0;
         bool trackFxInvertPhase = false;
@@ -1114,6 +1239,10 @@ public:
                               w.trackFxDenoise, w.trackFxDenoiseAmount,
                               w.trackFxInvertPhase, false,
                               w.trackFxReverb, w.trackFxReverbMix, w.trackFxReverbSize);
+                m_trackGraphicEq[qMakePair(w.isAudioTrack, w.trackIndex)]
+                    .setGains(w.trackGraphicEq);
+                m_trackParametricEq[qMakePair(w.isAudioTrack, w.trackIndex)]
+                    .setBands(w.trackParametricEq);
             }
         }
 
@@ -1159,6 +1288,12 @@ public:
     }
 
     void setMasterVolume(double v) { m_masterVolume = v; }
+    void setMasterGraphicEq(const QVector<double>& gains) {
+        m_masterGraphicEq.setGains(gains);
+    }
+    void setMasterParametricEq(const QVector<ParametricBand>& bands) {
+        m_masterParametricEq.setBands(bands);
+    }
 
     // Espera (com timeout) o head de QUEM vai tocar já agora estar conformado,
     // antes de o sink começar a puxar. Elimina o "começa mudo / dessincronizado"
@@ -1480,6 +1615,14 @@ public:
                     auto tit = m_trackFx.find(key);
                     if (tit != m_trackFx.cend())
                         tit.value().process(buses[bi].data(), totalSamples / 2);
+                    // EQ gráfico da faixa, após os demais efeitos de faixa
+                    // (espelha a ordem do export).
+                    auto git = m_trackGraphicEq.find(key);
+                    if (git != m_trackGraphicEq.cend())
+                        git.value().process(buses[bi].data(), totalSamples / 2);
+                    auto pit = m_trackParametricEq.find(key);
+                    if (pit != m_trackParametricEq.cend())
+                        pit.value().process(buses[bi].data(), totalSamples / 2);
                 }
                 const int16_t* bus = buses[bi].constData();
                 for (int i = 0; i < totalSamples; ++i) {
@@ -1498,6 +1641,12 @@ public:
             for (int i = 0; i < totalSamples; ++i)
                 p[i] = (int16_t)std::lround(qBound(-32768.0f, p[i] * mv, 32767.0f));
         }
+
+        // EQ gráfico do master no sinal final (após o volume master, igual ao
+        // export).
+        m_masterGraphicEq.process(reinterpret_cast<int16_t*>(data), capacity / 2 / 2);
+        m_masterParametricEq.process(reinterpret_cast<int16_t*>(data),
+                                     capacity / 2 / 2);
 
         // RMS master (buffer final após aplicar masterVolume).
         double masterSq = 0.0;
@@ -1551,6 +1700,13 @@ private:
     // Cadeia FX por faixa de áudio (chave = {isAudioTrack, trackIndex});
     // aplicada ao barramento da faixa no readData antes de somar no master.
     QHash<QPair<bool,int>, AudioFx> m_trackFx;
+    // Equalizador gráfico de 10 bandas por faixa de áudio (aplicado ao
+    // barramento da faixa, após os efeitos de faixa) e no master.
+    QHash<QPair<bool,int>, GraphicEq> m_trackGraphicEq;
+    GraphicEq m_masterGraphicEq;
+    // Equalizador paramétrico por faixa de áudio e no master.
+    QHash<QPair<bool,int>, ParametricEqDsp> m_trackParametricEq;
+    ParametricEqDsp m_masterParametricEq;
     QMutex m_mutex;
     QMutex m_jobMutex;          // serializa updateSources/shutdown/destrutor
     bool m_shutdown = false; // stopAudio(): rejeita novos updates/decodes
@@ -2134,16 +2290,14 @@ void PreviewWidget::renderFrame(QPainter& p) {
         qp.rotate(r);
         qp.scale(kk * fit * s * sX, kk * fit * s * sY);
         qp.translate(-img.width() / 2.0, -img.height() / 2.0);
-        if (alpha < 1.0) {
-            QImage img2 = img;
-            QPainter ip(&img2);
-            ip.setCompositionMode(QPainter::CompositionMode_DestinationIn);
-            ip.fillRect(img2.rect(), QColor(0, 0, 0, (int)(alpha * 255)));
-            ip.end();
-            qp.drawImage(0, 0, img2);
-        } else {
-            qp.drawImage(0, 0, img);
-        }
+        // Opacidade via QPainter: antes multiplicava o alpha num QImage copiado
+        // (DestinationIn) — a cópia forçava o COW a desprender o quadro inteiro
+        // (8MB 1080p / 33MB 4K) a CADA paint em que alpha < 1. Como o fade da
+        // camada de cima deixa alpha < 1 durante toda a transição, isso alocava
+        // e copiava o quadro por frame e engasgava o vídeo. setOpacity aplica a
+        // mesma mistura sem copiar.
+        qp.setOpacity(alpha);
+        qp.drawImage(0, 0, img);
         qp.restore();
     };
 
@@ -2906,6 +3060,8 @@ QVector<AudioMixer::SourceInfo> buildMixSources(const Project* p, double t) {
                 si.trackFxEqLow = tr.eqLow;
                 si.trackFxEqMid = tr.eqMid;
                 si.trackFxEqHigh = tr.eqHigh;
+                si.trackGraphicEq = tr.graphicEq;
+                si.trackParametricEq = tr.parametricEq;
                 si.trackFxDenoise = tr.denoise;
                 si.trackFxDenoiseAmount = tr.denoiseAmount;
                 si.trackFxInvertPhase = tr.invertPhase;
@@ -2984,6 +3140,8 @@ QVector<AudioMixer::SourceInfo> buildWarmSources(
                     si.trackFxEqLow = tac.eqLow;
                     si.trackFxEqMid = tac.eqMid;
                     si.trackFxEqHigh = tac.eqHigh;
+                    si.trackGraphicEq = tac.graphicEq;
+                    si.trackParametricEq = tac.parametricEq;
                     si.trackFxDenoise = tac.denoise;
                     si.trackFxDenoiseAmount = tac.denoiseAmount;
                     si.trackFxInvertPhase = tac.invertPhase;
@@ -3035,6 +3193,10 @@ void PreviewWidget::startAudio(double t) {
 
     m_audioFeed = new AudioMixer(this);
     m_audioFeed->setMasterVolume(m_project ? m_project->masterVolume : 1.0);
+    if (m_project) {
+        m_audioFeed->setMasterGraphicEq(m_project->masterGraphicEq);
+        m_audioFeed->setMasterParametricEq(m_project->masterParametricEq);
+    }
     m_audioFeed->open(QIODevice::ReadOnly | QIODevice::Unbuffered);
 
     // O mixer lê SÓ do conform (PCM já decodificado em background) → está
@@ -3114,6 +3276,10 @@ void PreviewWidget::stopAudio() {
 void PreviewWidget::updateMixAudio(double t, bool reseek) {
     if (!m_audioFeed) return;
     m_audioFeed->setMasterVolume(m_project ? m_project->masterVolume : 1.0);
+    if (m_project) {
+        m_audioFeed->setMasterGraphicEq(m_project->masterGraphicEq);
+        m_audioFeed->setMasterParametricEq(m_project->masterParametricEq);
+    }
     const QVector<AudioMixer::SourceInfo> sources = buildMixSources(m_project, t);
     const QVector<AudioMixer::SourceInfo> warm =
         buildWarmSources(m_project, t, sources);

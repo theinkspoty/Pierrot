@@ -212,7 +212,7 @@ void TimelineCommands::cutAtPlayhead(TimelineWidget* tl) {
     emit tl->modified();
 }
 
-void TimelineCommands::cutAndDelete(TimelineWidget* tl) {
+void TimelineCommands::cutAndDelete(TimelineWidget* tl, bool ripple) {
     if (!tl || !tl->project()) return;
     emit tl->editStart();
 
@@ -242,8 +242,12 @@ void TimelineCommands::cutAndDelete(TimelineWidget* tl) {
 
     // 2) Remove os clipes da direita (com grupos expandidos).
     QStringList toRemove = expandToGroups(tl, newClipIds);
-    for (Track& t : tl->project()->videoTracks) rippleDeleteInTrack(t, toRemove);
-    for (Track& t : tl->project()->audioTracks) rippleDeleteInTrack(t, toRemove);
+    if (ripple) {
+        for (Track& t : tl->project()->videoTracks) rippleDeleteInTrack(t, toRemove);
+        for (Track& t : tl->project()->audioTracks) rippleDeleteInTrack(t, toRemove);
+    } else {
+        doRemoveClipsByIds(tl, toRemove);
+    }
 
     tl->clearSelection();
     tl->updateScrollRanges();

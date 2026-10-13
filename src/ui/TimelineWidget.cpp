@@ -268,23 +268,6 @@ void TimelineWidget::addMediaAtPlayhead(const QString& mediaId) {
     const double t = snapTime(std::max(0.0, m_playhead));
     const double dur = mediaInsertDur(*m);
 
-    // Usa uma faixa livre (sem sobreposição em `t`) ou cria uma nova vazia.
-    auto findFreeTrack = [this](bool audio, double t, double dur, int prefer) {
-        auto overlap = [t, dur](const QVector<Clip>& clips) {
-            for (const Clip& o : clips)
-                if (o.pos < t + dur - 1e-9 && o.pos + o.dur > t + 1e-9) return true;
-            return false;
-        };
-        auto& list = audio ? m_project->audioTracks : m_project->videoTracks;
-        if (prefer >= 0 && prefer < (int)list.size()
-            && !list[prefer].locked && !overlap(list[prefer].clips))
-            return prefer;
-        for (int i = 0; i < (int)list.size(); ++i)
-            if (!list[i].locked && !overlap(list[i].clips)) return i;
-        m_project->addTrack(audio);
-        return (int)list.size() - 1;
-    };
-
     QString lastPlaced;
     const auto push = [&](QVector<Clip>& clips, const Clip& c) {
         auto it = clips.begin();
@@ -296,7 +279,7 @@ void TimelineWidget::addMediaAtPlayhead(const QString& mediaId) {
     const int aStreams = m->hasAudio ? qMax(1, m->audioStreams) : 0;
     const bool multi = aStreams > 1;
     if (m->hasVideo) {
-        const int vRow = findFreeTrack(false, t, dur, 0);
+        const int vRow = findFreeTrackFor(false, t, dur, 0);
         Clip c;
         c.id = newId();
         c.groupId = aStreams > 0 ? newId() : QString();
@@ -308,7 +291,7 @@ void TimelineWidget::addMediaAtPlayhead(const QString& mediaId) {
         push(m_project->videoTracks[vRow].clips, c);
         lastPlaced = c.id;
         for (int k = 0; k < aStreams; ++k) {
-            const int aRow = findFreeTrack(true, t, dur, 0);
+            const int aRow = findFreeTrackFor(true, t, dur, 0);
             Clip ac = c;
             ac.id = newId();
             ac.audioStreamIndex = k;
@@ -318,7 +301,7 @@ void TimelineWidget::addMediaAtPlayhead(const QString& mediaId) {
     } else if (m->hasAudio) {
         const QString gid = multi ? newId() : QString(); // streams juntos no Delete/mover
         for (int k = 0; k < aStreams; ++k) {
-            const int aRow = findFreeTrack(true, t, dur, 0);
+            const int aRow = findFreeTrackFor(true, t, dur, 0);
             Clip c;
             c.id = newId();
             c.mediaId = mediaId;
@@ -1468,7 +1451,36 @@ void TimelineWidget::cutSelected() {
     if (m_selected.isEmpty()) return;
     emit undoLabel(tr("Recortar"));
     copySelected();
-    deleteSelected();
+    // Recortar não deve juntar o vão por conta própria: só com o ímã ligado.
+    deleteSelection();
+}
+
+// Faixa livre para o intervalo [pos, pos+dur): prefere `prefer` (a faixa de
+// origem), depois a mais próxima acima/abaixo, e por fim cria uma faixa nova.
+// É o coração do "colar não empurra no tempo": em vez de deslizar o clipe até
+// não colidir, ele escolhe outra faixa — mantendo o tempo da agulha.
+int TimelineWidget::findFreeTrackFor(bool audio, double pos, double dur, int prefer) {
+    if (!m_project) return -1;
+    auto& list = audio ? m_project->audioTracks : m_project->videoTracks;
+    auto overlap = [pos, dur](const QVector<Clip>& clips) {
+        for (const Clip& o : clips)
+            if (o.pos < pos + dur - 1e-9 && o.pos + o.dur > pos + 1e-9) return true;
+        return false;
+    };
+    auto isFree = [&](int i) {
+        return i >= 0 && i < (int)list.size() && !list[i].locked && !overlap(list[i].clips);
+    };
+    if (isFree(prefer)) return prefer;
+    // Mais próxima da faixa de origem (testa para baixo e para cima).
+    for (int d = 1; d <= (int)list.size(); ++d) {
+        if (isFree(prefer + d)) return prefer + d;
+        if (isFree(prefer - d)) return prefer - d;
+    }
+    // `prefer` fora do range: varre tudo antes de criar.
+    for (int i = 0; i < (int)list.size(); ++i)
+        if (isFree(i)) return i;
+    m_project->addTrack(audio);
+    return (int)list.size() - 1;
 }
 
 void TimelineWidget::pasteClips() {
@@ -1480,30 +1492,13 @@ void TimelineWidget::pasteClips() {
     const double base = snapTime(std::max(0.0, m_playhead));
 
     QHash<QString, QString> groupMap; // groupId original -> novo
-    QHash<Track*, QVector<Clip>> placed;
     QStringList pasted;
 
-    auto targetTrack = [this](const ClipboardEntry& e) -> Track* {
-        if (e.audio)
-            return (e.track >= 0 && e.track < m_project->audioTracks.size())
-                ? &m_project->audioTracks[e.track] : nullptr;
-        return (e.track >= 0 && e.track < m_project->videoTracks.size())
-            ? &m_project->videoTracks[e.track] : nullptr;
-    };
-    // Pula faixas travadas.
-    auto usable = [](Track* tr) -> Track* { return (tr && tr->locked) ? nullptr : tr; };
-    // Desloca para não colidir com clipes já existentes na faixa.
-    auto fitPos = [](const QVector<Clip>& blockers, const Clip& c, double np) {
-        np = std::max(0.0, np);
-        for (const Clip& o : blockers) {
-            if (np < o.pos) {
-                if (np + c.dur > o.pos) np = o.pos - c.dur;
-            } else if (np < o.pos + o.dur) {
-                np = o.pos + o.dur;
-            }
-            if (np < 0.0) np = 0.0;
-        }
-        return std::max(0.0, np);
+    // Insere mantendo a lista ordenada por pos (o clipAt/hit-test depende disso).
+    const auto insertSorted = [](QVector<Clip>& clips, const Clip& c) {
+        auto it = clips.begin();
+        while (it != clips.end() && it->pos <= c.pos) ++it;
+        clips.insert(it, c);
     };
 
     for (const ClipboardEntry& e : m_clipboard) {
@@ -1516,14 +1511,14 @@ void TimelineWidget::pasteClips() {
         } else {
             nc.groupId.clear();
         }
-        nc.pos = base + (e.clip.pos - minPos);
-        Track* tr = usable(targetTrack(e));
-        if (!tr) continue;
-        QVector<Clip> blockers = tr->clips;
-        blockers += placed.value(tr);
-        nc.pos = fitPos(blockers, nc, nc.pos);
-        tr->clips.push_back(nc);
-        placed[tr].append(nc);
+        // Posição no tempo: preserva o offset relativo entre os clipes copiados.
+        nc.pos = std::max(0.0, base + (e.clip.pos - minPos));
+        // Onde colocar: faixa de origem se livre, senão a livre mais próxima,
+        // senão uma faixa nova. Nunca desloca no tempo.
+        const int row = findFreeTrackFor(e.audio, nc.pos, nc.dur, e.track);
+        auto& list = e.audio ? m_project->audioTracks : m_project->videoTracks;
+        if (row < 0 || row >= (int)list.size()) continue;
+        insertSorted(list[row].clips, nc);
         pasted.append(nc.id);
     }
     if (pasted.isEmpty()) return;
@@ -1870,9 +1865,10 @@ void TimelineWidget::keyPressEvent(QKeyEvent* e) {
     case Qt::Key_Delete:
     case Qt::Key_Backspace:
         // Vegas: com uma região de loop (seleção de tempo) ativa, Delete remove
-        // o tempo dentro da região (ripple por padrão; Shift+Delete deixa gap).
+        // o tempo dentro da região (ripple por padrão; Shift+Delete — ou ímã
+        // desligado — deixa gap).
         if (m_loopOut > m_loopIn) {
-            if (shift)
+            if (shift || !rippleCloseEnabled())
                 deleteLoopLeaveGap();
             else
                 deleteLoopRipple();
@@ -1886,12 +1882,9 @@ void TimelineWidget::keyPressEvent(QKeyEvent* e) {
             if (shift) {
                 deleteSelectedLeaveGap();
             } else {
-                // "Fechar o vão automaticamente (ripple)" é configurável: com a
-                // opção desativada, excluir deixa o espaço vazio.
-                if (SettingsDialog::rippleDeleteEnabled())
-                    deleteSelection();
-                else
-                    deleteSelectedLeaveGap();
+                // Fecha o vão (ripple) apenas com o ímã ligado e a opção ativa:
+                // deleteSelection já considera os dois.
+                deleteSelection();
             }
         }
         e->accept();
@@ -2534,7 +2527,8 @@ void TimelineWidget::cutAtPlayhead() {
 
 void TimelineWidget::cutAndDelete() {
     emit undoLabel(tr("Dividir e excluir"));
-    TimelineCommands::cutAndDelete(this);
+    // Sem ímã, não junta: remove o trecho da direita deixando o vão.
+    TimelineCommands::cutAndDelete(this, rippleCloseEnabled());
 }
 
 void TimelineWidget::splitClipAt(Clip* c, double t, QStringList* newIds) {
@@ -2647,11 +2641,15 @@ void TimelineWidget::duplicateClip(Clip* c) {
         }
         Track* tr = trackOf(src);
         if (tr) {
-            tr->clips.push_back(b);
+            // Insere em ordem cronológica (push_back quebrava a ordem por pos
+            // e o clipAt, que assumia lista ordenada, não achava o duplicado).
+            auto it = tr->clips.begin();
+            while (it != tr->clips.end() && it->pos <= b.pos) ++it;
+            tr->clips.insert(it, b);
             if (id == c->id) firstDup = b.id;
         }
     }
-    // O push_back pode realocar o vetor: reconstrói o índice para que o
+    // O insert pode realocar o vetor: reconstrói o índice para que o
     // deslocamento da cópia durante o Ctrl-arrasto (findClipById logo após)
     // encontre os clipes duplicados e o par não fique separado do mouse.
     rebuildClipIndex();
@@ -3035,8 +3033,12 @@ void TimelineWidget::deleteLoopLeaveGap() {
 
 // Delete: apaga somente os clipes selecionados. A seleção de faixa é apenas
 // informativa (mostra em qual faixa você está) e NÃO apaga faixa nenhuma.
+// Respeita o ímã: desligado, deixa o vão (sem ripple) como o Shift+Delete.
 void TimelineWidget::deleteSelection() {
-    deleteSelected();
+    if (rippleCloseEnabled())
+        deleteSelected();
+    else
+        deleteSelectedLeaveGap();
 }
 
 void TimelineWidget::deleteClipBeforePlayhead() {
@@ -3357,6 +3359,12 @@ void TimelineWidget::setTool(int tool) {
 void TimelineWidget::setSnap(bool on) {
     m_snap = on;
     update();
+}
+
+// O ímã é o bloqueio mestre do auto-juntar: desligá-lo desativa o ripple
+// (fechar o vão) mesmo que o botão Ripple esteja ligado.
+bool TimelineWidget::rippleCloseEnabled() const {
+    return m_snap && SettingsDialog::rippleDeleteEnabled();
 }
 
 void TimelineWidget::setGridVisible(bool on) {
