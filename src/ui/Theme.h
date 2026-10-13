@@ -142,10 +142,10 @@ struct ThemeColors {
     QColor graphRulerText;    // texto da régua e do label do playhead
     QColor graphHandle;       // alças bezier, marquee e linha do playhead
 
-    // ── Pancrop ─────────────────────────────────────────────────
-    QColor pancropBg;         // fundo do pan/crop
-    QColor pancropRegion;     // região selecionada
-    QColor pancropHandle;     // alças de resize
+    // ── Pantalone ─────────────────────────────────────────────────
+    QColor pantaloneBg;         // fundo do pan/crop
+    QColor pantaloneRegion;     // região selecionada
+    QColor pantaloneHandle;     // alças de resize
 
     // ── Divider between video/audio sections ──────────────────────
     QColor sectionDivider;    // barra divisória vídeo/áudio

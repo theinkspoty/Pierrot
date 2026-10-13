@@ -31,6 +31,29 @@ endif()
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
 find_package(FFmpeg REQUIRED)
 
+# ── Relatórios de crash detalhados ─────────────────────────────────────
+# O CrashReporter resolve nomes de função via dladdr(), o que só funciona se o
+# executável exportar os próprios símbolos (ENABLE_EXPORTS → -rdynamic). O
+# frame pointer torna o backtrace confiável e -g deixa o addr2line achar
+# arquivo/linha. Commit e hora do build vão gravados no cabeçalho do relatório.
+option(PIERROT_CRASH_DEBUG "Símbolos/frame pointers para relatórios de crash detalhados" ON)
+if(PIERROT_CRASH_DEBUG)
+    add_compile_options(-fno-omit-frame-pointer -g)
+endif()
+
+find_package(Git QUIET)
+if(Git_FOUND)
+    execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        OUTPUT_VARIABLE PIERROT_GIT_COMMIT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET)
+endif()
+if(NOT PIERROT_GIT_COMMIT)
+    set(PIERROT_GIT_COMMIT "desconhecido")
+endif()
+string(TIMESTAMP PIERROT_BUILD_TIME "%Y-%m-%d %H:%M:%S")
+
 # ── LaArtman: o motor de codecs, a camada mais baixa ───────────────────
 # Só I/O de mídia via libav (decode hoje; encode/mux no futuro). Não conhece
 # Project, render nem UI — é deliberadamente a base de tudo. A colombina
@@ -109,7 +132,7 @@ set(PIERROT_APP_SOURCES
     src/ui/PreviewProfiler.cpp
     src/ui/PreviewWidget.cpp
     src/ui/TlLog.cpp
-    src/ui/PancropWidget.cpp
+    src/ui/PantaloneWidget.cpp
     src/ui/ExportDialog.cpp
     src/ui/ProjectSettingsDialog.cpp
     src/ui/SettingsDialog.cpp
@@ -161,7 +184,7 @@ set(PIERROT_APP_HEADERS
     src/ui/PlaybackEngine.h
     src/ui/PreviewMonitor.h
     src/ui/MonitorUtils.h
-    src/ui/PancropWidget.h
+    src/ui/PantaloneWidget.h
     src/ui/ExportDialog.h
     src/ui/ProjectSettingsDialog.h
     src/ui/SettingsDialog.h
@@ -252,6 +275,11 @@ endif()
 
 add_library(colombina STATIC ${COLOMBINA_SOURCES} ${COLOMBINA_HEADERS})
 
+# Commit/hora do build aparecem no relatório de crash (CrashReporter.cpp).
+target_compile_definitions(colombina PRIVATE
+    PIERROT_GIT_COMMIT="${PIERROT_GIT_COMMIT}"
+    PIERROT_BUILD_TIME="${PIERROT_BUILD_TIME}")
+
 target_include_directories(colombina PUBLIC src src/colombina/ofx/sdk)
 
 target_link_libraries(colombina PUBLIC
@@ -275,6 +303,9 @@ else()
 endif()
 
 add_executable(pierrot ${PIERROT_APP_SOURCES} ${PIERROT_APP_HEADERS})
+
+# -rdynamic: exporta os símbolos internos para o CrashReporter (dladdr).
+set_target_properties(pierrot PROPERTIES ENABLE_EXPORTS ON)
 
 target_include_directories(pierrot PRIVATE src src/colombina/ofx/sdk)
 
@@ -391,10 +422,16 @@ add_executable(tst_crashreporter
     tests/tst_crashreporter.cpp
     src/colombina/CrashReporter.cpp
 )
+# -rdynamic para o relatório resolver os símbolos do próprio teste.
+set_target_properties(tst_crashreporter PROPERTIES ENABLE_EXPORTS ON)
+target_compile_definitions(tst_crashreporter PRIVATE
+    PIERROT_GIT_COMMIT="${PIERROT_GIT_COMMIT}"
+    PIERROT_BUILD_TIME="${PIERROT_BUILD_TIME}")
 target_include_directories(tst_crashreporter PRIVATE src src/colombina/ofx/sdk)
 target_link_libraries(tst_crashreporter PRIVATE
     ${PIERROT_QT_TEST}
     ${PIERROT_QT_CORE}
+    ${CMAKE_DL_LIBS}
 )
 add_test(NAME tst_crashreporter COMMAND tst_crashreporter)
 

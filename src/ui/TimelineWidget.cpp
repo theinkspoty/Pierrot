@@ -36,6 +36,7 @@
 #include <QPlainTextEdit>
 #include <QSpinBox>
 #include <QDoubleSpinBox>
+#include <QAbstractSpinBox>
 #include <QComboBox>
 #include <QKeySequenceEdit>
 #include <QWheelEvent>
@@ -2006,15 +2007,27 @@ bool TimelineWidget::eventFilter(QObject* o, QEvent* ev) {
         return false;
     }
     // Captura a tecla da Tesoura (default R) globalmente, inclusive quando o
-    // foco do teclado está fora da timeline (preview, toolbar etc.). Não
-    // interfere na digitação em campos de texto.
+    // foco do teclado está fora da timeline (preview, toolbar etc.). Nunca
+    // interfere na digitação: qualquer campo de texto (ou diálogo modal) fica
+    // fora da captura.
     if (ev->type() == QEvent::KeyPress || ev->type() == QEvent::KeyRelease) {
         auto* ke = static_cast<QKeyEvent*>(ev);
         if (ke->key() == razorHoldKey()) {
-            if (qobject_cast<QLineEdit*>(o) || qobject_cast<QTextEdit*>(o)
-                || qobject_cast<QPlainTextEdit*>(o) || qobject_cast<QSpinBox*>(o)
-                || qobject_cast<QDoubleSpinBox*>(o) || qobject_cast<QComboBox*>(o)
-                || qobject_cast<QKeySequenceEdit*>(o))
+            auto isTextInput = [](QObject* obj) -> bool {
+                if (!obj || !obj->isWidgetType()) return false;
+                return qobject_cast<QLineEdit*>(obj) || qobject_cast<QTextEdit*>(obj)
+                    || qobject_cast<QPlainTextEdit*>(obj)
+                    || qobject_cast<QAbstractSpinBox*>(obj)
+                    || qobject_cast<QComboBox*>(obj)
+                    || qobject_cast<QKeySequenceEdit*>(obj);
+            };
+            // Checa o receiver do evento E o widget realmente focado (cobre
+            // editores internos, ex. o QPlainTextEdit do editor de texto).
+            if (isTextInput(o) || isTextInput(qApp->focusWidget()))
+                return false;
+            // Com diálogo modal aberto (novo projeto, ajustes, salvar como…)
+            // a tesoura não pode roubar a tecla.
+            if (QApplication::activeModalWidget())
                 return false;
             if (ev->type() == QEvent::KeyPress) {
                 if (m_tool != ToolScissors && m_tempToolStore < 0) {
@@ -2165,14 +2178,14 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         QAction* audioFx = nullptr;
         QAction* transform = nullptr;
         QAction* textAction = nullptr;
-        QAction* panCrop = nullptr;
+        QAction* pantalone = nullptr;
         QAction* maskAction = nullptr;
         if (!audio) {
             fx = menu.addAction(tr("Efeitos de vídeo…"));
             grade = menu.addAction(tr("Correção de cor…"));
             transform = menu.addAction(tr("Transformar…"));
             textAction = menu.addAction(tr("Texto…"));
-            panCrop = menu.addAction(tr("Pancrop…"));
+            pantalone = menu.addAction(tr("Pantalone…"));
             maskAction = menu.addAction(tr("Máscara…"));
         } else {
             audioFx = menu.addAction(tr("Efeitos de áudio…"));
@@ -2275,7 +2288,7 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         else if (act == audioFx) showAudioEffectsDialog(clip);
         else if (act == transform) showTransformDialog(clip);
         else if (act == textAction) showTextEditorDialog(clip);
-        else if (act == panCrop) emit pancropRequested(clip->id);
+        else if (act == pantalone) emit pantaloneRequested(clip->id);
         else if (act == maskAction) emit maskRequested(clip->id);
         else if (act == transDissolve || act == transWipeL || act == transWipeR
                  || act == transWipeU || act == transWipeD

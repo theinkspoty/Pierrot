@@ -26,7 +26,7 @@ class QMenu;
 class MediaPoolWidget;
 class TimelineWidget;
 class PreviewWidget;
-class PancropWidget;
+class PantaloneWidget;
 class GraphEditorWidget;
 class EffectsWidget;
 class ExpressWidget;
@@ -236,7 +236,7 @@ private:
     MediaPoolWidget* m_pool = nullptr;
     TimelineWidget* m_timeline = nullptr;
     PreviewWidget* m_preview = nullptr;
-    PancropWidget* m_pancrop = nullptr;
+    PantaloneWidget* m_pantalone = nullptr;
     GraphEditorWidget* m_graph = nullptr;
     EffectsWidget* m_effects = nullptr;
     ExpressWidget* m_express = nullptr;
@@ -254,7 +254,7 @@ private:
     QDockWidget* m_poolDock = nullptr;
     QDockWidget* m_timelineDock = nullptr;
     QDockWidget* m_toolsDock = nullptr; // paleta vertical de ferramentas (Tools)
-    QDockWidget* m_pancropDock = nullptr;
+    QDockWidget* m_pantaloneDock = nullptr;
     QDockWidget* m_graphDock = nullptr;
     QDockWidget* m_effectsDock = nullptr;
     QDockWidget* m_expressDock = nullptr;

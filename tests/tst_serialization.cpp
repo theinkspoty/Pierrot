@@ -236,6 +236,7 @@ private slots:
     void promoteRecordingTrackMovesItToAudio();
     void clipAttrsRoundTripKeepsChromaKeyBands();
     void clipAttrsLegacyKeepsChromaKeyDefaults();
+    void maskKeyframesRoundTripAndInterpolate();
 };
 
 void TestSerialization::roundTripIsLossless() {
@@ -472,6 +473,64 @@ void TestSerialization::clipAttrsLegacyKeepsChromaKeyDefaults() {
     clipattrs::applyJson(d, o);
     QVERIFY(qAbs(d.chromaKeySoftness - 0.10) < 1e-9);
     QVERIFY(qAbs(d.chromaKeySpillSuppress - 0.5) < 1e-9);
+}
+
+// O motion da máscara depende dos keyframes (kfCx, kfCy, kfRx, kfRy,
+// kfRotation, kfFeather) sobreviverem ao round-trip e interpolarem no tempo.
+// Sem isto, animar a máscara no Pantalone não teria efeito nem no preview nem na
+// exportação (ambos leem cxAt(rel)/kfExpr). Cobre o fundamento do motion.
+void TestSerialization::maskKeyframesRoundTripAndInterpolate() {
+    Project p;
+    MediaItem m;
+    m.id = QStringLiteral("m1");
+    m.filePath = QStringLiteral("/tmp/a.mp4");
+    m.duration = 10.0;
+    m.width = 1920;
+    m.height = 1080;
+    m.hasVideo = true;
+    p.media.append(m);
+
+    Track vt;
+    vt.id = QStringLiteral("t1");
+    vt.audio = false;
+
+    Clip c;
+    c.id = QStringLiteral("c1");
+    c.mediaId = QStringLiteral("m1");
+    c.pos = 0.0;
+    c.dur = 8.0;
+    Mask mk;
+    mk.type = QStringLiteral("ellipse");
+    mk.enabled = true;
+    mk.invert = false;
+    mk.cx = 0.2; mk.cy = 0.3; mk.rx = 0.4; mk.ry = 0.35;
+    mk.rotation = 15.0; mk.feather = 0.05;
+    Keyframe k0; k0.time = 0.0; k0.value = 0.2; k0.interp = KfLinear;
+    Keyframe k1; k1.time = 2.0; k1.value = 0.8; k1.interp = KfLinear;
+    mk.kfCx = {k0, k1};
+    c.masks.append(mk);
+    vt.clips.append(c);
+    p.videoTracks.append(vt);
+
+    Project q;
+    q.fromJson(p.toJson());
+    // Round-trip sem perda (máscara + keyframes incluídos).
+    QCOMPARE(q.toJson(), p.toJson());
+
+    const Clip& qc = q.videoTracks[0].clips[0];
+    QVERIFY(qc.masks.size() == 1);
+    const Mask& qm = qc.masks[0];
+    QCOMPARE(qm.type, QStringLiteral("ellipse"));
+    QCOMPARE(qm.kfCx.size(), 2);
+    // No tempo exato do keyframe, o valor é o do keyframe.
+    QVERIFY(qAbs(qm.cxAt(0.0) - 0.2) < 1e-6);
+    QVERIFY(qAbs(qm.cxAt(2.0) - 0.8) < 1e-6);
+    // Entre eles, interpola (não fica preso na base nem num dos extremos).
+    const double mid = qm.cxAt(1.0);
+    QVERIFY(mid > 0.2 && mid < 0.8);
+    // Propriedades sem keyframe caem no valor base.
+    QVERIFY(qAbs(qm.cyAt(1.0) - 0.3) < 1e-6);
+    QVERIFY(qAbs(qm.rotAt(1.0) - 15.0) < 1e-6);
 }
 
 QTEST_APPLESS_MAIN(TestSerialization)

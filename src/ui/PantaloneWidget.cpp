@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
-#include "PancropWidget.h"
+#include "PantaloneWidget.h"
 #include "ui/Theme.h"
 #include "colombina/ffmpeg/ProxyManager.h"
 #include "colombina/generators.h"
@@ -30,6 +30,8 @@
 #include <QShortcut>
 #include <QKeySequence>
 #include <QScrollArea>
+#include <QListWidget>
+#include <QCheckBox>
 #include <functional>
 #include <algorithm>
 #include <cmath>
@@ -44,10 +46,10 @@ constexpr int kPanMax = 100;   // % da largura/altura do projeto
 constexpr int kRotMax = 180;   // graus (±)
 constexpr double kStretchCenter = 1.0; // neutro (1.0×)
 
-// Renderiza um TextStyle sobre um frame transparente (usado no pancrop de
+// Renderiza um TextStyle sobre um frame transparente (usado no pantalone de
 // clipes de texto, que não têm quadro decodificado). Aplica o transform do
 // clipe (pan/zoom/rotação) para o texto aparecer ONDE o preview mostra —
-// antes ficava centralizado no pancrop mesmo com o clipe deslocado.
+// antes ficava centralizado no pantalone mesmo com o clipe deslocado.
 void renderTextStyleFrame(QImage& img, const TextStyle& st,
                           double tx, double ty, double rotDeg, double s,
                           double sX = 1.0, double sY = 1.0) {
@@ -63,6 +65,40 @@ void renderTextStyleFrame(QImage& img, const TextStyle& st,
     textrender::paint(p, st, L, box, H);
 }
 constexpr int kRotStep = 5;    // graus por tick da roda (Alt+roda)
+
+// Pontos de controle da máscara em px do quadro, já rotacionados, a partir dos
+// valores RESOLVIDOS (normalizados 0..1 + rotação em graus):
+// [0]=centro, [1]=alça de rotação, [2..]=bordas (cantos p/ retângulo,
+// cardeais p/ elipse). O mesmo layout do previewMaskCtrl, para o hit-test e o
+// desenho do Pantalone batem com o overlay do preview.
+QVector<QPointF> maskCtrlPoints(const QString& type, double cxN, double cyN,
+                                double rxN, double ryN, double rotDeg,
+                                int w0, int h0) {
+    const double cx = cxN * w0, cy = cyN * h0;
+    const double rx = std::max(0.001, rxN) * w0;
+    const double ry = std::max(0.001, ryN) * h0;
+    const double rad = rotDeg * M_PI / 180.0;
+    QVector<QPointF> base;
+    if (type == QLatin1String("rect"))
+        base = { QPointF(cx - rx, cy - ry), QPointF(cx + rx, cy - ry),
+                 QPointF(cx + rx, cy + ry), QPointF(cx - rx, cy + ry) };
+    else
+        base = { QPointF(cx - rx, cy), QPointF(cx, cy - ry),
+                 QPointF(cx + rx, cy), QPointF(cx, cy + ry) };
+    if (rad != 0.0) {
+        const double cs = std::cos(rad), sn = std::sin(rad);
+        for (QPointF& b : base) {
+            const double dx = b.x() - cx, dy = b.y() - cy;
+            b = QPointF(cx + dx * cs - dy * sn, cy + dx * sn + dy * cs);
+        }
+    }
+    const double arm = std::max(1.0, std::min(rx, ry));
+    QVector<QPointF> pts;
+    pts << QPointF(cx, cy)
+        << QPointF(cx - arm * std::sin(rad), cy - arm * std::cos(rad));
+    for (const QPointF& b : base) pts << b;
+    return pts;
+}
 
 // Seção recolhível estilo "Effect Controls" do Premiere: um cabeçalho com seta
 // de expansão que esconde/mostra o corpo (grade de sliders).
@@ -119,10 +155,10 @@ void applyEasePreset(QVector<Keyframe>& kf, int i, int preset) {
 }
 
 // Viewfinder: widget que exibe o frame com a caixa de recorte/janela de saída
-// e recebe os eventos de mouse/roda. Só delega para o PancropWidget dono.
-class PancropWidget::Viewport : public QWidget {
+// e recebe os eventos de mouse/roda. Só delega para o PantaloneWidget dono.
+class PantaloneWidget::Viewport : public QWidget {
 public:
-    explicit Viewport(PancropWidget* owner) : QWidget(owner), m_owner(owner) {
+    explicit Viewport(PantaloneWidget* owner) : QWidget(owner), m_owner(owner) {
         setMinimumSize(180, 150);
     }
 protected:
@@ -140,15 +176,15 @@ protected:
         setCursor(Qt::ArrowCursor);
     }
 private:
-    PancropWidget* m_owner;
+    PantaloneWidget* m_owner;
 };
 
 // Faixa de tempo dos keyframes do clipe: mostra a posição dos keyframes
 // (relativa ao início do clipe) e permite arrastá-los para a esquerda/direita.
-class PancropWidget::KeyframeStrip : public QWidget {
+class PantaloneWidget::KeyframeStrip : public QWidget {
 public:
-    explicit KeyframeStrip(PancropWidget* owner) : QWidget(owner), m_owner(owner) {
-        setMinimumHeight(36);
+    explicit KeyframeStrip(PantaloneWidget* owner) : QWidget(owner), m_owner(owner) {
+        setMinimumHeight(72); // 3 pistas (Recorte · Máscara · Resto)
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         setFocusPolicy(Qt::ClickFocus);
     }
@@ -171,7 +207,7 @@ protected:
         if (e->type() == QEvent::ShortcutOverride) {
             const int key = static_cast<QKeyEvent*>(e)->key();
             // Impede o atalho global do MainWindow de apagar o clipe quando a
-            // faixa de keyframes do pancrop está com foco.
+            // faixa de keyframes do pantalone está com foco.
             if (key == Qt::Key_Delete || key == Qt::Key_Backspace) {
                 e->accept();
                 return true;
@@ -180,17 +216,17 @@ protected:
         return QWidget::event(e);
     }
 private:
-    PancropWidget* m_owner;
+    PantaloneWidget* m_owner;
 };
 
-PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
+PantaloneWidget::PantaloneWidget(QWidget* parent) : QWidget(parent) {
     // Este decoder roda SÍNCRONO no thread da UI, um quadro por chamada. O
     // ganho do VAAPI é nulo nesse uso e o device é compartilhado por processo
     // com os workers de preview — conflito que derrubava o app. Fica em
     // software; a aceleração real acontece no preview/export.
     m_decoder.setHardwareDecodeAllowed(false);
     setMinimumSize(360, 280);
-    setObjectName(QStringLiteral("pancropRoot"));
+    setObjectName(QStringLiteral("pantaloneRoot"));
 
     auto makeSlider = [this](int min, int max) {
         auto* s = new QSlider(Qt::Horizontal, this);
@@ -325,6 +361,113 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     addValRow(rotSec.grid, 3, tr("Âncora X:"), m_anchorX, m_anchorXVal, P_AnchorX);
     addValRow(rotSec.grid, 4, tr("Âncora Y:"), m_anchorY, m_anchorYVal, P_AnchorY);
 
+    // ── Máscaras (retângulo/elipse) ────────────────────────────────────
+    // A máscara fica ancorada ao quadro (0..1) e aparece como gizmo no
+    // viewfinder, ao lado do box de recorte — o mesmo modelo Mask/preview.
+    CollapsibleSection maskSec = makeSection(tr("Máscaras"));
+    m_maskList = new QListWidget(maskSec.body);
+    m_maskList->setFixedHeight(64);
+    m_maskList->setToolTip(tr("Máscaras do clipe. A selecionada vira gizmo "
+                              "editável no viewfinder."));
+    maskSec.grid->addWidget(m_maskList, 0, 0, 1, 5);
+
+    auto* addRectBtn = new QPushButton(tr("+ Retângulo"), maskSec.body);
+    auto* addEllBtn = new QPushButton(tr("+ Elipse"), maskSec.body);
+    m_maskDelBtn = new QToolButton(maskSec.body);
+    m_maskDelBtn->setText(QStringLiteral("Remover"));
+    m_maskDelBtn->setToolTip(tr("Remover a máscara selecionada"));
+    auto* maskBtns = new QHBoxLayout;
+    maskBtns->setSpacing(3);
+    maskBtns->addWidget(addRectBtn);
+    maskBtns->addWidget(addEllBtn);
+    maskBtns->addStretch(1);
+    maskBtns->addWidget(m_maskDelBtn);
+    maskSec.grid->addLayout(maskBtns, 1, 0, 1, 5);
+
+    m_maskEnabled = new QCheckBox(tr("Habilitada"), maskSec.body);
+    m_maskInvert = new QCheckBox(tr("Inverter"), maskSec.body);
+    auto* maskFlags = new QHBoxLayout;
+    maskFlags->setSpacing(10);
+    maskFlags->addWidget(m_maskEnabled);
+    maskFlags->addWidget(m_maskInvert);
+    maskFlags->addStretch(1);
+    maskSec.grid->addLayout(maskFlags, 2, 0, 1, 5);
+
+    auto* feLab = new QLabel(tr("Suavidade:"), maskSec.body);
+    feLab->setMinimumWidth(54);
+    m_maskFeather = new QSlider(Qt::Horizontal, maskSec.body);
+    m_maskFeather->setRange(0, 25); // 0..0.25 (fração do quadro)
+    m_maskFeather->setMinimumWidth(70);
+    m_maskFeatherVal = makeValLabel();
+    auto* feRow = new QHBoxLayout;
+    feRow->addWidget(feLab);
+    feRow->addWidget(m_maskFeather, 1);
+    feRow->addWidget(m_maskFeatherVal);
+    maskSec.grid->addLayout(feRow, 3, 0, 1, 5);
+
+    // Keyframes da máscara: um losango por propriedade (centro, tamanho,
+    // rotação, suavidade), estilo AE/DaVinci. Com "● Auto" ligado, arrastar o
+    // gizmo grava sozinho — o losango serve pra ligar/desligar na mão.
+    auto* kfMaskRow = new QHBoxLayout;
+    kfMaskRow->setSpacing(2);
+    kfMaskRow->addWidget(new QLabel(tr("Keyframes:"), maskSec.body));
+    auto addMaskKf = [&](int prop, const QString& tip) {
+        QPushButton* b = makeDiamond(prop);
+        b->setToolTip(tip);
+        b->setFixedSize(20, 20);
+        kfMaskRow->addWidget(b);
+    };
+    addMaskKf(P_MaskCx, tr("Keyframe: centro X"));
+    addMaskKf(P_MaskCy, tr("Keyframe: centro Y"));
+    addMaskKf(P_MaskRx, tr("Keyframe: largura"));
+    addMaskKf(P_MaskRy, tr("Keyframe: altura"));
+    addMaskKf(P_MaskRot, tr("Keyframe: rotação"));
+    addMaskKf(P_MaskFeather, tr("Keyframe: suavidade"));
+    kfMaskRow->addStretch(1);
+    maskSec.grid->addLayout(kfMaskRow, 4, 0, 1, 5);
+
+    connect(m_maskList, &QListWidget::currentRowChanged, this, [this](int row) {
+        m_maskSel = row;
+        syncMaskControls();
+        m_view->update();
+    });
+    connect(addRectBtn, &QPushButton::clicked, this,
+            [this]() { addMask(QStringLiteral("rect")); });
+    connect(addEllBtn, &QPushButton::clicked, this,
+            [this]() { addMask(QStringLiteral("ellipse")); });
+    connect(m_maskDelBtn, &QToolButton::clicked, this,
+            [this]() { removeSelectedMask(); });
+    connect(m_maskEnabled, &QCheckBox::toggled, this, [this](bool on) {
+        Clip* c = activeClip();
+        if (!c || m_maskSel < 0 || m_maskSel >= c->masks.size()) return;
+        emitChange();
+        c->masks[m_maskSel].enabled = on;
+        refreshMaskList();
+        m_view->update();
+    });
+    connect(m_maskInvert, &QCheckBox::toggled, this, [this](bool on) {
+        Clip* c = activeClip();
+        if (!c || m_maskSel < 0 || m_maskSel >= c->masks.size()) return;
+        emitChange();
+        c->masks[m_maskSel].invert = on;
+        m_view->update();
+    });
+    connect(m_maskFeather, &QSlider::sliderReleased, this,
+            [this]() { m_undoPushed = false; });
+    connect(m_maskFeather, &QSlider::valueChanged, this, [this](int v) {
+        Clip* c = activeClip();
+        if (!c || m_maskSel < 0 || m_maskSel >= c->masks.size()) return;
+        emitChange();
+        c->masks[m_maskSel].feather = v / 100.0;
+        if (m_maskFeatherVal)
+            m_maskFeatherVal->setText(QString::number(v / 100.0, 'f', 2));
+        if (m_kfAuto && m_kfAuto->isChecked()) {
+            writeKeyframe(P_MaskFeather, v / 100.0);
+            refreshDiamonds();
+        }
+        m_view->update();
+    });
+
     // Conecta sliders → commitSlider; os labels de valor são atualizados junto.
     auto connectSlider = [&](QSlider* s, int prop, std::function<double()> toBase) {
         connect(s, &QSlider::sliderReleased, this, [this]() { m_undoPushed = false; });
@@ -457,31 +600,92 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
     m_strip = new KeyframeStrip(this);
     m_strip->setToolTip(tr("Arraste um keyframe para a esquerda/direita para "
                            "mover sua posição no tempo"));
-    auto* controls = new QWidget(this);
-    auto* ctlLay = new QVBoxLayout(controls);
-    ctlLay->setContentsMargins(0, 0, 0, 0);
-    ctlLay->setSpacing(5);
-    ctlLay->addLayout(kfBar);
-    ctlLay->addWidget(m_strip);
-    ctlLay->addWidget(cropSec.container);
-    ctlLay->addWidget(moveSec.container);
-    ctlLay->addWidget(rotSec.container);
-    ctlLay->addWidget(resetBtn);
-    ctlLay->addStretch(1);
 
-    // QScrollArea: permite scroll quando os controles não cabem na dock.
+    // ── Barra lateral (recortável): ajuste fino numérico ──────────────
+    // Fica estreita à direita; o viewer domina. Pode ser recolhida pelo » .
+    auto* sidebar = new QWidget(this);
+    auto* sbLay = new QVBoxLayout(sidebar);
+    sbLay->setContentsMargins(0, 0, 0, 0);
+    sbLay->setSpacing(5);
+    sbLay->addWidget(cropSec.container);
+    sbLay->addWidget(moveSec.container);
+    sbLay->addWidget(rotSec.container);
+    sbLay->addWidget(resetBtn);
+    sbLay->addStretch(1);
+
+    m_secCrop = cropSec.container;
+    m_secMove = moveSec.container;
+    m_secRot = rotSec.container;
+
     auto* scroll = new QScrollArea(this);
-    scroll->setWidget(controls);
+    scroll->setWidget(sidebar);
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     scroll->setMinimumWidth(0);
+    scroll->setMaximumWidth(250);
 
-    auto* lay = new QHBoxLayout(this);
+    auto* sbToggle = new QToolButton(this);
+    sbToggle->setText(QStringLiteral("»"));
+    sbToggle->setToolTip(tr("Recolher/ampliar painel de propriedades"));
+    sbToggle->setCheckable(true);
+    sbToggle->setAutoRaise(true);
+    sbToggle->setFixedSize(16, 26);
+    connect(sbToggle, &QToolButton::toggled, this, [scroll, sbToggle](bool collapsed) {
+        scroll->setVisible(!collapsed);
+        sbToggle->setText(collapsed ? QStringLiteral("«") : QStringLiteral("»"));
+    });
+
+    // Topo: o viewer domina; sidebar estreita à direita.
+    auto* top = new QWidget(this);
+    auto* topLay = new QHBoxLayout(top);
+    topLay->setContentsMargins(0, 0, 0, 0);
+    topLay->setSpacing(4);
+    topLay->addWidget(m_view, 1);
+    topLay->addWidget(sbToggle, 0, Qt::AlignTop);
+    topLay->addWidget(scroll, 0);
+
+    // ── Faixa inferior: máscaras (esq) | keyframes/timeline (dir) ─────
+    auto* bottom = new QWidget(this);
+    auto* botLay = new QHBoxLayout(bottom);
+    botLay->setContentsMargins(0, 0, 0, 0);
+    botLay->setSpacing(10);
+    maskSec.container->setMaximumWidth(230); // máscara compacta; timeline domina
+    botLay->addWidget(maskSec.container, 1);
+    auto* tlCol = new QVBoxLayout;
+    tlCol->setContentsMargins(0, 0, 0, 0);
+    tlCol->setSpacing(3);
+    tlCol->addLayout(kfBar);
+    tlCol->addWidget(m_strip, 1);
+    botLay->addLayout(tlCol, 5);
+
+    // ── Barra de modos do viewer ──────────────────────────────────────
+    auto* modeBar = new QHBoxLayout;
+    modeBar->setSpacing(2);
+    auto makeMode = [&](const QString& label, ViewMode m, const QString& tip) {
+        auto* b = new QToolButton(this);
+        b->setText(label);
+        b->setCheckable(true);
+        b->setToolTip(tip);
+        b->setAutoRaise(true);
+        b->setObjectName(QStringLiteral("modeBtn"));
+        connect(b, &QToolButton::clicked, this, [this, m]() { setViewMode(m); });
+        m_modeBtns[(int)m] = b;
+        modeBar->addWidget(b);
+    };
+    makeMode(tr("Recortar"), ModeCrop, tr("Só as alças de recorte"));
+    makeMode(tr("Transformar"), ModeTransform,
+             tr("Zoom, posição, rotação e âncora"));
+    makeMode(tr("Janelas"), ModeMask, tr("Máscaras/janelas do clipe"));
+    modeBar->addStretch(1);
+
+    // Raiz: vertical [ modos | viewer/sidebar | máscaras/timeline ].
+    auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(4, 4, 4, 4);
-    lay->setSpacing(6);
-    lay->addWidget(m_view, 1);
-    lay->addWidget(scroll, 1);
+    lay->setSpacing(5);
+    lay->addLayout(modeBar);
+    lay->addWidget(top, 1);
+    lay->addWidget(bottom, 0);
 
     // Atalhos de teclado (setas para ajustar valores).
     const auto& tc = themeColors();
@@ -492,7 +696,7 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
         // Fundo só no widget raiz (objectName) e no scroll: a regra genérica
         // "QWidget" pintava #161616 por cima de TODOS os filhos — inclusive do
         // editor interno dos spinboxes — e escondia os valores no tema escuro.
-        "#pancropRoot{background:%1;}"
+        "#pantaloneRoot{background:%1;}"
         "QScrollArea{background:%1; border:none;}"
         "QScrollArea > QWidget{background:%1;}"
         "QScrollArea > QWidget > QWidget{background:%1;}"
@@ -512,13 +716,15 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
         "QToolButton:hover{background:%7; color:%4;}"
         "QToolButton:pressed{background:%8;}"
         "QToolButton:checked{color:%5;}"
+        "QToolButton#modeBtn{padding:3px 11px; border-radius:4px;}"
+        "QToolButton#modeBtn:checked{background:%5; color:%4;}"
         "QSlider::groove:horizontal{height:2px; background:%2;}"
         "QSlider::sub-page:horizontal{background:%5;}"
         "QSlider::handle:horizontal{width:9px; height:9px; margin:-4px 0;"
         " border-radius:5px; background:%9; border:1px solid %5;}"
         "QSlider::handle:horizontal:hover{background:%10;}"
         "QLabel{color:%6; font-size:11px;}")
-        .arg(tc.pancropBg.name(),       // %1 fundo do painel
+        .arg(tc.pantaloneBg.name(),       // %1 fundo do painel
              tc.trackBorder.name(),     // %2 divisor / groove
              tc.text.name(),            // %3 título da seção
              QColor(Qt::white).name(),  // %4 hover / ativo
@@ -530,30 +736,38 @@ PancropWidget::PancropWidget(QWidget* parent) : QWidget(parent) {
         .arg(tc.spinText.name()));      // %10 alça hover
 
     refreshDiamonds();
+    setViewMode(m_mode); // sincroniza o estado dos botões de modo
     m_strip->update();
     m_view->update();
 }
 
-void PancropWidget::setProject(Project* p) {
+void PantaloneWidget::setProject(Project* p) {
     m_project = p;
     m_clipId.clear();
     m_frame = QImage();
     m_framePath.clear();
     m_undoPushed = false;
+    m_maskSel = -1;
+    m_maskDragHandle = -1;
+    refreshMaskList();
+    syncMaskControls();
     m_view->update();
 }
 
-void PancropWidget::setClipId(const QString& id) {
+void PantaloneWidget::setClipId(const QString& id) {
     if (m_clipId == id) return;
     m_clipId = id;
     m_undoPushed = false;
+    m_maskDragHandle = -1;
     loadFrame();
     syncFromClip();
+    refreshMaskList();
+    syncMaskControls();
     m_view->update();
     m_strip->update();
 }
 
-void PancropWidget::setPlayhead(double t) {
+void PantaloneWidget::setPlayhead(double t) {
     // Só recarrega o frame se a mudança de tempo for significativa (>50ms)
     // para evitar decodificar frame a frame durante a reprodução.
     const bool needReload = std::fabs(t - m_playhead) > 0.05 || m_frame.isNull();
@@ -564,27 +778,27 @@ void PancropWidget::setPlayhead(double t) {
     m_strip->update();
 }
 
-void PancropWidget::refresh() {
+void PantaloneWidget::refresh() {
     loadFrame();
     syncFromClip();
     m_view->update();
 }
 
-void PancropWidget::sync() {
+void PantaloneWidget::sync() {
     syncFromClip();
     m_view->update();
 }
 
-void PancropWidget::showEvent(QShowEvent* e) {
+void PantaloneWidget::showEvent(QShowEvent* e) {
     QWidget::showEvent(e);
-    // MainWindow chama setClipId() ANTES de m_pancropDock->show(), então o
+    // MainWindow chama setClipId() ANTES de m_pantaloneDock->show(), então o
     // loadFrame() daquele momento foi descartado pela guarda de visibilidade.
     loadFrame();
     syncFromClip();
     m_view->update();
 }
 
-Clip* PancropWidget::activeClip() {
+Clip* PantaloneWidget::activeClip() {
     if (!m_project || m_clipId.isEmpty()) return nullptr;
     for (Track& t : m_project->videoTracks)
         for (Clip& c : t.clips)
@@ -592,8 +806,8 @@ Clip* PancropWidget::activeClip() {
     return nullptr;
 }
 
-void PancropWidget::loadFrame() {
-    // O dock do pancrop nasce escondido (MainWindow), mas continua ligado ao
+void PantaloneWidget::loadFrame() {
+    // O dock do pantalone nasce escondido (MainWindow), mas continua ligado ao
     // playhead e à seleção da timeline. Sem esta guarda, TODO arasto do
     // playhead disparava uma decodificação VAAPI SÍNCRONA no thread da UI,
     // concorrente com os workers de preview — e derrubava o app com SIGSEGV
@@ -653,7 +867,7 @@ void PancropWidget::loadFrame() {
     m_framePath = mi->filePath;
 }
 
-void PancropWidget::syncFromClip() {
+void PantaloneWidget::syncFromClip() {
     Clip* c = activeClip();
     const double rel = c ? std::clamp(m_playhead - c->pos, 0.0, std::max(0.0, c->dur)) : 0.0;
     const double L = c ? std::clamp(kfValue(c->kfCropL, c->cropL, rel), 0.0, 0.9) : 0.0;
@@ -690,7 +904,7 @@ void PancropWidget::syncFromClip() {
     refreshDiamonds();
 }
 
-void PancropWidget::updateValueLabels() {
+void PantaloneWidget::updateValueLabels() {
     const int L = m_cropL->value();
     const int R = m_cropR->value();
     const int T = m_cropT->value();
@@ -718,13 +932,13 @@ void PancropWidget::updateValueLabels() {
     if (m_anchorYVal) m_anchorYVal->setText(pct(ay));
 }
 
-double PancropWidget::relPlayhead() {
+double PantaloneWidget::relPlayhead() {
     Clip* c = activeClip();
     if (!c) return -1.0;
     return std::clamp(m_playhead - c->pos, 0.0, std::max(0.0, c->dur));
 }
 
-QVector<Keyframe>* PancropWidget::keyframesFor(int prop) {
+QVector<Keyframe>* PantaloneWidget::keyframesFor(int prop) {
     Clip* c = activeClip();
     if (!c) return nullptr;
     switch (prop) {
@@ -740,11 +954,44 @@ QVector<Keyframe>* PancropWidget::keyframesFor(int prop) {
         case P_ScaleY: return &c->kfScaleY;
         case P_AnchorX: return &c->kfAnchorX;
         case P_AnchorY: return &c->kfAnchorY;
+        // Propriedades da máscara ATIVA (nullptr se não há máscara selecionada).
+        case P_MaskCx:      { Mask* m = activeMask(); return m ? &m->kfCx : nullptr; }
+        case P_MaskCy:      { Mask* m = activeMask(); return m ? &m->kfCy : nullptr; }
+        case P_MaskRx:      { Mask* m = activeMask(); return m ? &m->kfRx : nullptr; }
+        case P_MaskRy:      { Mask* m = activeMask(); return m ? &m->kfRy : nullptr; }
+        case P_MaskRot:     { Mask* m = activeMask(); return m ? &m->kfRotation : nullptr; }
+        case P_MaskFeather: { Mask* m = activeMask(); return m ? &m->kfFeather : nullptr; }
     }
     return nullptr;
 }
 
-double PancropWidget::propValue(int prop) const {
+// Props que a faixa de keyframes / navegação / editor de curvas enxergam: as
+// 12 do clipe e, quando há máscara selecionada, as 6 dela (motion da máscara).
+QVector<int> PantaloneWidget::activeProps() {
+    QVector<int> props;
+    props << P_CropL << P_CropR << P_CropT << P_CropB
+          << P_Scale << P_PanX << P_PanY << P_Rotation
+          << P_ScaleX << P_ScaleY << P_AnchorX << P_AnchorY;
+    if (activeMask())
+        props << P_MaskCx << P_MaskCy << P_MaskRx << P_MaskRy
+              << P_MaskRot << P_MaskFeather;
+    return props;
+}
+
+void PantaloneWidget::setViewMode(ViewMode m) {
+    m_mode = m;
+    for (auto it = m_modeBtns.begin(); it != m_modeBtns.end(); ++it)
+        it.value()->setChecked((ViewMode)it.key() == m);
+    // A sidebar segue o modo: mostra só as propriedades relevantes.
+    // Em "Janelas" a máscara se edita no viewer + painel inferior, então a
+    // sidebar fica enxuta (só "Redefinir").
+    if (m_secCrop) m_secCrop->setVisible(m == ModeCrop);
+    if (m_secMove) m_secMove->setVisible(m == ModeTransform);
+    if (m_secRot)  m_secRot->setVisible(m == ModeTransform);
+    if (m_view) m_view->update();
+}
+
+double PantaloneWidget::propValue(int prop) {
     switch (prop) {
         case P_CropL: return m_cropL->value() / 100.0;
         case P_CropR: return m_cropR->value() / 100.0;
@@ -769,19 +1016,26 @@ double PancropWidget::propValue(int prop) const {
             return m_anchorX->value() / 100.0;
         case P_AnchorY:
             return m_anchorY->value() / 100.0;
+        case P_MaskCx:      { Mask* m = activeMask(); const double r = std::max(0.0, relPlayhead()); return m ? m->cxAt(r) : 0.0; }
+        case P_MaskCy:      { Mask* m = activeMask(); const double r = std::max(0.0, relPlayhead()); return m ? m->cyAt(r) : 0.0; }
+        case P_MaskRx:      { Mask* m = activeMask(); const double r = std::max(0.0, relPlayhead()); return m ? m->rxAt(r) : 0.0; }
+        case P_MaskRy:      { Mask* m = activeMask(); const double r = std::max(0.0, relPlayhead()); return m ? m->ryAt(r) : 0.0; }
+        case P_MaskRot:     { Mask* m = activeMask(); const double r = std::max(0.0, relPlayhead()); return m ? m->rotAt(r) : 0.0; }
+        case P_MaskFeather: { Mask* m = activeMask(); const double r = std::max(0.0, relPlayhead()); return m ? m->featherAt(r) : 0.0; }
     }
     return 0.0;
 }
 
-void PancropWidget::toggleKeyframe(int prop) {
+void PantaloneWidget::toggleKeyframe(int prop) {
     QVector<Keyframe>* kf = keyframesFor(prop);
     if (!kf) return;
     const double rel = relPlayhead();
     if (rel < 0.0) return;
     if (!m_undoPushed) { emit editStart(); m_undoPushed = true; }
     // Sempre informa a propriedade editada, para o editor de curvas exibir a
-    // curva correspondente (independente de undo pendente).
-    emit propertyEdited(prop);
+    // curva correspondente (independente de undo pendente). O graph editor
+    // ainda só conhece as props do clipe; as da máscara ficam fora por ora.
+    if (prop < P_MaskCx) emit propertyEdited(prop);
     for (int i = 0; i < kf->size(); ++i) {
         if (std::fabs((*kf)[i].time - rel) < 1e-6) {
             kf->removeAt(i);
@@ -803,7 +1057,7 @@ void PancropWidget::toggleKeyframe(int prop) {
     m_view->update();
 }
 
-void PancropWidget::writeKeyframe(int prop, double value) {
+void PantaloneWidget::writeKeyframe(int prop, double value) {
     QVector<Keyframe>* kf = keyframesFor(prop);
     if (!kf) return;
     const double rel = relPlayhead();
@@ -823,12 +1077,10 @@ void PancropWidget::writeKeyframe(int prop, double value) {
               [](const Keyframe& a, const Keyframe& b) { return a.time < b.time; });
 }
 
-void PancropWidget::gotoKeyframe(int dir) {
+void PantaloneWidget::gotoKeyframe(int dir) {
     Clip* c = activeClip();
     if (!c) return;
-    const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
-                         P_Scale, P_PanX, P_PanY, P_Rotation,
-                         P_ScaleX, P_ScaleY, P_AnchorX, P_AnchorY};
+    const QVector<int> props = activeProps();
     QVector<double> times;
     for (int prop : props) {
         QVector<Keyframe>* kf = keyframesFor(prop);
@@ -848,7 +1100,7 @@ void PancropWidget::gotoKeyframe(int dir) {
     if (best >= 0.0) emit keyframeJump(best);
 }
 
-void PancropWidget::refreshDiamonds() {
+void PantaloneWidget::refreshDiamonds() {
     const double rel = relPlayhead();
     const QString on =
         QStringLiteral("QPushButton{color:%1; border:none; background:transparent; font-size:14px;}"
@@ -875,7 +1127,7 @@ void PancropWidget::refreshDiamonds() {
     if (m_strip) m_strip->update();
 }
 
-void PancropWidget::commitSlider(int prop, double baseValue) {
+void PantaloneWidget::commitSlider(int prop, double baseValue) {
     Clip* c = activeClip();
     if (!c) return;
     // Empurra o undo UMA vez por gesto; o propertyEdited é emitido sempre
@@ -909,7 +1161,7 @@ void PancropWidget::commitSlider(int prop, double baseValue) {
     if (c->isText) loadFrame();
 }
 
-void PancropWidget::setCropValues(double L, double R, double T, double B) {
+void PantaloneWidget::setCropValues(double L, double R, double T, double B) {
     Clip* c = activeClip();
     if (!c) return;
     L = std::clamp(L, 0.0, 1.0);
@@ -929,7 +1181,7 @@ void PancropWidget::setCropValues(double L, double R, double T, double B) {
     m_view->update();
 }
 
-void PancropWidget::emitChange() {
+void PantaloneWidget::emitChange() {
     if (!m_undoPushed) {
         emit editStart();
         m_undoPushed = true;
@@ -937,7 +1189,7 @@ void PancropWidget::emitChange() {
     emit modified();
 }
 
-void PancropWidget::computeView(double s, double tx, double ty, int w0, int h0,
+void PantaloneWidget::computeView(double s, double tx, double ty, int w0, int h0,
                                 QRectF* cropS, QRectF* outS) const {
     if (w0 <= 0 || h0 <= 0) return;
     const double L = std::clamp(m_cropL->value() / 100.0, 0.0, 1.0);
@@ -964,8 +1216,12 @@ void PancropWidget::computeView(double s, double tx, double ty, int w0, int h0,
     // Centro da janela dentro do recorte (centro do recorte - pan/escala).
     const double cx = kx + kw / 2.0 - tx / ks;
     const double cy = ky + kh / 2.0 - ty / ks;
-    const double lx = std::clamp(cx - w / 2.0, kx, kx + kw - w);
-    const double ly = std::clamp(cy - h / 2.0, ky, ky + kh - h);
+    // As bordas vêm de `kx + kw - w`. Com w == kw a matemática diz hi == lo,
+    // mas (kx + kw) - w arredonda e pode cair um ULP abaixo de kx, violando a
+    // pré-condição de std::clamp (hi >= lo) e abortando o app no paint. O
+    // std::max(garante hi >= lo) em qualquer estado de ponto flutuante.
+    const double lx = std::clamp(cx - w / 2.0, kx, std::max(kx, kx + kw - w));
+    const double ly = std::clamp(cy - h / 2.0, ky, std::max(ky, ky + kh - h));
     *outS = QRectF(lx, ly, w, h);
 }
 
@@ -973,7 +1229,7 @@ void PancropWidget::computeView(double s, double tx, double ty, int w0, int h0,
 // viewfinder, girando por -deg em torno do centro da área de exibição (disp).
 // É o inverso do p.rotate(deg) usado no paintViewfinder, para que o hit-test
 // e o arraste continuem funcionando com a imagem girada.
-QPointF PancropWidget::rotatedViewPos(const QRect& viewRect, const QPoint& sp) const {
+QPointF PantaloneWidget::rotatedViewPos(const QRect& viewRect, const QPoint& sp) const {
     const int w0 = m_frame.width();
     const int h0 = m_frame.height();
     if (w0 <= 0 || h0 <= 0) return QPointF(sp);
@@ -989,7 +1245,7 @@ QPointF PancropWidget::rotatedViewPos(const QRect& viewRect, const QPoint& sp) c
                    ctr.y() - dx * s + dy * c);
 }
 
-void PancropWidget::screenToSource(const QRect& viewRect, const QPoint& sp,
+void PantaloneWidget::screenToSource(const QRect& viewRect, const QPoint& sp,
                                    double* sx, double* sy) const {
     const int w0 = m_frame.width();
     const int h0 = m_frame.height();
@@ -1002,7 +1258,7 @@ void PancropWidget::screenToSource(const QRect& viewRect, const QPoint& sp,
     *sy = (rp.y() - disp.top()) / disp.height() * h0;
 }
 
-void PancropWidget::applyPan(double sx, double sy) {
+void PantaloneWidget::applyPan(double sx, double sy) {
     Clip* c = activeClip();
     if (!c || m_frame.isNull()) return;
     const int w0 = m_frame.width();
@@ -1029,9 +1285,9 @@ void PancropWidget::applyPan(double sx, double sy) {
     double cx = sx;
     double cy = sy;
     if (w >= kw) cx = ox;
-    else cx = std::clamp(cx, kx + w / 2.0, kx + kw - w / 2.0);
+    else cx = std::clamp(cx, kx + w / 2.0, std::max(kx + w / 2.0, kx + kw - w / 2.0));
     if (h >= kh) cy = oy;
-    else cy = std::clamp(cy, ky + h / 2.0, ky + kh - h / 2.0);
+    else cy = std::clamp(cy, ky + h / 2.0, std::max(ky + h / 2.0, ky + kh - h / 2.0));
 
     const double tx = (ox - cx) * ks;
     const double ty = (oy - cy) * ks;
@@ -1044,10 +1300,258 @@ void PancropWidget::applyPan(double sx, double sy) {
     m_view->update();
 }
 
+// ── Máscaras (retângulo/elipse) ────────────────────────────────────────
+
+Mask* PantaloneWidget::activeMask() {
+    Clip* c = activeClip();
+    if (!c || m_maskSel < 0 || m_maskSel >= c->masks.size()) return nullptr;
+    return &c->masks[m_maskSel];
+}
+
+void PantaloneWidget::refreshMaskList() {
+    if (!m_maskList) return;
+    Clip* c = activeClip();
+    const QSignalBlocker b(m_maskList);
+    m_maskList->clear();
+    if (c) {
+        for (int i = 0; i < c->masks.size(); ++i) {
+            const Mask& m = c->masks[i];
+            const QString kind = m.type == QLatin1String("ellipse")
+                                     ? tr("elipse")
+                                     : tr("retângulo");
+            m_maskList->addItem(
+                tr("Máscara %1 · %2%3")
+                    .arg(i + 1)
+                    .arg(kind)
+                    .arg(m.enabled ? QString() : tr(" (deslig.)")));
+        }
+    }
+    const int count = m_maskList->count();
+    if (m_maskSel < 0 && count > 0) m_maskSel = 0;
+    if (m_maskSel >= count) m_maskSel = count - 1;
+    m_maskList->setCurrentRow(m_maskSel);
+}
+
+void PantaloneWidget::syncMaskControls() {
+    Mask* m = activeMask();
+    const bool has = m != nullptr;
+    if (m_maskEnabled) {
+        const QSignalBlocker b(m_maskEnabled);
+        m_maskEnabled->setChecked(m && m->enabled);
+        m_maskEnabled->setEnabled(has);
+    }
+    if (m_maskInvert) {
+        const QSignalBlocker b(m_maskInvert);
+        m_maskInvert->setChecked(m && m->invert);
+        m_maskInvert->setEnabled(has);
+    }
+    if (m_maskFeather) {
+        const QSignalBlocker b(m_maskFeather);
+        m_maskFeather->setValue(m ? (int)std::lround(m->feather * 100.0) : 0);
+        m_maskFeather->setEnabled(has);
+    }
+    if (m_maskFeatherVal)
+        m_maskFeatherVal->setText(
+            m ? QString::number(m->feather, 'f', 2) : QStringLiteral("—"));
+    if (m_maskDelBtn) m_maskDelBtn->setEnabled(has);
+}
+
+void PantaloneWidget::applyMaskEdit() {
+    emitChange();
+    m_view->update();
+}
+
+void PantaloneWidget::addMask(const QString& type) {
+    Clip* c = activeClip();
+    if (!c) return;
+    emitChange();
+    Mask d;
+    d.type = type;
+    d.enabled = true;
+    d.cx = 0.5; d.cy = 0.5; d.rx = 0.35; d.ry = 0.35;
+    d.rotation = 0.0; d.feather = 0.0; d.invert = false;
+    c->masks.append(d);
+    m_maskSel = c->masks.size() - 1;
+    m_undoPushed = false; // nova ação => novo undo
+    refreshMaskList();
+    syncMaskControls();
+    m_view->update();
+}
+
+void PantaloneWidget::removeSelectedMask() {
+    Clip* c = activeClip();
+    if (!c || m_maskSel < 0 || m_maskSel >= c->masks.size()) return;
+    emitChange();
+    c->masks.remove(m_maskSel);
+    m_undoPushed = false;
+    refreshMaskList();
+    syncMaskControls();
+    m_view->update();
+}
+
+bool PantaloneWidget::pickMaskHandle(QWidget* view, const QPoint& pos) {
+    Mask* mp = activeMask();
+    if (!mp || !mp->hasMask() || m_frame.isNull()) return false;
+    const int w0 = m_frame.width(), h0 = m_frame.height();
+    if (w0 <= 0 || h0 <= 0) return false;
+    const QRectF disp = computeDisp(view->rect());
+    auto toDisp = [&](double sx, double sy) {
+        return QPointF(disp.left() + sx / w0 * disp.width(),
+                       disp.top() + sy / h0 * disp.height());
+    };
+    // Usa os valores interpolados no playhead (igual ao preview/exportação),
+    // para as alças baterem com o gizmo animado.
+    Clip* c = activeClip();
+    const double rel = c ? std::clamp(m_playhead - c->pos, 0.0,
+                                      std::max(0.0, c->dur))
+                         : 0.0;
+    const QVector<QPointF> pts = maskCtrlPoints(mp->type, mp->cxAt(rel),
+                                                mp->cyAt(rel), mp->rxAt(rel),
+                                                mp->ryAt(rel), mp->rotAt(rel),
+                                                w0, h0);
+    const QPointF mouse = rotatedViewPos(view->rect(), pos);
+    const double tol = 9.0;
+    int best = -1;
+    double bestD = tol * tol;
+    for (int i = 0; i < pts.size(); ++i) {
+        const QPointF sp = toDisp(pts[i].x(), pts[i].y());
+        const double dx = sp.x() - mouse.x(), dy = sp.y() - mouse.y();
+        const double d2 = dx * dx + dy * dy;
+        if (d2 < bestD) { bestD = d2; best = i; }
+    }
+    if (best < 0) return false;
+    m_maskDragHandle = best;
+    m_maskDragRot = mp->rotAt(rel);
+    m_maskPress = toDisp(pts[0].x(), pts[0].y());
+    m_maskDragAng = std::atan2(mouse.y() - m_maskPress.y(),
+                               mouse.x() - m_maskPress.x());
+    return true;
+}
+
+void PantaloneWidget::applyMaskDrag(QWidget* view, const QPoint& pos) {
+    Mask* mp = activeMask();
+    if (!mp || m_maskDragHandle < 0 || m_frame.isNull()) return;
+    const int w0 = m_frame.width(), h0 = m_frame.height();
+    if (w0 <= 0 || h0 <= 0) return;
+    // Posição do mouse no espaço do quadro (px), já desrotacionada.
+    double sx, sy;
+    screenToSource(view->rect(), pos, &sx, &sy);
+    // Centro/rotação de referência interpolados no playhead (igual ao gizmo).
+    Clip* c = activeClip();
+    const double rel = c ? std::clamp(m_playhead - c->pos, 0.0,
+                                      std::max(0.0, c->dur))
+                         : 0.0;
+    const double cx = mp->cxAt(rel) * w0, cy = mp->cyAt(rel) * h0;
+    if (m_maskDragHandle == 0) {           // mover: centro acompanha o cursor
+        mp->cx = std::clamp(sx / w0, 0.0, 1.0);
+        mp->cy = std::clamp(sy / h0, 0.0, 1.0);
+    } else if (m_maskDragHandle == 1) {    // rotação: ângulo ao redor do centro
+        const double ang = std::atan2(sy - cy, sx - cx);
+        double d = ang - m_maskDragAng;
+        while (d > M_PI) d -= 2.0 * M_PI;
+        while (d < -M_PI) d += 2.0 * M_PI;
+        double rot = m_maskDragRot + d * 180.0 / M_PI;
+        while (rot > 180.0) rot -= 360.0;
+        while (rot < -180.0) rot += 360.0;
+        mp->rotation = rot;
+    } else {                              // borda: raio projetado nos eixos
+        const double dx = sx - cx, dy = sy - cy;
+        const double rad = mp->rotAt(rel) * M_PI / 180.0;
+        const double lx =  dx * std::cos(rad) + dy * std::sin(rad);
+        const double ly = -dx * std::sin(rad) + dy * std::cos(rad);
+        if (std::abs(lx) > 1.0) mp->rx = qBound(0.001, std::abs(lx) / w0, 1.5);
+        if (std::abs(ly) > 1.0) mp->ry = qBound(0.001, std::abs(ly) / h0, 1.5);
+    }
+    // Auto-keyframe (padrão AE/DaVinci): com "● Auto" ligado, arrastar o gizmo
+    // grava keyframe das propriedades alteradas no playhead => motion.
+    if (m_kfAuto && m_kfAuto->isChecked()) {
+        if (m_maskDragHandle == 0) {
+            writeKeyframe(P_MaskCx, mp->cx);
+            writeKeyframe(P_MaskCy, mp->cy);
+        } else if (m_maskDragHandle == 1) {
+            writeKeyframe(P_MaskRot, mp->rotation);
+        } else {
+            writeKeyframe(P_MaskRx, mp->rx);
+            writeKeyframe(P_MaskRy, mp->ry);
+        }
+        refreshDiamonds();
+    }
+    applyMaskEdit();
+}
+
+void PantaloneWidget::drawMaskGizmos(QPainter& p, const QRectF& disp, int w0, int h0) {
+    Clip* c = activeClip();
+    if (!c || c->masks.isEmpty() || w0 <= 0 || h0 <= 0) return;
+    auto toDisp = [&](double sx, double sy) {
+        return QPointF(disp.left() + sx / w0 * disp.width(),
+                       disp.top() + sy / h0 * disp.height());
+    };
+    const QColor band(130, 215, 255);
+    const QColor accent = themeColors().accent;
+    const double rel = std::clamp(m_playhead - c->pos, 0.0, std::max(0.0, c->dur));
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing);
+    for (int i = 0; i < c->masks.size(); ++i) {
+        const Mask& m = c->masks[i];
+        if (m.type.isEmpty()) continue;
+        const bool active = (i == m_maskSel);
+        // Valores interpolados no playhead (igual ao preview/exportação), para
+        // o gizmo seguir a animação ao dar scrub.
+        const double cx = m.cxAt(rel) * w0, cy = m.cyAt(rel) * h0;
+        const double rx = std::max(0.001, m.rxAt(rel)) * w0;
+        const double ry = std::max(0.001, m.ryAt(rel)) * h0;
+        const double rotDeg = m.rotAt(rel);
+        const double feath = m.featherAt(rel);
+        const QPointF ctr = toDisp(cx, cy);
+        // Forma (rotacionada) desenhada em torno do centro, no espaço de disp.
+        p.save();
+        p.translate(ctr);
+        p.rotate(rotDeg);
+        const double hw = rx / w0 * disp.width();
+        const double hh = ry / h0 * disp.height();
+        p.setBrush(Qt::NoBrush);
+        if (feath > 0.0) {
+            const double fx = feath * disp.width();
+            const double fy = feath * disp.height();
+            p.setPen(QPen(QColor(130, 215, 255, 90), 1, Qt::DashLine));
+            if (m.type == QLatin1String("rect"))
+                p.drawRect(QRectF(-hw - fx, -hh - fy, 2 * (hw + fx), 2 * (hh + fy)));
+            else
+                p.drawEllipse(QPointF(0, 0), hw + fx, hh + fy);
+        }
+        p.setPen(QPen(active ? QColor(255, 255, 255, 235)
+                             : QColor(band.red(), band.green(), band.blue(), 130),
+                      active ? 2 : 1));
+        if (m.type == QLatin1String("rect"))
+            p.drawRect(QRectF(-hw, -hh, 2 * hw, 2 * hh));
+        else
+            p.drawEllipse(QPointF(0, 0), hw, hh);
+        p.restore();
+        if (!active) continue;
+        // Alças da máscara ativa (centro, rotação e bordas), já rotacionadas.
+        const QVector<QPointF> pts = maskCtrlPoints(m.type, m.cxAt(rel), m.cyAt(rel),
+                                                    m.rxAt(rel), m.ryAt(rel),
+                                                    rotDeg, w0, h0);
+        p.setPen(QPen(accent, 1));
+        p.setBrush(Qt::NoBrush);
+        p.drawLine(ctr, toDisp(pts[1].x(), pts[1].y()));
+        p.setBrush(Qt::white);
+        p.setPen(QPen(accent, 1.4));
+        for (int k = 2; k < pts.size(); ++k) {
+            const QPointF h = toDisp(pts[k].x(), pts[k].y());
+            p.drawRect(QRectF(h.x() - 4.5, h.y() - 4.5, 9.0, 9.0));
+        }
+        p.drawEllipse(ctr, 4.5, 4.5);
+        p.setBrush(QColor(255, 186, 60));
+        p.drawEllipse(toDisp(pts[1].x(), pts[1].y()), 5.0, 5.0);
+    }
+    p.restore();
+}
+
 // Área (em px do widget) onde o frame do source é desenhado no viewfinder
 // (modelo "contain", centralizado). Compartilhada pelo painter e pelos
 // hit-tests, para a geometria dos gizmos nunca descolar do desenho.
-QRectF PancropWidget::computeDisp(const QRect& viewRect) const {
+QRectF PantaloneWidget::computeDisp(const QRect& viewRect) const {
     const int w0 = m_frame.width();
     const int h0 = m_frame.height();
     if (w0 <= 0 || h0 <= 0) return QRectF();
@@ -1073,7 +1577,7 @@ QRectF PancropWidget::computeDisp(const QRect& viewRect) const {
 // Aplica zoom (escala) mantendo o centro da janela de saída NO MESMO ponto da
 // imagem — mesmo comportamento do zoom com a roda, que redefine o pan para a
 // janela não "andar" enquanto o usuário dá zoom (usado por roda e gizmo).
-void PancropWidget::applyZoomTo(double sNew, const QPointF& centerSrc) {
+void PantaloneWidget::applyZoomTo(double sNew, const QPointF& centerSrc) {
     if (m_frame.isNull()) return;
     const int w0 = m_frame.width();
     const int h0 = m_frame.height();
@@ -1102,7 +1606,7 @@ void PancropWidget::applyZoomTo(double sNew, const QPointF& centerSrc) {
     m_view->update();
 }
 
-void PancropWidget::paintViewfinder(QWidget* view) {
+void PantaloneWidget::paintViewfinder(QWidget* view) {
     QPainter p(view);
     // Fundo quadriculado sutil (estilo DaVinci/After Effects) atrás do frame.
     const QColor tileA(42, 44, 50);
@@ -1122,7 +1626,7 @@ void PancropWidget::paintViewfinder(QWidget* view) {
     if (m_frame.isNull()) {
         p.setPen(QColor(140, 140, 150));
         p.drawText(view->rect(), Qt::AlignCenter,
-                   tr("Selecione um clipe de vídeo para editar o pancrop."));
+                   tr("Selecione um clipe de vídeo para editar o pantalone."));
         return;
     }
     const int w0 = m_frame.width();
@@ -1159,14 +1663,15 @@ void PancropWidget::paintViewfinder(QWidget* view) {
     const QRectF outDisp(toDisp(outS.left(), outS.top()),
                          toDisp(outS.right(), outS.bottom()));
 
-    // Máscara escura em camadas (estilo Premiere): o que está fora do recorte
-    // e o que o zoom esconde fora da janela de saída recebem véus crescentes.
-    QPainterPath outsideCrop;
-    outsideCrop.addRect(disp);
-    QPainterPath cropHole;
-    cropHole.addRect(cropDisp.adjusted(-3, -3, 3, 3));
-    p.fillPath(outsideCrop.subtracted(cropHole), QColor(0, 0, 0, 110));
-    if (cropDisp != outDisp) {
+    // Máscara escura (estilo Premiere): véu do que está fora do recorte no
+    // modo Recortar; do que está fora da janela de saída no modo Transformar.
+    if (m_mode == ModeCrop) {
+        QPainterPath outsideCrop;
+        outsideCrop.addRect(disp);
+        QPainterPath cropHole;
+        cropHole.addRect(cropDisp.adjusted(-3, -3, 3, 3));
+        p.fillPath(outsideCrop.subtracted(cropHole), QColor(0, 0, 0, 110));
+    } else if (m_mode == ModeTransform && cropDisp != outDisp) {
         QPainterPath outsideOut;
         outsideOut.addRect(cropDisp);
         QPainterPath outHole;
@@ -1174,8 +1679,8 @@ void PancropWidget::paintViewfinder(QWidget* view) {
         p.fillPath(outsideOut.subtracted(outHole), QColor(0, 0, 0, 130));
     }
 
-    // Grade de terços + cruz central (dentro da rotação, acompanham o clipe).
-    if (m_showGrid) {
+    // Grade de terços + cruz central (modo Transformar, de enquadramento).
+    if (m_mode == ModeTransform && m_showGrid) {
         p.setPen(QPen(QColor(255, 255, 255, 45), 1));
         const QPointF c = outDisp.center();
         p.drawLine(QPointF(outDisp.left(), c.y()), QPointF(outDisp.right(), c.y()));
@@ -1190,24 +1695,26 @@ void PancropWidget::paintViewfinder(QWidget* view) {
         }
     }
 
-    // Safe margins — cinza discreto.
-    p.setBrush(Qt::NoBrush);
-    p.setPen(QPen(QColor(255, 255, 255, 32), 1));
-    p.drawRect(outDisp.adjusted(outDisp.width() * 0.05, outDisp.height() * 0.05,
-                                -outDisp.width() * 0.05, -outDisp.height() * 0.05));
-    p.setPen(QColor(255, 255, 255, 20));
-    p.drawRect(outDisp.adjusted(outDisp.width() * 0.10, outDisp.height() * 0.10,
-                                -outDisp.width() * 0.10, -outDisp.height() * 0.10));
-
-    // Caixa de RECORTE (borda branca tracejada sutil).
-    p.setPen(QPen(QColor(255, 255, 255, 150), 1, Qt::DashLine));
-    p.setBrush(Qt::NoBrush);
-    p.drawRect(cropDisp);
-
-    // Caixa de ZOOM/saída (borda azul-ciano em destaque).
-    p.setPen(QPen(QColor(0, 163, 224), 2));
-    p.setBrush(Qt::NoBrush);
-    p.drawRect(outDisp);
+    // Safe margins + caixa de saída (modo Transformar) — cinza discreto.
+    if (m_mode == ModeTransform) {
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(QColor(255, 255, 255, 32), 1));
+        p.drawRect(outDisp.adjusted(outDisp.width() * 0.05, outDisp.height() * 0.05,
+                                    -outDisp.width() * 0.05, -outDisp.height() * 0.05));
+        p.setPen(QColor(255, 255, 255, 20));
+        p.drawRect(outDisp.adjusted(outDisp.width() * 0.10, outDisp.height() * 0.10,
+                                    -outDisp.width() * 0.10, -outDisp.height() * 0.10));
+        // Caixa de ZOOM/saída (borda azul-ciano em destaque).
+        p.setPen(QPen(QColor(0, 163, 224), 2));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(outDisp);
+    }
+    if (m_mode == ModeCrop) {
+        // Caixa de RECORTE (borda branca tracejada sutil).
+        p.setPen(QPen(QColor(255, 255, 255, 150), 1, Qt::DashLine));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(cropDisp);
+    }
 
     const bool hasHover = (m_hoverMode != DragNone && m_dragMode == DragNone);
     auto drawHandle = [&](const QPointF& h, double sz, int fr, int fg, int fb,
@@ -1217,57 +1724,61 @@ void PancropWidget::paintViewfinder(QWidget* view) {
         p.drawRoundedRect(QRectF(h.x() - sz / 2.0, h.y() - sz / 2.0, sz, sz), 2.0, 2.0);
     };
 
-    // Alças de recorte (quadrados brancos com borda escura) no perímetro do crop.
-    const double hd = hasHover ? 10.0 : 8.0;
-    p.setPen(QPen(QColor(12, 14, 18), 1));
-    const QPointF tl(cropDisp.left(), cropDisp.top());
-    const QPointF tr(cropDisp.right(), cropDisp.top());
-    const QPointF bl(cropDisp.left(), cropDisp.bottom());
-    const QPointF br(cropDisp.right(), cropDisp.bottom());
-    const QPointF mt(cropDisp.center().x(), cropDisp.top());
-    const QPointF mb(cropDisp.center().x(), cropDisp.bottom());
-    const QPointF ml(cropDisp.left(), cropDisp.center().y());
-    const QPointF mr(cropDisp.right(), cropDisp.center().y());
-    const QPointF handles[8] = { tl, tr, bl, br, mt, mb, ml, mr };
-    for (const QPointF& h : handles)
-        drawHandle(h, hd, 220, 225, 235, 210);
-
-    // Alças de ZOOM (douradas): nos cantos da janela de saída, deslocadas para
-    // fora da diagonal para não conflitarem com as de recorte.
-    const double zd = hasHover ? 12.0 : 9.0;
-    p.setPen(QPen(QColor(10, 12, 16), 1));
-    const QPointF outCorners[4] = { outDisp.topLeft(), outDisp.topRight(),
-                                    outDisp.bottomLeft(), outDisp.bottomRight() };
-    for (const QPointF& cp : outCorners) {
-        const QPointF d = cp - outDisp.center();
-        const double len = std::hypot(d.x(), d.y());
-        const QPointF pos = len > 1e-6 ? cp + d / len * 9.0 : cp;
-        drawHandle(pos, zd, 255, 186, 60, 235);
+    // Alças de recorte (modo Recortar): quadrados brancos no perímetro do crop.
+    if (m_mode == ModeCrop) {
+        const double hd = hasHover ? 10.0 : 8.0;
+        p.setPen(QPen(QColor(12, 14, 18), 1));
+        const QPointF tl(cropDisp.left(), cropDisp.top());
+        const QPointF tr(cropDisp.right(), cropDisp.top());
+        const QPointF bl(cropDisp.left(), cropDisp.bottom());
+        const QPointF br(cropDisp.right(), cropDisp.bottom());
+        const QPointF mt(cropDisp.center().x(), cropDisp.top());
+        const QPointF mb(cropDisp.center().x(), cropDisp.bottom());
+        const QPointF ml(cropDisp.left(), cropDisp.center().y());
+        const QPointF mr(cropDisp.right(), cropDisp.center().y());
+        const QPointF handles[8] = { tl, tr, bl, br, mt, mb, ml, mr };
+        for (const QPointF& h : handles)
+            drawHandle(h, hd, 220, 225, 235, 210);
     }
 
-    // Alça de ROTAÇÃO (estilo Premiere): círculo dourado acima do topo da
-    // janela de saída, ligado por uma linha-guia.
-    const QPointF rotHdl(outDisp.center().x(), outDisp.top() - 26.0);
-    p.setPen(QPen(QColor(255, 186, 60, 220), 1));
-    p.setBrush(Qt::NoBrush);
-    p.drawLine(outDisp.center().x(), outDisp.top(), rotHdl.x(), rotHdl.y());
-    p.setPen(QPen(QColor(10, 12, 16), 1));
-    p.setBrush(hasHover ? QColor(255, 216, 120) : QColor(255, 186, 60, 235));
-    p.drawEllipse(rotHdl, 5.5, 5.5);
+    // Modo Transformar: alças de zoom (douradas), rotação e âncora.
+    if (m_mode == ModeTransform) {
+        const double zd = hasHover ? 12.0 : 9.0;
+        p.setPen(QPen(QColor(10, 12, 16), 1));
+        const QPointF outCorners[4] = { outDisp.topLeft(), outDisp.topRight(),
+                                        outDisp.bottomLeft(), outDisp.bottomRight() };
+        for (const QPointF& cp : outCorners) {
+            const QPointF d = cp - outDisp.center();
+            const double len = std::hypot(d.x(), d.y());
+            const QPointF pos = len > 1e-6 ? cp + d / len * 9.0 : cp;
+            drawHandle(pos, zd, 255, 186, 60, 235);
+        }
+        // Alça de ROTAÇÃO (estilo Premiere).
+        const QPointF rotHdl(outDisp.center().x(), outDisp.top() - 26.0);
+        p.setPen(QPen(QColor(255, 186, 60, 220), 1));
+        p.setBrush(Qt::NoBrush);
+        p.drawLine(outDisp.center().x(), outDisp.top(), rotHdl.x(), rotHdl.y());
+        p.setPen(QPen(QColor(10, 12, 16), 1));
+        p.setBrush(hasHover ? QColor(255, 216, 120) : QColor(255, 186, 60, 235));
+        p.drawEllipse(rotHdl, 5.5, 5.5);
+        // Gizmo de ponto de ancoragem (anel branco com cruz).
+        const double axPct = m_anchorX->value() / 100.0;
+        const double ayPct = m_anchorY->value() / 100.0;
+        const double anchorSrcX = w0 * 0.5 + axPct * w0 * 0.5;
+        const double anchorSrcY = h0 * 0.5 + ayPct * h0 * 0.5;
+        const QPointF anchorDisp = toDisp(anchorSrcX, anchorSrcY);
+        p.setPen(QPen(QColor(255, 255, 255, 200), 1.5));
+        p.setBrush(Qt::NoBrush);
+        p.drawEllipse(anchorDisp, 7.0, 7.0);
+        p.drawLine(QPointF(anchorDisp.x() - 4.0, anchorDisp.y()),
+                   QPointF(anchorDisp.x() + 4.0, anchorDisp.y()));
+        p.drawLine(QPointF(anchorDisp.x(), anchorDisp.y() - 4.0),
+                   QPointF(anchorDisp.x(), anchorDisp.y() + 4.0));
+    }
 
-    // Gizmo de ponto de ancoragem (anel branco com cruz).
-    const double axPct = m_anchorX->value() / 100.0;
-    const double ayPct = m_anchorY->value() / 100.0;
-    const double anchorSrcX = w0 * 0.5 + axPct * w0 * 0.5;
-    const double anchorSrcY = h0 * 0.5 + ayPct * h0 * 0.5;
-    const QPointF anchorDisp = toDisp(anchorSrcX, anchorSrcY);
-    p.setPen(QPen(QColor(255, 255, 255, 200), 1.5));
-    p.setBrush(Qt::NoBrush);
-    p.drawEllipse(anchorDisp, 7.0, 7.0);
-    p.drawLine(QPointF(anchorDisp.x() - 4.0, anchorDisp.y()),
-               QPointF(anchorDisp.x() + 4.0, anchorDisp.y()));
-    p.drawLine(QPointF(anchorDisp.x(), anchorDisp.y() - 4.0),
-               QPointF(anchorDisp.x(), anchorDisp.y() + 4.0));
+    // Gizmos de máscara (modo Janelas) — no espaço rotacionado, com a imagem.
+    if (m_mode == ModeMask)
+        drawMaskGizmos(p, disp, w0, h0);
 
     // ── Indicador de resolução do projeto (estilo Vegas) ─────────────
     p.restore();  // restaura antes de desenhar o overlay sem rotação
@@ -1287,7 +1798,7 @@ void PancropWidget::paintViewfinder(QWidget* view) {
     p.restore();
 }
 
-void PancropWidget::viewportPress(QWidget* view, QMouseEvent* e) {
+void PantaloneWidget::viewportPress(QWidget* view, QMouseEvent* e) {
     if (e->button() != Qt::LeftButton || m_frame.isNull()) {
         e->ignore();
         return;
@@ -1327,6 +1838,14 @@ void PancropWidget::viewportPress(QWidget* view, QMouseEvent* e) {
     m_dragMode = DragNone;
     m_lastDrag = e->pos();
 
+    // Gizmos de máscara (modo Janelas) têm precedência.
+    if (m_mode == ModeMask && pickMaskHandle(view, e->pos())) {
+        view->setCursor(Qt::ClosedHandCursor);
+        if (!m_undoPushed) { emit editStart(); m_undoPushed = true; }
+        e->accept();
+        return;
+    }
+
     // Hit-test nas alças de ZOOM (cantos da janela de saída, deslocados para
     // fora) e na alça de ROTAÇÃO (círculo acima do topo): ficam mais para fora
     // que recorte/pan, então têm precedência.
@@ -1363,7 +1882,7 @@ void PancropWidget::viewportPress(QWidget* view, QMouseEvent* e) {
             break;
         }
     }
-    if (zoomIdx >= 0) {
+    if (m_mode == ModeTransform && zoomIdx >= 0) {
         const double sOld = std::clamp(m_scale->value() / 100.0, kMinScale, kMaxScale);
         m_grabOffset = QPointF(std::hypot(zHandles[zoomIdx].x() - oC.x(),
                                           zHandles[zoomIdx].y() - oC.y()),
@@ -1387,7 +1906,7 @@ void PancropWidget::viewportPress(QWidget* view, QMouseEvent* e) {
     const double ayPct = m_anchorY->value() / 100.0;
     const QPointF anchorDisp = toDisp(w0 * 0.5 + axPct * w0 * 0.5,
                                       h0 * 0.5 + ayPct * h0 * 0.5);
-    if (near(pos, anchorDisp)) {
+    if (m_mode == ModeTransform && near(pos, anchorDisp)) {
         m_dragMode = DragAnchor;
         m_grabOffset = QPointF(axPct, ayPct);
         view->setCursor(Qt::CrossCursor);
@@ -1397,22 +1916,24 @@ void PancropWidget::viewportPress(QWidget* view, QMouseEvent* e) {
         return;
     }
 
-    if (near(pos, tl)) m_dragMode = DragCropTL;
-    else if (near(pos, tr)) m_dragMode = DragCropTR;
-    else if (near(pos, bl)) m_dragMode = DragCropBL;
-    else if (near(pos, br)) m_dragMode = DragCropBR;
-    else if (pos.x() >= ml.x() - tol && pos.x() <= ml.x() + tol &&
-             pos.y() >= mt.y() && pos.y() <= mb.y())
-        m_dragMode = DragCropL;
-    else if (pos.x() >= mr.x() - tol && pos.x() <= mr.x() + tol &&
-             pos.y() >= mt.y() && pos.y() <= mb.y())
-        m_dragMode = DragCropR;
-    else if (pos.y() >= mt.y() - tol && pos.y() <= mt.y() + tol &&
-             pos.x() >= ml.x() && pos.x() <= mr.x())
-        m_dragMode = DragCropT;
-    else if (pos.y() >= mb.y() - tol && pos.y() <= mb.y() + tol &&
-             pos.x() >= ml.x() && pos.x() <= mr.x())
-        m_dragMode = DragCropB;
+    if (m_mode == ModeCrop) {
+        if (near(pos, tl)) m_dragMode = DragCropTL;
+        else if (near(pos, tr)) m_dragMode = DragCropTR;
+        else if (near(pos, bl)) m_dragMode = DragCropBL;
+        else if (near(pos, br)) m_dragMode = DragCropBR;
+        else if (pos.x() >= ml.x() - tol && pos.x() <= ml.x() + tol &&
+                 pos.y() >= mt.y() && pos.y() <= mb.y())
+            m_dragMode = DragCropL;
+        else if (pos.x() >= mr.x() - tol && pos.x() <= mr.x() + tol &&
+                 pos.y() >= mt.y() && pos.y() <= mb.y())
+            m_dragMode = DragCropR;
+        else if (pos.y() >= mt.y() - tol && pos.y() <= mt.y() + tol &&
+                 pos.x() >= ml.x() && pos.x() <= mr.x())
+            m_dragMode = DragCropT;
+        else if (pos.y() >= mb.y() - tol && pos.y() <= mb.y() + tol &&
+                 pos.x() >= ml.x() && pos.x() <= mr.x())
+            m_dragMode = DragCropB;
+    }
 
     if (m_dragMode != DragNone) {
         switch (m_dragMode) {
@@ -1426,8 +1947,10 @@ void PancropWidget::viewportPress(QWidget* view, QMouseEvent* e) {
         return;
     }
 
-    // Só inicia o pan se o clique começar dentro (ou perto) da janela de saída.
-    if (outS.adjusted(-0.05 * outS.width(), -0.05 * outS.height(),
+    // Só inicia o pan (modo Transformar) se o clique começar dentro (ou perto)
+    // da janela de saída.
+    if (m_mode == ModeTransform &&
+        outS.adjusted(-0.05 * outS.width(), -0.05 * outS.height(),
                       0.05 * outS.width(), 0.05 * outS.height()).contains(QPointF(sx, sy))) {
         m_dragMode = DragPan;
         // Mantém a "pegada": guarda o offset entre o cursor e o centro da
@@ -1444,7 +1967,12 @@ void PancropWidget::viewportPress(QWidget* view, QMouseEvent* e) {
     }
 }
 
-void PancropWidget::viewportMove(QWidget* view, QMouseEvent* e) {
+void PantaloneWidget::viewportMove(QWidget* view, QMouseEvent* e) {
+    // Arraste de máscara ativo: continua enquanto m_maskDragHandle >= 0.
+    if (m_maskDragHandle >= 0) {
+        applyMaskDrag(view, e->pos());
+        return;
+    }
     // Hover tracking: atualiza m_hoverMode quando não está arrastando.
     if (m_dragMode == DragNone && !m_frame.isNull()) {
         double sx, sy;
@@ -1493,7 +2021,8 @@ void PancropWidget::viewportMove(QWidget* view, QMouseEvent* e) {
             const QPointF hp = len > 1e-6 ? zooms[i] + d / len * 9.0 : zooms[i];
             hitZoom = std::hypot(pos.x() - hp.x(), pos.y() - hp.y()) <= 10.0;
         }
-        if (std::hypot(pos.x() - rotHdl.x(), pos.y() - rotHdl.y()) <= 12.0) {
+    if (m_mode == ModeTransform &&
+        std::hypot(pos.x() - rotHdl.x(), pos.y() - rotHdl.y()) <= 12.0) {
             newHover = DragRotate;
         } else if (hitZoom) {
             newHover = DragZoomBR;
@@ -1605,7 +2134,12 @@ void PancropWidget::viewportMove(QWidget* view, QMouseEvent* e) {
     }
 }
 
-void PancropWidget::viewportRelease(QWidget* view, QMouseEvent* e) {
+void PantaloneWidget::viewportRelease(QWidget* view, QMouseEvent* e) {
+    if (m_maskDragHandle >= 0) {
+        m_maskDragHandle = -1;
+        m_undoPushed = false;
+        view->setCursor(Qt::ArrowCursor);
+    }
     if (m_dragMode != DragNone) {
         m_dragMode = DragNone;
         view->setCursor(Qt::ArrowCursor);
@@ -1614,7 +2148,7 @@ void PancropWidget::viewportRelease(QWidget* view, QMouseEvent* e) {
     e->accept();
 }
 
-void PancropWidget::viewportWheel(QWidget* view, QWheelEvent* e) {
+void PantaloneWidget::viewportWheel(QWidget* view, QWheelEvent* e) {
     if (m_frame.isNull() || !activeClip()) {
         e->ignore();
         return;
@@ -1649,7 +2183,7 @@ void PancropWidget::viewportWheel(QWidget* view, QWheelEvent* e) {
     applyZoomTo(sNew, center);
 }
 
-void PancropWidget::viewportContextMenu(QWidget* view, QContextMenuEvent* e) {
+void PantaloneWidget::viewportContextMenu(QWidget* view, QContextMenuEvent* e) {
     Clip* c = activeClip();
     if (!c) { e->ignore(); return; }
     QMenu menu(view);
@@ -1697,14 +2231,34 @@ void PancropWidget::viewportContextMenu(QWidget* view, QContextMenuEvent* e) {
 // --- Faixa de tempo dos keyframes (arraste esquerda/direita) ---
 
 // Converte posição relativa do playhead/keyframe (0..clip.dur) em pixel na strip.
+// Calha à esquerda da faixa para os rótulos das pistas (Recorte/Máscara/Resto).
+static constexpr int kKfLabelGutter = 54;
+
 static int kfStripX(double rel, const QWidget* view, double dur) {
-    const int w = view->width();
-    if (dur <= 0.0) return 0;
+    const int usable = view->width() - kKfLabelGutter - 4;
+    if (dur <= 0.0 || usable <= 0) return kKfLabelGutter;
     const double frac = std::clamp(rel / dur, 0.0, 1.0);
-    return 4 + (int)std::lround(frac * (w - 8));
+    return kKfLabelGutter + (int)std::lround(frac * usable);
 }
 
-void PancropWidget::paintKeyframeStrip(QWidget* view) {
+// Fração 0..1 a partir da posição x do mouse (desconta a calha e a margem).
+static double kfStripFrac(int x, const QWidget* view) {
+    const int usable = view->width() - kKfLabelGutter - 8;
+    if (usable <= 0) return 0.0;
+    return std::clamp((double)(x - kKfLabelGutter - 4) / usable, 0.0, 1.0);
+}
+
+// As 3 pistas da faixa: Recorte, Máscara e Resto (transformação agrupada).
+static void kfLaneProps(QVector<int> lanes[3]) {
+    using P = PantaloneWidget;
+    lanes[0] = {P::P_CropL, P::P_CropR, P::P_CropT, P::P_CropB};
+    lanes[1] = {P::P_MaskCx, P::P_MaskCy, P::P_MaskRx, P::P_MaskRy,
+                P::P_MaskRot, P::P_MaskFeather};
+    lanes[2] = {P::P_Scale, P::P_PanX, P::P_PanY, P::P_Rotation,
+                P::P_ScaleX, P::P_ScaleY, P::P_AnchorX, P::P_AnchorY};
+}
+
+void PantaloneWidget::paintKeyframeStrip(QWidget* view) {
     QPainter p(view);
     p.fillRect(view->rect(), QColor(19, 20, 24));
     Clip* c = activeClip();
@@ -1713,66 +2267,85 @@ void PancropWidget::paintKeyframeStrip(QWidget* view) {
     const int w = view->width();
     const int h = view->height();
 
-    // Linha do tempo discreta, como nas mini-tiras do editor de curvas.
-    p.setPen(QColor(46, 49, 56));
-    p.drawLine(0, h / 2, w, h / 2);
+    QVector<int> lanes[3];
+    kfLaneProps(lanes);
+    const QString labels[3] = { tr("Recorte"), tr("Máscara"), tr("Resto") };
+    const int laneH = std::max(1, h / 3);
 
-    // Keyframes: coleta os tempos únicos de todas as propriedades.
-    const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
-                         P_Scale, P_PanX, P_PanY, P_Rotation,
-                         P_ScaleX, P_ScaleY, P_AnchorX, P_AnchorY};
-    QVector<double> times;
-    for (int prop : props) {
-        QVector<Keyframe>* kf = keyframesFor(prop);
-        if (!kf) continue;
-        for (const Keyframe& k : *kf) {
-            if (!times.contains(k.time))
-                times.append(k.time);
+    // Fundo, divisores e rótulos das pistas.
+    QFont lf = view->font();
+    lf.setPointSize(8);
+    p.setFont(lf);
+    for (int i = 0; i < 3; ++i) {
+        const int top = i * laneH;
+        const int bot = (i == 2) ? h : top + laneH;
+        if (i > 0) {
+            p.setPen(QColor(40, 42, 48));
+            p.drawLine(0, top, w, top);
         }
+        p.setPen(QColor(140, 145, 155));
+        p.drawText(QRect(2, top, kKfLabelGutter - 4, bot - top),
+                   Qt::AlignVCenter | Qt::AlignLeft, labels[i]);
     }
-    std::sort(times.begin(), times.end());
-    const double rel = relPlayhead();
 
-    // Linha do playhead (igual à das mini-tiras do editor de curvas).
+    const double rel = relPlayhead();
+    // Playhead cruza todas as pistas.
     if (rel >= 0.0) {
         const int px = kfStripX(rel, view, dur);
         p.setPen(QPen(QColor(190, 220, 255, 200), 1));
         p.drawLine(px, 2, px, h - 2);
     }
 
-    for (double t : times) {
-        const int x = kfStripX(t, view, dur);
-        const bool active = rel >= 0.0 && std::fabs(t - rel) < 1e-6;
-        const bool sel = m_selectedTimes.contains(t);
-        QPolygon dia = QPolygon()
-            << QPoint(x, h / 2 - 6) << QPoint(x + 5, h / 2)
-            << QPoint(x, h / 2 + 6) << QPoint(x - 5, h / 2);
-        p.setPen(QPen(QColor(10, 10, 12), 1));
-        // Selecionado = verde; no playhead = laranja; senão cinza (mesmos
-        // critérios de cor do editor de curvas).
-        p.setBrush(sel ? QColor(120, 230, 150)
-                       : active ? QColor(255, 179, 64)
-                                : QColor(200, 205, 215));
-        p.drawPolygon(dia);
+    // Keyframes, uma pista de cada vez.
+    for (int i = 0; i < 3; ++i) {
+        const int top = i * laneH;
+        const int bot = (i == 2) ? h : top + laneH;
+        const int cy = (top + bot) / 2;
+        QVector<double> times;
+        for (int prop : lanes[i]) {
+            QVector<Keyframe>* kf = keyframesFor(prop);
+            if (!kf) continue;
+            for (const Keyframe& k : *kf)
+                if (!times.contains(k.time)) times.append(k.time);
+        }
+        std::sort(times.begin(), times.end());
+        for (double t : times) {
+            const int x = kfStripX(t, view, dur);
+            const bool active = rel >= 0.0 && std::fabs(t - rel) < 1e-6;
+            const bool sel = m_selectedTimes.contains(t);
+            QPolygon dia = QPolygon()
+                << QPoint(x, cy - 5) << QPoint(x + 4, cy)
+                << QPoint(x, cy + 5) << QPoint(x - 4, cy);
+            p.setPen(QPen(QColor(10, 10, 12), 1));
+            // Selecionado = verde; no playhead = laranja; senão cinza.
+            p.setBrush(sel ? QColor(120, 230, 150)
+                           : active ? QColor(255, 179, 64)
+                                    : QColor(200, 205, 215));
+            p.drawPolygon(dia);
+        }
     }
 }
 
-void PancropWidget::stripPress(QWidget* view, QMouseEvent* e) {
+void PantaloneWidget::stripPress(QWidget* view, QMouseEvent* e) {
     m_stripDragging = false;
     m_stripPlayheadDrag = false;
     Clip* c = activeClip();
     if (e->button() != Qt::LeftButton || !c) return;
     const double dur = std::max(c->dur, 1e-3);
-    const int midY = view->height() / 2;
+    const int h = view->height();
+    const int laneH = std::max(1, h / 3);
+    const int lane = std::clamp(e->pos().y() / laneH, 0, 2);
+    const int laneTop = lane * laneH;
+    const int laneBot = (lane == 2) ? h : laneTop + laneH;
+    const int laneCy = (laneTop + laneBot) / 2;
 
-    // Encontra o keyframe mais próximo do clique. O hit é limitado à zona do
-    // losango (vertical) para não roubar o arraste da agulha quando o playhead
-    // está exatamente sobre um keyframe.
-    const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
-                         P_Scale, P_PanX, P_PanY, P_Rotation,
-                         P_ScaleX, P_ScaleY, P_AnchorX, P_AnchorY};
+    // Encontra o keyframe mais próximo do clique DENTRO da pista clicada.
+    // O hit é limitado à zona do losango (vertical) para não roubar o arraste
+    // da agulha quando o playhead está exatamente sobre um keyframe.
+    QVector<int> lanes[3];
+    kfLaneProps(lanes);
     QVector<double> times;
-    for (int prop : props) {
+    for (int prop : lanes[lane]) {
         QVector<Keyframe>* kf = keyframesFor(prop);
         if (!kf) continue;
         for (const Keyframe& k : *kf)
@@ -1783,7 +2356,7 @@ void PancropWidget::stripPress(QWidget* view, QMouseEvent* e) {
     for (int i = 0; i < times.size(); ++i) {
         const int x = kfStripX(times[i], view, dur);
         const int dist = std::abs(e->pos().x() - x);
-        if (dist <= 9 && std::abs(e->pos().y() - midY) <= 12 && dist < bestDist) {
+        if (dist <= 9 && std::abs(e->pos().y() - laneCy) <= laneH / 2 + 2 && dist < bestDist) {
             bestDist = dist; bestIdx = i;
         }
     }
@@ -1837,19 +2410,17 @@ void PancropWidget::stripPress(QWidget* view, QMouseEvent* e) {
     // Clique vazio / na agulha: limpa a seleção e pula/arrasta o playhead.
     m_selectedTimes.clear();
     m_stripPlayheadDrag = true;
-    const double frac = std::clamp((double)(e->pos().x() - 4) / (view->width() - 8),
-                                   0.0, 1.0);
+    const double frac = kfStripFrac(e->pos().x(), view);
     emit keyframeJump(c->pos + frac * dur);
     m_strip->update();
     e->accept();
 }
 
-void PancropWidget::stripMove(QWidget* view, QMouseEvent* e) {
+void PantaloneWidget::stripMove(QWidget* view, QMouseEvent* e) {
     Clip* c = activeClip();
     if (!c) return;
     const double dur = std::max(c->dur, 1e-3);
-    const double frac = std::clamp((double)(e->pos().x() - 4) / (view->width() - 8),
-                                   0.0, 1.0);
+    const double frac = kfStripFrac(e->pos().x(), view);
     const double newRel = frac * dur;
 
     // Arraste da agulha: move o playhead (scrub).
@@ -1870,9 +2441,7 @@ void PancropWidget::stripMove(QWidget* view, QMouseEvent* e) {
 
     // Move o tempo de TODAS as propriedades que tinham keyframe na posição
     // original (preserva o agrupamento visual no playhead).
-    const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
-                         P_Scale, P_PanX, P_PanY, P_Rotation,
-                         P_ScaleX, P_ScaleY, P_AnchorX, P_AnchorY};
+    const QVector<int> props = activeProps();
     for (int prop : props) {
         QVector<Keyframe>* kf = keyframesFor(prop);
         if (!kf) continue;
@@ -1898,7 +2467,7 @@ void PancropWidget::stripMove(QWidget* view, QMouseEvent* e) {
     e->accept();
 }
 
-void PancropWidget::stripRelease(QWidget* view, QMouseEvent* e) {
+void PantaloneWidget::stripRelease(QWidget* view, QMouseEvent* e) {
     if (m_stripDragging || m_stripPlayheadDrag) {
         m_stripDragging = false;
         m_stripPlayheadDrag = false;
@@ -1912,17 +2481,14 @@ void PancropWidget::stripRelease(QWidget* view, QMouseEvent* e) {
 
 // Duplo clique na faixa: cria keyframes em todas as propriedades de
 // transformação naquele instante, fixando os valores interpolados.
-void PancropWidget::stripDoubleClick(QWidget* view, QMouseEvent* e) {
+void PantaloneWidget::stripDoubleClick(QWidget* view, QMouseEvent* e) {
     Clip* c = activeClip();
     if (!c) { e->ignore(); return; }
     const double dur = std::max(c->dur, 1e-3);
-    const double frac = std::clamp((double)(e->pos().x() - 4) / (view->width() - 8),
-                                   0.0, 1.0);
+    const double frac = kfStripFrac(e->pos().x(), view);
     const double rel = frac * dur;
 
-    const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
-                         P_Scale, P_PanX, P_PanY, P_Rotation,
-                         P_ScaleX, P_ScaleY, P_AnchorX, P_AnchorY};
+    const QVector<int> props = activeProps();
     // Já existe keyframe nesse instante: nada a fazer.
     for (int prop : props) {
         QVector<Keyframe>* kf = keyframesFor(prop);
@@ -1936,6 +2502,7 @@ void PancropWidget::stripDoubleClick(QWidget* view, QMouseEvent* e) {
     for (int prop : props) {
         QVector<Keyframe>* kf = keyframesFor(prop);
         if (!kf) continue;
+        if (prop >= P_MaskCx) continue; // duplo clique = só props do clipe
         Keyframe k;
         k.time = rel;
         k.interp = KfSmooth;
@@ -1965,12 +2532,10 @@ void PancropWidget::stripDoubleClick(QWidget* view, QMouseEvent* e) {
 
 // Apaga os keyframes selecionados na faixa (em todas as propriedades de
 // transformação no mesmo instante). Ligado ao Delete/Backspace da faixa.
-void PancropWidget::deleteSelectedKeyframes() {
+void PantaloneWidget::deleteSelectedKeyframes() {
     Clip* c = activeClip();
     if (!c || m_selectedTimes.isEmpty()) return;
-    const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
-                         P_Scale, P_PanX, P_PanY, P_Rotation,
-                         P_ScaleX, P_ScaleY, P_AnchorX, P_AnchorY};
+    const QVector<int> props = activeProps();
     if (!m_undoPushed) { emit editStart(); m_undoPushed = true; }
     for (double t : m_selectedTimes) {
         for (int prop : props) {
@@ -1989,14 +2554,12 @@ void PancropWidget::deleteSelectedKeyframes() {
 
 // Clique direito num keyframe da faixa: predefinições de suavização estilo
 // Vegas (linear, suave, rápido, lento, acentuada).
-void PancropWidget::stripContextMenu(QWidget* view, QContextMenuEvent* e) {
+void PantaloneWidget::stripContextMenu(QWidget* view, QContextMenuEvent* e) {
     Clip* c = activeClip();
     if (!c) { e->ignore(); return; }
     const double dur = std::max(c->dur, 1e-3);
 
-    const int props[] = {P_CropL, P_CropR, P_CropT, P_CropB,
-                         P_Scale, P_PanX, P_PanY, P_Rotation,
-                         P_ScaleX, P_ScaleY, P_AnchorX, P_AnchorY};
+    const QVector<int> props = activeProps();
     QVector<double> times;
     for (int prop : props) {
         QVector<Keyframe>* kf = keyframesFor(prop);

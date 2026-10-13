@@ -15,7 +15,7 @@
 #include "colombina/models/Project.h"
 
 // Layout e desenho de TextStyle (títulos) compartilhados entre o preview, o
-// pancrop de texto e o export. Antes estas três rotinas duplicavam a quebra de
+// pantalone de texto e o export. Antes estas três rotinas duplicavam a quebra de
 // linha, o dimensionamento da fonte e a geração do QPainterPath.
 namespace textrender {
 
@@ -63,7 +63,7 @@ inline Layout layout(const TextStyle& st, double W, double H) {
     return L;
 }
 
-// Caixa relativa ao centro do quadro (preview e pancrop aplicam o transform
+// Caixa relativa ao centro do quadro (preview e pantalone aplicam o transform
 // do clipe em torno do centro).
 inline QRectF centeredBox(const TextStyle& st, const Layout& L, double W, double H) {
     double x;

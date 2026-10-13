@@ -38,7 +38,7 @@ TrimmerDialog::TrimmerDialog(const MediaItem& media, QWidget* parent)
     setMinimumSize(560, 340);
 
     m_decoder = new FFmpegDecoder();
-    // Mesmo padrão do pancrop: decodifica um quadro por chamada, na UI, durante
+    // Mesmo padrão do pantalone: decodifica um quadro por chamada, na UI, durante
     // o arasto do trim. Zero ganho com VAAPI e risco de derrubar o app — fica
     // em software.
     m_decoder->setHardwareDecodeAllowed(false);

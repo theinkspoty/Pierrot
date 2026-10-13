@@ -17,6 +17,9 @@ class QSlider;
 class QLabel;
 class QPushButton;
 class QToolButton;
+class QListWidget;
+class QCheckBox;
+class QPainter;
 
 // Painel docável de pan/crop estilo DaVinci/Vegas: viewfinder com a caixa de
 // recorte/zoom arrastável e sliders de crop/escala/pan.
@@ -24,16 +27,22 @@ class QToolButton;
 // a tela não ficar atrás/embaixo dos sliders. Os keyframes seguem o padrão do
 // DaVinci Resolve: um losango por parâmetro alterna keyframe no playhead,
 // botões ◀/▶ navegam e o auto-keyframe cria keyframe ao mexer num slider.
-class PancropWidget : public QWidget {
+class PantaloneWidget : public QWidget {
     Q_OBJECT
 public:
-    // Propriedades de transformação do pancrop (mesmas usadas nos sliders).
+    // Propriedades de transformação do pantalone (mesmas usadas nos sliders).
     enum Prop {
         P_CropL = 0, P_CropR, P_CropT, P_CropB, P_Scale, P_PanX, P_PanY,
-        P_Rotation, P_ScaleX, P_ScaleY, P_AnchorX, P_AnchorY
+        P_Rotation, P_ScaleX, P_ScaleY, P_AnchorX, P_AnchorY,
+        // Propriedades da máscara ATIVA (valem enquanto houver m_maskSel).
+        P_MaskCx, P_MaskCy, P_MaskRx, P_MaskRy, P_MaskRot, P_MaskFeather
     };
 
-    explicit PancropWidget(QWidget* parent = nullptr);
+    // Modos do viewer: cada um mostra só as próprias alças (acaba o
+    // emaranhado de gizmos sobrepostos). Tudo se manipula no viewer.
+    enum ViewMode { ModeCrop, ModeTransform, ModeMask };
+
+    explicit PantaloneWidget(QWidget* parent = nullptr);
 
     void setProject(Project* p);
     void setClipId(const QString& id);
@@ -53,7 +62,7 @@ protected:
     // Chamado quando o dock é exibido: o frame não é decodificado enquanto o
     // painel está escondido (ver loadFrame), então é aqui que ele é buscado.
     void showEvent(QShowEvent* e) override;
-    // O viewfinder é um QWidget aninhado (Viewport); o PancropWidget apenas
+    // O viewfinder é um QWidget aninhado (Viewport); o PantaloneWidget apenas
     // monta o layout lado a lado (viewfinder | controles) e delega o desenho
     // e os eventos de mouse/roda do viewfinder.
 private:
@@ -88,7 +97,9 @@ private:
     // Keyframes (estilo DaVinci).
     double relPlayhead();
     QVector<Keyframe>* keyframesFor(int prop);
-    double propValue(int prop) const;
+    // Props keyframáveis agora: as 12 do clipe + as 6 da máscara ativa.
+    QVector<int> activeProps();
+    double propValue(int prop);
     void toggleKeyframe(int prop);
     void gotoKeyframe(int dir);
     void writeKeyframe(int prop, double value);
@@ -107,6 +118,19 @@ private:
     // viewfinder (para hit-test e arraste funcionarem com a imagem girada).
     QPointF rotatedViewPos(const QRect& viewRect, const QPoint& sp) const;
     void applyPan(double sx, double sy);
+
+    // ── Máscaras (rect/ellipse) — gizmos no viewfinder ────────────────
+    // A máscara é normalizada 0..1 ao quadro (m_frame), igual ao modelo Mask e
+    // ao overlay do preview; aqui ela é desenhada/arrastada no disp do Pantalone.
+    Mask* activeMask();
+    void refreshMaskList();
+    void syncMaskControls();
+    void applyMaskEdit();
+    void addMask(const QString& type);
+    void removeSelectedMask();
+    bool pickMaskHandle(QWidget* view, const QPoint& pos);
+    void applyMaskDrag(QWidget* view, const QPoint& pos);
+    void drawMaskGizmos(QPainter& p, const QRectF& disp, int w0, int h0);
 
     enum DragMode { DragNone, DragPan, DragAnchor, DragRotate,
                     DragZoomTL, DragZoomTR, DragZoomBL, DragZoomBR,
@@ -153,6 +177,29 @@ private:
     QHash<int, QToolButton*> m_resetBtns;
     QPushButton* m_kfAuto = nullptr;
     bool m_showGrid = true;
+
+    // ── Máscaras ──────────────────────────────────────────────────────
+    QListWidget* m_maskList = nullptr;
+    QCheckBox* m_maskEnabled = nullptr;
+    QCheckBox* m_maskInvert = nullptr;
+    QSlider* m_maskFeather = nullptr;
+    QLabel* m_maskFeatherVal = nullptr;
+    QToolButton* m_maskDelBtn = nullptr;
+    int m_maskSel = -1;        // índice da máscara ativa (-1 = nenhuma)
+    int m_maskDragHandle = -1; // alça em arraste (-1 = solto)
+    double m_maskDragRot = 0.0;
+    double m_maskDragAng = 0.0;
+    QPointF m_maskPress;       // posição (disp) no início do arraste
+    bool m_maskUndoPushed = false;
+
+    // ── Modos do viewer ──────────────────────────────────────────────
+    ViewMode m_mode = ModeTransform;
+    QHash<int, QToolButton*> m_modeBtns;
+    // Seções da sidebar que seguem o modo (mostra só as relevantes).
+    QWidget* m_secCrop = nullptr;
+    QWidget* m_secMove = nullptr;
+    QWidget* m_secRot = nullptr;
+    void setViewMode(ViewMode m);
 
     DragMode m_dragMode = DragNone;
     DragMode m_hoverMode = DragNone;  // Handle sob o mouse (para highlight)

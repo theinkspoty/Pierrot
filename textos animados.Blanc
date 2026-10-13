@@ -1,0 +1,484 @@
+{
+    "audioRate": 48000,
+    "audioTracks": [
+        {
+            "audio": true,
+            "blendMode": "normal",
+            "clips": [
+            ],
+            "collapsed": false,
+            "color": "",
+            "denoise": false,
+            "denoiseAmount": 12,
+            "eqHigh": 0,
+            "eqLow": 0,
+            "eqMid": 0,
+            "fxEffects": [
+            ],
+            "fxTrack": false,
+            "groupId": "",
+            "height": 0,
+            "id": "98ea744d-e43e-4f53-96cf-841554b9540c",
+            "invertPhase": false,
+            "kfMesaAnchorX": [
+            ],
+            "kfMesaAnchorY": [
+            ],
+            "kfMesaOpacity": [
+            ],
+            "kfMesaRotX": [
+            ],
+            "kfMesaRotY": [
+            ],
+            "kfMesaRotation": [
+            ],
+            "kfMesaScaleX": [
+            ],
+            "kfMesaScaleY": [
+            ],
+            "kfMesaX": [
+            ],
+            "kfMesaY": [
+            ],
+            "kfMesaZ": [
+            ],
+            "kfPan": [
+            ],
+            "kfVolume": [
+            ],
+            "locked": false,
+            "mesaAcceptsLights": false,
+            "mesaAnchorX": 0,
+            "mesaAnchorY": 0,
+            "mesaHidden": false,
+            "mesaLocked": false,
+            "mesaMotionBlur": true,
+            "mesaOpacity": 1,
+            "mesaRotX": 0,
+            "mesaRotY": 0,
+            "mesaRotation": 0,
+            "mesaScaleX": 1,
+            "mesaScaleY": 1,
+            "mesaX": 0,
+            "mesaY": 0,
+            "mesaZ": 0,
+            "meshPath": "",
+            "muted": false,
+            "name": "Audio 1",
+            "opacity": 1,
+            "pan": 0,
+            "reverb": false,
+            "reverbMix": 0.35,
+            "reverbSize": 0.5,
+            "solo": false,
+            "visible": true,
+            "volume": 1
+        },
+        {
+            "audio": true,
+            "blendMode": "normal",
+            "clips": [
+            ],
+            "collapsed": false,
+            "color": "",
+            "denoise": false,
+            "denoiseAmount": 12,
+            "eqHigh": 0,
+            "eqLow": 0,
+            "eqMid": 0,
+            "fxEffects": [
+            ],
+            "fxTrack": false,
+            "groupId": "",
+            "height": 0,
+            "id": "15376660-4409-4646-8357-69367f45fde2",
+            "invertPhase": false,
+            "kfMesaAnchorX": [
+            ],
+            "kfMesaAnchorY": [
+            ],
+            "kfMesaOpacity": [
+            ],
+            "kfMesaRotX": [
+            ],
+            "kfMesaRotY": [
+            ],
+            "kfMesaRotation": [
+            ],
+            "kfMesaScaleX": [
+            ],
+            "kfMesaScaleY": [
+            ],
+            "kfMesaX": [
+            ],
+            "kfMesaY": [
+            ],
+            "kfMesaZ": [
+            ],
+            "kfPan": [
+            ],
+            "kfVolume": [
+            ],
+            "locked": false,
+            "mesaAcceptsLights": false,
+            "mesaAnchorX": 0,
+            "mesaAnchorY": 0,
+            "mesaHidden": false,
+            "mesaLocked": false,
+            "mesaMotionBlur": true,
+            "mesaOpacity": 1,
+            "mesaRotX": 0,
+            "mesaRotY": 0,
+            "mesaRotation": 0,
+            "mesaScaleX": 1,
+            "mesaScaleY": 1,
+            "mesaX": 0,
+            "mesaY": 0,
+            "mesaZ": 0,
+            "meshPath": "",
+            "muted": false,
+            "name": "Audio 2",
+            "opacity": 1,
+            "pan": 0,
+            "reverb": false,
+            "reverbMix": 0.35,
+            "reverbSize": 0.5,
+            "solo": false,
+            "visible": true,
+            "volume": 1
+        },
+        {
+            "audio": true,
+            "blendMode": "normal",
+            "clips": [
+            ],
+            "collapsed": false,
+            "color": "",
+            "denoise": false,
+            "denoiseAmount": 12,
+            "eqHigh": 0,
+            "eqLow": 0,
+            "eqMid": 0,
+            "fxEffects": [
+            ],
+            "fxTrack": false,
+            "groupId": "",
+            "height": 0,
+            "id": "ebd114f3-edc9-4fb2-9368-f64845be9ec1",
+            "invertPhase": false,
+            "kfMesaAnchorX": [
+            ],
+            "kfMesaAnchorY": [
+            ],
+            "kfMesaOpacity": [
+            ],
+            "kfMesaRotX": [
+            ],
+            "kfMesaRotY": [
+            ],
+            "kfMesaRotation": [
+            ],
+            "kfMesaScaleX": [
+            ],
+            "kfMesaScaleY": [
+            ],
+            "kfMesaX": [
+            ],
+            "kfMesaY": [
+            ],
+            "kfMesaZ": [
+            ],
+            "kfPan": [
+            ],
+            "kfVolume": [
+            ],
+            "locked": false,
+            "mesaAcceptsLights": false,
+            "mesaAnchorX": 0,
+            "mesaAnchorY": 0,
+            "mesaHidden": false,
+            "mesaLocked": false,
+            "mesaMotionBlur": true,
+            "mesaOpacity": 1,
+            "mesaRotX": 0,
+            "mesaRotY": 0,
+            "mesaRotation": 0,
+            "mesaScaleX": 1,
+            "mesaScaleY": 1,
+            "mesaX": 0,
+            "mesaY": 0,
+            "mesaZ": 0,
+            "meshPath": "",
+            "muted": false,
+            "name": "Audio 3",
+            "opacity": 1,
+            "pan": 0,
+            "reverb": false,
+            "reverbMix": 0.35,
+            "reverbSize": 0.5,
+            "solo": false,
+            "visible": true,
+            "volume": 1
+        }
+    ],
+    "fps": 30,
+    "height": 1080,
+    "markers": [
+    ],
+    "masterVolume": 1,
+    "media": [
+        {
+            "audioChannels": [
+            ],
+            "audioStreams": 0,
+            "duration": 0.04,
+            "filePath": "/home/ntsc/Downloads/fundo-azul-hd-gj8ocjj36nuli64o.jpg",
+            "fps": 25,
+            "genCells": 8,
+            "generator": "",
+            "hasAudio": false,
+            "hasVideo": true,
+            "height": 1920,
+            "id": "eadc4bba-d737-407e-bd19-f17ac226f9ce",
+            "isMesh": false,
+            "isSolid": false,
+            "name": "fundo-azul-hd-gj8ocjj36nuli64o",
+            "solidColor": "#ff000000",
+            "solidColor2": "#ffffffff",
+            "width": 1080
+        }
+    ],
+    "mesaPosAbs": true,
+    "mesas": [
+    ],
+    "name": "",
+    "recordingTracks": [
+    ],
+    "textResources": [
+    ],
+    "trackGroups": [
+    ],
+    "useProxies": true,
+    "videoTracks": [
+        {
+            "audio": false,
+            "blendMode": "normal",
+            "clips": [
+            ],
+            "collapsed": false,
+            "color": "",
+            "denoise": false,
+            "denoiseAmount": 12,
+            "eqHigh": 0,
+            "eqLow": 0,
+            "eqMid": 0,
+            "fxEffects": [
+            ],
+            "fxTrack": false,
+            "groupId": "",
+            "height": 0,
+            "id": "9b71b3d1-0b31-474d-9599-4d1e2eab2e70",
+            "invertPhase": false,
+            "kfMesaAnchorX": [
+            ],
+            "kfMesaAnchorY": [
+            ],
+            "kfMesaOpacity": [
+            ],
+            "kfMesaRotX": [
+            ],
+            "kfMesaRotY": [
+            ],
+            "kfMesaRotation": [
+            ],
+            "kfMesaScaleX": [
+            ],
+            "kfMesaScaleY": [
+            ],
+            "kfMesaX": [
+            ],
+            "kfMesaY": [
+            ],
+            "kfMesaZ": [
+            ],
+            "kfPan": [
+            ],
+            "kfVolume": [
+            ],
+            "locked": false,
+            "mesaAcceptsLights": false,
+            "mesaAnchorX": 0,
+            "mesaAnchorY": 0,
+            "mesaHidden": false,
+            "mesaLocked": false,
+            "mesaMotionBlur": true,
+            "mesaOpacity": 1,
+            "mesaRotX": 0,
+            "mesaRotY": 0,
+            "mesaRotation": 0,
+            "mesaScaleX": 1,
+            "mesaScaleY": 1,
+            "mesaX": 0,
+            "mesaY": 0,
+            "mesaZ": 0,
+            "meshPath": "",
+            "muted": false,
+            "name": "Video 1",
+            "opacity": 1,
+            "pan": 0,
+            "reverb": false,
+            "reverbMix": 0.35,
+            "reverbSize": 0.5,
+            "solo": false,
+            "visible": true,
+            "volume": 1
+        },
+        {
+            "audio": false,
+            "blendMode": "normal",
+            "clips": [
+            ],
+            "collapsed": false,
+            "color": "",
+            "denoise": false,
+            "denoiseAmount": 12,
+            "eqHigh": 0,
+            "eqLow": 0,
+            "eqMid": 0,
+            "fxEffects": [
+            ],
+            "fxTrack": false,
+            "groupId": "",
+            "height": 0,
+            "id": "857c930c-a077-4ce4-a2fb-f536dd81ddc8",
+            "invertPhase": false,
+            "kfMesaAnchorX": [
+            ],
+            "kfMesaAnchorY": [
+            ],
+            "kfMesaOpacity": [
+            ],
+            "kfMesaRotX": [
+            ],
+            "kfMesaRotY": [
+            ],
+            "kfMesaRotation": [
+            ],
+            "kfMesaScaleX": [
+            ],
+            "kfMesaScaleY": [
+            ],
+            "kfMesaX": [
+            ],
+            "kfMesaY": [
+            ],
+            "kfMesaZ": [
+            ],
+            "kfPan": [
+            ],
+            "kfVolume": [
+            ],
+            "locked": false,
+            "mesaAcceptsLights": false,
+            "mesaAnchorX": 0,
+            "mesaAnchorY": 0,
+            "mesaHidden": false,
+            "mesaLocked": false,
+            "mesaMotionBlur": true,
+            "mesaOpacity": 1,
+            "mesaRotX": 0,
+            "mesaRotY": 0,
+            "mesaRotation": 0,
+            "mesaScaleX": 1,
+            "mesaScaleY": 1,
+            "mesaX": 0,
+            "mesaY": 0,
+            "mesaZ": 0,
+            "meshPath": "",
+            "muted": false,
+            "name": "Video 2",
+            "opacity": 1,
+            "pan": 0,
+            "reverb": false,
+            "reverbMix": 0.35,
+            "reverbSize": 0.5,
+            "solo": false,
+            "visible": true,
+            "volume": 1
+        },
+        {
+            "audio": false,
+            "blendMode": "normal",
+            "clips": [
+            ],
+            "collapsed": false,
+            "color": "",
+            "denoise": false,
+            "denoiseAmount": 12,
+            "eqHigh": 0,
+            "eqLow": 0,
+            "eqMid": 0,
+            "fxEffects": [
+            ],
+            "fxTrack": false,
+            "groupId": "",
+            "height": 0,
+            "id": "98405a54-9517-4b5c-b4b0-da0ac9d0b1ce",
+            "invertPhase": false,
+            "kfMesaAnchorX": [
+            ],
+            "kfMesaAnchorY": [
+            ],
+            "kfMesaOpacity": [
+            ],
+            "kfMesaRotX": [
+            ],
+            "kfMesaRotY": [
+            ],
+            "kfMesaRotation": [
+            ],
+            "kfMesaScaleX": [
+            ],
+            "kfMesaScaleY": [
+            ],
+            "kfMesaX": [
+            ],
+            "kfMesaY": [
+            ],
+            "kfMesaZ": [
+            ],
+            "kfPan": [
+            ],
+            "kfVolume": [
+            ],
+            "locked": false,
+            "mesaAcceptsLights": false,
+            "mesaAnchorX": 0,
+            "mesaAnchorY": 0,
+            "mesaHidden": false,
+            "mesaLocked": false,
+            "mesaMotionBlur": true,
+            "mesaOpacity": 1,
+            "mesaRotX": 0,
+            "mesaRotY": 0,
+            "mesaRotation": 0,
+            "mesaScaleX": 1,
+            "mesaScaleY": 1,
+            "mesaX": 0,
+            "mesaY": 0,
+            "mesaZ": 0,
+            "meshPath": "",
+            "muted": false,
+            "name": "Video 3",
+            "opacity": 1,
+            "pan": 0,
+            "reverb": false,
+            "reverbMix": 0.35,
+            "reverbSize": 0.5,
+            "solo": false,
+            "visible": true,
+            "volume": 1
+        }
+    ],
+    "width": 1920
+}

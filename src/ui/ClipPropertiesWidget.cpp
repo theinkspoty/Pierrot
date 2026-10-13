@@ -416,7 +416,7 @@ void ClipPropertiesWidget::rebuild() {
                 [this, clip]() { return &clip->kfVolume; });
         } else {
             // Opacidade geral e velocidade saíram daqui: opacidade geral é
-            // controlada no Pancrop e a velocidade no dock Velocidade. Ficar
+            // controlada no Pantalone e a velocidade no dock Velocidade. Ficar
             // nos dois lugares dava dois valores concorrentes para a mesma
             // propriedade. O fade (opacidade das pontas) continua no clipe,
             // porque é do clipe e não tem casa melhor.

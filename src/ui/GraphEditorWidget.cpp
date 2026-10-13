@@ -367,7 +367,7 @@ GraphCanvas::GraphCanvas(QWidget* parent) : QWidget(parent) {
     setMouseTracking(true);
 
     // Coalesce o `modified()` durante arrastos: o pipeline ligado a esse sinal
-    // (re-render do preview, sync do pancrop, timeline) é pesado; disparar por
+    // (re-render do preview, sync do pantalone, timeline) é pesado; disparar por
     // movimento de mouse travava o arraste horizontal do keyframe. Aqui ele é
     // agrupado em ~30Hz, mantendo a repintura local imediata.
     m_modifiedTimer = new QTimer(this);

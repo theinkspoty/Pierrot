@@ -10,15 +10,23 @@
 #include <QThread>
 
 // Instala handlers de sinais fatais (SIGSEGV, SIGABRT, etc.) que geram um
-// relatório de crash com backtrace e informações do sistema, salvos em um
-// arquivo. Deve ser chamado cedo no main().
+// relatório de crash completo, salvos em ~/Pierrot-crash-<data>.txt. Deve ser
+// chamado cedo no main().
 //
-// O relatório inclui a thread que quebrou (backtrace via execinfo) e um
-// inventário das demais threads: as registradas por registerThread() com o
-// que estavam fazendo, e todas as threads do processo lidas de
-// /proc/self/task — inclusive as que ninguém registrou (pool do Qt, threads
-// internas do FFmpeg). É o que permite localizar um SIGSEGV em decode
-// concorrente, onde a thread culpada raramente é a que quebrou.
+// O relatório traz:
+//   • cabeçalho: versão + commit + hora do build, sinal, endereço da falha
+//     (para SIGSEGV/SIGBUS/SIGILL/SIGFPE), TID/nome da thread que quebrou,
+//     Qt, executável, kernel, CPUs e CWD;
+//   • backtrace da thread que quebrou, com nomes de função resolvidos e
+//     desmangados (requer linkar o executável com -rdynamic) + um comando
+//     addr2line pronto para achar arquivo/linha;
+//   • registradores da CPU no instante da queda (x86_64);
+//   • inventário de TODAS as threads do processo lidas de /proc/self/task,
+//     com o wchan do kernel; as registradas por registerThread() aparecem com
+//     nome e o que estavam fazendo, e a que quebrou vem marcada com
+//     [CRESCEU AQUI] — é o que localiza um travamento em decode concorrente;
+//   • diagnóstico específico do sinal (ex.: para SIGABRT, explica asserção
+//     falhada/exceção não tratada e aponta o frame que chamou abort()).
 namespace CrashReporter {
 
 // Instala os handlers de sinal. Idempotente.

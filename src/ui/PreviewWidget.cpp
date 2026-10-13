@@ -2111,7 +2111,7 @@ void PreviewWidget::setProject(Project* p) {
 void PreviewWidget::refreshView() {
     // Todo caminho de EDIÇÃO passa por aqui: TimelineWidget::modified,
     // MediaPoolWidget::mediaChanged (mídia trocada), GraphEditorWidget::modified
-    // (keyframes de crop/LAINKA), PancropWidget::modified, MaskEditorDialog e
+    // (keyframes de crop/LAINKA), PantaloneWidget::modified, MaskEditorDialog e
     // ExpressWidget. O tick de playback NÃO passa por aqui (ele vai por
     // applySeekVisual), então este é o ponto exato para invalidar o memo de
     // applyCrop(): a chave carrega tempo e crop, mas não os parâmetros de LAINKA,
@@ -4778,7 +4778,7 @@ void PreviewWidget::drawGrid(QPainter& p, const QRect& canvas) {
 // Overlay de edição de máscara: desenha as formas do clipe sobre o monitor
 // com alças arrastáveis (mover centro, redimensionar bordas, rotacionar) e
 // repassa as edições via sinal. O usuário arrasta direto no preview, como no
-// PanCrop/Transform do Vegas — só é aplicado ao clipe quando o dialog salva.
+// Pantalone/Transform do Vegas — só é aplicado ao clipe quando o dialog salva.
 // ════════════════════════════════════════════════════════════════════════
 namespace {
 

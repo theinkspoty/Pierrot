@@ -227,7 +227,7 @@ signals:
     void velocityRequested(const QString& clipId); // abre dock Editor de Velocidade
     void pivotRequested(const QString& clipId); // abre dock Pivot (3D do clipe)
     void selectionChanged(const QString& id);
-    void pancropRequested(const QString& id);
+    void pantaloneRequested(const QString& id);
     void maskRequested(const QString& id);
     void propertiesRequested(const QString& id);
     void mediaImported();

@@ -9,7 +9,7 @@
 #include "ui/MediaPoolWidget.h"
 #include "ui/TimelineWidget.h"
 #include "ui/PreviewWidget.h"
-#include "ui/PancropWidget.h"
+#include "ui/PantaloneWidget.h"
 #include "ui/MaskEditorDialog.h"
 #include "ui/GraphEditorWidget.h"
 #include "ui/EffectsWidget.h"
@@ -226,8 +226,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     m_centralLay->addWidget(m_preview, 1);
     setCentralWidget(centralHost);
 
-    m_pancrop = new PancropWidget(this);
-    m_pancrop->setProject(&m_project);
+    m_pantalone = new PantaloneWidget(this);
+    m_pantalone->setProject(&m_project);
 
     m_graph = new GraphEditorWidget(this);
     m_graph->setProject(&m_project);
@@ -853,8 +853,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         statusBar()->showMessage(msg);
     });
 
-    connect(m_timeline, &TimelineWidget::selectionChanged, m_pancrop, &PancropWidget::setClipId);
-    connect(m_timeline, &TimelineWidget::playheadChanged, m_pancrop, &PancropWidget::setPlayhead);
+    connect(m_timeline, &TimelineWidget::selectionChanged, m_pantalone, &PantaloneWidget::setClipId);
+    connect(m_timeline, &TimelineWidget::playheadChanged, m_pantalone, &PantaloneWidget::setPlayhead);
     connect(m_timeline, &TimelineWidget::selectionChanged, m_graph, &GraphEditorWidget::setClipId);
     connect(m_timeline, &TimelineWidget::playheadChanged, m_graph, &GraphEditorWidget::setPlayhead);
     connect(m_timeline, &TimelineWidget::selectionChanged, m_velocity, &VelocityEditorWidget::setClipId);
@@ -886,48 +886,48 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_graph, &GraphEditorWidget::modified, this, [this]() {
         m_timeline->update();
         m_preview->refreshView();
-        m_pancrop->sync();
+        m_pantalone->sync();
         setModified();
     });
     connect(m_timeline, &TimelineWidget::modified, m_graph, &GraphEditorWidget::refresh);
-    connect(m_pancrop, &PancropWidget::modified, m_graph, &GraphEditorWidget::refresh);
-    // Correspondência pancrop ↔ editor de curvas: ao animar uma propriedade
-    // no pancrop, o editor de curvas exibe a curva correspondente.
-    connect(m_pancrop, &PancropWidget::propertyEdited, this, [this](int prop) {
+    connect(m_pantalone, &PantaloneWidget::modified, m_graph, &GraphEditorWidget::refresh);
+    // Correspondência pantalone ↔ editor de curvas: ao animar uma propriedade
+    // no pantalone, o editor de curvas exibe a curva correspondente.
+    connect(m_pantalone, &PantaloneWidget::propertyEdited, this, [this](int prop) {
         GraphProp gp;
         switch (prop) {
-            case PancropWidget::P_CropL: gp = GPropCropL; break;
-            case PancropWidget::P_CropR: gp = GPropCropR; break;
-            case PancropWidget::P_CropT: gp = GPropCropT; break;
-            case PancropWidget::P_CropB: gp = GPropCropB; break;
-            case PancropWidget::P_Scale: gp = GPropScale; break;
-            case PancropWidget::P_PanX:  gp = GPropTx; break;
-            case PancropWidget::P_PanY:  gp = GPropTy; break;
-            case PancropWidget::P_Rotation: gp = GPropRotation; break;
+            case PantaloneWidget::P_CropL: gp = GPropCropL; break;
+            case PantaloneWidget::P_CropR: gp = GPropCropR; break;
+            case PantaloneWidget::P_CropT: gp = GPropCropT; break;
+            case PantaloneWidget::P_CropB: gp = GPropCropB; break;
+            case PantaloneWidget::P_Scale: gp = GPropScale; break;
+            case PantaloneWidget::P_PanX:  gp = GPropTx; break;
+            case PantaloneWidget::P_PanY:  gp = GPropTy; break;
+            case PantaloneWidget::P_Rotation: gp = GPropRotation; break;
             default: return;
         }
         m_graph->setProperty(gp);
     });
-    connect(m_timeline, &TimelineWidget::pancropRequested, this, [this](const QString& id) {
-        m_pancrop->setClipId(id);
-        m_pancropDock->show();
-        m_pancropDock->raise();
+    connect(m_timeline, &TimelineWidget::pantaloneRequested, this, [this](const QString& id) {
+        m_pantalone->setClipId(id);
+        m_pantaloneDock->show();
+        m_pantaloneDock->raise();
     });
     connect(m_timeline, &TimelineWidget::maskRequested, this, &MainWindow::openMaskEditor);
-    connect(m_pancrop, &PancropWidget::keyframeJump, this, [this](double t) {
+    connect(m_pantalone, &PantaloneWidget::keyframeJump, this, [this](double t) {
         m_timeline->setPlayhead(t);
         m_preview->seek(t);
-        m_pancrop->setPlayhead(t);
+        m_pantalone->setPlayhead(t);
         m_graph->setPlayhead(t);
     });
     connect(m_graph, &GraphEditorWidget::keyframeJump, this, [this](double t) {
         m_timeline->setPlayhead(t);
         m_preview->seek(t);
-        m_pancrop->setPlayhead(t);
+        m_pantalone->setPlayhead(t);
         m_graph->setPlayhead(t);
     });
-    connect(m_pancrop, &PancropWidget::editStart, this, &MainWindow::pushUndo);
-    connect(m_pancrop, &PancropWidget::modified, this, [this]() {
+    connect(m_pantalone, &PantaloneWidget::editStart, this, &MainWindow::pushUndo);
+    connect(m_pantalone, &PantaloneWidget::modified, this, [this]() {
         m_timeline->update();
         m_preview->refreshView();
         setModified();
@@ -1037,7 +1037,7 @@ void MainWindow::applyWorkspacePreset(const QString& name) {
     show(m_effectsDock, false);
     show(m_expressDock, false);
     show(m_histDock, false);
-    show(m_pancropDock, false);
+    show(m_pantaloneDock, false);
     show(m_mesaDock, false);
     show(m_scopesDock, false);
     show(m_mixerDock, false);
@@ -1059,9 +1059,9 @@ void MainWindow::applyWorkspacePreset(const QString& name) {
         show(m_poolDock, true);
     } else if (name == QStringLiteral("Composição")) {
         show(m_mesaDock, true);
-        show(m_pancropDock, true);
+        show(m_pantaloneDock, true);
         show(m_scopesDock, true);
-        // O Pivot é ferramenta 3D do clipe: fica junto da Mesa e do Pancrop.
+        // O Pivot é ferramenta 3D do clipe: fica junto da Mesa e do Pantalone.
         // Sem isto ele só aparecia pelo menu de contexto do clipe, o que na
         // prática significava "não existe".
         show(m_pivotDock, true);
@@ -1309,9 +1309,9 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* e) {
     if (e->type() == QEvent::KeyPress) {
         auto* ke = static_cast<QKeyEvent*>(e);
         QWidget* fw = focusWidget();
-        const bool inPancrop = fw && m_pancrop && m_pancrop->isAncestorOf(fw);
+        const bool inPantalone = fw && m_pantalone && m_pantalone->isAncestorOf(fw);
         const bool inGraph = fw && m_graph && m_graph->isAncestorOf(fw);
-        if (!inPancrop && !inGraph) {
+        if (!inPantalone && !inGraph) {
             if (ke->key() == Qt::Key_Left && !(ke->modifiers() & Qt::AltModifier)) {
                 Project* p = m_timeline->project();
                 const double t = m_timeline->playhead() - 1.0 / (p ? p->fps : 30.0);
@@ -1570,9 +1570,9 @@ void MainWindow::createDocks() {
     m_timelineDock = makeDock(QStringLiteral("timelineDock"), tr("Timeline"),
                               nullptr, Qt::BottomDockWidgetArea);
 
-    m_pancropDock = makeDock(QStringLiteral("pancropDock"), tr("Pancrop"),
-                             m_pancrop, Qt::RightDockWidgetArea);
-    m_pancropDock->hide();
+    m_pantaloneDock = makeDock(QStringLiteral("pantaloneDock"), tr("Pantalone"),
+                             m_pantalone, Qt::RightDockWidgetArea);
+    m_pantaloneDock->hide();
 
     m_graphDock = makeDock(QStringLiteral("graphDock"), tr("Editor de Curvas"),
                            m_graph, Qt::BottomDockWidgetArea);
@@ -1678,7 +1678,7 @@ void MainWindow::createDocks() {
     m_mesa->setProject(&m_project);
     m_mesaDock = makeDock(QStringLiteral("mesaDock"), tr("Mesa"),
                           m_mesa, Qt::RightDockWidgetArea);
-    tabifyDockWidget(m_pancropDock, m_mesaDock);
+    tabifyDockWidget(m_pantaloneDock, m_mesaDock);
     m_mesaDock->hide();
 
     // Histórico de edições (undo/redo) — dock à direita, agrupado na pilha
@@ -1764,7 +1764,7 @@ void MainWindow::applyInitialDockWidths() {
     resizeDocks({m_poolDock}, {420}, Qt::Horizontal);
     resizeDocks({m_fileBrowserDock}, {220}, Qt::Horizontal);
     resizeDocks({m_effectsDock, m_expressDock, m_histDock}, {260}, Qt::Horizontal);
-    resizeDocks({m_pancropDock, m_mesaDock, m_scopesDock}, {280}, Qt::Horizontal);
+    resizeDocks({m_pantaloneDock, m_mesaDock, m_scopesDock}, {280}, Qt::Horizontal);
     // Paleta de ferramentas: coluna estreita ao lado da timeline (Tools).
     if (m_toolsDock) resizeDocks({m_toolsDock}, {60}, Qt::Horizontal);
 }
@@ -2862,7 +2862,7 @@ void MainWindow::undo() {
     --m_undoIndex;
     applyUndoState();
     // Preserva a seleção e o foco (o setProject da timeline limpa a seleção e
-    // o editor de curvas/pancrop perderiam o clipe após o Ctrl+Z).
+    // o editor de curvas/pantalone perderiam o clipe após o Ctrl+Z).
     if (!sel.isEmpty()) m_timeline->selectClip(sel);
     if (fw) fw->setFocus();
     setModified();
@@ -2883,7 +2883,7 @@ void MainWindow::applyUndoState() {
     restoreSnapshot(m_undoStack[m_undoIndex]);
     m_timeline->setProject(&m_project);
     m_pool->refreshFromProject();
-    m_pancrop->setProject(&m_project);
+    m_pantalone->setProject(&m_project);
     m_graph->refresh();
     m_props->refresh();
     m_preview->refreshView();
@@ -2955,8 +2955,8 @@ void MainWindow::newProject() {
     ++m_projGen; // troca de projeto: invalida callbacks de save em voo
     for (int i = 0; i < 3; ++i) m_project.addTrack(false);
     for (int i = 0; i < 3; ++i) m_project.addTrack(true);
-    m_pancrop->setProject(&m_project);
-    m_pancropDock->hide();
+    m_pantalone->setProject(&m_project);
+    m_pantaloneDock->hide();
     m_undoStack.clear();
     m_undoStack.push_back(snapshotState());
     m_undoLabels.clear();
@@ -3297,7 +3297,7 @@ void MainWindow::projectSettings() {
     // invalidados, então o preview passa a decodificar a fonte certa.
     m_timeline->setProject(&m_project);
     m_pool->refreshFromProject();
-    m_pancrop->setProject(&m_project);
+    m_pantalone->setProject(&m_project);
     m_preview->refreshView();
     statusBar()->showMessage(tr("Configurações do projeto atualizadas."));
 }

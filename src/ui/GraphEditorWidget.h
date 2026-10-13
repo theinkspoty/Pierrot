@@ -270,7 +270,7 @@ public:
     void setMesaTrack(Track* track);
     void setMesaCamera(MesaComposition* mc);
     void setPlayhead(double t);
-    // Seleciona a curva a exibir (usado também pelo pancrop ao animar).
+    // Seleciona a curva a exibir (usado também pelo pantalone ao animar).
     void setProperty(GraphProp p);
     QSize sizeHint() const override;
 public slots:

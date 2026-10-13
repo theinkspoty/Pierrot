@@ -121,9 +121,9 @@ static ThemeColors makeDarkPalette() {
     c.graphRulerText    = QColor(0x96, 0x99, 0xA0);
     c.graphHandle       = QColor(0x26, 0x80, 0xEB);
 
-    c.pancropBg         = QColor(0x16, 0x16, 0x16);
-    c.pancropRegion     = QColor(0x26, 0x80, 0xEB, 60);
-    c.pancropHandle     = QColor(0x26, 0x80, 0xEB);
+    c.pantaloneBg         = QColor(0x16, 0x16, 0x16);
+    c.pantaloneRegion     = QColor(0x26, 0x80, 0xEB, 60);
+    c.pantaloneHandle     = QColor(0x26, 0x80, 0xEB);
 
     c.sectionDivider    = QColor(0x0A, 0x0A, 0x0A);   // divisória quase invisível
 
@@ -236,9 +236,9 @@ static ThemeColors makeLightPalette() {
     c.graphRulerText    = QColor(90, 90, 96);
     c.graphHandle       = QColor(0, 110, 225);
 
-    c.pancropBg         = QColor(165, 165, 170);
-    c.pancropRegion     = QColor(0, 100, 225, 50);
-    c.pancropHandle     = QColor(0, 82, 185);
+    c.pantaloneBg         = QColor(165, 165, 170);
+    c.pantaloneRegion     = QColor(0, 100, 225, 50);
+    c.pantaloneHandle     = QColor(0, 82, 185);
 
     c.sectionDivider    = QColor(0, 100, 225);
 
@@ -364,9 +364,9 @@ static ThemeColors makeRidgePalette() {
     c.graphRulerText    = QColor(0x4A, 0x3A, 0x00);
     c.graphHandle       = QColor(0x4A, 0x3A, 0x00);   // alças/handles em tinta, não branco
 
-    c.pancropBg         = QColor(0xF5, 0xC0, 0x00);
-    c.pancropRegion     = QColor(0x00, 0x00, 0x00, 60);
-    c.pancropHandle     = QColor(0x00, 0x00, 0x00);
+    c.pantaloneBg         = QColor(0xF5, 0xC0, 0x00);
+    c.pantaloneRegion     = QColor(0x00, 0x00, 0x00, 60);
+    c.pantaloneHandle     = QColor(0x00, 0x00, 0x00);
 
     c.sectionDivider    = QColor(0x80, 0x66, 0x00);   // marrom (branco some no amarelo)
 
