@@ -520,6 +520,28 @@ struct Clip {
         return false;
     }
 
+    // ── Malha (warp / espremer) ────────────────────────────────────────
+    // Grade de pontos normalizados 0..1 (vértices das células). Cada ponto é
+    // a posição de DESTINO do vértice da grade regular; arrastar espreime/
+    // estica a região (warp bilinear). Resolução livre (ex.: 2×2, 3×2, 3×3).
+    QVector<QPointF> mesh;
+    int meshCols = 3;          // pontos por linha (>=2)
+    int meshRows = 3;          // pontos por coluna (>=2)
+
+    bool hasMesh() const {
+        return meshCols >= 2 && meshRows >= 2 && mesh.size() == meshCols * meshRows;
+    }
+    // Liga a malha com a grade regular (pontos uniformemente espaçados).
+    void enableDefaultMesh(int cols = 3, int rows = 3) {
+        meshCols = qMax(2, cols);
+        meshRows = qMax(2, rows);
+        mesh.clear();
+        for (int j = 0; j < meshRows; ++j)
+            for (int i = 0; i < meshCols; ++i)
+                mesh.append(QPointF(i / double(meshCols - 1),
+                                    j / double(meshRows - 1)));
+    }
+
     // Keyframes animados (tempos em segundos da timeline).
     QVector<Keyframe> kfOpacity;
     QVector<Keyframe> kfVolume;

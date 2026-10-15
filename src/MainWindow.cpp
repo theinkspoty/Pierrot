@@ -15,6 +15,7 @@
 #include "ui/EffectsWidget.h"
 #include "ui/ClipPropertiesWidget.h"
 #include "ui/TextEditorDialog.h"
+#include "ui/MotionScriptDock.h"
 #include "ui/ExpressWidget.h"
 #include "ui/FileBrowserWidget.h"
 #include "ui/MixerWidget.h"
@@ -120,7 +121,9 @@ namespace {
 //    estava errada: QMainWindow aceita docks em volta do central), e o dock
 //    previewDock deixou de existir. Bump para descartar layouts da v5 que
 //    ainda referenciam o dock fantasma.
-constexpr int kLayoutVersion = 7;
+// 8: o dock "Motion Script" (editor de animação por texto) entrou na pilha
+//    direita. Bump para que layouts antigos não o mantenham escondido.
+constexpr int kLayoutVersion = 8;
 
 // Número máximo de cópias do backup rotativo (~/Pierrot/backups/).
 constexpr int kBackupCopies = 10;
@@ -894,6 +897,21 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // Correspondência pantalone ↔ editor de curvas: ao animar uma propriedade
     // no pantalone, o editor de curvas exibe a curva correspondente.
     connect(m_pantalone, &PantaloneWidget::propertyEdited, this, [this](int prop) {
+        // Props de máscara: mostra a curva da máscara ATIVA no editor de curvas.
+        if (prop >= PantaloneWidget::P_MaskCx) {
+            GraphProp gp;
+            switch (prop) {
+                case PantaloneWidget::P_MaskCx: gp = GPropMaskCx; break;
+                case PantaloneWidget::P_MaskCy: gp = GPropMaskCy; break;
+                case PantaloneWidget::P_MaskRx: gp = GPropMaskRx; break;
+                case PantaloneWidget::P_MaskRy: gp = GPropMaskRy; break;
+                case PantaloneWidget::P_MaskRot: gp = GPropMaskRot; break;
+                case PantaloneWidget::P_MaskFeather: gp = GPropMaskFeather; break;
+                default: return;
+            }
+            m_graph->setActiveMask(m_pantalone->currentMaskIndex(), gp);
+            return;
+        }
         GraphProp gp;
         switch (prop) {
             case PantaloneWidget::P_CropL: gp = GPropCropL; break;
@@ -1613,6 +1631,17 @@ void MainWindow::createDocks() {
         m_timeline->invalidateScene();
         m_preview->refreshView();
         setModified();
+    });
+
+    // Motion Script — dock para gerar clipes animados via texto/script
+    m_motionWidget = new MotionScriptDock(this);
+    m_motionWidget->setTimeline(m_timeline);
+    m_motionDock = makeDock(QStringLiteral("motionScriptDock"), tr("Motion Script"),
+                          m_motionWidget, Qt::RightDockWidgetArea);
+    tabifyDockWidget(m_textDock, m_motionDock);
+    m_motionDock->raise();
+    connect(m_motionWidget, &MotionScriptDock::clipConverted, this, [this]() {
+        statusBar()->showMessage(tr("Clip Motion Script criado na timeline."), 2500);
     });
 
     m_fileBrowserDock = makeDock(QStringLiteral("fileBrowserDock"),

@@ -46,6 +46,13 @@ enum GraphProp {
     GPropScaleY,
     GPropAnchorX,
     GPropAnchorY,
+    // Máscara ativa (Pantalone) — curvas de motion da janela/máscara.
+    GPropMaskCx,
+    GPropMaskCy,
+    GPropMaskRx,
+    GPropMaskRy,
+    GPropMaskRot,
+    GPropMaskFeather,
     // Mesa track properties
     GPropMesaX,
     GPropMesaY,
@@ -71,6 +78,8 @@ public:
     void setData(Clip* clip, GraphProp prop, double playhead, double fps);
     void setMesaData(Track* track, GraphProp prop, double playhead, double fps);
     void setCamData(MesaComposition* mc, GraphProp prop, double playhead, double fps);
+    // Curva da máscara ativa (Pantalone): lê/escreve kfCx/kfCy/… do Mask.
+    void setMaskData(Clip* clip, int maskIndex, GraphProp prop, double playhead, double fps);
     QVector<Keyframe>* keys() const;
     double baseValue() const;
     void valueRange(double* lo, double* hi) const;
@@ -143,6 +152,8 @@ private:
     MesaComposition* m_mesaCamera = nullptr;
     bool m_mesaMode = false;
     bool m_camMode = false;
+    int m_maskIndex = -1;      // índice no clip (evita ponteiro pendurado)
+    bool m_maskMode = false;
     GraphProp m_prop = GPropOpacity;
     double m_playhead = 0.0;
     double m_fps = 30.0;
@@ -185,6 +196,7 @@ public:
     void setData(Clip* clip, GraphProp prop, double fps);
     void setMesaData(Track* track, GraphProp prop, double fps);
     void setCamData(MesaComposition* mc, GraphProp prop, double fps);
+    void setMaskData(Clip* clip, int maskIndex, GraphProp prop, double fps);
     void setPlayhead(double t);
     QSize sizeHint() const override;
 signals:
@@ -202,12 +214,15 @@ private:
     double xToT(int x) const;
     int tToX(double t) const;
     int hitKey(const QPoint& p) const;
+    const QVector<Keyframe>* keys() const; // ciente de máscara
 
     Clip* m_clip = nullptr;
     Track* m_mesaTrack = nullptr;
     MesaComposition* m_mesaCamera = nullptr;
     bool m_mesaMode = false;
     bool m_camMode = false;
+    int m_maskIndex = -1;      // índice no clip (evita ponteiro pendurado)
+    bool m_maskMode = false;
     GraphProp m_prop = GPropOpacity;
     double m_playhead = 0.0;
     double m_fps = 30.0;
@@ -230,6 +245,7 @@ public:
     void setStripData(Clip* clip, double fps);
     void setStripMesaData(Track* track, double fps);
     void setStripCamData(MesaComposition* mc, double fps);
+    void setStripMaskData(Clip* clip, int maskIndex, double fps);
     void setStripPlayhead(double t);
     void setExpanded(bool on);
     KeyframeStrip* strip() const { return m_strip; }
@@ -272,6 +288,8 @@ public:
     void setPlayhead(double t);
     // Seleciona a curva a exibir (usado também pelo pantalone ao animar).
     void setProperty(GraphProp p);
+    // Exibe a curva da máscara ATIVA (Pantalone) — motion da janela.
+    void setActiveMask(int maskIndex, GraphProp p);
     QSize sizeHint() const override;
 public slots:
     void refresh();
@@ -288,6 +306,10 @@ private:
     void toggleAnimation(GraphProp p);
     void toggleKeyAtPlayhead(GraphProp p);
     void jumpKeyframe(GraphProp p, int dir);
+    // Resolvedor ciente de máscara: keyframes/valor base do clipe OU da
+    // máscara em edição (para props GPropMask*), evitando deref de nullptr.
+    QVector<Keyframe>* keysForActive(GraphProp p) const;
+    double baseForActive(GraphProp p) const;
 
     Project* m_project = nullptr;
     QString m_clipId;
@@ -297,6 +319,7 @@ private:
     bool m_camMode = false;
     double m_playhead = 0.0;
     GraphProp m_prop = GPropOpacity;
+    int m_activeMaskIndex = -1; // máscara em edição (evita ponteiro pendurado)
     GraphCanvas* m_canvas = nullptr;
     QLabel* m_status = nullptr;
     QLabel* m_noClip = nullptr;

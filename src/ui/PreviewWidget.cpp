@@ -2124,6 +2124,10 @@ void PreviewWidget::refreshView() {
     // blend, opacidade) não mudam essas chaves e deixariam o composto velho
     // com o playhead parado. Invalida aqui, junto com o memo de crop.
     m_compositedCache = QImage();
+    // O cache de camadas guarda o quadro já COM os efeitos aplicados (inclusive
+    // a máscara); editar o clipe (ex.: criar máscara no Pantalone) deixa ele
+    // velho. Limpa para o efeito aparecer no preview.
+    m_layerCache.clear();
     updateFrame();
     update();
 }
@@ -4235,13 +4239,102 @@ void PreviewWidget::applyBasicEffects(QImage& img) {
 // Aplica as máscaras do clipe ao quadro: multiplica o alpha pela cobertura da
 // forma (rect/ellipse), com feather (borda suave por distância assinada) e
 // invert, combinadas em união. Avalia os keyframes em `rel` (tempo relativo).
+// Warp de malha 3×3 (espremer/esticar a mídia). Os 9 pontos são as posições
+// de DESTINO dos vértices da grade regular (2×2 células). Para cada pixel de
+// destino inverte o mapeamento bilinear (Newton) e amostra o fonte.
+static bool meshIsIdentity(const QVector<QPointF>& mesh, int cols, int rows) {
+    const double eps = 1e-4;
+    for (int j = 0; j < rows; ++j) {
+        for (int i = 0; i < cols; ++i) {
+            const QPointF& p = mesh[cols * j + i];
+            if (std::abs(p.x() - i / double(cols - 1)) > eps
+                || std::abs(p.y() - j / double(rows - 1)) > eps)
+                return false;
+        }
+    }
+    return true;
+}
+
+static void warpByMesh(QImage& img, const QVector<QPointF>& mesh, int cols, int rows) {
+    if (cols < 2 || rows < 2 || mesh.size() != cols * rows) return;
+    const int w = img.width(), h = img.height();
+    if (w < 2 || h < 2) return;
+    // Grade regular (padrão) = identidade: pula o warp inteiro. Sem isso, todo
+    // clipe com malha ativa rodava Newton por pixel sem alterar a imagem —
+    // causava BLOQUEIO de segundos na UI e pressão de memória (4GB peak).
+    if (meshIsIdentity(mesh, cols, rows)) return;
+    const QImage src = img.convertToFormat(QImage::Format_ARGB32);
+    if (src.isNull()) return;
+    QImage dst(w, h, QImage::Format_ARGB32);
+    if (dst.isNull()) return;
+    dst.fill(Qt::transparent);
+
+    auto S = [&](int i, int j) { // vértice regular (fonte) em px
+        return QPointF(i * (w - 1) / (cols - 1.0), j * (h - 1) / (rows - 1.0));
+    };
+    auto D = [&](int i, int j) { // ponto de controle (destino) em px
+        const QPointF& p = mesh[cols * j + i];
+        return QPointF(std::clamp(p.x(), -0.5, 1.5) * (w - 1),
+                       std::clamp(p.y(), -0.5, 1.5) * (h - 1));
+    };
+    auto bil = [](const QPointF& P00, const QPointF& P10, const QPointF& P11,
+                  const QPointF& P01, double u, double v) {
+        return (1 - v) * ((1 - u) * P00 + u * P10) + v * ((1 - u) * P01 + u * P11);
+    };
+
+    for (int cj = 0; cj < rows - 1; ++cj) {
+        for (int ci = 0; ci < cols - 1; ++ci) {
+            const QPointF P00 = D(ci, cj), P10 = D(ci + 1, cj);
+            const QPointF P11 = D(ci + 1, cj + 1), P01 = D(ci, cj + 1);
+            const double minX = std::min(std::min(P00.x(), P10.x()), std::min(P11.x(), P01.x()));
+            const double maxX = std::max(std::max(P00.x(), P10.x()), std::max(P11.x(), P01.x()));
+            const double minY = std::min(std::min(P00.y(), P10.y()), std::min(P11.y(), P01.y()));
+            const double maxY = std::max(std::max(P00.y(), P10.y()), std::max(P11.y(), P01.y()));
+            const int x0 = std::max(0, (int)std::floor(minX));
+            const int x1 = std::min(w - 1, (int)std::ceil(maxX));
+            const int y0 = std::max(0, (int)std::floor(minY));
+            const int y1 = std::min(h - 1, (int)std::ceil(maxY));
+            for (int y = y0; y <= y1; ++y) {
+                QRgb* dline = reinterpret_cast<QRgb*>(dst.scanLine(y));
+                for (int x = x0; x <= x1; ++x) {
+                    const QPointF q(x, y);
+                    double u = 0.5, v = 0.5;
+                    for (int it = 0; it < 10; ++it) {
+                        const QPointF cur = bil(P00, P10, P11, P01, u, v);
+                        const QPointF e = cur - q;
+                        if (std::abs(e.x()) < 0.3 && std::abs(e.y()) < 0.3) break;
+                        const QPointF dPdu = (1 - v) * (P10 - P00) + v * (P11 - P01);
+                        const QPointF dPdv = (1 - u) * (P01 - P00) + u * (P11 - P10);
+                        const double det = dPdu.x() * dPdv.y() - dPdu.y() * dPdv.x();
+                        if (std::abs(det) < 1e-9) break;
+                        u += (-e.x() * dPdv.y() + e.y() * dPdv.x()) / det;
+                        v += (-dPdu.x() * e.y() + dPdu.y() * e.x()) / det;
+                        u = std::clamp(u, 0.0, 1.0);
+                        v = std::clamp(v, 0.0, 1.0);
+                    }
+                    if (u < -0.001 || u > 1.001 || v < -0.001 || v > 1.001) continue;
+                    const QPointF s = bil(S(ci, cj), S(ci + 1, cj),
+                                          S(ci + 1, cj + 1), S(ci, cj + 1), u, v);
+                    const int sx = std::clamp((int)std::lround(s.x()), 0, w - 1);
+                    const int sy = std::clamp((int)std::lround(s.y()), 0, h - 1);
+                    dline[x] = reinterpret_cast<const QRgb*>(src.constScanLine(sy))[sx];
+                }
+            }
+        }
+    }
+    img = dst;
+}
+
 void PreviewWidget::applyMasks(QImage& img, const Clip& c, double rel) {
     const int w = img.width();
     const int h = img.height();
     if (w < 1 || h < 1) return;
+    // A máscara modifica o canal alpha. Se a fonte não tem alpha por byte
+    // (vídeo decodificado em RGB32), converte — antes retornava e a máscara
+    // simplesmente não aparecia no preview.
     if (img.format() != QImage::Format_ARGB32
         && img.format() != QImage::Format_ARGB32_Premultiplied)
-        return; // precisa de canal alpha por byte
+        img = img.convertToFormat(QImage::Format_ARGB32);
 
     std::vector<float> cov((size_t)w * (size_t)h, 0.0f);
     for (const Mask& m : c.masks) {
@@ -4295,6 +4388,10 @@ void PreviewWidget::applyMasks(QImage& img, const Clip& c, double rel) {
 
 void PreviewWidget::applyBasicEffectsOn(QImage& img, const Clip& c, double rel) {
     if (img.isNull()) return;
+
+    // Malha 3×3 (warp): espreime/estica a mídia antes das máscaras.
+    if (c.hasMesh())
+        warpByMesh(img, c.mesh, c.meshCols, c.meshRows);
 
     // Máscaras: recorta o quadro por forma (rect/ellipse), com feather e
     // invert, em união. Rodam antes do chroma/desfoque/cor para que esses

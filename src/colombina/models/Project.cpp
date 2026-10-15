@@ -327,6 +327,17 @@ static QJsonObject clipToJson(const Clip& c) {
         maskArr.append(mo);
     }
     o["masks"] = maskArr;
+    // ── Malha 3×3 (warp) ───────────────────────────────────────────────
+    QJsonArray meshArr;
+    for (const QPointF& pt : c.mesh) {
+        QJsonArray qa;
+        qa.append(pt.x());
+        qa.append(pt.y());
+        meshArr.append(qa);
+    }
+    o["mesh"] = meshArr;
+    o["meshCols"] = c.meshCols;
+    o["meshRows"] = c.meshRows;
     return o;
 }
 
@@ -416,6 +427,21 @@ static Clip clipFromJson(const QJsonObject& o) {
         m.kfRotation = kfFromJson(mo["kfRotation"]);
         m.kfFeather = kfFromJson(mo["kfFeather"]);
         if (!m.type.isEmpty()) c.masks.append(m);
+    }
+    // ── Malha (warp) ────────────────────────────────────────────────────
+    const QJsonArray meshArr = o["mesh"].toArray();
+    c.meshCols = o["meshCols"].toInt(3);
+    c.meshRows = o["meshRows"].toInt(3);
+    if (c.meshCols >= 2 && c.meshRows >= 2 &&
+        meshArr.size() == c.meshCols * c.meshRows) {
+        for (const QJsonValue& pv : meshArr) {
+            const QJsonArray qa = pv.toArray();
+            if (qa.size() >= 2)
+                c.mesh.append(QPointF(qa.at(0).toDouble(), qa.at(1).toDouble()));
+        }
+    } else {
+        c.meshCols = 3;
+        c.meshRows = 3;
     }
     return c;
 }

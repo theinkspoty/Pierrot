@@ -32,6 +32,7 @@
 #include <QScrollArea>
 #include <QListWidget>
 #include <QCheckBox>
+#include <QComboBox>
 #include <functional>
 #include <algorithm>
 #include <cmath>
@@ -601,6 +602,41 @@ PantaloneWidget::PantaloneWidget(QWidget* parent) : QWidget(parent) {
     m_strip->setToolTip(tr("Arraste um keyframe para a esquerda/direita para "
                            "mover sua posição no tempo"));
 
+    // ── Malha (resolução da grade) ─────────────────────────────────────
+    CollapsibleSection meshSec = makeSection(tr("Malha"));
+    auto* resLab = new QLabel(tr("Grade:"), meshSec.body);
+    m_meshRes = new QComboBox(meshSec.body);
+    for (const char* r : { "2×2", "3×2", "3×3", "4×4", "5×5" })
+        m_meshRes->addItem(QString::fromUtf8(r));
+    auto* resRow = new QHBoxLayout;
+    resRow->addWidget(resLab);
+    resRow->addWidget(m_meshRes, 1);
+    meshSec.grid->addLayout(resRow, 0, 0, 1, 5);
+    auto* meshReset = new QPushButton(tr("Redefinir malha"), meshSec.body);
+    meshSec.grid->addWidget(meshReset, 1, 0, 1, 5);
+    connect(m_meshRes, &QComboBox::currentTextChanged, this, [this](const QString& t) {
+        Clip* c = activeClip();
+        if (!c) return;
+        int cols = 3, rows = 3;
+        if (t == QLatin1String("2×2")) { cols = 2; rows = 2; }
+        else if (t == QLatin1String("3×2")) { cols = 3; rows = 2; }
+        else if (t == QLatin1String("3×3")) { cols = 3; rows = 3; }
+        else if (t == QLatin1String("4×4")) { cols = 4; rows = 4; }
+        else if (t == QLatin1String("5×5")) { cols = 5; rows = 5; }
+        emitChange();
+        c->enableDefaultMesh(cols, rows);
+        m_meshDrag = -1;
+        m_view->update();
+    });
+    connect(meshReset, &QPushButton::clicked, this, [this]() {
+        Clip* c = activeClip();
+        if (!c) return;
+        emitChange();
+        c->enableDefaultMesh(c->meshCols, c->meshRows);
+        m_meshDrag = -1;
+        m_view->update();
+    });
+
     // ── Barra lateral (recortável): ajuste fino numérico ──────────────
     // Fica estreita à direita; o viewer domina. Pode ser recolhida pelo » .
     auto* sidebar = new QWidget(this);
@@ -610,12 +646,14 @@ PantaloneWidget::PantaloneWidget(QWidget* parent) : QWidget(parent) {
     sbLay->addWidget(cropSec.container);
     sbLay->addWidget(moveSec.container);
     sbLay->addWidget(rotSec.container);
+    sbLay->addWidget(meshSec.container);
     sbLay->addWidget(resetBtn);
     sbLay->addStretch(1);
 
     m_secCrop = cropSec.container;
     m_secMove = moveSec.container;
     m_secRot = rotSec.container;
+    m_secMesh = meshSec.container;
 
     auto* scroll = new QScrollArea(this);
     scroll->setWidget(sidebar);
@@ -677,6 +715,7 @@ PantaloneWidget::PantaloneWidget(QWidget* parent) : QWidget(parent) {
     makeMode(tr("Transformar"), ModeTransform,
              tr("Zoom, posição, rotação e âncora"));
     makeMode(tr("Janelas"), ModeMask, tr("Máscaras/janelas do clipe"));
+    makeMode(tr("Malha"), ModeMesh, tr("Malha 3×3 para espremer/esticar a mídia"));
     modeBar->addStretch(1);
 
     // Raiz: vertical [ modos | viewer/sidebar | máscaras/timeline ].
@@ -988,6 +1027,17 @@ void PantaloneWidget::setViewMode(ViewMode m) {
     if (m_secCrop) m_secCrop->setVisible(m == ModeCrop);
     if (m_secMove) m_secMove->setVisible(m == ModeTransform);
     if (m_secRot)  m_secRot->setVisible(m == ModeTransform);
+    if (m_secMesh) {
+        m_secMesh->setVisible(m == ModeMesh);
+        if (m == ModeMesh && m_meshRes) {
+            Clip* c = activeClip();
+            if (c && c->hasMesh()) {
+                const QSignalBlocker b(m_meshRes);
+                m_meshRes->setCurrentText(
+                    QStringLiteral("%1×%2").arg(c->meshCols).arg(c->meshRows));
+            }
+        }
+    }
     if (m_view) m_view->update();
 }
 
@@ -1033,9 +1083,8 @@ void PantaloneWidget::toggleKeyframe(int prop) {
     if (rel < 0.0) return;
     if (!m_undoPushed) { emit editStart(); m_undoPushed = true; }
     // Sempre informa a propriedade editada, para o editor de curvas exibir a
-    // curva correspondente (independente de undo pendente). O graph editor
-    // ainda só conhece as props do clipe; as da máscara ficam fora por ora.
-    if (prop < P_MaskCx) emit propertyEdited(prop);
+    // curva correspondente (inclusive as da máscara).
+    emit propertyEdited(prop);
     for (int i = 0; i < kf->size(); ++i) {
         if (std::fabs((*kf)[i].time - rel) < 1e-6) {
             kf->removeAt(i);
@@ -1308,6 +1357,10 @@ Mask* PantaloneWidget::activeMask() {
     return &c->masks[m_maskSel];
 }
 
+Mask* PantaloneWidget::currentMask() {
+    return activeMask();
+}
+
 void PantaloneWidget::refreshMaskList() {
     if (!m_maskList) return;
     Clip* c = activeClip();
@@ -1476,7 +1529,43 @@ void PantaloneWidget::applyMaskDrag(QWidget* view, const QPoint& pos) {
         }
         refreshDiamonds();
     }
+    // Informa a propriedade editada: o editor de curvas passa a mostrar a
+    // curva da máscara em tempo real enquanto você arrasta o gizmo.
+    if (m_maskDragHandle == 0) emit propertyEdited(P_MaskCx);
+    else if (m_maskDragHandle == 1) emit propertyEdited(P_MaskRot);
+    else emit propertyEdited(P_MaskRx);
     applyMaskEdit();
+}
+
+void PantaloneWidget::drawMeshGizmo(QPainter& p, const QRectF& disp, int w0, int h0) {
+    Clip* c = activeClip();
+    if (!c || !c->hasMesh() || w0 <= 0 || h0 <= 0) return;
+    auto toDisp = [&](double nx, double ny) {
+        return QPointF(disp.left() + nx * disp.width(),
+                       disp.top() + ny * disp.height());
+    };
+    const QVector<QPointF>& mesh = c->mesh;
+    const int cols = c->meshCols, rows = c->meshRows;
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing);
+    // Grade: linhas horizontais e verticais conectando os pontos.
+    p.setPen(QPen(QColor(130, 215, 255, 140), 1));
+    for (int j = 0; j < rows; ++j)
+        for (int i = 0; i < cols - 1; ++i)
+            p.drawLine(toDisp(mesh[cols * j + i].x(), mesh[cols * j + i].y()),
+                       toDisp(mesh[cols * j + i + 1].x(), mesh[cols * j + i + 1].y()));
+    for (int i = 0; i < cols; ++i)
+        for (int j = 0; j < rows - 1; ++j)
+            p.drawLine(toDisp(mesh[cols * j + i].x(), mesh[cols * j + i].y()),
+                       toDisp(mesh[cols * (j + 1) + i].x(), mesh[cols * (j + 1) + i].y()));
+    // Pontos de controle (alças).
+    p.setPen(QPen(QColor(12, 14, 18), 1));
+    for (int k = 0; k < mesh.size(); ++k) {
+        const QPointF d = toDisp(mesh[k].x(), mesh[k].y());
+        p.setBrush(k == m_meshDrag ? QColor(255, 186, 60) : QColor(255, 255, 255));
+        p.drawEllipse(d, 4.5, 4.5);
+    }
+    p.restore();
 }
 
 void PantaloneWidget::drawMaskGizmos(QPainter& p, const QRectF& disp, int w0, int h0) {
@@ -1780,6 +1869,10 @@ void PantaloneWidget::paintViewfinder(QWidget* view) {
     if (m_mode == ModeMask)
         drawMaskGizmos(p, disp, w0, h0);
 
+    // Malha (modo Malha) — grade 3×3 de espremer/esticar a mídia.
+    if (m_mode == ModeMesh)
+        drawMeshGizmo(p, disp, w0, h0);
+
     // ── Indicador de resolução do projeto (estilo Vegas) ─────────────
     p.restore();  // restaura antes de desenhar o overlay sem rotação
     p.save();
@@ -1844,6 +1937,35 @@ void PantaloneWidget::viewportPress(QWidget* view, QMouseEvent* e) {
         if (!m_undoPushed) { emit editStart(); m_undoPushed = true; }
         e->accept();
         return;
+    }
+
+    // Malha 3×3 (modo Malha): ativa ao mexer e arrasta um ponto da grade.
+    if (m_mode == ModeMesh) {
+        Clip* c = activeClip();
+        if (c) {
+            if (!c->hasMesh()) c->enableDefaultMesh();
+            const QRectF mdisp = computeDisp(view->rect());
+            auto mToDisp = [&](double nx, double ny) {
+                return QPointF(mdisp.left() + nx * mdisp.width(),
+                               mdisp.top() + ny * mdisp.height());
+            };
+            const QPointF mpos = rotatedViewPos(view->rect(), e->pos());
+            int best = -1;
+            double bestD = 81.0; // 9² px de tolerância
+            for (int k = 0; k < c->mesh.size(); ++k) {
+                const QPointF d = mToDisp(c->mesh[k].x(), c->mesh[k].y());
+                const double dx = d.x() - mpos.x(), dy = d.y() - mpos.y();
+                const double d2 = dx * dx + dy * dy;
+                if (d2 < bestD) { bestD = d2; best = k; }
+            }
+            if (best >= 0) {
+                m_meshDrag = best;
+                if (!m_undoPushed) { emit editStart(); m_undoPushed = true; }
+                view->setCursor(Qt::ClosedHandCursor);
+                e->accept();
+                return;
+            }
+        }
     }
 
     // Hit-test nas alças de ZOOM (cantos da janela de saída, deslocados para
@@ -1968,6 +2090,22 @@ void PantaloneWidget::viewportPress(QWidget* view, QMouseEvent* e) {
 }
 
 void PantaloneWidget::viewportMove(QWidget* view, QMouseEvent* e) {
+    // Arraste da malha: move o ponto selecionado (warp).
+    if (m_meshDrag >= 0) {
+        Clip* c = activeClip();
+        if (c && c->hasMesh() && m_meshDrag < c->mesh.size() && !m_frame.isNull()) {
+            const int w0 = m_frame.width(), h0 = m_frame.height();
+            if (w0 > 0 && h0 > 0) {
+                double sx, sy;
+                screenToSource(view->rect(), e->pos(), &sx, &sy);
+                c->mesh[m_meshDrag] = QPointF(std::clamp(sx / w0, -0.5, 1.5),
+                                              std::clamp(sy / h0, -0.5, 1.5));
+                emitChange();
+                m_view->update();
+            }
+        }
+        return;
+    }
     // Arraste de máscara ativo: continua enquanto m_maskDragHandle >= 0.
     if (m_maskDragHandle >= 0) {
         applyMaskDrag(view, e->pos());
@@ -2135,6 +2273,11 @@ void PantaloneWidget::viewportMove(QWidget* view, QMouseEvent* e) {
 }
 
 void PantaloneWidget::viewportRelease(QWidget* view, QMouseEvent* e) {
+    if (m_meshDrag >= 0) {
+        m_meshDrag = -1;
+        m_undoPushed = false;
+        view->setCursor(Qt::ArrowCursor);
+    }
     if (m_maskDragHandle >= 0) {
         m_maskDragHandle = -1;
         m_undoPushed = false;
@@ -2361,6 +2504,7 @@ void PantaloneWidget::stripPress(QWidget* view, QMouseEvent* e) {
         }
     }
     if (bestIdx >= 0) {
+        m_stripLane = lane; // mover/apagar só a pista de onde veio o keyframe
         // Shift+clique alterna a seleção sem iniciar arraste.
         if (e->modifiers() & Qt::ShiftModifier) {
             if (m_selectedTimes.contains(times[bestIdx]))
@@ -2409,6 +2553,7 @@ void PantaloneWidget::stripPress(QWidget* view, QMouseEvent* e) {
 
     // Clique vazio / na agulha: limpa a seleção e pula/arrasta o playhead.
     m_selectedTimes.clear();
+    m_stripLane = -1;
     m_stripPlayheadDrag = true;
     const double frac = kfStripFrac(e->pos().x(), view);
     emit keyframeJump(c->pos + frac * dur);
@@ -2439,9 +2584,13 @@ void PantaloneWidget::stripMove(QWidget* view, QMouseEvent* e) {
     const double from = m_stripDragTo;
     m_stripDragTo = newRel;
 
-    // Move o tempo de TODAS as propriedades que tinham keyframe na posição
-    // original (preserva o agrupamento visual no playhead).
-    const QVector<int> props = activeProps();
+    // Move o keyframe SÓ na pista de onde ele veio (Recorte, Máscara ou
+    // Resto) — não sincroniza as outras pistas.
+    QVector<int> lanes[3];
+    kfLaneProps(lanes);
+    const QVector<int> props = (m_stripLane >= 0 && m_stripLane < 3)
+                                   ? lanes[m_stripLane]
+                                   : activeProps();
     for (int prop : props) {
         QVector<Keyframe>* kf = keyframesFor(prop);
         if (!kf) continue;
@@ -2535,7 +2684,11 @@ void PantaloneWidget::stripDoubleClick(QWidget* view, QMouseEvent* e) {
 void PantaloneWidget::deleteSelectedKeyframes() {
     Clip* c = activeClip();
     if (!c || m_selectedTimes.isEmpty()) return;
-    const QVector<int> props = activeProps();
+    QVector<int> lanes[3];
+    kfLaneProps(lanes);
+    const QVector<int> props = (m_stripLane >= 0 && m_stripLane < 3)
+                                   ? lanes[m_stripLane]
+                                   : activeProps();
     if (!m_undoPushed) { emit editStart(); m_undoPushed = true; }
     for (double t : m_selectedTimes) {
         for (int prop : props) {

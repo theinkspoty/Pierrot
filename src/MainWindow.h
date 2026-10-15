@@ -32,6 +32,7 @@ class EffectsWidget;
 class ExpressWidget;
 class ClipPropertiesWidget;
 class TextEditorWidget;
+class MotionScriptDock;
 class FileBrowserWidget;
 class MixerWidget;
 class EqualizerWidget;
@@ -247,6 +248,7 @@ private:
     MesaWidget* m_mesa = nullptr;
     SourceMonitorWidget* m_source = nullptr; // Source Monitor (dock, Premiere)
     TextEditorWidget* m_textEditor = nullptr; // Editor de Texto (dock, live)
+    MotionScriptDock* m_motionWidget = nullptr; // Editor de Script de Motion (dock)
     VelocityEditorWidget* m_velocity = nullptr; // Editor de Velocidade (dock)
     PivotWidget* m_pivot = nullptr; // Pivot — edição 3D do clipe (dock)
     QPointer<MaskEditorDialog> m_maskDialog;  // janela de máscara (única)
@@ -268,6 +270,7 @@ private:
     QDockWidget* m_propsDock = nullptr;     // Inspector (passo 3, ROADMAP 7.1)
     QDockWidget* m_sourceDock = nullptr;    // Source Monitor (Insert/Overwrite)
     QDockWidget* m_textDock = nullptr;      // Editor de Texto (dock, live)
+    QDockWidget* m_motionDock = nullptr;    // Editor de Script de Motion (dock)
     QDockWidget* m_velocityDock = nullptr;  // Editor de Velocidade do clipe
     QDockWidget* m_pivotDock = nullptr;    // Pivot — 3D do clipe
     // Registro de todos os docks criados por makeDock(), na ordem de criação.

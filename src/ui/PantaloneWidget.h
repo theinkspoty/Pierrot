@@ -19,6 +19,7 @@ class QPushButton;
 class QToolButton;
 class QListWidget;
 class QCheckBox;
+class QComboBox;
 class QPainter;
 
 // Painel docável de pan/crop estilo DaVinci/Vegas: viewfinder com a caixa de
@@ -40,7 +41,7 @@ public:
 
     // Modos do viewer: cada um mostra só as próprias alças (acaba o
     // emaranhado de gizmos sobrepostos). Tudo se manipula no viewer.
-    enum ViewMode { ModeCrop, ModeTransform, ModeMask };
+    enum ViewMode { ModeCrop, ModeTransform, ModeMask, ModeMesh };
 
     explicit PantaloneWidget(QWidget* parent = nullptr);
 
@@ -48,6 +49,11 @@ public:
     void setClipId(const QString& id);
     void setPlayhead(double t);
     QString clipId() const { return m_clipId; }
+    // Máscara selecionada (para o editor de curvas), ou nullptr.
+    Mask* currentMask();
+    // Índice da máscara selecionada (-1 = nenhuma). O editor de curvas usa o
+    // índice (não o ponteiro) para não depender de Clip::masks.
+    int currentMaskIndex() const { return m_maskSel; }
 public slots:
     void refresh();
     void sync();
@@ -131,6 +137,7 @@ private:
     bool pickMaskHandle(QWidget* view, const QPoint& pos);
     void applyMaskDrag(QWidget* view, const QPoint& pos);
     void drawMaskGizmos(QPainter& p, const QRectF& disp, int w0, int h0);
+    void drawMeshGizmo(QPainter& p, const QRectF& disp, int w0, int h0);
 
     enum DragMode { DragNone, DragPan, DragAnchor, DragRotate,
                     DragZoomTL, DragZoomTR, DragZoomBL, DragZoomBR,
@@ -192,6 +199,9 @@ private:
     QPointF m_maskPress;       // posição (disp) no início do arraste
     bool m_maskUndoPushed = false;
 
+    // ── Malha 3×3 (warp) ──────────────────────────────────────────────
+    int m_meshDrag = -1;       // ponto da malha em arraste (-1 = solto)
+
     // ── Modos do viewer ──────────────────────────────────────────────
     ViewMode m_mode = ModeTransform;
     QHash<int, QToolButton*> m_modeBtns;
@@ -199,6 +209,8 @@ private:
     QWidget* m_secCrop = nullptr;
     QWidget* m_secMove = nullptr;
     QWidget* m_secRot = nullptr;
+    QWidget* m_secMesh = nullptr; // resolução da malha (modo Malha)
+    QComboBox* m_meshRes = nullptr;
     void setViewMode(ViewMode m);
 
     DragMode m_dragMode = DragNone;
@@ -213,6 +225,7 @@ private:
     bool m_stripDragging = false;
     double m_stripDragFrom = -1.0;
     double m_stripDragTo = -1.0;
+    int m_stripLane = -1; // pista do keyframe selecionado (mover/apagar só ela)
     // Tempos (relativos ao clipe) dos keyframes selecionados na faixa.
     QVector<double> m_selectedTimes;
     // Arraste da agulha (playhead) na faixa de tempo.

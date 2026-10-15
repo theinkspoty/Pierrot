@@ -73,6 +73,12 @@ QString propName(GraphProp p) {
         case GPropCropB:     return QStringLiteral("Crop Bottom");
         case GPropAnchorX:   return QStringLiteral("Anchor X");
         case GPropAnchorY:   return QStringLiteral("Anchor Y");
+        case GPropMaskCx:      return QStringLiteral("Máscara Centro X");
+        case GPropMaskCy:      return QStringLiteral("Máscara Centro Y");
+        case GPropMaskRx:      return QStringLiteral("Máscara Largura");
+        case GPropMaskRy:      return QStringLiteral("Máscara Altura");
+        case GPropMaskRot:     return QStringLiteral("Máscara Rotação");
+        case GPropMaskFeather: return QStringLiteral("Máscara Suavidade");
         case GPropMesaX:     return QStringLiteral("Mesa X");
         case GPropMesaY:     return QStringLiteral("Mesa Y");
         case GPropMesaScaleX:    return QStringLiteral("Mesa Escala");
@@ -141,6 +147,41 @@ double baseFor(Clip* c, GraphProp p) {
         default: return 0.0;
     }
     return 0.0;
+}
+
+// Keyframes/valor base das propriedades da máscara ativa (Pantalone).
+QVector<Keyframe>* keysForMask(Mask* m, GraphProp p) {
+    if (!m) return nullptr;
+    switch (p) {
+        case GPropMaskCx:      return &m->kfCx;
+        case GPropMaskCy:      return &m->kfCy;
+        case GPropMaskRx:      return &m->kfRx;
+        case GPropMaskRy:      return &m->kfRy;
+        case GPropMaskRot:     return &m->kfRotation;
+        case GPropMaskFeather: return &m->kfFeather;
+        default: return nullptr;
+    }
+    return nullptr;
+}
+
+double baseForMask(Mask* m, GraphProp p) {
+    if (!m) return 0.0;
+    switch (p) {
+        case GPropMaskCx:      return m->cx;
+        case GPropMaskCy:      return m->cy;
+        case GPropMaskRx:      return m->rx;
+        case GPropMaskRy:      return m->ry;
+        case GPropMaskRot:     return m->rotation;
+        case GPropMaskFeather: return m->feather;
+        default: return 0.0;
+    }
+    return 0.0;
+}
+
+// Resolve uma máscara por ÍNDICE no clipe (seguro: não guarda ponteiro, que
+// penduraria quando Clip::masks realoca ou o clipe troca).
+static Mask* maskAt(Clip* c, int idx) {
+    return (c && idx >= 0 && idx < c->masks.size()) ? &c->masks[idx] : nullptr;
 }
 
 QVector<Keyframe>* keysForTrack(Track* t, GraphProp p) {
@@ -214,6 +255,12 @@ void rangeFor(GraphProp p, double* lo, double* hi) {
             *lo = 0.0; *hi = 1.0; return;
         case GPropAnchorX: case GPropAnchorY:
             *lo = -1.0; *hi = 1.0; return;
+        case GPropMaskCx: case GPropMaskCy:
+            *lo = 0.0; *hi = 1.0; return;
+        case GPropMaskRx: case GPropMaskRy:
+            *lo = 0.0; *hi = 1.5; return;
+        case GPropMaskRot: *lo = -360.0; *hi = 360.0; return;
+        case GPropMaskFeather: *lo = 0.0; *hi = 0.25; return;
         case GPropMesaX: *lo = -2000.0; *hi = 2000.0; return;
         case GPropMesaY: *lo = -2000.0; *hi = 2000.0; return;
         case GPropMesaScaleX: case GPropMesaScaleY:
@@ -433,6 +480,35 @@ void GraphCanvas::setMesaData(Track* track, GraphProp prop, double playhead, dou
     update();
 }
 
+void GraphCanvas::setMaskData(Clip* clip, int maskIndex, GraphProp prop, double playhead, double fps) {
+    cancelModified();
+    m_clip = clip;
+    m_mesaTrack = nullptr;
+    m_mesaCamera = nullptr;
+    m_mesaMode = false;
+    m_camMode = false;
+    m_maskIndex = maskIndex;
+    m_maskMode = (maskIndex >= 0);
+    m_prop = prop;
+    m_playhead = playhead;
+    m_fps = (fps > 1.0) ? fps : 30.0;
+    if (m_maskMode && keys()) sortKeys();
+    valueRange(&m_loProp, &m_hiProp);
+    fitValueRange();
+    m_dragKey = -1;
+    m_dragHandle = -1;
+    m_hoverKey = -1;
+    m_curveNewKey = false;
+    m_playheadDrag = false;
+    m_undoPushed = false;
+    m_selKeys.clear();
+    m_selOrig.clear();
+    m_marqueeActive = false;
+    m_t0 = 0.0;
+    m_t1 = -1.0;
+    update();
+}
+
 void GraphCanvas::setCamData(MesaComposition* mc, GraphProp prop, double playhead, double fps) {
     cancelModified();
     m_clip = nullptr;
@@ -465,6 +541,8 @@ QVector<Keyframe>* GraphCanvas::keys() const {
         return keysForCamera(m_mesaCamera, m_prop);
     if (m_mesaMode && m_mesaTrack)
         return keysForTrack(m_mesaTrack, m_prop);
+    if (m_maskMode)
+        return keysForMask(maskAt(m_clip, m_maskIndex), m_prop);
     return keysFor(m_clip, m_prop);
 }
 
@@ -473,6 +551,8 @@ double GraphCanvas::baseValue() const {
         return baseForCamera(m_mesaCamera, m_prop);
     if (m_mesaMode && m_mesaTrack)
         return baseForTrack(m_mesaTrack, m_prop);
+    if (m_maskMode)
+        return baseForMask(maskAt(m_clip, m_maskIndex), m_prop);
     return baseFor(m_clip, m_prop);
 }
 
@@ -1684,6 +1764,8 @@ void KeyframeStrip::setData(Clip* clip, GraphProp prop, double fps) {
     m_mesaMode = false;
     m_mesaCamera = nullptr;
     m_camMode = false;
+    m_maskIndex = -1;
+    m_maskMode = false;
     m_prop = prop;
     m_fps = (fps > 1.0) ? fps : 30.0;
     m_dragIdx = -1;
@@ -1697,11 +1779,35 @@ void KeyframeStrip::setMesaData(Track* track, GraphProp prop, double fps) {
     m_mesaCamera = nullptr;
     m_mesaMode = (track != nullptr);
     m_camMode = false;
+    m_maskIndex = -1;
+    m_maskMode = false;
     m_prop = prop;
     m_fps = (fps > 1.0) ? fps : 30.0;
     m_dragIdx = -1;
     m_moved = false;
     update();
+}
+
+void KeyframeStrip::setMaskData(Clip* clip, int maskIndex, GraphProp prop, double fps) {
+    m_clip = clip;
+    m_mesaTrack = nullptr;
+    m_mesaCamera = nullptr;
+    m_mesaMode = false;
+    m_camMode = false;
+    m_maskIndex = maskIndex;
+    m_maskMode = (maskIndex >= 0);
+    m_prop = prop;
+    m_fps = (fps > 1.0) ? fps : 30.0;
+    m_dragIdx = -1;
+    m_moved = false;
+    update();
+}
+
+const QVector<Keyframe>* KeyframeStrip::keys() const {
+    if (m_camMode && m_mesaCamera) return keysForCamera(m_mesaCamera, m_prop);
+    if (m_mesaMode && m_mesaTrack) return keysForTrack(m_mesaTrack, m_prop);
+    if (m_maskMode) return keysForMask(maskAt(m_clip, m_maskIndex), m_prop);
+    return keysFor(m_clip, m_prop);
 }
 
 void KeyframeStrip::setCamData(MesaComposition* mc, GraphProp prop, double fps) {
@@ -1710,6 +1816,8 @@ void KeyframeStrip::setCamData(MesaComposition* mc, GraphProp prop, double fps) 
     m_mesaCamera = mc;
     m_mesaMode = false;
     m_camMode = (mc != nullptr);
+    m_maskIndex = -1;
+    m_maskMode = false;
     m_prop = prop;
     m_fps = (fps > 1.0) ? fps : 30.0;
     m_dragIdx = -1;
@@ -1775,9 +1883,7 @@ void KeyframeStrip::paintEvent(QPaintEvent*) {
     p.setPen(QPen(themeColors().graphGrid, 1));
     p.drawLine(0, 0, width(), 0);
 
-    const QVector<Keyframe>* ks = m_camMode ? keysForCamera(m_mesaCamera, m_prop)
-                               : m_mesaMode ? keysForTrack(m_mesaTrack, m_prop)
-                                             : keysFor(m_clip, m_prop);
+    const QVector<Keyframe>* ks = keys();
     if (!ks || ks->isEmpty()) return;
 
     const int midY = height() / 2;
@@ -1813,9 +1919,7 @@ void KeyframeStrip::mousePressEvent(QMouseEvent* e) {
     m_dragIdx = hitKey(e->pos());
     m_moved = false;
     if (m_dragIdx >= 0) {
-        const QVector<Keyframe>* ks = m_camMode ? keysForCamera(m_mesaCamera, m_prop)
-                                    : m_mesaMode ? keysForTrack(m_mesaTrack, m_prop)
-                                                 : keysFor(m_clip, m_prop);
+        const QVector<Keyframe>* ks = keys();
         if (ks) m_dragT0 = (*ks)[m_dragIdx].time;
         emit keyClicked(m_dragIdx);
         e->accept();
@@ -1827,9 +1931,12 @@ void KeyframeStrip::mouseMoveEvent(QMouseEvent* e) {
         QWidget::mouseMoveEvent(e);
         return;
     }
-    QVector<Keyframe>& K = m_camMode ? *keysForCamera(m_mesaCamera, m_prop)
-                          : m_mesaMode ? *keysForTrack(m_mesaTrack, m_prop)
-                                      : *keysFor(m_clip, m_prop);
+    QVector<Keyframe>* kp = m_camMode ? keysForCamera(m_mesaCamera, m_prop)
+                            : m_mesaMode ? keysForTrack(m_mesaTrack, m_prop)
+                            : m_maskMode ? keysForMask(maskAt(m_clip, m_maskIndex), m_prop)
+                                        : keysFor(m_clip, m_prop);
+    if (!kp) return;
+    QVector<Keyframe>& K = *kp;
     if (m_dragIdx >= K.size()) return;
     double dur;
     if (m_mesaMode || m_camMode) {
@@ -2023,6 +2130,10 @@ void GraphPropRow::setStripCamData(MesaComposition* mc, double fps) {
     m_strip->setCamData(mc, m_prop, fps);
 }
 
+void GraphPropRow::setStripMaskData(Clip* clip, int maskIndex, double fps) {
+    m_strip->setMaskData(clip, maskIndex, m_prop, fps);
+}
+
 void GraphPropRow::setStripPlayhead(double t) {
     m_strip->setPlayhead(t);
 }
@@ -2184,12 +2295,16 @@ void GraphEditorWidget::setClipId(const QString& id) {
     m_mesaMode = false;
     m_mesaCamera = nullptr;
     m_camMode = false;
+    m_activeMaskIndex = -1; // sai do modo máscara ao trocar de clipe
+    if (m_prop >= GPropMaskCx && m_prop <= GPropMaskFeather) m_prop = GPropOpacity;
     rebuildRows();
     Clip* c = activeClip();
     if (c) {
-        if (keysFor(c, m_prop)->isEmpty()) {
+        auto* km = keysFor(c, m_prop);
+        if (!km || km->isEmpty()) {
             for (GraphProp p : m_props) {
-                if (!keysFor(c, p)->isEmpty()) { m_prop = p; break; }
+                auto* kp = keysFor(c, p);
+                if (kp && !kp->isEmpty()) { m_prop = p; break; }
             }
         }
         if (!m_props.contains(m_prop)) m_prop = m_props.first();
@@ -2299,31 +2414,36 @@ void GraphEditorWidget::refresh() {
     bool changed = false;
     {
         Clip* c = activeClip();
-        bool hasVideo = false, hasAudio = false;
+        bool hasVideo = false, hasAudio = false, hasMask = false;
         if (c && m_project) {
             const MediaItem* mi = m_project->findMedia(c->mediaId);
             if (mi) { hasVideo = mi->hasVideo; hasAudio = mi->hasAudio; }
             if (c->isText) hasVideo = true;
+            hasMask = !c->masks.isEmpty();
         }
-        bool haveVideo = false, haveAudio = false;
+        bool haveVideo = false, haveAudio = false, haveMask = false;
         for (GraphProp p : m_props) {
-            if (p == GPropVolume) haveAudio = true; else haveVideo = true;
+            if (p == GPropVolume) haveAudio = true;
+            else if (p >= GPropMaskCx && p <= GPropMaskFeather) haveMask = true;
+            else haveVideo = true;
         }
-        changed = (haveVideo != hasVideo) || (haveAudio != hasAudio);
+        // Reconstrói também quando o nº de máscaras muda (criou/apagou máscara
+        // no Pantalone) — é o que faz o grupo "Máscara" aparecer.
+        changed = (haveVideo != hasVideo) || (haveAudio != hasAudio) ||
+                  (haveMask != hasMask);
     }
-    if (changed) {
-        rebuildRows();
-        m_canvas->setData(activeClip(), m_prop, m_playhead,
-                          m_project ? m_project->fps : 30.0);
-        return;
-    }
+    if (changed) rebuildRows();
 
     const double zt0 = m_canvas->zoomT0();
     const double zt1 = m_canvas->zoomT1();
     const QVector<double> selTimes = m_canvas->selectionTimes();
     syncRowData();
-    m_canvas->setData(activeClip(), m_prop, m_playhead,
-                      m_project ? m_project->fps : 30.0);
+    const double fps = m_project ? m_project->fps : 30.0;
+    // Canvas no modo certo: máscara se a prop atual é de máscara, senão clipe.
+    if (m_prop >= GPropMaskCx && m_prop <= GPropMaskFeather)
+        m_canvas->setMaskData(activeClip(), m_activeMaskIndex, m_prop, m_playhead, fps);
+    else
+        m_canvas->setData(activeClip(), m_prop, m_playhead, fps);
     if (zt1 > zt0) m_canvas->setZoom(zt0, zt1);
     if (!selTimes.isEmpty()) m_canvas->selectKeysAtTimes(selTimes);
 }
@@ -2339,6 +2459,35 @@ Clip* GraphEditorWidget::activeClip() const {
     return nullptr;
 }
 
+// Keyframes/valor base cientes de máscara: para props GPropMask* usa a máscara
+// em edição; para as demais, o clipe. Evita deref de nullptr.
+QVector<Keyframe>* GraphEditorWidget::keysForActive(GraphProp p) const {
+    if (p >= GPropMaskCx && p <= GPropMaskFeather)
+        return keysForMask(maskAt(activeClip(), m_activeMaskIndex), p);
+    return keysFor(activeClip(), p);
+}
+
+double GraphEditorWidget::baseForActive(GraphProp p) const {
+    if (p >= GPropMaskCx && p <= GPropMaskFeather)
+        return baseForMask(maskAt(activeClip(), m_activeMaskIndex), p);
+    return baseFor(activeClip(), p);
+}
+
+// Exibe a curva da máscara ATIVA (Pantalone) — motion da janela no editor de
+// curvas. Não passa por m_props (que lista só props do clipe).
+void GraphEditorWidget::setActiveMask(int maskIndex, GraphProp p) {
+    if (p < GPropMaskCx || p > GPropMaskFeather) return;
+    m_activeMaskIndex = maskIndex;
+    m_prop = p;
+    for (GraphProp q : m_props) {
+        GraphPropRow* row = m_rows.value((int)q);
+        if (row) row->setActive(false);
+    }
+    m_canvas->setMaskData(activeClip(), maskIndex, p, m_playhead,
+                          m_project ? m_project->fps : 30.0);
+    syncValueLabels();
+}
+
 double GraphEditorWidget::propValueAtPlayhead(GraphProp p) const {
     if (m_camMode && m_mesaCamera) {
         const QVector<Keyframe>* K = keysForCamera(m_mesaCamera, p);
@@ -2349,15 +2498,17 @@ double GraphEditorWidget::propValueAtPlayhead(GraphProp p) const {
         return kfValue(*K, baseForTrack(m_mesaTrack, p), std::max(0.0, m_playhead));
     }
     Clip* c = activeClip();
-    if (!c) return 0.0;
-    const QVector<Keyframe>* K = keysFor(c, p);
-    const double rel = std::clamp(m_playhead - c->pos, 0.0, c->dur);
-    return kfValue(*K, baseFor(c, p), rel);
+    const QVector<Keyframe>* K = keysForActive(p);
+    if (!K) return baseForActive(p);
+    double rel = 0.0;
+    if (c) rel = std::clamp(m_playhead - c->pos, 0.0, c->dur);
+    return kfValue(*K, baseForActive(p), rel);
 }
 
 void GraphEditorWidget::setProperty(GraphProp p) {
     if (!m_props.contains(p)) return;
     if (p == m_prop) return;
+    m_activeMaskIndex = -1; // selecionar prop do clipe sai do modo máscara
     m_prop = p;
     if (m_camMode && m_mesaCamera)
         m_canvas->setCamData(m_mesaCamera, p, m_playhead,
@@ -2391,9 +2542,15 @@ void GraphEditorWidget::syncRowData() {
             row->setStripMesaData(m_mesaTrack, fps);
         } else {
             Clip* c = activeClip();
-            row->setStripData(c, fps);
-            const QVector<Keyframe>* K = keysFor(c, p);
-            row->setAnimated(K && !K->isEmpty());
+            if (p >= GPropMaskCx && p <= GPropMaskFeather) {
+                const QVector<Keyframe>* K = keysForMask(maskAt(c, m_activeMaskIndex), p);
+                row->setAnimated(K && !K->isEmpty());
+                row->setStripMaskData(c, m_activeMaskIndex, fps);
+            } else {
+                row->setStripData(c, fps);
+                const QVector<Keyframe>* K = keysFor(c, p);
+                row->setAnimated(K && !K->isEmpty());
+            }
         }
         row->setActive(p == m_prop);
     }
@@ -2420,16 +2577,18 @@ void GraphEditorWidget::rebuildRows() {
     m_rows.clear();
     m_props.clear();
 
+    // Propriedades separadas em GRUPOS (cabeçalho + linhas), em vez de uma
+    // coluna plana — alinhado à estrutura por modo do Pantalone.
+    struct G { QString title; QVector<GraphProp> props; };
+    QVector<G> groups;
+
     if (m_camMode && m_mesaCamera) {
-        // Mesa camera properties
-        m_props = { GPropCamX, GPropCamY, GPropCamZoom, GPropCamRotation };
-        if (!m_props.contains(m_prop)) m_prop = m_props.first();
+        groups << G{ QString(), { GPropCamX, GPropCamY, GPropCamZoom, GPropCamRotation } };
         m_noClip->setVisible(false);
     } else if (m_mesaMode && m_mesaTrack) {
-        m_props = { GPropMesaX, GPropMesaY, GPropMesaScaleX,
-                    GPropMesaRotation, GPropMesaOpacity,
-                    GPropMesaAnchorX, GPropMesaAnchorY };
-        if (!m_props.contains(m_prop)) m_prop = m_props.first();
+        groups << G{ QString(), { GPropMesaX, GPropMesaY, GPropMesaScaleX,
+                                  GPropMesaRotation, GPropMesaOpacity,
+                                  GPropMesaAnchorX, GPropMesaAnchorY } };
         m_noClip->setVisible(false);
     } else {
         Clip* c = activeClip();
@@ -2445,55 +2604,79 @@ void GraphEditorWidget::rebuildRows() {
             if (mi) { hasVideo = mi->hasVideo; hasAudio = mi->hasAudio; }
             if (c->isText) hasVideo = true;
         }
+        m_activeMaskIndex = -1;
         if (hasVideo) {
-            const QVector<GraphProp> vid = { GPropOpacity, GPropScale, GPropScaleX,
-                                             GPropScaleY,
-                                             GPropRotation,
-                                             GPropTx, GPropTy,
-                                             GPropAnchorX, GPropAnchorY,
-                                             GPropCropL, GPropCropR, GPropCropT, GPropCropB };
-            for (GraphProp p : vid) m_props.append(p);
+            groups << G{ tr("Transformação"),
+                         { GPropOpacity, GPropScale, GPropScaleX, GPropScaleY,
+                           GPropRotation, GPropTx, GPropTy, GPropAnchorX, GPropAnchorY } };
+            groups << G{ tr("Recorte"),
+                         { GPropCropL, GPropCropR, GPropCropT, GPropCropB } };
         }
-        if (hasAudio) m_props.append(GPropVolume);
-        if (m_props.isEmpty()) m_props.append(GPropOpacity);
-        if (!m_props.contains(m_prop)) m_prop = m_props.first();
+        if (hasAudio) groups << G{ tr("Áudio"), { GPropVolume } };
+        if (!c->masks.isEmpty()) {
+            m_activeMaskIndex = 0;
+            groups << G{ tr("Máscara"),
+                         { GPropMaskCx, GPropMaskCy, GPropMaskRx, GPropMaskRy,
+                           GPropMaskRot, GPropMaskFeather } };
+        }
+        if (groups.isEmpty()) groups << G{ QString(), { GPropOpacity } };
         m_noClip->setVisible(false);
     }
 
-    for (GraphProp p : m_props) {
-        auto* row = new GraphPropRow(p);
-        m_rowsLayout->insertWidget(m_rowsLayout->count() - 1, row);
-        m_rows.insert((int)p, row);
+    // Monta m_props na ordem de exibição (grupos).
+    for (const G& g : groups)
+        for (GraphProp p : g.props) m_props.append(p);
+    if (!m_props.contains(m_prop)) m_prop = m_props.first();
 
-        connect(row, &GraphPropRow::propertyClicked, this, [this, p]() { setProperty(p); });
-        connect(row, &GraphPropRow::stopwatchClicked, this, [this, p]() { toggleAnimation(p); });
-        connect(row, &GraphPropRow::prevKeyframe, this, [this, p]() { jumpKeyframe(p, -1); });
-        connect(row, &GraphPropRow::nextKeyframe, this, [this, p]() { jumpKeyframe(p, 1); });
-        connect(row, &GraphPropRow::toggleKeyframe, this, [this, p]() { toggleKeyAtPlayhead(p); });
-        connect(row, &GraphPropRow::stripKeyClicked, this, [this, p](int idx) {
-            setProperty(p);
-            m_canvas->selectKeyIndex(idx);
-        });
-        connect(row, &GraphPropRow::stripDragStart, this, [this](int) { emit editStart(); });
-        connect(row, &GraphPropRow::stripDragKey, this, [this, p](int idx, double t) {
-            m_canvas->dragStripTime(idx, t);
-        });
-        connect(row, &GraphPropRow::stripAddKey, this, [this, p](double t) {
-            Clip* c = activeClip();
-            if (!c) return;
-            const double rel = std::clamp(t, 0.0, c->dur);
-            QVector<Keyframe>& K = *keysFor(c, p);
-            for (const Keyframe& k : K)
-                if (std::fabs(k.time - rel) < 1e-9) {
-                    m_status->setText(tr("Já existe um keyframe nesse tempo."));
-                    return;
-                }
-            const double v = kfValue(K, baseFor(c, p), rel);
-            emit editStart();
-            m_canvas->addKeyframe(rel, v);
-            syncRowData();
-            m_canvas->commitChange();
-        });
+    for (const G& g : groups) {
+        if (!g.title.isEmpty()) {
+            auto* h = new QLabel(g.title);
+            h->setObjectName(QStringLiteral("graphGroupHeader"));
+            h->setStyleSheet(QStringLiteral(
+                "color:%1; font-weight:bold; font-size:11px; padding:7px 4px 2px 4px;")
+                .arg(themeColors().text.name()));
+            m_rowsLayout->insertWidget(m_rowsLayout->count() - 1, h);
+        }
+        for (GraphProp p : g.props) {
+            auto* row = new GraphPropRow(p);
+            m_rowsLayout->insertWidget(m_rowsLayout->count() - 1, row);
+            m_rows.insert((int)p, row);
+
+            connect(row, &GraphPropRow::propertyClicked, this, [this, p]() {
+                if (p >= GPropMaskCx && p <= GPropMaskFeather) setActiveMask(m_activeMaskIndex, p);
+                else setProperty(p);
+            });
+            connect(row, &GraphPropRow::stopwatchClicked, this, [this, p]() { toggleAnimation(p); });
+            connect(row, &GraphPropRow::prevKeyframe, this, [this, p]() { jumpKeyframe(p, -1); });
+            connect(row, &GraphPropRow::nextKeyframe, this, [this, p]() { jumpKeyframe(p, 1); });
+            connect(row, &GraphPropRow::toggleKeyframe, this, [this, p]() { toggleKeyAtPlayhead(p); });
+            connect(row, &GraphPropRow::stripKeyClicked, this, [this, p](int idx) {
+                if (p >= GPropMaskCx && p <= GPropMaskFeather) setActiveMask(m_activeMaskIndex, p);
+                else setProperty(p);
+                m_canvas->selectKeyIndex(idx);
+            });
+            connect(row, &GraphPropRow::stripDragStart, this, [this](int) { emit editStart(); });
+            connect(row, &GraphPropRow::stripDragKey, this, [this, p](int idx, double t) {
+                m_canvas->dragStripTime(idx, t);
+            });
+            connect(row, &GraphPropRow::stripAddKey, this, [this, p](double t) {
+                Clip* c = activeClip();
+                QVector<Keyframe>* kp = keysForActive(p);
+                if (!c || !kp) return;
+                const double rel = std::clamp(t, 0.0, c->dur);
+                QVector<Keyframe>& K = *kp;
+                for (const Keyframe& k : K)
+                    if (std::fabs(k.time - rel) < 1e-9) {
+                        m_status->setText(tr("Já existe um keyframe nesse tempo."));
+                        return;
+                    }
+                const double v = kfValue(K, baseForActive(p), rel);
+                emit editStart();
+                m_canvas->addKeyframe(rel, v);
+                syncRowData();
+                m_canvas->commitChange();
+            });
+        }
     }
     syncRowData();
     if (GraphPropRow* r = m_rows.value((int)m_prop)) r->setExpanded(true);
@@ -2527,13 +2710,14 @@ void GraphEditorWidget::toggleAnimation(GraphProp p) {
         }
     } else {
         Clip* c = activeClip();
-        if (!c) return;
-        QVector<Keyframe>& K = *keysFor(c, p);
+        QVector<Keyframe>* kp = keysForActive(p);
+        if (!c || !kp) return;
+        QVector<Keyframe>& K = *kp;
         if (K.isEmpty()) {
             const double rel = std::clamp(m_playhead - c->pos, 0.0, c->dur);
             Keyframe nk;
             nk.time = rel;
-            nk.value = baseFor(c, p);
+            nk.value = baseForActive(p);
             nk.interp = KfSmooth;
             K.append(nk);
         } else {
@@ -2579,8 +2763,9 @@ void GraphEditorWidget::toggleKeyAtPlayhead(GraphProp p) {
         }
     } else {
         Clip* c = activeClip();
-        if (!c) return;
-        QVector<Keyframe>& K = *keysFor(c, p);
+        QVector<Keyframe>* kp = keysForActive(p);
+        if (!c || !kp) return;
+        QVector<Keyframe>& K = *kp;
         const double rel0 = std::clamp(m_playhead - c->pos, 0.0, c->dur);
         const double rel = std::round(rel0 / fr) * fr;
         int at = -1;
@@ -2590,7 +2775,7 @@ void GraphEditorWidget::toggleKeyAtPlayhead(GraphProp p) {
             K.removeAt(at);
             m_canvas->clearSelection();
         } else {
-            const double v = kfValue(K, baseFor(c, p), rel);
+            const double v = kfValue(K, baseForActive(p), rel);
             m_canvas->addKeyframe(rel, v);
         }
     }
