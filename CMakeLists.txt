@@ -132,6 +132,7 @@ set(PIERROT_APP_SOURCES
     src/ui/PreviewProfiler.cpp
     src/ui/PreviewWidget.cpp
     src/ui/TlLog.cpp
+    src/ui/UiDecode.cpp
     src/ui/PantaloneWidget.cpp
     src/ui/ExportDialog.cpp
     src/ui/ProjectSettingsDialog.cpp
@@ -179,6 +180,7 @@ set(PIERROT_APP_HEADERS
     src/ui/SourceMonitorWidget.h
     src/ui/VelocityEditorWidget.h
     src/ui/PivotWidget.h
+    src/ui/UiDecode.h
     src/ui/RenderQueueDialog.h
     src/ui/ScopeWidget.h
     src/ui/MediaPoolWidget.h

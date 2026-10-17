@@ -11,9 +11,11 @@
 
 #include <QWidget>
 #include <QImage>
+#include <QShowEvent>
 #include <QVector>
 #include "colombina/models/Project.h"
 #include "colombina/mesh/ObjLoader.h"
+#include "laartman/FFmpegDecoder.h"
 
 class QLabel;
 class QSlider;
@@ -40,6 +42,7 @@ signals:
 
 protected:
     void paintEvent(QPaintEvent*) override;
+    void showEvent(QShowEvent* e) override;
     void mousePressEvent(QMouseEvent*) override;
     void mouseMoveEvent(QMouseEvent*) override;
     void mouseReleaseEvent(QMouseEvent*) override;
@@ -72,6 +75,10 @@ private:
     QString m_clipId;
     double m_playhead = 0.0;
     QImage m_frame; // quadro de mídia (se houver)
+    // Decoder persistente do canvas: antes cada ensureFrame() abria um
+    // FFmpegDecoder novo (open ~500-800ms no thread da UI). Reaproveitado
+    // via uidecode::decode — reabre só na troca de arquivo.
+    FFmpegDecoder m_decoder;
     mesh::ObjMesh m_mesh;
     bool m_hasMesh = false;
     DragMode m_drag = DragNone;

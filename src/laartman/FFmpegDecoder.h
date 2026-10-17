@@ -44,6 +44,11 @@ public:
     ~FFmpegDecoder();
 
     static FFmpegMediaInfo probe(const QString& filePath);
+    // true se o arquivo é um GIF/WebP ANIMADO (múltiplos quadros + duração
+    // real). Usado pelo exportador para decidir entre o caminho de imagem
+    // estática (-loop 1 -framerate) e o de vídeo em loop (-ignore_loop 0).
+    // Falso para PNG/JPEG/BMP/SVG/estáticos (inclusive GIF de um quadro).
+    static bool isAnimatedImage(const QString& filePath);
     // Picos de áudio de um stream específico (índice do stream) ou do melhor
     // stream (streamIndex < 0).
     static FFmpegAudioPeaks audioPeaks(const QString& filePath,
@@ -153,6 +158,14 @@ private:
 
     // Imagem estática (JPEG, PNG, BMP, etc.): frame único, sem seek.
     bool m_isImage = false;
+    // GIF animado (múltiplos quadros + NETSCAPE com loop). frameAt() embrulha
+    // o tempo pedido com fmod sobre a duração real do arquivo, repetindo a
+    // animação para preencher o clipe (paridade com o export, que passa
+    // -ignore_loop 0 para o demuxer loopar os pacotes).
+    bool m_isLoopGif = false;
+    // Duração REAL do arquivo em segundos (fmt->duration / AV_TIME_BASE). Usada
+    // só pelo embrulho do loop acima; -1 quando desconhecida/não-loop.
+    double m_gifDurationSec = -1.0;
 
     // Aceleração de hardware (VAAPI/Linux; desligável com PIERROT_GPU=0).
     // m_hwPixFmt guarda o formato do quadro decodificado (ex.: AV_PIX_FMT_VAAPI);

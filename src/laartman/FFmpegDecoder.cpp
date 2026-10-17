@@ -206,6 +206,34 @@ FFmpegMediaInfo FFmpegDecoder::probe(const QString& filePath) {
     return info;
 }
 
+bool FFmpegDecoder::isAnimatedImage(const QString& filePath) {
+    const QString ext = QFileInfo(filePath).suffix().toLower();
+    if (ext != QLatin1String("gif") && ext != QLatin1String("webp"))
+        return false;
+    AVFormatContext* fmt = nullptr;
+    if (avformat_open_input(&fmt, filePath.toUtf8().constData(), nullptr, nullptr) != 0)
+        return false;
+    bool animated = false;
+    if (avformat_find_stream_info(fmt, nullptr) >= 0) {
+        for (unsigned i = 0; i < fmt->nb_streams && !animated; ++i) {
+            const AVStream* st = fmt->streams[i];
+            if (st->codecpar->codec_type != AVMEDIA_TYPE_VIDEO)
+                continue;
+            const int64_t nb = st->nb_frames;
+            // nb_frames é a fonte confiável quando disponível (0 = desconhecido,
+            // tratado como animado por segurança). duration só decide se nb_frames
+            // não foi preenchido, e exige múltiplos quadros implícitos (>1 frame
+            // de atraso), evitando falso positivo em GIF estático com delay longo.
+            animated = (nb != 1)
+                       && (nb > 1
+                           || (st->duration != AV_NOPTS_VALUE && st->duration > 1)
+                           || (fmt->duration > AV_TIME_BASE / 4));
+        }
+    }
+    avformat_close_input(&fmt);
+    return animated;
+}
+
 static double sampleAt(const AVFrame* frame, const AVCodecContext* cc, int channel, int index) {
     const AVSampleFormat sf = static_cast<AVSampleFormat>(frame->format);
     const int planar = av_sample_fmt_is_planar(sf);
@@ -651,6 +679,19 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
                                                  || (st->nb_frames > 0 && st->nb_frames <= 1));
                         m_isImage = (isImagePath(filePath) && singleFrame)
                                     || (fmt->duration <= 0);
+                        // GIF/WebP animado (extensão de imagem mas NÃO singleFrame,
+                        // com duração real > 0): frameAt() embrulha o tempo pedido
+                        // com fmod sobre a duração real para repetir a animação
+                        // enquanto o clipe durar (paridade com o export, que usa
+                        // -ignore_loop 0 para o demuxer loopar os pacotes).
+                        if (!m_isImage && isImagePath(filePath)) {
+                            m_isLoopGif = true;
+                            m_gifDurationSec = (fmt->duration > 0)
+                                ? fmt->duration / (double)AV_TIME_BASE : -1.0;
+                        } else {
+                            m_isLoopGif = false;
+                            m_gifDurationSec = -1.0;
+                        }
                     }
                 } // if (cc) after avcodec_parameters_to_context
             }
@@ -762,6 +803,8 @@ void FFmpegDecoder::freeAllLocked() {
     }
     m_stream = -1;
     m_isImage = false;
+    m_isLoopGif = false;
+    m_gifDurationSec = -1.0;
     m_audioStream = -1;
     m_requestedAudioStream = -1;
     m_audioSkipFrames = 0;
@@ -896,7 +939,12 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
     };
 
     // ── Frame cache: retorna frame armazenado se disponível ───────────
-    const double targetSec = m_isImage ? 0.0 : std::max(0.0, seconds);
+    double targetSec = m_isImage ? 0.0 : std::max(0.0, seconds);
+    // GIF/WebP animado: embrulha o tempo pedido sobre a duração real do
+    // arquivo, repetindo a animação para preencher o clipe (paridade com o
+    // export, que usa -ignore_loop 0 no demuxer).
+    if (m_isLoopGif && m_gifDurationSec > 0.0)
+        targetSec = std::fmod(targetSec, m_gifDurationSec);
     if (!m_isImage && m_fps > 0.0) {
         const FrameCacheKey cacheKey{(int64_t)std::floor(targetSec * m_fps), maxWidth};
         result = frameFromCacheLocked(cacheKey);

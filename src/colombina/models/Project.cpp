@@ -8,6 +8,7 @@
 
 #include <QJsonArray>
 #include <QJsonValue>
+#include <QDebug>
 
 static QJsonObject mediaToJson(const MediaItem& m) {
     QJsonObject o;
@@ -719,10 +720,24 @@ QJsonObject Project::toJson() const {
     // e recebem +canvasW/2, +canvasH/2 no load — ver fromJson.
     o["mesaPosAbs"] = true;
 
+    // Carimbo do schema: sem isto, fromJson só conseguia detectar formato
+    // legado por marcadores ad-hoc (mesaPosAbs) e não havia como medir a
+    // idade de um .Blanc nem planejar migração futura — ver Project.h.
+    o["schemaVersion"] = kSchemaVersion;
+
     return o;
 }
 
 void Project::fromJson(const QJsonObject& o) {
+    // Formato do arquivo: ausente = v0 (legado puro, anterior ao carimbo).
+    const int ver = o["schemaVersion"].toInt(0);
+    if (ver > kSchemaVersion)
+        qWarning().noquote()
+            << QStringLiteral(".Blanc com schemaVersion %1 (app suporta %2):"
+                              " arquivo de versão mais nova, carregando mesmo"
+                              " assim — campos desconhecidos serão ignorados")
+                      .arg(ver).arg(kSchemaVersion);
+
     name = o["name"].toString();
     width = o["width"].toInt(1920);
     height = o["height"].toInt(1080);
@@ -791,7 +806,7 @@ void Project::fromJson(const QJsonObject& o) {
         if (!m.id.isEmpty()) mesas.append(m);
     }
 
-    // Migração v1 → v2: antes, mesaX/mesaY e camX/camY eram OFFSETS do centro
+    // Migração v0 → v1: antes, mesaX/mesaY e camX/camY eram OFFSETS do centro
     // da comp (default 0 = centro). Agora são px ABSOLUTOS com origem no canto
     // superior esquerdo (default = centro). Desloca valores estáticos E os
     // keyframes, preservando a aparência dos projetos antigos.
@@ -799,7 +814,12 @@ void Project::fromJson(const QJsonObject& o) {
     // composição que ainda referencie o conteúdo anterior.
     ++revision;
 
-    if (!o.contains("mesaPosAbs") || !o["mesaPosAbs"].toBool()) {
+    // Para arquivos v0 (sem schemaVersion) o marcador `mesaPosAbs` continua
+    // sendo a autoridade — ele foi gravado antes do carimbo de versão. Já um
+    // arquivo carimbado (ver >= kSchemaMesaPosAbs) tem o formato atual por
+    // definição, mesmo que o marcador esteja faltando.
+    if (ver < kSchemaMesaPosAbs &&
+        (!o.contains("mesaPosAbs") || !o["mesaPosAbs"].toBool())) {
         for (MesaComposition& m : mesas) {
             const double dX = m.canvasW / 2.0;
             const double dY = m.canvasH / 2.0;

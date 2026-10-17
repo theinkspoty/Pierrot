@@ -132,6 +132,19 @@
 - Escala X/Y independente, âncora X/Y arrastrável.
 - **Safe margins** (title-safe/action-safe) no viewfinder.
 - **Âncora visual** (gizmo branco) no viewfinder, arrastrável.
+- **Dock "Animação"** (presets de keyframes): aplica presets aos clipes
+  **selecionados** na timeline (tempos escalados pela duração real; as props
+  tocadas são substituídas). Grupos: Entradas, Saídas, Idle (laço), Efeitos e
+  **Elásticos** — trio profissional **Slam Elástico** (queda + squash
+  antifase), **Estica e Some** (anticipation + fuga elástica) e **Mola (laço)**
+  (bob + twist antifase em loop), todos com `KfElastic`/`KfBounce`/`KfBack`.
+  Cada preset tem **miniatura animada estilo Vegas Pro**: simulação em clipe
+  dummy 1920×1080 redesenhada em loop a ~30 fps (timer único só roda com o
+  dock visível), com fantasma de repouso e ícone play que orienta rotação e
+  deformação — preview antes de aplicar: **fileiras de 3 colunas sem espremer**
+  (mínimo do card = sizeHint; rolagem horizontal se faltar espaço) e a
+  miniatura só **reproduz com o mouse sobre ela** (em repouso mostra um quadro
+  estático representativo; ao sair, volta ao repouso).
 
 ## Clipes de Texto
 

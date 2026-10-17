@@ -92,13 +92,22 @@ constexpr int kPresetMaxV = 100, kPresetMaxA = 78;
 // própria; sem isto entrariam como um clipe de ~1s, estreito demais).
 constexpr double kDefaultImageDur = 3.0;
 
+// true para GIF/WebP ANIMADO (múltiplos quadros). Diferente de imagem estática,
+// esses têm duração real e devem ser inseridos com ela (o decoder loopa o
+// arquivo para preencher um clipe mais longo).
+bool isAnimatedMedia(const QString& path) {
+    return FFmpegDecoder::isAnimatedImage(path);
+}
 
 
 
-// Duração efetiva ao inserir uma mídia na timeline: imagens usam o padrão
-// próprio; vídeo/áudio usam a duração real (ou 1s como fallback).
+
+// Duração efetiva ao inserir uma mídia na timeline: imagens estáticas usam o
+// padrão próprio; GIF/WebP animado, vídeo e áudio usam a duração real (ou 1s
+// como fallback).
 double mediaInsertDur(const MediaItem& m) {
-    if (isImageFile(m.filePath)) return kDefaultImageDur;
+    if (isImageFile(m.filePath) && !isAnimatedMedia(m.filePath))
+        return kDefaultImageDur;
     return m.duration > 0 ? m.duration : 1.0;
 }
 
@@ -137,7 +146,7 @@ TimelineWidget::TimelineWidget(QWidget* parent) : QWidget(parent) {
         if (m_dragMode == MoveClip || m_dragMode == TrimLeft
             || m_dragMode == TrimRight || m_dragMode == ResizeTrack)
             refreshView();
-        else if (m_dragMode == FadeIn)
+        else if (m_dragMode == FadeIn || m_dragMode == FadeOut)
             // Fade/opacidade não mudam o conteúdo cacheado dos clipes (onda,
             // thumb) nem o conjunto de clipes — só o alpha de composição.
             // invalidateScene() aqui refazia o rebuildClipIndex() por mousemove
@@ -344,7 +353,8 @@ void TimelineWidget::insertSourceAtPlayhead(const QString& mediaId, double srcIn
     const double t = snapTime(std::max(0.0, m_playhead));
     double dur = srcOut - srcIn;
     if (dur <= kMinDur) {
-        if (isImageFile(m->filePath)) dur = kDefaultImageDur;
+        if (isImageFile(m->filePath) && !isAnimatedMedia(m->filePath))
+            dur = kDefaultImageDur;
         else dur = m->duration > 0 ? m->duration : 1.0;
         srcIn = 0.0;
     }
@@ -493,7 +503,8 @@ void TimelineWidget::overwriteSourceAtPlayhead(const QString& mediaId, double sr
     const double t = snapTime(std::max(0.0, m_playhead));
     double dur = srcOut - srcIn;
     if (dur <= kMinDur) {
-        if (isImageFile(m->filePath)) dur = kDefaultImageDur;
+        if (isImageFile(m->filePath) && !isAnimatedMedia(m->filePath))
+            dur = kDefaultImageDur;
         else dur = m->duration > 0 ? m->duration : 1.0;
         srcIn = 0.0;
     }

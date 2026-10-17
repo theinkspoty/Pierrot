@@ -33,7 +33,7 @@ alterações locais, que implementam:
 | **Alta** | B-03 | Otimização `invalidateSceneContent()` é anulada na mesma chamada | `TimelineWidget.cpp` | ✅ corrigido |
 | **Alta** | B-04 | Faixa de scroll não cresce ao estender o último clipe | `TimelineDrag.cpp` | ✅ corrigido |
 | **Média** | B-05 | Presets perdem Suavidade e Spill | `clipattrs.h` | ✅ corrigido |
-| **Média** | B-06 | Exportador ignora Suavidade/Spill e fixa `blend=0.1` | `ProjectExporter.cpp` | ✅ parcial (blend) |
+| **Média** | B-06 | Exportador ignora Suavidade/Spill e fixa `blend=0.1` | `ProjectExporter.cpp` | ✅ (blend + despill) |
 | **Média** | B-07 | Guia de alinhamento aparece a cada mousemove | `TimelineDrag.cpp` | ✅ corrigido |
 | **Média** | B-08 | Supressão de spill funciona apenas para chave verde | `PreviewWidget.cpp` | ✅ corrigido |
 | **Média** | B-09 | Peso e critério da supressão de spill invertidos/limitados | `PreviewWidget.cpp` | ✅ corrigido |
@@ -59,7 +59,7 @@ alterações locais, que implementam:
 | B-03 | `FadeIn`/`ClipOpacity` passaram a despachar para `invalidateSceneContent()` em vez do ramo `else` que chamava `invalidateScene()` e refazia `rebuildClipIndex()`. |
 | B-04 | Nova função `ensureScrollRangeReaches(double tEnd)`: só alarga a barra horizontal, nunca encolhe, não recalcula o range vertical. Chamada no arraste; `mouseReleaseEvent()` passou a chamar `updateScrollRanges()` para ressincronizar ao fim do gesto. |
 | B-05 | `clipattrs.h` grava e lê `chromaKeySoftness` e `chromaKeySpillSuppress`, com fallback ao default do struct para presets antigos. |
-| B-06 | `blend` do `chromakey` no export passa a derivar de `chromaKeySoftness` (`clamp(softness, 0.01, 0.9)`), reproduzindo o 0.1 no default. A supressão de spill continua sem equivalente no ffmpeg — limitação documentada no código. |
+| B-06 | `blend` do `chromakey` no export passa a derivar de `chromaKeySoftness` (`clamp(softness, 0.01, 0.9)`), reproduzindo o 0.1 no default. **Depois (2026-10-17)**: a supressão de spill ganhou equivalente no export via filtro `despill` (`despillFilter()` em `ProjectExporter.cpp`) — `type` derivado do mesmo `keyCh` do preview, `mix=0.5` (= média dos outros dois canais, o `replacement` do preview), escala do canal = `-0.675 * spill` (ponto médio do sino `0.35 + 0.65*bell` do preview, já que o export não tem alpha por pixel). Chave vermelha e ties ficam de fora (mesma exclusão do preview); sem `despill` no ffmpeg (≥4.3) o export avisa no log e segue sem ele. |
 | B-07 | A guia passa a comparar o resultado do `snapToEdges()` com a **grid quantizada**, e não com a posição bruta — assim só o snap de borda acende. Em `TrimLeft`/`TrimRight` a comparação é pré-`clamp`. A fórmula X duplicada foi trocada por `timeToX()`. |
 | B-08 | O canal da chave (`keyCh`) é derivado de `kr/kg/kb` e o despill passa a operar nele, cobrindo verde, azul e vermelho. Ties (ciano, magenta, amarelo, cinza) ficam sem despill por não haver canal dominante definido. |
 | B-09 | Peso trocado para uma curva em sino `4a(1-a)` (máxima em alpha intermediário, onde a franja é visível) e o gate `pixLum > keyLum` foi trocado por "o canal da chave domina o pixel", que não descarta pixels escuros contaminados. Arredondamento unificado em `lround`. |
@@ -813,8 +813,14 @@ ausentes.
 
 ### Pendente de validação
 
-Nenhuma das correções foi **compilada ou testada** (ver seção 8). Antes de
-considerar fechado, é preciso:
+**Validação estática (2026-10-17, sem toolchain no ambiente):** as 17
+correções foram conferidas linha a linha no código atual. 16 conformes;
+**B-03 estava incompleto** (`FadeOut` não estava no ramo `invalidateSceneContent()`
+de `TimelineWidget.cpp` — corrigido, junto com a entrada do enum real que é
+`FadeOut`, não `ClipOpacity` como escrito aqui) e **B-06 avançou de
+"parcial" para completo** (spill via `despill`, ver seção 2.1).
+
+Ainda falta a validação por execução:
 
 - [ ] `cmake --build build -j$(nproc)` e `ctest --test-dir build`.
 - [ ] `tst_serialization` (os dois casos novos de preset).

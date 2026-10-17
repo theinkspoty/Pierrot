@@ -5,6 +5,7 @@
 
 #include "PantaloneWidget.h"
 #include "ui/Theme.h"
+#include "ui/UiDecode.h"
 #include "colombina/ffmpeg/ProxyManager.h"
 #include "colombina/generators.h"
 #include "colombina/render/TextRender.h"
@@ -896,14 +897,14 @@ void PantaloneWidget::loadFrame() {
         if (m_decoder.isOpen()) m_decoder.close();
         m_lastDecodedClipId = c->id;
     }
-    if (!m_decoder.isOpen() || m_decoder.source() != vpath)
-        m_decoder.open(vpath);
-    if (!m_decoder.isOpen()) { m_frame = QImage(); m_framePath.clear(); return; }
     // Decodifica o frame na posição atual do playhead para preview em tempo real.
     const double t = std::clamp(m_playhead - c->pos, 0.0, std::max(0.0, c->dur - 0.05));
-    m_frame = m_decoder.frameAt(t, 720);
-    m_decoder.releaseBuffers();
-    m_framePath = mi->filePath;
+    // Ponto único de decode na UI (uidecode::decode): gate de visibilidade,
+    // reabertura só na troca de arquivo e releaseBuffers() pós-frame — antes
+    // essas regras moravam duplicadas aqui e no PivotCanvas.
+    m_frame = uidecode::decode(this, m_decoder, vpath, t, 720);
+    if (m_frame.isNull()) m_framePath.clear();
+    else m_framePath = mi->filePath;
 }
 
 void PantaloneWidget::syncFromClip() {

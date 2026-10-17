@@ -231,6 +231,8 @@ private slots:
     void roundTripIsLossless();
     void roundTripPreservesKeyFields();
     void legacyProjectWithoutMesaPosAbsShiftsCamera();
+    void schemaVersionIsStamped();
+    void legacyProjectWithoutSchemaVersionLoads();
     void recordingTracksRoundTrip();
     void legacyProjectWithoutRecordingTracksLoads();
     void promoteRecordingTrackMovesItToAudio();
@@ -346,6 +348,32 @@ void TestSerialization::legacyProjectWithoutMesaPosAbsShiftsCamera() {
     QCOMPARE(p.mesas.size(), 1);
     QVERIFY(qAbs(p.mesas[0].camX - 320.0) < 1e-9);
     QVERIFY(qAbs(p.mesas[0].camY - 180.0) < 1e-9);
+}
+
+void TestSerialization::schemaVersionIsStamped() {
+    // Todo .Blanc novo sai carimbado: sem o campo não havia como saber a
+    // idade do arquivo nem planejar migração (só havia marcador ad-hoc).
+    const QJsonObject o = makeProject().toJson();
+    QVERIFY(o.contains(QStringLiteral("schemaVersion")));
+    QCOMPARE(o["schemaVersion"].toInt(), Project::kSchemaVersion);
+    QVERIFY(Project::kSchemaVersion >= 1);
+}
+
+void TestSerialization::legacyProjectWithoutSchemaVersionLoads() {
+    // .Blanc gravado antes do carimbo (v0): abre sem erro e, ao salvar de
+    // novo, recebe a versão atual — v0 entra, kSchemaVersion sai.
+    QJsonObject o = makeProject().toJson();
+    o.remove(QStringLiteral("schemaVersion"));
+    QVERIFY(!o.contains(QStringLiteral("schemaVersion")));
+
+    Project p;
+    p.fromJson(o);
+    QCOMPARE(p.name, makeProject().name);
+    QCOMPARE(p.mesas.size(), makeProject().mesas.size());
+    // Round-trip mantém o conteúdo e re-carimba a versão atual.
+    const QJsonObject saved = p.toJson();
+    QCOMPARE(saved["schemaVersion"].toInt(), Project::kSchemaVersion);
+    QCOMPARE(saved["mesaPosAbs"].toBool(), true);
 }
 
 void TestSerialization::recordingTracksRoundTrip() {

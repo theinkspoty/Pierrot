@@ -5,6 +5,7 @@
 
 #include "PivotWidget.h"
 #include "ui/Theme.h"
+#include "ui/UiDecode.h"
 #include "laartman/FFmpegDecoder.h"
 #include "colombina/ffmpeg/ProxyManager.h"
 #include "colombina/render/Math3D.h"
@@ -155,6 +156,10 @@ PivotCanvas::PivotCanvas(QWidget* parent) : QWidget(parent) {
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
+    // Decode pontual no thread da UI: nunca VAAPI. O device é compartilhado
+    // com os workers do preview e o conflito de agendamento derrubava o app
+    // (mesma razão de setHardwareDecodeAllowed antes de open).
+    m_decoder.setHardwareDecodeAllowed(false);
 }
 
 Clip* PivotCanvas::resolveClip() const {
@@ -222,12 +227,22 @@ void PivotCanvas::ensureFrame() {
     if (!m_clip || !m_project || m_hasMesh) return;
     const MediaItem* m = m_project->findMedia(m_clip->mediaId);
     if (!m || m->isSolid || m->filePath.isEmpty() || !m->hasVideo) return;
-    FFmpegDecoder dec;
-    dec.setHardwareDecodeAllowed(false);
-    dec.open(ProxyManager::instance().resolveVideo(m->filePath), -1);
     const double srcT = clipSrcTime(*m_clip,
         std::clamp(m_playhead - m_clip->pos, 0.0, m_clip->dur));
-    m_frame = dec.frameAt(srcT, 480);
+    // Ponto único de decode na UI (uidecode::decode): não decodifica com o
+    // dock oculto e reaproveita o decoder — antes era um FFmpegDecoder novo
+    // a cada seleção de clipe, síncrono no thread da UI.
+    m_frame = uidecode::decode(this, m_decoder,
+        ProxyManager::instance().resolveVideo(m->filePath), srcT, 480);
+}
+
+void PivotCanvas::showEvent(QShowEvent* e) {
+    QWidget::showEvent(e);
+    // setClipId() pode ter rodado com o dock escondido (MainWindow liga a
+    // seleção da timeline ao pivot antes/depois de o dock existir): a guarda
+    // de visibilidade do decode descartou o frame — carrega agora.
+    ensureFrame();
+    update();
 }
 
 void PivotCanvas::paintEvent(QPaintEvent*) {

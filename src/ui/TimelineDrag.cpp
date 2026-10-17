@@ -35,7 +35,8 @@ namespace {
 
 
 double mediaInsertDur(const MediaItem& m) {
-    if (isImageFile(m.filePath)) return 3.0;
+    if (isImageFile(m.filePath) && !FFmpegDecoder::isAnimatedImage(m.filePath))
+        return 3.0;
     return m.duration > 0 ? m.duration : 1.0;
 }
 } // namespace

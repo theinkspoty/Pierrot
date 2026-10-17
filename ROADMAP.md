@@ -320,8 +320,12 @@ em tom claro, volume da faixa atrás de **Shift+V** (como Premiere), seleção
 
 ### Kernel — `Plano-Atualizacao-Kernel.md` (P0–P6)
 
-- [ ] **P0 — Versionamento de schema `.Blanc`** — `toJson`/`fromJson` não
-  gravam versão; só migração ad-hoc (`mesaPosAbs`).
+- [x] **P0 — Versionamento de schema `.Blanc`** — `toJson` grava
+  `schemaVersion` (`Project::kSchemaVersion`, v0 = arquivo sem campo) e
+  `fromJson` lê `ver`, com migração versionada (`kSchemaMesaPosAbs`, o
+  marcador legado `mesaPosAbs` continua autoridade para v0) e aviso no log
+  quando o arquivo é de um app mais novo. Convenção documentada em
+  `Project.h`; testes em `tst_serialization` (stamp + legado sem campo).
 - [ ] **P1 — Indexação O(1) por id** — finders lineares; `findMesaForTrack` é
   O(n·m); sem `QHash` no modelo.
 - [~] **P2 — Load `.Blanc` assíncrono e defensivo** — save é async, load é
@@ -517,7 +521,16 @@ bug de latência, não de correção.
 - [ ] **Auto-detect por medição** — usar o `PreviewProfiler`, não chute.
 - [ ] **Proxy como lever principal** — VAAPI é o maior ganho de CPU; não
   desligar primeiro.
-- [ ] **Auditoria de decode síncrono na UI** — `PivotCanvas::ensureFrame()` abre
-  decoder por chamada sem guarda `isVisible()`; unificar em `decodeUiFrame()`.
+- [x] **Auditoria de decode síncrono na UI** — unificado em
+  `uidecode::decode()` (`src/ui/UiDecode.*`): guarda `isVisible()` (dock
+  oculto não decodifica), decoder persistente reaproveitado (antes o Pivot
+  abria um `FFmpegDecoder` novo por seleção de clipe) e `releaseBuffers()`
+  pós-frame. `PivotCanvas` ganhou `showEvent` para recarregar ao exibir;
+  `PantaloneWidget::loadFrame` passou a usar o mesmo ponto único.
+- [x] **GIF/WebP animado em loop** — `FFmpegDecoder` detecta mídia animada
+  (`isAnimatedImage`) e embrulha o tempo pedido com `fmod` sobre a duração
+  real, repetindo a animação enquanto o clipe durar (paridade com o export,
+  que usa `-ignore_loop 0` no demuxer). Inserção na timeline usa a duração
+  real do arquivo em vez de 3s fixos.
 - [ ] **Build stamp no binário** — commit + data em `version.h` via CMake, no
   título/About/crash report (todo build mostra "0.7" hoje).

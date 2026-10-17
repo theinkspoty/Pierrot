@@ -1093,6 +1093,23 @@ public:
         return d;
     }
 
+    // ── Schema do .Blanc versionado ──────────────────────────────────────
+    // toJson() carimba `schemaVersion` = kSchemaVersion. Arquivos SEM o
+    // campo são v0 (legado: tudo anterior ao carimbo). Cada mudança
+    // INCOMPATÍVEL no formato segue o passo:
+    //   1. cria a constante kSchema<Nome> = <nova versão>;
+    //   2. no fromJson, adiciona `if (ver < kSchema<Nome>) { ...migra... }`
+    //      no fim da leitura, em ordem cronológica (NUNCA renumerar nem
+    //      remover passos já publicados);
+    //   3. sobe kSchemaVersion.
+    // Arquivos gravados por um app MAIS NOVO (ver > kSchemaVersion) abrem
+    // mesmo assim (parse defensivo), com aviso no log do fromJson.
+    static constexpr int kSchemaVersion = 1;
+    // v0 → v1: mesaX/mesaY/camX/camY deixaram de ser offsets do centro e
+    // passaram a ser px absolutos (marcador legado `mesaPosAbs`, anterior ao
+    // schemaVersion — para arquivos v0 ele continua sendo a autoridade).
+    static constexpr int kSchemaMesaPosAbs = 1;
+
     QJsonObject toJson() const;
     void fromJson(const QJsonObject& obj);
 };

@@ -292,6 +292,67 @@ QString num(double v) {
     return QString::number(v, 'f', 3);
 }
 
+// Detector (com cache por sessão) do filtro `despill` no ffmpeg do sistema —
+// existe desde o ffmpeg 4.3/2020. Sem ele, a supressão de spill fica fora do
+// render: a paridade com o preview cai, mas o export continua funcionando.
+static bool despillAvailable() {
+    static const bool ok = [] {
+        QProcess p;
+        p.start(QStringLiteral("ffmpeg"), QStringList() << QStringLiteral("-filters"));
+        if (!p.waitForFinished(8000)) return false;
+        const QString out = QString::fromUtf8(p.readAllStandardOutput());
+        return out.contains(QStringLiteral(" despill "));
+    }();
+    return ok;
+}
+
+// Supressão de spill no export (paridade com o preview — B-06 do
+// Relatorio-Possiveis-Bugs). O preview puxa o canal da chave em direção à
+// média dos outros dois, com força `spillAmt = spill * (0.35 + 0.65 *
+// sino(alpha))`; no export não há alpha por pixel, então usa-se o ponto
+// médio do sino (0.35 + 0.65*0.5 = 0.675) — aproximação, recalibrar se a
+// diferença visual pesar.
+//
+// `despill` só tem type green/blue e opera por limiar: com mix=0.5 o limiar
+// vira a média dos outros dois canais (= o `replacement` do preview), e a
+// escala negativa do canal da chave reproduz `corrigido = ch - amt*(ch-med)`.
+// Chave vermelha não tem equivalente e ties (ciano/magenta/amarelo/cinza)
+// ficam de fora — mesmo critério de exclusão do preview (keyDominates).
+QString despillFilter(const Clip& c) {
+    const double spill = std::clamp(c.chromaKeySpillSuppress, 0.0, 1.0);
+    if (spill <= 0.0) return QString();
+    if (!despillAvailable()) {
+        // Degradação visível: o controle existe na UI, mas o render sai sem
+        // ele — avisa uma vez por sessão em vez de sumir com o efeito.
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            qWarning().noquote()
+                << QStringLiteral("[export] ffmpeg sem filtro `despill`"
+                                  " (>= 4.3): supressão de spill ignorada no"
+                                  " render — preview e export divergem");
+        }
+        return QString();
+    }
+
+    // Mesmo derivador de canal do preview (PreviewWidget, bloco chroma key).
+    const QColor key = c.chromaKeyColor;
+    const int kv[3] = { key.red(), key.green(), key.blue() };
+    const int keyCh = (kv[1] >= kv[0] && kv[1] >= kv[2]) ? 1
+                    : (kv[2] >= kv[0] ? 2 : 0);
+    if (!(kv[keyCh] > kv[(keyCh + 1) % 3] && kv[keyCh] > kv[(keyCh + 2) % 3]))
+        return QString(); // tie: sem canal dominante, igual ao preview
+    if (keyCh == 0)
+        return QString(); // chave vermelha: despill não tem type=red
+
+    const double amt = -0.675 * spill;
+    if (keyCh == 1)
+        return QStringLiteral("despill=type=green:mix=0.5:green=%1")
+            .arg(num(amt));
+    return QStringLiteral("despill=type=blue:mix=0.5:green=0:blue=%1")
+        .arg(num(amt));
+}
+
 // Cadeia de filtros `equalizer` (um por banda com ganho não nulo) que
 // reproduz o EQ gráfico de 10 bandas do modelo. Bandas de 1 oitava
 // (width_type=o), casando com os biquads peaking do preview (Q≈1,414).
@@ -1092,11 +1153,20 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                                         .arg(num(v.c->dur * v.c->speed));
                 }
             }
-        } else if (isImageFile(v.m->filePath)) {
-            // Imagem estática: loop contínuo na taxa do projeto, limitado à
-            // duração do clipe.
+        } else if (isImageFile(v.m->filePath)
+                   && !FFmpegDecoder::isAnimatedImage(v.m->filePath)) {
+            // Imagem estática (PNG/JPEG/BMP/WebP estático, GIF de um quadro):
+            // loop contínuo na taxa do projeto, limitado à duração do clipe.
             args << "-loop" << "1" << "-framerate" << num(FPS)
                  << "-t" << num(v.c->dur * v.c->speed) << "-i" << v.m->filePath;
+        } else if (isImageFile(v.m->filePath)) {
+            // GIF animado (ou WebP animado): o demuxer respeita a extensão
+            // NETSCAPE com -ignore_loop 0 e repete os pacotes enquanto o
+            // clipe durar (paridade com o preview, que embrulha o tempo com
+            // fmod). Sem -ignore_loop o ffmpeg toca uma vez só e congela.
+            args << "-ignore_loop" << "0"
+                 << "-ss" << num(v.c->in) << "-t" << num(v.c->dur * v.c->speed)
+                 << "-i" << v.m->filePath;
         } else {
             args << "-ss" << num(v.c->in) << "-t" << num(v.c->dur * v.c->speed)
                  << "-i" << v.m->filePath;
@@ -1423,12 +1493,17 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                 // 0.1, então o controle de suavidade não tinha efeito algum no
                 // render final. Mapeamento escolhido para reproduzir o 0.1 no
                 // default (softness = 0.10) e cobrir toda a faixa 0→1.
-                // A supressão de spill não tem filtro equivalente no ffmpeg.
                 const double blend = std::clamp(v.c->chromaKeySoftness, 0.01, 0.9);
                 fc.last().append(QStringLiteral(",chromakey=color=%1:similarity=%2:blend=%3")
                                      .arg(hexColor(v.c->chromaKeyColor))
                                      .arg(num(std::clamp(v.c->chromaKeySimilarity, 0.0, 1.0)))
                                      .arg(num(blend)));
+                // Supressão de spill logo depois (ordem do preview: alpha é
+                // calculado antes, a correção do canal da chave não muda o
+                // alpha). Sem o filtro despill no ffmpeg, sai sem despill.
+                const QString desp = despillFilter(*v.c);
+                if (!desp.isEmpty())
+                    fc.last().append(QLatin1Char(',') + desp);
             }
             if (v.c->brightness != 0.0 || v.c->contrast != 1.0 || v.c->saturation != 1.0)
                 fc.last().append(QStringLiteral(",eq=brightness=%1:contrast=%2:saturation=%3")
