@@ -36,7 +36,7 @@ makedepends=(
     'ffmpeg'
 )
 source=("$pkgname-$pkgver.tar.gz")
-sha256sums=('ab6a5ad0cfdc27785000f80a8efc10d02196870f910740e3e3e2e03983a6ade6')
+sha256sums=('3ac265be86efa99da6c743cdf7ef80890ab7e070060572790f546ccf24afe7e1')
 
 build() {
     cmake -S "$pkgname-$pkgver" -B build \
