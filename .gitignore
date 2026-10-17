@@ -4,6 +4,7 @@ dist/
 packaging/.tools/
 *.AppImage
 *.AppImage.zsync
+squashfs-root/
 target/
 packaging/arch/pkg/
 packaging/arch/src/

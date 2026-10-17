@@ -9,6 +9,7 @@
 #include "colombina/generators.h"
 #include "colombina/mesh/ObjLoader.h"
 #include "colombina/render/Math3D.h"
+#include "colombina/render/TextRender.h"
 
 #include <QPainter>
 #include <QPainterPath>
@@ -730,30 +731,21 @@ bool MesaRenderer::prepareLayer(LayerPrep& out, const MesaComposition& mesa,
         if (cRel < 0 || cRel >= c.dur) continue;
 
         if (c.isText) {
-            // Renderiza texto no TAMANHO NATURAL da camada (a composição).
-            // A escala é aplicada pela matriz da camada — antes o texto era
-            // escalado duas vezes (frame × sc e de novo no drawImage).
+            // Renderiza texto no TAMANHO NATURAL da camada (a composição),
+            // compartilhando layout/paint com o preview e o export
+            // (textrender) — inclui emoji colorido e posx/posy.
             const TextStyle* ts = project.textStyleFor(c);
             const int fw = qMax(64, (int)(mesa.canvasW));
             const int fh = qMax(32, (int)(mesa.canvasH));
             frame = QImage(fw, fh, QImage::Format_ARGB32);
             frame.fill(Qt::transparent);
-            const double sizeFrac = ts->textSize > 0.0 ? ts->textSize : (1.0 / 18.0);
-            const int pxSize = qMax(4, (int)qRound(sizeFrac * fh));
-            QFont font;
-            if (!ts->fontFamily.isEmpty()) font.setFamily(ts->fontFamily);
-            font.setPixelSize(pxSize);
-            font.setBold(ts->textBold);
+            TextStyle st = *ts;
+            if (!c.text.text.isEmpty()) st.text = c.text.text;
+            const textrender::Layout L = textrender::layout(st, fw, fh);
+            const QRectF box = textrender::centeredBox(st, L, fw, fh);
             QPainter fp(&frame);
             fp.setRenderHint(QPainter::Antialiasing);
-            fp.translate(fw / 2.0, fh / 2.0);
-            QPainterPath path;
-            path.addText(QPointF(0, 0), font, c.text.text.isEmpty()
-                ? ts->text : c.text.text);
-            if (ts->textOutline > 0.0)
-                fp.strokePath(path, QPen(ts->textOutlineColor,
-                                         qMax(1.0, ts->textOutline * fh)));
-            fp.fillPath(path, ts->textColor);
+            textrender::paint(fp, st, L, box, fh);
         } else if (!c.mediaId.isEmpty() || c.hasMulticam()) {
             const MediaItem* mi = project.findMedia(c.mediaIdAt(cRel));
             if (mi) {

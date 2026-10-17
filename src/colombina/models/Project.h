@@ -92,10 +92,13 @@ struct Marker {
 
 // Modos de interpolação de keyframe.
 enum KfInterp {
-    KfLinear = 0, // segmento reto
-    KfSmooth = 1, // Auto Bezier (curva suave automática, Catmull-Rom)
-    KfStep   = 2, // segura o valor até o próximo keyframe
-    KfBezier = 3  // Bezier manual (handles de entrada e saída independentes)
+    KfLinear  = 0, // segmento reto
+    KfSmooth  = 1, // Auto Bezier (curva suave automática, Catmull-Rom)
+    KfStep    = 2, // segura o valor até o próximo keyframe
+    KfBezier  = 3, // Bezier manual (handles de entrada e saída independentes)
+    KfElastic = 4, // elástico out (overshoot com oscilação amortecida)
+    KfBounce  = 5, // quique out (salto amortecido até o alvo)
+    KfBack    = 6  // back out (passa do alvo e volta — overshoot simples)
 };
 
 struct Keyframe {
@@ -117,6 +120,32 @@ inline double cubicBezier(double a, double c1, double c2, double b, double f) {
     const double u = 1.0 - f;
     return u * u * u * a + 3.0 * u * u * f * c1
          + 3.0 * u * f * f * c2 + f * f * f * b;
+}
+
+// Easings out (penetração/ease-out) usados pelos keyframes KfElastic,
+// KfBounce e KfBack — f normalizado em [0,1] dentro do segmento.
+inline double easeOutBack(double f) {
+    const double c1 = 1.70158;
+    const double c3 = c1 + 1.0;
+    const double u = f - 1.0;
+    return 1.0 + c3 * u * u * u + c1 * u * u;
+}
+
+inline double easeOutElastic(double f) {
+    if (f <= 0.0) return 0.0;
+    if (f >= 1.0) return 1.0;
+    const double c4 = 2.0 * 3.14159265358979323846 / 3.0;
+    return std::pow(2.0, -10.0 * f) * std::sin((f * 10.0 - 0.75) * c4) + 1.0;
+}
+
+inline double easeOutBounce(double f) {
+    const double n1 = 7.5625;
+    const double d1 = 2.75;
+    if (f < 1.0 / d1) return n1 * f * f;
+    if (f < 2.0 / d1) { f -= 1.5 / d1; return n1 * f * f + 0.75; }
+    if (f < 2.5 / d1) { f -= 2.25 / d1; return n1 * f * f + 0.9375; }
+    f -= 2.625 / d1;
+    return n1 * f * f + 0.984375;
 }
 
 // Interpola os keyframes no instante `t` (timeline, em segundos), respeitando
@@ -179,6 +208,12 @@ inline double kfValue(const QVector<Keyframe>& keys, double base, double t) {
             const double w3 = u * u * u;
             return w0 * a.value + w1 * p1y + w2 * p2y + w3 * b.value;
         }
+        case KfElastic:
+            return a.value + (b.value - a.value) * easeOutElastic(f);
+        case KfBounce:
+            return a.value + (b.value - a.value) * easeOutBounce(f);
+        case KfBack:
+            return a.value + (b.value - a.value) * easeOutBack(f);
         case KfLinear:
         default:
             return a.value + (b.value - a.value) * f;

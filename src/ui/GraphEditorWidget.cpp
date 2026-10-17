@@ -97,10 +97,13 @@ QString propName(GraphProp p) {
 
 QString interpName(int interp) {
     switch (interp) {
-        case KfSmooth: return QStringLiteral("Auto Bezier");
-        case KfStep:   return QStringLiteral("Hold");
-        case KfBezier: return QStringLiteral("Bezier");
-        default:       return QStringLiteral("Linear");
+        case KfSmooth:  return QStringLiteral("Auto Bezier");
+        case KfStep:    return QStringLiteral("Hold");
+        case KfBezier:  return QStringLiteral("Bezier");
+        case KfElastic: return QStringLiteral("Elastic");
+        case KfBounce:  return QStringLiteral("Bounce");
+        case KfBack:    return QStringLiteral("Back");
+        default:        return QStringLiteral("Linear");
     }
 }
 
@@ -320,6 +323,39 @@ void drawKeyGlyph(QPainter& p, const QPointF& c, int interp, qreal s,
             << QPointF(c.x(), c.y() + s)
             << QPointF(c.x() - s, c.y());
         p.drawPolygon(dia);
+        return;
+    }
+    case KfElastic: {
+        // Estrela — elástico.
+        QPolygonF star;
+        for (int i = 0; i < 10; ++i) {
+            const double ang = -3.14159265358979323846 / 2.0 + i * 3.14159265358979323846 / 5.0;
+            const double r = (i % 2 == 0) ? s * 1.15 : s * 0.5;
+            star << QPointF(c.x() + r * std::cos(ang), c.y() + r * std::sin(ang));
+        }
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.drawPolygon(star);
+        p.setRenderHint(QPainter::Antialiasing, false);
+        return;
+    }
+    case KfBounce: {
+        // Casa larga com base larga — quique.
+        const QPolygonF house = QPolygonF()
+            << QPointF(c.x() - s * 0.95, c.y() + s * 0.7)
+            << QPointF(c.x() - s * 0.7, c.y() - s * 0.5)
+            << QPointF(c.x(), c.y() - s * 1.05)
+            << QPointF(c.x() + s * 0.7, c.y() - s * 0.5)
+            << QPointF(c.x() + s * 0.95, c.y() + s * 0.7);
+        p.drawPolygon(house);
+        return;
+    }
+    case KfBack: {
+        // Círculo com "cauda" de overshoot.
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.drawEllipse(c, s * 0.65, s * 0.65);
+        p.drawLine(QPointF(c.x() - s * 1.15, c.y() + s * 0.85),
+                   QPointF(c.x() - s * 0.35, c.y() + s * 0.35));
+        p.setRenderHint(QPainter::Antialiasing, false);
         return;
     }
     }
@@ -867,22 +903,34 @@ void GraphCanvas::moveSelected(double dT, double dV, bool snap) {
         if (k.time < minT - 1e-9 && k.time > leftB) leftB = k.time;
         if (k.time > maxT + 1e-9 && k.time < rightB) rightB = k.time;
     }
-    double d = dT;
-    if (minT + d < leftB + 0.001) d = leftB + 0.001 - minT;
-    if (maxT + d > rightB - 0.001) d = rightB - 0.001 - maxT;
+    // Keyframes podem existir FORA da duração do clipe (ex.: gerados por script
+    // ou importados) — nesse caso leftB pode superar rightB. Sem normalizar a
+    // ordem, std::clamp recebia low > high e disparava o __glibcxx_assert_fail
+    // do libstdc++ (abort). Garante sempre low <= high.
+    double loT = std::min(leftB, rightB) + 0.001;
+    double hiT = std::max(leftB, rightB) - 0.001;
+    if (hiT < loT) {
+        const double mid = 0.5 * (leftB + rightB);
+        loT = hiT = mid;
+    }
 
+    double d = dT;
+    if (minT + d < loT) d = loT - minT;
+    if (maxT + d > hiT) d = hiT - maxT;
+
+    const double vLo = std::min(m_lo, m_hi);
+    const double vHi = std::max(m_lo, m_hi);
     for (int j = 0; j < m_selKeys.size(); ++j) {
         Keyframe& k = K[m_selKeys[j]];
         const Keyframe& o = m_selOrig[j];
         double nt = o.time + d;
         if (snap) nt = snapTime(nt);
-        nt = std::clamp(nt, leftB + 0.001, rightB - 0.001);
+        nt = std::clamp(nt, loT, hiT);
         k.time = nt;
         // Movimento vertical restaurado: o valor acompanha o arraste.
         // A sensibilidade (Configurações → Editor de curvas) amplifica o
         // deslocamento vertical para permitir curvas mais exageradas.
-        k.value = std::clamp(o.value + dV,
-                             m_loProp, m_hiProp);
+        k.value = std::clamp(o.value + dV, vLo, vHi);
     }
 }
 
@@ -1028,6 +1076,19 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
                     path.cubicTo(tToX(a.time + a.ox), vToY(a.value + a.oy),
                                  tToX(b.time - b.ix), vToY(b.value + b.iy),
                                  tToX(b.time), vToY(b.value));
+                    break;
+                }
+                case KfElastic:
+                case KfBounce:
+                case KfBack: {
+                    // Easings amostrados da curva real (kfValue) — o mesmo
+                    // cálculo do preview/export, senão o gráfico mostrava
+                    // linha reta e escondia o overshoot.
+                    constexpr int N = 16;
+                    for (int s = 1; s <= N; ++s) {
+                        const double t = a.time + span * s / N;
+                        addTo(t, kfValue(*ks, a.value, t));
+                    }
                     break;
                 }
                 case KfLinear:
@@ -1498,7 +1559,10 @@ void GraphCanvas::wheelEvent(QWheelEvent* e) {
     const double range = timeRange();
     const double tc = xToT(e->position().x());
     const double minR = std::min(0.02, 2.0 / m_fps);
-    const double nr = std::clamp(range * factor, minR, dur);
+    // Em mesa/câmera `dur` pode ser menor que minR (range mínimo de 0.001s),
+    // o que invertia o clamp e abortava; mantém sempre low <= high.
+    const double loR = std::min(minR, dur);
+    const double nr = std::clamp(range * factor, loR, dur);
     double t0 = tc - (tc - timeStart()) * (nr / range);
     t0 = std::clamp(t0, 0.0, dur - nr);
     m_t0 = t0;
@@ -1601,14 +1665,16 @@ void GraphCanvas::keyPressEvent(QKeyEvent* e) {
         return;
     }
 
-    // 1/2/3/4 definem a interpolação dos keyframes selecionados.
-    if (e->key() >= Qt::Key_1 && e->key() <= Qt::Key_4 && !ctrl) {
-        const int modes[4] = {KfLinear, KfSmooth, KfStep, KfBezier};
+    // 1/2/3/4/5/6/7 definem a interpolação dos keyframes selecionados.
+    if (e->key() >= Qt::Key_1 && e->key() <= Qt::Key_7 && !ctrl) {
+        const int modes[7] = {KfLinear, KfSmooth, KfStep, KfBezier,
+                              KfElastic, KfBounce, KfBack};
         const int mode = modes[e->key() - Qt::Key_1];
         emit editStart();
         for (int i : m_selKeys) {
             (*ks)[i].interp = mode;
-            if (mode == KfSmooth) {
+            if (mode == KfSmooth || mode == KfElastic || mode == KfBounce
+                || mode == KfBack) {
                 (*ks)[i].ox = (*ks)[i].oy = 0.0;
                 (*ks)[i].ix = (*ks)[i].iy = 0.0;
             }
@@ -1715,6 +1781,9 @@ void GraphCanvas::contextMenuEvent(QContextMenuEvent* e) {
     QAction* ease = menu.addAction(tr("Easy Ease (varinha)"));
     QAction* easeIn = menu.addAction(tr("Easy Ease In"));
     QAction* easeOut = menu.addAction(tr("Easy Ease Out"));
+    QAction* elastic = menu.addAction(tr("Elastic"));
+    QAction* bounce = menu.addAction(tr("Bounce"));
+    QAction* back = menu.addAction(tr("Back (overshoot)"));
     menu.addSeparator();
     QAction* del = menu.addAction(m_selKeys.size() > 1
                                       ? tr("Excluir %1 keyframes").arg(m_selKeys.size())
@@ -1728,12 +1797,19 @@ void GraphCanvas::contextMenuEvent(QContextMenuEvent* e) {
     }
     emit editStart();
     m_undoPushed = true;
-    if (act == lin || act == bez || act == autoBez || act == hold) {
+    if (act == lin || act == bez || act == autoBez || act == hold
+        || act == elastic || act == bounce || act == back) {
         for (int i : m_selKeys) {
             K[i].interp = (act == lin) ? KfLinear
                           : (act == bez) ? KfBezier
-                          : (act == autoBez) ? KfSmooth : KfStep;
-            if (act == autoBez) { K[i].ox = K[i].oy = 0.0; K[i].ix = K[i].iy = 0.0; }
+                          : (act == autoBez) ? KfSmooth
+                          : (act == hold) ? KfStep
+                          : (act == elastic) ? KfElastic
+                          : (act == bounce) ? KfBounce : KfBack;
+            if (act == autoBez || act == elastic || act == bounce || act == back) {
+                K[i].ox = K[i].oy = 0.0;
+                K[i].ix = K[i].iy = 0.0;
+            }
         }
     } else if (act == del) {
         QVector<int> sel = m_selKeys;

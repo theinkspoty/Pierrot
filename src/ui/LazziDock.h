@@ -1,8 +1,8 @@
 // Pierrot — editor de vídeo
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#ifndef UI_MOTIONSCRIPTDOCK_H
-#define UI_MOTIONSCRIPTDOCK_H
+#ifndef UI_LAZZIDOCK_H
+#define UI_LAZZIDOCK_H
 
 #include <QWidget>
 
@@ -13,10 +13,10 @@ class QLabel;
 class QToolButton;
 class TimelineWidget;
 
-class MotionScriptDock : public QWidget {
+class LazziDock : public QWidget {
     Q_OBJECT
 public:
-    explicit MotionScriptDock(QWidget* parent = nullptr);
+    explicit LazziDock(QWidget* parent = nullptr);
     void setTimeline(TimelineWidget* tl);
 
 signals:
@@ -25,6 +25,8 @@ signals:
 private slots:
     void convertToClip();
     void applyTemplateDefault();
+    void applyTemplateAe();
+    void applyTemplateShape();
     void applyTemplateTextAnim();
     void loadFile();
     void saveFile();
@@ -37,4 +39,4 @@ private:
     QLabel* m_helpLabel = nullptr;
 };
 
-#endif // UI_MOTIONSCRIPTDOCK_H
+#endif // UI_LAZZIDOCK_H

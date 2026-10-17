@@ -380,9 +380,10 @@ QString kfExpr(const QVector<Keyframe>& keys, double base, double offset) {
                 seg = QString("(1-(%1))^3*%2 + 3*(1-(%1))^2*(%1)*%3"
                               " + 3*(1-(%1))*(%1)^2*%4 + (%1)^3*%5")
                           .arg(f).arg(num(pv)).arg(num(c1)).arg(num(c2)).arg(num(v));
-            } else if (mode == KfBezier) {
-                // O ffmpeg não resolve o u do bezier paramétrico (posição
-                // real dos handles no tempo). Amostra a curva exata (kfValue)
+            } else if (mode == KfBezier || mode == KfElastic || mode == KfBounce
+                       || mode == KfBack) {
+                // Bezier paramétrico e easings (elastic/bounce/back) não têm
+                // expressão ffmpeg fechada. Amostra a curva exata (kfValue)
                 // em N sub-segmentos lineares, reproduzindo o preview.
                 constexpr int N = 12;
                 QVector<double> kts(N + 1), kvs(N + 1);

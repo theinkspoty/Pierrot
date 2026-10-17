@@ -142,7 +142,10 @@ set(PIERROT_APP_SOURCES
     src/ui/AudioEffectsDialog.cpp
     src/ui/TrackAudioFxDialog.cpp
     src/ui/TextEditorDialog.cpp
-    src/ui/MotionScriptDock.cpp
+    src/ui/LazziDock.cpp
+    src/ui/AnimPresetDock.cpp
+    src/ui/ColorWheel.cpp
+    src/ui/ColorDock.cpp
     src/ui/WelcomeWindow.cpp
     src/ui/GraphEditorWidget.cpp
     src/ui/ClipPropertiesWidget.cpp
@@ -196,7 +199,10 @@ set(PIERROT_APP_HEADERS
     src/ui/TrackAudioFxDialog.h
     src/ui/AudioFxHelpers.h
     src/ui/TextEditorDialog.h
-    src/ui/MotionScriptDock.h
+    src/ui/LazziDock.h
+    src/ui/AnimPresetDock.h
+    src/ui/ColorWheel.h
+    src/ui/ColorDock.h
     src/ui/WelcomeWindow.h
     src/ui/GraphEditorWidget.h
     src/ui/ClipPropertiesWidget.h

@@ -87,16 +87,24 @@ inline QRectF absoluteBox(const TextStyle& st, const Layout& L, double W, double
 inline void paint(QPainter& p, const TextStyle& st, const Layout& L,
                   const QRectF& box, double H) {
     if (st.textBackground) p.fillRect(box, st.textBackgroundColor);
-    QPainterPath path;
     const double baseline = box.top() + L.pad + L.ascent;
-    for (int i = 0; i < L.wrapped.size(); ++i)
-        path.addText(QPointF(box.left() + L.pad, baseline + i * L.lineHeight), L.font, L.wrapped[i]);
     if (st.textOutline > 0.0) {
+        QPainterPath path;
+        for (int i = 0; i < L.wrapped.size(); ++i)
+            path.addText(QPointF(box.left() + L.pad, baseline + i * L.lineHeight),
+                         L.font, L.wrapped[i]);
         QPen pen(st.textOutlineColor, qMax(1.0, st.textOutline * H),
                  Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
         p.strokePath(path, pen);
     }
-    p.fillPath(path, st.textColor);
+    // Preenchimento via drawText (não fillPath): fontes de emoji colorido
+    // (Noto Color Emoji etc.) não geram contour via addText e sumiam do
+    // frame; drawText renderiza o glifo nativo, mantendo a cor do emoji.
+    p.setFont(L.font);
+    p.setPen(st.textColor);
+    for (int i = 0; i < L.wrapped.size(); ++i)
+        p.drawText(QPointF(box.left() + L.pad, baseline + i * L.lineHeight),
+                   L.wrapped[i]);
 }
 
 } // namespace textrender

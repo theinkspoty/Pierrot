@@ -15,7 +15,9 @@
 #include "ui/EffectsWidget.h"
 #include "ui/ClipPropertiesWidget.h"
 #include "ui/TextEditorDialog.h"
-#include "ui/MotionScriptDock.h"
+#include "ui/LazziDock.h"
+#include "ui/AnimPresetDock.h"
+#include "ui/ColorDock.h"
 #include "ui/ExpressWidget.h"
 #include "ui/FileBrowserWidget.h"
 #include "ui/MixerWidget.h"
@@ -1633,16 +1635,40 @@ void MainWindow::createDocks() {
         setModified();
     });
 
-    // Motion Script — dock para gerar clipes animados via texto/script
-    m_motionWidget = new MotionScriptDock(this);
-    m_motionWidget->setTimeline(m_timeline);
-    m_motionDock = makeDock(QStringLiteral("motionScriptDock"), tr("Motion Script"),
-                          m_motionWidget, Qt::RightDockWidgetArea);
-    tabifyDockWidget(m_textDock, m_motionDock);
-    m_motionDock->raise();
-    connect(m_motionWidget, &MotionScriptDock::clipConverted, this, [this]() {
-        statusBar()->showMessage(tr("Clip Motion Script criado na timeline."), 2500);
+    // Lazzi — dock para gerar clipes animados via texto/script
+    m_lazziWidget = new LazziDock(this);
+    m_lazziWidget->setTimeline(m_timeline);
+    m_lazziDock = makeDock(QStringLiteral("motionScriptDock"), tr("Lazzi"),
+                          m_lazziWidget, Qt::RightDockWidgetArea);
+    tabifyDockWidget(m_textDock, m_lazziDock);
+    m_lazziDock->raise();
+    connect(m_lazziWidget, &LazziDock::clipConverted, this, [this]() {
+        statusBar()->showMessage(tr("Clip Lazzi criado na timeline."), 2500);
     });
+
+    // Animação — presets de keyframes aplicados aos clipes selecionados.
+    m_animPresetWidget = new AnimPresetDock(this);
+    m_animPresetWidget->setTimeline(m_timeline);
+    m_animPresetDock = makeDock(QStringLiteral("animPresetDock"),
+                                tr("Animação"), m_animPresetWidget,
+                                Qt::RightDockWidgetArea);
+    tabifyDockWidget(m_lazziDock, m_animPresetDock);
+    connect(m_animPresetWidget, &AnimPresetDock::presetsApplied, this,
+            [this](int n) {
+                statusBar()->showMessage(
+                    tr("Preset de animação aplicado em %1 clipe(s).").arg(n),
+                    2500);
+            });
+
+    // Cor — correção de cor estilo DaVinci (trackballs Lift/Gamma/Gain).
+    m_colorWidget = new ColorDock(this);
+    m_colorWidget->setTimeline(m_timeline);
+    m_colorWidget->setPreview(m_preview);
+    m_colorDock = makeDock(QStringLiteral("colorDock"), tr("Cor"),
+                           m_colorWidget, Qt::RightDockWidgetArea);
+    tabifyDockWidget(m_animPresetDock, m_colorDock);
+    connect(m_timeline, &TimelineWidget::selectionChanged, m_colorWidget,
+            &ColorDock::setClipById);
 
     m_fileBrowserDock = makeDock(QStringLiteral("fileBrowserDock"),
                                  tr("Explorador de Arquivos"),
