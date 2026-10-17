@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.7.1 (2026-10-17)
+
+Release de animação + correções de curvas. Naipe continua **alpha**.
+
+### Animação
+
+- **Dock "Animação"** com presets de keyframes e **miniaturas animadas
+  estilo Vegas Pro**: fileiras de 3 colunas sem espremer; a miniatura só
+  reproduz com o mouse em cima (repouso = quadro estático representativo).
+- Novo grupo **Elásticos**: **Slam Elástico** (queda + squash antifase),
+  **Estica e Some** (anticipation + fuga elástica) e **Mola (laço)**
+  (bob + twist antifase em loop).
+
+### Curvas (editor de keyframes)
+
+- **KfSmooth (Auto Bezier) corrigido**: controles em `span/3` (a fórmula
+  antiga deixava a tangente 3× íngreme — S exagerado que passava dos
+  keyframes); par isolado de 2 keys ganha S suave (ease). Desenho do editor,
+  animação e exportação usam a mesma fórmula.
+- **Varinha só em keys Suave** — Linear/Degrau ficam retos (antes, alças
+  "fantasma" convertiam a reta em S ao serem tocadas).
+
+### Correções
+
+- **Loop de GIF/WebP animado** na timeline: duração real na inserção;
+  exportação com `-ignore_loop 0` respeitando o loop do arquivo.
+- Correções do relatório de bugs (B-01…B-17) e versionamento `.Blanc`
+  com migração (`kSchemaVersion`).
+
 ## 0.7 (2026-10-02)
 
 Release de fluxo Premiere + efeitos + UI. Naipe continua **alpha**.

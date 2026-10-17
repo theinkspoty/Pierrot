@@ -1,4 +1,4 @@
-# Pierrot v0.7 alpha
+# Pierrot v0.7.1 alpha
 
 > **Este app é para uso pessoal.** Não é ambicioso nem quer substituir nenhum
 > software — o foco é o meu próprio uso: um workflow estável que eu conheço do

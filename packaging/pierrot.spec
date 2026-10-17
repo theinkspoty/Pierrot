@@ -17,7 +17,7 @@
 %global debug_package %{nil}
 
 Name:           pierrot
-Version:        0.7
+Version:        0.7.1
 Release:        1%{?dist}
 Summary:        Editor de vídeo estilo Vegas Pro para Linux
 
@@ -64,5 +64,8 @@ DESTDIR=%{buildroot} cmake --install build
 %{_datadir}/icons/hicolor/scalable/apps/pierrot.svg
 
 %changelog
+* Sat Oct 17 2026 theinkspoty <theinkspoty@users.noreply.github.com> - 0.7.1-1
+- Pierrot 0.7.1: dock de presets de animação com miniaturas animadas,
+  correção do KfSmooth (Catmull-Rom) e do loop de GIF/WebP na timeline.
 * Mon Oct 12 2026 theinkspoty <theinkspoty@users.noreply.github.com> - 0.7-1
 - Pierrot 0.7: Source Monitor, multicâmera, editor de velocidade, frei0r/OFX.
