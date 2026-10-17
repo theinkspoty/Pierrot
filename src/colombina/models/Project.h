@@ -175,8 +175,15 @@ inline double kfValue(const QVector<Keyframe>& keys, double base, double t) {
             const double m0 = (dt0 > 1e-9) ? (b.value - p0.value) / dt0 : 0.0;
             const double dt3 = (lo + 2 < (int)keys.size()) ? (p3.time - a.time) : span;
             const double m3 = (dt3 > 1e-9) ? (p3.value - a.value) / dt3 : 0.0;
-            return cubicBezier(a.value, a.value + m0 * span,
-                               b.value - m3 * span, b.value, f);
+            // Par isolado (só 2 keys): secante/2 em vez de cheia — dá um S
+            // suave (ease) em vez de reta crua. Composto: Catmull-Rom padrão.
+            // Controle em span/3 (Hermite→Bezier): a fórmula antiga usava
+            // span cheio e deixava a tangente 3× íngreme (S exagerado com
+            // overshoot além dos keyframes).
+            const double iso = ((lo == 0) && (lo + 2 >= (int)keys.size()))
+                                   ? 0.5 : 1.0;
+            return cubicBezier(a.value, a.value + m0 * span * iso / 3.0,
+                               b.value - m3 * span * iso / 3.0, b.value, f);
         }
         case KfBezier: {
             // Bezier paramétrico real (como o Premiere): os handles têm

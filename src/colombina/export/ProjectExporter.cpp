@@ -436,8 +436,12 @@ QString kfExpr(const QVector<Keyframe>& keys, double base, double offset) {
                 const double m0 = (dt0 > 1e-9) ? (b.value - p0.value) / dt0 : 0.0;
                 const double dt3 = (i + 1 < ks.size()) ? (p3.time - a.time) : span;
                 const double m3 = (dt3 > 1e-9) ? (p3.value - a.value) / dt3 : 0.0;
-                const double c1 = a.value + m0 * span;
-                const double c2 = v - m3 * span;
+                // Mesmo ajuste do kfValue (Project.h): controle em span/3 e
+                // secante/2 em par isolado — o ffmpeg reproduz o preview.
+                const double iso =
+                    ((i == 1) && (i + 1 >= ks.size())) ? 0.5 : 1.0;
+                const double c1 = a.value + m0 * span * iso / 3.0;
+                const double c2 = v - m3 * span * iso / 3.0;
                 seg = QString("(1-(%1))^3*%2 + 3*(1-(%1))^2*(%1)*%3"
                               " + 3*(1-(%1))*(%1)^2*%4 + (%1)^3*%5")
                           .arg(f).arg(num(pv)).arg(num(c1)).arg(num(c2)).arg(num(v));

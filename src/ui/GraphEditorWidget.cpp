@@ -428,17 +428,19 @@ static bool bezierHandle(const QVector<Keyframe>& K, int i, bool out,
         *ht = k.ix; *hv = k.iy;
         return true;
     }
-    // Suave, Linear e Degrau recebem uma alça padrão (tangente Catmull-Rom):
-    // fica visível para o usuário entortar a curva, e ao arrastá-la o keyframe
-    // é convertido para Bezier manual.
-    if (k.interp == KfSmooth || k.interp == KfLinear || k.interp == KfStep) {
+    // Só Auto Bezier recebe alça padrão (tangente Catmull-Rom): fica visível
+    // para o usuário entortar a curva, e ao arrastá-la o keyframe é convertido
+    // para Bezier manual. Linear/Degrau NÃO recebem alça — arrastava "uma
+    // alça fantasma" com 3× a inclinação da reta e convertia a reta em S.
+    if (k.interp == KfSmooth) {
         const double span = out
             ? ((i + 1 < K.size()) ? K[i + 1].time - k.time : 0.0)
             : ((i - 1 >= 0) ? k.time - K[i - 1].time : 0.0);
         if (span <= 1e-9) return false;
-        const double m = autoTangent(K, i);
+        // Par isolado (2 keys): secante/2 (mesmo critério do kfValue).
+        const double m = autoTangent(K, i) * ((K.size() == 2) ? 0.5 : 1.0);
         *ht = span / 3.0;
-        *hv = out ? m * span : -m * span;
+        *hv = out ? m * span / 3.0 : -m * span / 3.0;
         return true;
     }
     return false;
@@ -1067,8 +1069,14 @@ void GraphCanvas::paintEvent(QPaintEvent*) {
                     const double m0 = (dt0 > 1e-9) ? (b.value - p0.value) / dt0 : 0.0;
                     const double dt3 = (i + 2 < ks->size()) ? (p3.time - a.time) : span;
                     const double m3 = (dt3 > 1e-9) ? (p3.value - a.value) / dt3 : 0.0;
-                    path.cubicTo(tToX(a.time + span / 3.0), vToY(a.value + m0 * span),
-                                 tToX(b.time - span / 3.0), vToY(b.value - m3 * span),
+                    // Mesmo ajuste do kfValue (Project.h): controle em span/3
+                    // e secante/2 em par isolado — desenho = animação real.
+                    const double iso = ((i == 0) && (i + 2 >= ks->size()))
+                                           ? 0.5 : 1.0;
+                    path.cubicTo(tToX(a.time + span / 3.0),
+                                 vToY(a.value + m0 * span * iso / 3.0),
+                                 tToX(b.time - span / 3.0),
+                                 vToY(b.value - m3 * span * iso / 3.0),
                                  tToX(b.time), vToY(b.value));
                     break;
                 }
@@ -1261,15 +1269,18 @@ void GraphCanvas::mousePressEvent(QMouseEvent* e) {
         m_dragSide = hSide;
         QVector<Keyframe>& K = *keys();
         if (K[hh].interp != KfBezier) {
-            // Pegar a alça de qualquer keyframe (suave, linear ou degrau) o
-            // converte em bezier manual, preservando a curva (handles =
-            // tangente Catmull-Rom) e deixando o usuário entortar/fazer ondas.
-            double ht0, hv0, ht1, hv1;
-            bezierHandle(K, hh, true, &ht0, &hv0);
-            bezierHandle(K, hh, false, &ht1, &hv1);
+            // Pegar a alça de um keyframe suave o converte em bezier manual,
+            // preservando a curva (handles = tangente Catmull-Rom corrigida)
+            // e deixando o usuário entortar/fazer ondas. Só keys suaves têm
+            // alça — Linear/Degrau nem entram aqui (handleHit não as pega).
+            double ht0 = 0.0, hv0 = 0.0, ht1 = 0.0, hv1 = 0.0;
+            if (bezierHandle(K, hh, true, &ht0, &hv0)) {
+                K[hh].ox = ht0; K[hh].oy = hv0;
+            }
+            if (bezierHandle(K, hh, false, &ht1, &hv1)) {
+                K[hh].ix = ht1; K[hh].iy = hv1;
+            }
             K[hh].interp = KfBezier;
-            K[hh].ox = ht0; K[hh].oy = hv0;
-            K[hh].ix = ht1; K[hh].iy = hv1;
             emit editStart();
             m_undoPushed = true;
         }

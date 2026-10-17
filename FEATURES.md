@@ -126,6 +126,12 @@
   Effects/Premiere). `Ctrl+F9` = Easy Ease In · `Shift+F9` = Easy Ease Out.
   Também no Editor de Velocidade (keyframe sob o playhead).
 - **Interpolações**: Linear, Suave, Degrau, Bezier.
+  - **Suave (Auto Bezier)** = Catmull-Rom corrigido: controles em `span/3`
+    (antes usava span cheio — tangente 3× íngreme, S exagerado que passava
+    dos keyframes); par isolado de 2 keys ganha S suave (ease). Desenho do
+    editor, animação (`kfValue`) e exportação usam a mesma fórmula.
+  - **Varinha/alças**: só keys Auto Bezier recebem alça — Linear/Degrau ficam
+    retos (antes, alças "fantasma" convertiam a reta em S ao serem tocadas).
 - **Seleção múltipla** de keyframes (Shift/marquee).
 - **Pan/Crop com keyframes** sincronizados com o editor de curvas (mesmos dados).
 - Painel com seções recolhíveis (Recorte / Zoom e Posição / Rotação).
