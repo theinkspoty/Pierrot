@@ -83,7 +83,7 @@ QString LainkaRenderer::renderClip(const Project& project,
     const int clipH = project.height;
 
     const QString tmpPath = tmpDir.filePath(
-        QString("lainka_%1.mp4").arg(clipId.left(8)));
+        QString("lainka_%1.mov").arg(clipId.left(8)));
 
     // Inicia ffmpeg para codificação via pipe.
     prerender::PreRenderSession session(clipW, clipH, outputFps, tmpPath);
@@ -115,9 +115,10 @@ QString LainkaRenderer::renderClip(const Project& project,
         // Decodifica o frame.
         QImage frame = decodeFrame(dec, fxT);
         if (frame.isNull()) {
-            // Frame não decodificado: usa preto.
+            // Frame não decodificado: TRANSPARENTE (não preto opaco — senão o
+            // GIF/WebP exportado com alpha ganhava um quadrado preto, issue #7).
             frame = QImage(clipW, clipH, QImage::Format_RGBA8888);
-            frame.fill(Qt::black);
+            frame.fill(Qt::transparent);
         }
 
         // Redimensiona se a resolução do frame diverge da esperada.
@@ -156,7 +157,7 @@ QString LainkaRenderer::renderClip(const Project& project,
     // Move o arquivo para um local permanente (o QTemporaryDir será destruído).
     return prerender::publishToCache(
         tmpPath, QStringLiteral("lainka"),
-        QStringLiteral("lainka_%1.mp4").arg(clipId.left(8)), error, "LAINKA");
+        QStringLiteral("lainka_%1.mov").arg(clipId.left(8)), error, "LAINKA");
 }
 
 QHash<QString, QString> LainkaRenderer::renderAll(const Project& project,

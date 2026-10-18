@@ -20,6 +20,10 @@ PreRenderSession::~PreRenderSession() {
 }
 
 bool PreRenderSession::start(QString* error, const QString& label) {
+    // ProRes 4444 com alpha (yuva444p10le): H.264/yuv420p não tem canal alpha
+    // e queimava o fundo preto no pré-render LAINKA/OFX — GIF/WebP exportados
+    // com transparência saíam opacos (issue #7). ProRes é o intermediário
+    // padrão com alpha; decode de volta via ffmpeg é rápido.
     QStringList args;
     args << "-y"
          << "-f" << "rawvideo"
@@ -27,11 +31,10 @@ bool PreRenderSession::start(QString* error, const QString& label) {
          << "-video_size" << QString("%1x%2").arg(m_w).arg(m_h)
          << "-framerate" << QString::number(m_fps)
          << "-i" << "pipe:0"
-         << "-c:v" << "libx264"
-         << "-preset" << "medium"
-         << "-crf" << "18"
-         << "-pix_fmt" << "yuv420p"
-         << "-movflags" << "+faststart"
+         << "-c:v" << "prores_ks"
+         << "-profile:v" << "4444"
+         << "-pix_fmt" << "yuva444p10le"
+         << "-vendor" << "apl0"
          << m_tmpPath;
 
     m_proc.start("ffmpeg", args);

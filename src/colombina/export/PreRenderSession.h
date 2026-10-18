@@ -11,10 +11,9 @@
 
 namespace prerender {
 
-// Pipe ffmpeg rawvideo RGBA -> H.264/mp4, compartilhado pelos
-// pré-renderizadores LAINKA e OFX. Encapsula a montagem dos argumentos, o
-// bombeamento de frames e a validação do exit code, que antes eram
-// duplicados nos dois renderizadores.
+// Pipe ffmpeg rawvideo RGBA -> ProRes 4444/mov (COM alpha), compartilhado
+// pelos pré-renderizadores LAINKA e OFX. H.264/yuv420p não tem canal alpha
+// e queimava fundo preto (issue #7: GIF exportado sem transparência).
 class PreRenderSession {
 public:
     PreRenderSession(int width, int height, int fps, const QString& tmpPath);

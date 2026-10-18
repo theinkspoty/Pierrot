@@ -68,7 +68,7 @@ QString OfxExportRenderer::renderClip(const Project& project,
 
     // Prepara arquivo temporário.
     const QString tmpPath = QDir::tempPath()
-        + QString("/pierrot-ofx-%1.mp4").arg(clipId.left(8));
+        + QString("/pierrot-ofx-%1.mov").arg(clipId.left(8));
 
     // Inicia ffmpeg para escrever o arquivo.
     prerender::PreRenderSession session(clipW, clipH, outputFps, tmpPath);
@@ -93,8 +93,9 @@ QString OfxExportRenderer::renderClip(const Project& project,
         // Decodifica o frame.
         QImage frame = decodeFrame(dec, srcT);
         if (frame.isNull()) {
+            // TRANSPARENTE, não preto opaco (paridade com LainkaRenderer).
             frame = QImage(clipW, clipH, QImage::Format_RGBA8888);
-            frame.fill(Qt::black);
+            frame.fill(Qt::transparent);
         }
 
         // Redimensiona se necessário.
@@ -118,7 +119,7 @@ QString OfxExportRenderer::renderClip(const Project& project,
     // Move para local permanente.
     return prerender::publishToCache(
         tmpPath, QStringLiteral("ofx"),
-        QStringLiteral("ofx_%1.mp4").arg(clipId.left(8)), error, "OFX");
+        QStringLiteral("ofx_%1.mov").arg(clipId.left(8)), error, "OFX");
 }
 
 QHash<QString, QString> OfxExportRenderer::renderAll(const Project& project,

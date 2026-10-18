@@ -1275,7 +1275,8 @@ QStringList ProjectExporter::buildCommand(const Project& project,
             const double fadeIn = std::min(std::max(v.c->fadeIn, 0.0), dur);
             const double fadeOut = std::min(std::max(v.c->fadeOut, 0.0), dur - fadeIn);
             const bool hasT = v.c->hasTransform();
-            // Mídia transparente (texto gerado ou PNG/WebP com alpha). Todo
+            // Mídia transparente (texto gerado, PNG/WebP com alpha, ou
+            // pré-render LAINKA/OFX em ProRes 4444 — issue #7). Todo
             // redimensionamento do ffmpeg (o enquadramento contain, o flatt
             // X/Y e a rotação) interpola RGB com alpha "freio" (straight), e o
             // RGB preto sob os pixels transparentes vaza para as bordas —
@@ -1283,7 +1284,9 @@ QStringList ProjectExporter::buildCommand(const Project& project,
             // depois esticar). Para essa mídia, pré-multiplicamos o alpha logo
             // no início da cadeia e desfazemos depois de toda a geometria.
             const bool alphaMedia = (v.m == nullptr)
-                || (v.m && isImageFile(v.m->filePath));
+                || (v.m && isImageFile(v.m->filePath))
+                || (v.m && (v.m->filePath.contains(QLatin1String("/lainka/lainka_"))
+                            || v.m->filePath.contains(QLatin1String("/ofx/ofx_"))));
             bool premultiplied = false;
             const QString scaleExpr = kfExpr(v.c->kfScale, v.c->scale, pos);
             const QString rotExpr = kfExpr(v.c->kfRotation, v.c->rotation, pos);
@@ -1324,10 +1327,9 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                     chain += QStringLiteral(",format=rgba,premultiply=inplace=1");
                     premultiplied = true;
                 }
-                // Mídia sem fundo (PNG/WebP com alpha): o letterbox usa
-                // TRANSPARENTE para não cobrir o que está por baixo. Vídeos/
-                // imagens opacas usam preto (letterbox clássico).
-                const bool alphaMedia = v.m && isImageFile(v.m->filePath);
+                // Mídia sem fundo (PNG/WebP com alpha OU pré-render LAINKA/OFX
+                // em ProRes): o letterbox usa TRANSPARENTE para não cobrir o
+                // que está por baixo. Vídeos/imagens opacas usam preto.
                 const QString padColor = (alphaMedia || transparent)
                                              ? QStringLiteral("black@0")
                                              : QStringLiteral("black");
