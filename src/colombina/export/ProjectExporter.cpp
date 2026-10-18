@@ -557,8 +557,10 @@ QStringList opacityFades(const QVector<Keyframe>& keys, double base, double pos,
         QString expr = parts.join(QLatin1Char(','));
         for (int i = 0; i < samples - 1; ++i) expr += QLatin1Char(')');
         // Converte opacidade (0..1) para eq brightness (-1..1): b = v - 1.
+        // SEM vírgula inicial: o chamador (opacityFades loop) prepende a vírgula.
+        // Com a vírgula aqui o filter_complex virava `,,eq=` → "No such filter: ''".
         const QString bExpr = QStringLiteral("(%1)-1").arg(expr);
-        out << QStringLiteral(",eq=brightness='%1'").arg(bExpr);
+        out << QStringLiteral("eq=brightness='%1'").arg(bExpr);
     }
 
     *baseMul = mul;
@@ -658,7 +660,9 @@ static QString masksFilter(const Clip& c, double pos) {
         else maxExpr = QString("max(%1,%2)").arg(maxExpr, e);
     }
     if (maxExpr.isEmpty()) return QString();
-    return QStringLiteral(",geq=A='p(3)*clamp(%1,0,1)'").arg(maxExpr);
+    // SEM vírgula inicial: o chamador prepende a vírgula (mesma convenção de
+    // despillFilter/opacityFades; a vírgula aqui gerava `,,geq=`).
+    return QStringLiteral("geq=A='p(3)*clamp(%1,0,1)'").arg(maxExpr);
 }
 
 // Filtro ffmpeg para o efeito PSX (paridade com o preview). O geq avalia por
