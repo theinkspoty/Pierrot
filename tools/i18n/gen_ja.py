@@ -10,7 +10,7 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(BASE, "..", ".."))
 STRINGS = os.path.join(BASE, "strings.txt")
 PART = os.path.join(BASE, "ja.part1.txt")
-TARGET = os.path.join(REPO, "src", "ui", "JaTranslator.cpp")
+TARGET = os.path.join(REPO, "src", "ui", "core", "JaTranslator.cpp")
 
 # Strings novas que ainda não estavam em strings.txt (adicionadas depois da extração).
 EXTRAS = {
@@ -18,6 +18,29 @@ EXTRAS = {
     "Requer reinício do aplicativo para tomar efeito.":
         "日本語が利用可能になりました。英語はバージョン 0.7.5 で対応予定です。"
         "変更を反映するにはアプリの再起動が必要です。",
+    # Tema por paleta (.pierrot-theme).
+    "(nenhum)": "（なし）",
+    "Importar…": "読み込み…",
+    "Abrir pasta": "フォルダーを開く",
+    "Importar tema": "テーマの読み込み",
+    "Não foi possível copiar o arquivo.": "ファイルをコピーできませんでした。",
+    "Remover tema": "テーマの削除",
+    'Remover o tema \\"%1\\"?': "テーマ「%1」を削除しますか？",
+    "Tema por paleta (.pierrot-theme)": "パレットテーマ (.pierrot-theme)",
+    "Exportar tema atual…": "現在のテーマを書き出し…",
+    "Exportar tema atual": "現在のテーマを書き出し",
+    "Exportar tema": "テーマの書き出し",
+    "Não foi possível escrever o arquivo.": "ファイルを書き込めませんでした。",
+    "Importar tema por paleta (.pierrot-theme)":
+        "パレットテーマを読み込み (.pierrot-theme)",
+    "Tema por paleta Pierrot (*.pierrot-theme)":
+        "Pierrot パレットテーマ (*.pierrot-theme)",
+    "Cobre o aplicativo inteiro (timeline, playhead, monitor, gráficos) por "
+    "definir as cores de toda a UI. Chaves ausentes herdam do tema acima. "
+    "Requer reinício do aplicativo.":
+        "UI 全体の色を定義するため、アプリ全体（タイムライン、再生ヘッド、"
+        "モニター、グラフ）を網羅します。欠けたキーは上のテーマから継承され"
+        "ます。変更の反映にはアプリの再起動が必要です。",
 }
 
 def has_bare_quote(s):

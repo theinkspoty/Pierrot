@@ -15,13 +15,34 @@
   Yu Gothic → Meiryo; sem nenhuma instalada, cai no sans padrão). Menu,
   abas, títulos de dock e de grupo em negrito.
 
+### Tema por paleta (.pierrot-theme)
+
+- **Tema completo de ponta a ponta** (Ajustes ▸ Interface ▸ Tema por paleta):
+  um arquivo `.pierrot-theme` define as **cores semânticas** de `ThemeColors`
+  (`chave = #RRGGBB`, ~96 linhas). Como **toda** a UI lê dessa paleta —
+  inclusive o que é **desenhado por código** (timeline, playhead "agulha",
+  monitor, gráficos, docks, botões) — este formato cobre o app inteiro.
+  Chaves ausentes herdam do tema embutido escolhido em "Tema:". Botões
+  **Importar…**, **Exportar tema atual…**, **Remover** e **Abrir pasta**.
+  Requer reiniciar o app.
+- **Implementação**: `serializeThemeColors()`/`applyThemeColorText()` e o
+  override em `paletteFor()` (`Theme.cpp`) — o arquivo é lido uma vez e
+  mesclado sobre a paleta embutida; `flatControlStyleSheet`,
+  `globalStyleSheet`, `dialogStyleSheet`, o `QPalette` e os `paintEvent`
+  seguem essa paleta.
+- **Cabeçalho das faixas passou a seguir o tema**: fundo (`trackLabelBg`),
+  texto (`trackLabelText`), separadores (`trackBorder`), chips M/S/R, glifos,
+  cadeado, olho/falante, meter e alça de resize deixaram de ser cores fixas
+  estilo Premiere e agora leem `themeColors()` — vale também para os temas
+  embutidos (antes o cabeçalho ficava sempre escuro).
+
 ### Idioma japonês
 
 - **Suporte completo a 日本語** (Ajustes ▸ Interface ▸ Idioma ▸ 日本語): menus,
-  diálogos, chips, atalhos e mensagens traduzidos (1159 entradas; `%1`…
+  diálogos, chips, atalhos e mensagens traduzidos (1174 entradas; `%1`…
   preservados). Requer reiniciar o app. O japonês também troca a fonte da
   interface pela pilha de gothics japoneses, em qualquer tema.
-- **Tradutor embutido em C++** (`src/ui/JaTranslator`): tabela `QHash` estática
+- **Tradutor embutido em C++** (`src/ui/core/JaTranslator`): tabela `QHash` estática
   em `QStringLiteral`, instalada no `main` só quando o idioma salvo é `ja`.
   Não usa `lupdate`/`lrelease`/`.qm` — o build segue sem depender de qttools.
   Texto sem tradução cai no original em pt-BR; funciona também em `tr(variável)`

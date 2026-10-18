@@ -122,54 +122,54 @@ set(PIERROT_APP_SOURCES
     src/main.cpp
     src/Bench.cpp
     src/MainWindow.cpp
-    src/ui/MediaPoolWidget.cpp
-    src/ui/TimelineWidget.cpp
-    src/ui/TimelineCommands.cpp
-    src/ui/TimelineSelection.cpp
-    src/ui/TimelinePaint.cpp
-    src/ui/TimelineDrag.cpp
-    src/ui/PlaybackEngine.cpp
-    src/ui/PreviewProfiler.cpp
-    src/ui/PreviewWidget.cpp
-    src/ui/TlLog.cpp
-    src/ui/UiDecode.cpp
-    src/ui/PantaloneWidget.cpp
-    src/ui/ExportDialog.cpp
-    src/ui/ProjectSettingsDialog.cpp
-    src/ui/SettingsDialog.cpp
-    src/ui/Theme.cpp
-    src/ui/JaTranslator.cpp
-    src/ui/TransformDialog.cpp
-    src/ui/MaskEditorDialog.cpp
-    src/ui/AudioEffectsDialog.cpp
-    src/ui/TrackAudioFxDialog.cpp
-    src/ui/TextEditorDialog.cpp
-    src/ui/LazziDock.cpp
-    src/ui/AnimPresetDock.cpp
-    src/ui/ColorWheel.cpp
-    src/ui/ColorDock.cpp
-    src/ui/WelcomeWindow.cpp
-    src/ui/GraphEditorWidget.cpp
-    src/ui/ClipPropertiesWidget.cpp
-    src/ui/ClickLogger.cpp
-    src/ui/EffectsWidget.cpp
-    src/ui/ExpressWidget.cpp
-    src/ui/TrimmerDialog.cpp
-    src/ui/SourceMonitorWidget.cpp
-    src/ui/VelocityEditorWidget.cpp
-    src/ui/PivotWidget.cpp
-    src/ui/RenderQueueDialog.cpp
-    src/ui/ScopeWidget.cpp
-    src/ui/PreviewMonitor.cpp
-    src/ui/FileBrowserWidget.cpp
-    src/ui/MixerWidget.cpp
-    src/ui/EqualizerWidget.cpp
-    src/ui/EqCurveView.cpp
-    src/ui/MesaWidget.cpp
-    src/ui/MesaHitTest.cpp
-    src/ui/MesaInputHandler.cpp
-    src/ui/MesaOverlayRenderer.cpp
-    src/ui/MesaCanvasOps.cpp
+    src/ui/panels/MediaPoolWidget.cpp
+    src/ui/timeline/TimelineWidget.cpp
+    src/ui/timeline/TimelineCommands.cpp
+    src/ui/timeline/TimelineSelection.cpp
+    src/ui/timeline/TimelinePaint.cpp
+    src/ui/timeline/TimelineDrag.cpp
+    src/ui/monitor/PlaybackEngine.cpp
+    src/ui/monitor/PreviewProfiler.cpp
+    src/ui/monitor/PreviewWidget.cpp
+    src/ui/timeline/TlLog.cpp
+    src/ui/monitor/UiDecode.cpp
+    src/ui/mesa/PantaloneWidget.cpp
+    src/ui/dialogs/ExportDialog.cpp
+    src/ui/dialogs/ProjectSettingsDialog.cpp
+    src/ui/dialogs/SettingsDialog.cpp
+    src/ui/core/Theme.cpp
+    src/ui/core/JaTranslator.cpp
+    src/ui/dialogs/TransformDialog.cpp
+    src/ui/dialogs/MaskEditorDialog.cpp
+    src/ui/audio/AudioEffectsDialog.cpp
+    src/ui/audio/TrackAudioFxDialog.cpp
+    src/ui/dialogs/TextEditorDialog.cpp
+    src/ui/motion/LazziDock.cpp
+    src/ui/motion/AnimPresetDock.cpp
+    src/ui/panels/ColorWheel.cpp
+    src/ui/panels/ColorDock.cpp
+    src/ui/dialogs/WelcomeWindow.cpp
+    src/ui/motion/GraphEditorWidget.cpp
+    src/ui/timeline/ClipPropertiesWidget.cpp
+    src/ui/core/ClickLogger.cpp
+    src/ui/panels/EffectsWidget.cpp
+    src/ui/panels/ExpressWidget.cpp
+    src/ui/monitor/TrimmerDialog.cpp
+    src/ui/monitor/SourceMonitorWidget.cpp
+    src/ui/motion/VelocityEditorWidget.cpp
+    src/ui/mesa/PivotWidget.cpp
+    src/ui/dialogs/RenderQueueDialog.cpp
+    src/ui/monitor/ScopeWidget.cpp
+    src/ui/monitor/PreviewMonitor.cpp
+    src/ui/panels/FileBrowserWidget.cpp
+    src/ui/audio/MixerWidget.cpp
+    src/ui/audio/EqualizerWidget.cpp
+    src/ui/audio/EqCurveView.cpp
+    src/ui/mesa/MesaWidget.cpp
+    src/ui/mesa/MesaHitTest.cpp
+    src/ui/mesa/MesaInputHandler.cpp
+    src/ui/mesa/MesaOverlayRenderer.cpp
+    src/ui/mesa/MesaCanvasOps.cpp
     resources.qrc
 )
 
@@ -177,46 +177,46 @@ set(PIERROT_APP_HEADERS
     src/MainWindow.h
     src/Bench.h
     src/version.h
-    src/ui/TrimmerDialog.h
-    src/ui/SourceMonitorWidget.h
-    src/ui/VelocityEditorWidget.h
-    src/ui/PivotWidget.h
-    src/ui/UiDecode.h
-    src/ui/RenderQueueDialog.h
-    src/ui/ScopeWidget.h
-    src/ui/MediaPoolWidget.h
-    src/ui/TimelineWidget.h
-    src/ui/TimelineCommands.h
-    src/ui/PreviewWidget.h
-    src/ui/PlaybackEngine.h
-    src/ui/PreviewMonitor.h
-    src/ui/MonitorUtils.h
-    src/ui/PantaloneWidget.h
-    src/ui/ExportDialog.h
-    src/ui/ProjectSettingsDialog.h
-    src/ui/SettingsDialog.h
-    src/ui/Theme.h
-    src/ui/TransformDialog.h
-    src/ui/MaskEditorDialog.h
-    src/ui/AudioEffectsDialog.h
-    src/ui/TrackAudioFxDialog.h
-    src/ui/AudioFxHelpers.h
-    src/ui/TextEditorDialog.h
-    src/ui/LazziDock.h
-    src/ui/AnimPresetDock.h
-    src/ui/ColorWheel.h
-    src/ui/ColorDock.h
-    src/ui/WelcomeWindow.h
-    src/ui/GraphEditorWidget.h
-    src/ui/ClipPropertiesWidget.h
-    src/ui/ClickLogger.h
-    src/ui/EffectsWidget.h
-    src/ui/ExpressWidget.h
-    src/ui/FileBrowserWidget.h
-    src/ui/MixerWidget.h
-    src/ui/EqualizerWidget.h
-    src/ui/EqCurveView.h
-    src/ui/MesaWidget.h
+    src/ui/monitor/TrimmerDialog.h
+    src/ui/monitor/SourceMonitorWidget.h
+    src/ui/motion/VelocityEditorWidget.h
+    src/ui/mesa/PivotWidget.h
+    src/ui/monitor/UiDecode.h
+    src/ui/dialogs/RenderQueueDialog.h
+    src/ui/monitor/ScopeWidget.h
+    src/ui/panels/MediaPoolWidget.h
+    src/ui/timeline/TimelineWidget.h
+    src/ui/timeline/TimelineCommands.h
+    src/ui/monitor/PreviewWidget.h
+    src/ui/monitor/PlaybackEngine.h
+    src/ui/monitor/PreviewMonitor.h
+    src/ui/monitor/MonitorUtils.h
+    src/ui/mesa/PantaloneWidget.h
+    src/ui/dialogs/ExportDialog.h
+    src/ui/dialogs/ProjectSettingsDialog.h
+    src/ui/dialogs/SettingsDialog.h
+    src/ui/core/Theme.h
+    src/ui/dialogs/TransformDialog.h
+    src/ui/dialogs/MaskEditorDialog.h
+    src/ui/audio/AudioEffectsDialog.h
+    src/ui/audio/TrackAudioFxDialog.h
+    src/ui/audio/AudioFxHelpers.h
+    src/ui/dialogs/TextEditorDialog.h
+    src/ui/motion/LazziDock.h
+    src/ui/motion/AnimPresetDock.h
+    src/ui/panels/ColorWheel.h
+    src/ui/panels/ColorDock.h
+    src/ui/dialogs/WelcomeWindow.h
+    src/ui/motion/GraphEditorWidget.h
+    src/ui/timeline/ClipPropertiesWidget.h
+    src/ui/core/ClickLogger.h
+    src/ui/panels/EffectsWidget.h
+    src/ui/panels/ExpressWidget.h
+    src/ui/panels/FileBrowserWidget.h
+    src/ui/audio/MixerWidget.h
+    src/ui/audio/EqualizerWidget.h
+    src/ui/audio/EqCurveView.h
+    src/ui/mesa/MesaWidget.h
 )
 
 # ── DSP em Rust (opcional): portada de AudioFx (EQ/gate/AGC/reverb) ─────
@@ -260,7 +260,7 @@ if(PIERROT_ENABLE_RUST)
         INTERFACE_INCLUDE_DIRECTORIES "${PIERROT_RUST_DIR}/include"
     )
     add_dependencies(pierrot_rust pierrot_audiofx)
-    list(APPEND PIERROT_APP_HEADERS src/ui/AudioFxBridge.h)
+    list(APPEND PIERROT_APP_HEADERS src/ui/audio/AudioFxBridge.h)
 endif()
 
 # ── Alvos ───────────────────────────────────────────────────────────────

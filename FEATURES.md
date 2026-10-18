@@ -234,9 +234,24 @@
   `%1`… preservados) — e troca a fonte da interface pela pilha de gothics
   japoneses (em qualquer tema). Requer reiniciar o app.
 - **Inglês** reservado ("v0.7.5"), por ora cai no pt-BR.
-- Tradução **embutida em C++** (`src/ui/JaTranslator`), sem `lupdate`/`.qm`:
+- Tradução **embutida em C++** (`src/ui/core/JaTranslator`), sem `lupdate`/`.qm`:
   string sem tradução aparece no original em pt-BR. A fonte fica em
   `tools/i18n/` (`gen_ja.py` regenera a tabela no `.cpp`).
+
+## Temas
+
+- Temas embutidos: **Escuro** (padrão), **Claro (Final Cut)**,
+  **Ridge Racer (R4)** e **Japan 95**.
+
+## Tema por paleta (.pierrot-theme)
+
+- **Tema completo** (Ajustes ▸ Interface ▸ Tema por paleta): define as cores
+  semânticas de `ThemeColors` (`chave = #RRGGBB`, ~96 chaves). Cobre o app
+  **inteiro** — inclusive o que é desenhado por código (timeline, playhead,
+  monitor, gráficos, docks, botões) — porque alimenta a paleta, que é lida
+  pelos stylesheets gerados, pelo `QPalette` e pelos `paintEvent`. Chaves
+  ausentes herdam do tema embutido. Importar… / **Exportar tema atual…** /
+  Remover / Abrir pasta. Requer reiniciar o app.
 
 ## Undo/Redo
 

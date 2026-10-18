@@ -11,10 +11,10 @@
 #include <QStyleFactory>
 #include <QDialog>
 #include "MainWindow.h"
-#include "ui/WelcomeWindow.h"
-#include "ui/ClickLogger.h"
-#include "ui/JaTranslator.h"
-#include "ui/Theme.h"
+#include "ui/dialogs/WelcomeWindow.h"
+#include "ui/core/ClickLogger.h"
+#include "ui/core/JaTranslator.h"
+#include "ui/core/Theme.h"
 #include "Bench.h"
 #include "colombina/CrashReporter.h"
 #include <QMessageBox>

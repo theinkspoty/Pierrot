@@ -1,0 +1,86 @@
+// Pierrot — editor de vídeo
+// Copyright (C) 2026 theinkspoty
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
+
+#pragma once
+
+#include <QDialog>
+#include <QStringList>
+#include <QMap>
+
+class QCheckBox;
+class QSpinBox;
+class QDoubleSpinBox;
+class QComboBox;
+class QListWidget;
+class QStackedWidget;
+class QTreeWidget;
+class QLineEdit;
+
+class SettingsDialog : public QDialog {
+    Q_OBJECT
+public:
+    explicit SettingsDialog(QWidget* parent = nullptr);
+
+    // Configurações compartilhadas (lidas de qualquer lugar do app).
+    static bool mkvWarningEnabled();
+    // Modo de exibição das miniaturas nos clipes da timeline:
+    // 0 = todas (fatias contínuas), 1 = início e fim, 2 = nenhuma.
+    static int  thumbMode();
+    // Ao excluir, fecha o vão automaticamente (ripple). Desativável.
+    static bool rippleDeleteEnabled();
+    // Abre o trimmer (in/out) ao soltar uma única mídia na timeline. Desativável.
+    static bool trimmerEnabled();
+    // Sensibilidade do arraste vertical no editor de curvas (1.0 = padrão).
+    static double graphSensitivity();
+    // Versões leves de vídeo (proxies) para preview e thumbs em alta resolução.
+    static bool proxiesEnabled();
+    // Caminhos extras de plugins OFX configurados pelo usuário.
+    static QStringList ofxSearchPaths();
+    // Pasta padrão onde o diálogo de exportação abre. Opcional (ativável).
+    static bool exportDefaultDirEnabled();
+    static QString exportDefaultDir();
+
+    // Valores escolhidos no diálogo (aplicar depois do OK).
+    bool autoSaveEnabled() const;
+    int  autoSaveMinutes() const;
+    bool mkvWarning() const;
+
+    // Avisa (uma vez por sessão) quando importa arquivos MKV experimentais.
+    static void warnMkvIfNeeded(QWidget* parent, const QStringList& files);
+    // Avisa (uma vez por sessão) quando importa mídia 4K ou superior.
+    static bool warn4kEnabled();
+    static void warn4kIfNeeded(QWidget* parent, bool has4k);
+protected:
+    void accept() override;
+    bool eventFilter(QObject* o, QEvent* e) override;
+private:
+    void buildShortcutsPage();
+    void refreshShortcutRow();
+    QCheckBox* m_mkvWarn = nullptr;
+    QCheckBox* m_autoSave = nullptr;
+    QSpinBox*  m_autoInterval = nullptr;
+    QComboBox* m_thumbMode = nullptr;
+    QCheckBox* m_rippleDelete = nullptr;
+    QCheckBox* m_trimmer = nullptr;
+    QCheckBox* m_hwDecode = nullptr;
+    QCheckBox* m_proxies = nullptr;
+    QCheckBox* m_hwEncode = nullptr;
+    QDoubleSpinBox* m_graphSens = nullptr;
+    // Navegação por categorias (sidebar estilo DaVinci).
+    QListWidget*   m_catList = nullptr;
+    QStackedWidget* m_stack = nullptr;
+    // Editor de atalhos do teclado.
+    QTreeWidget* m_shortcuts = nullptr;
+    QMap<QString, QString> m_shortcutMap;
+    QString m_recordId; // atalho sendo regravado
+    // Configuração de caminhos OFX.
+    QListWidget* m_ofxPaths = nullptr;
+    // Pasta padrão de renderização (opcional).
+    QCheckBox* m_exportDirEnabled = nullptr;
+    QLineEdit* m_exportDirEdit = nullptr;
+    QComboBox* m_themeCombo = nullptr;
+    QComboBox* m_extPaletteCombo = nullptr;
+    QComboBox* m_langCombo = nullptr;
+};
