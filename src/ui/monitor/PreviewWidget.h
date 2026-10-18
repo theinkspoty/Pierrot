@@ -42,19 +42,20 @@ class OfxPluginManager;
 class Frei0rPluginManager;
 class ScopeWidget;
 
-// Snapshot dos parâmetros de efeitos NÃO temporais (crop + efeitos básicos +
-// máscaras) de um clipe, para que o FrameWorker os aplique na thread de vídeo,
-// fora do caminho síncrono da UI. Só é ativado para clipes sem LAINKA/MotiOn/
-// OFX/frei0r — esses continuam sendo processados na UI. `active=false` preserva
-// o caminho atual (quadro cru chega à UI e applyCrop() roda nela).
+// Snapshot dos parâmetros de efeitos de um clipe, para que o FrameWorker os
+// aplique na thread de vídeo, fora do caminho síncrono da UI. `active=false`
+// preserva o caminho antigo (quadro cru chega à UI e applyCrop() roda nela).
+// LAINKA continua desligando o fast path (onion skin/motion blur dependem do
+// histórico da UI); MotiOn/OFX/frei0r vão para o worker junto com o crop.
 struct FrameFx {
     bool active = false;
     int cropL = 0;
     int cropR = 0;
     int cropT = 0;
     int cropB = 0;
-    double rel = 0.0;   // tempo relativo do clipe p/ keyframes (máscaras/efeitos)
-    Clip clip;          // efeitos básicos + máscaras (snapshot; COW barato)
+    double rel = 0.0;     // tempo relativo do clipe p/ keyframes (máscaras/efeitos)
+    double absTime = 0.0; // tempo absoluto da timeline (OFX usa o playhead cru)
+    Clip clip;            // efeitos + máscaras (snapshot; COW barato)
 };
 Q_DECLARE_METATYPE(FrameFx)
 
@@ -64,8 +65,8 @@ public:
     explicit PreviewWidget(QWidget* parent = nullptr);
     ~PreviewWidget() override;
     void setProject(Project* p);
-    void setOfxManager(OfxPluginManager* m) { m_ofxManager = m; }
-    void setFrei0rManager(Frei0rPluginManager* m) { m_frei0rManager = m; }
+    void setOfxManager(OfxPluginManager* m);
+    void setFrei0rManager(Frei0rPluginManager* m);
     void refreshView();
 
     // Retorna uma cópia REDUZIDA (160×90) do quadro composto atual, para os
@@ -146,6 +147,13 @@ protected:
     void applyCrop();
     void applyBasicEffects(QImage& img);
     static void applyBasicEffectsOn(QImage& img, const Clip& c, double rel = 0.0);
+    // MotiOn (blur de movimento por amostragem) do clipe — estático p/ o worker.
+    static void applyMotionOn(QImage& img, const Clip& c);
+    // MotiOn + OFX + frei0r do clipe (efeitos "temporais" que vão p/ o worker
+    // junto com o crop). `absTime` = tempo da timeline (OFX); `rel` = tempo
+    // relativo do clipe (frei0r). Managers podem ser nulos (pula aquele estágio).
+    static void applyTemporalFxOn(QImage& img, const Clip& c, double absTime, double rel,
+                                  OfxPluginManager* ofxMgr, Frei0rPluginManager* frei0rMgr);
     // Aplica as máscaras (shapes rect/ellipse) do clipe ao quadro, multiplicando
     // o alpha pela cobertura (feather + invert, em união). `rel` = tempo
     // relativo do clipe (avalia os keyframes das máscaras).

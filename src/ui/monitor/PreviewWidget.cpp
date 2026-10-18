@@ -238,6 +238,12 @@ public:
     explicit FrameWorker(DecoderPool* pool, QObject* parent = nullptr)
         : QObject(parent), m_pool(pool) {}
 
+    // Managers de efeitos (lidados pela UI; o worker só lê durante o decode).
+    void setEffectManagers(OfxPluginManager* ofx, Frei0rPluginManager* f0r) {
+        m_ofxMgr = ofx;
+        m_frei0rMgr = f0r;
+    }
+
     // Cancelamento cooperativo do frameAt EM ANDAMENTO (Fase 3). Thread-safe:
     // a UI chama direto (não é slot — um invoke enfileirado só rodaria depois
     // de o decode terminar, que é justamente o que queremos evitar). Só tem
@@ -324,14 +330,17 @@ public slots:
                           .arg(dbgWasReady ? QStringLiteral("ready") : QStringLiteral("dec"), 6)
                           .arg(dbgMs, 0, 'f', 1);
         }
-        // Caminho rápido: clipes sem efeitos temporais (LAINKA/MotiOn/OFX/
-        // frei0r) têm o crop + efeitos básicos/máscaras aplicados AQUI, na
-        // thread de vídeo — o C2 (copy do applyCropTo) e o C3 (per-pixel dos
-        // efeitos básicos) saem do tiquinho da UI.
+        // Caminho rápido: crop + efeitos básicos/máscaras + MotiOn/OFX/frei0r
+        // aplicados AQUI, na thread de vídeo — o C2 (copy do applyCropTo), o C3
+        // (per-pixel dos básicos) e a cadeia temporal saem do tiquinho da UI.
+        // LAINKA continua fora (fx.active=false): onion skin/motion blur dependem
+        // do quadro anterior mantido na UI.
         const bool fxApplied = fx.active && !img.isNull();
         if (fxApplied) {
             img = PreviewWidget::applyCropTo(img, fx.cropL, fx.cropR, fx.cropT, fx.cropB);
             PreviewWidget::applyBasicEffectsOn(img, fx.clip, fx.rel);
+            PreviewWidget::applyTemporalFxOn(img, fx.clip, fx.absTime, fx.rel,
+                                             m_ofxMgr, m_frei0rMgr);
         }
         emit frameReady(clipId, path, t, maxW, img, fxApplied);
 
@@ -398,6 +407,8 @@ private:
     DecoderPool* m_pool;            // não dono (vida do PreviewWidget)
     FFmpegDecoder* m_decoder = nullptr; // lease atual do pool (posse entre decodeOne)
     QString m_curPath;              // caminho do lease atual
+    OfxPluginManager* m_ofxMgr = nullptr;      // não dono
+    Frei0rPluginManager* m_frei0rMgr = nullptr; // não dono
 
     // Frame decodificado adiante (pipeline de 1 frame à frente).
     QImage m_readyImg;
@@ -2165,6 +2176,7 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     // cara em arquivos grandes/4K/MKV) do caminho da UI.
     m_frameThread = new CrashReporter::TrackedThread("preview-frame", this);
     m_frameWorker = new FrameWorker(m_decPool);
+    m_frameWorker->setEffectManagers(m_ofxManager, m_frei0rManager);
     m_frameWorker->moveToThread(m_frameThread);
     connect(m_frameThread, &QThread::finished, m_frameWorker, &QObject::deleteLater);
     connect(m_frameWorker, &FrameWorker::frameReady,
@@ -2689,7 +2701,15 @@ void PreviewWidget::renderFrame(QPainter& p) {
             profFrame().layers = layers.size();
         }
         PreviewProfiler::Scope compScope(PreviewProfiler::active() ? &profFrame().compositeNs : nullptr);
-        QImage acc(canvas.size(), QImage::Format_ARGB32);
+        // Buffer reutilizado entre frames (é o próprio m_compositedCache): alocar
+        // um ARGB32 novo do canvas a cada quadro (~8 MB @1080p, 33 MB @4K) era
+        // megas de allocator por frame à toa. fill() no mesmo buffer mantém a
+        // capacidade; o epoch garante que repaints do mesmo frame só redesenham.
+        if (m_compositedCache.size() != canvas.size()
+            || m_compositedCache.format() != QImage::Format_ARGB32) {
+            m_compositedCache = QImage(canvas.size(), QImage::Format_ARGB32);
+        }
+        QImage& acc = m_compositedCache;
         acc.fill(Qt::black);
         const double cx = acc.width() / 2.0;
         const double cy = acc.height() / 2.0;
@@ -2720,7 +2740,6 @@ void PreviewWidget::renderFrame(QPainter& p) {
         if (clip && !clip->isText)
             drawClipText(ap, acc.rect(), clip, k);
         ap.end();
-        m_compositedCache = acc;
         m_compositedEpoch = m_currentFrameIndex;
         m_compositedLayerCount = layers.size();
         p.drawImage(canvas.topLeft(), acc);
@@ -3188,8 +3207,7 @@ bool PreviewWidget::tryRenderMesa(const Clip* clip) {
     }
     // Nenhum efeito de clipe deve ser aplicado à composição da Mesa.
     m_clipLainkaEnabled = false;
-    m_clipMotionEnabled = false;
-    m_clipOfxFx.clear();
+    m_clipOfxFx.clear(); m_clipMotionEnabled = false; m_clipFrei0rFx.clear();
     m_clipMasks.clear();
     applyCrop();
     return true;
@@ -3594,6 +3612,16 @@ QString PreviewWidget::resolvePreviewVideo(const QString& srcPath) {
     return resolved;
 }
 
+void PreviewWidget::setOfxManager(OfxPluginManager* m) {
+    m_ofxManager = m;
+    if (m_frameWorker) m_frameWorker->setEffectManagers(m_ofxManager, m_frei0rManager);
+}
+
+void PreviewWidget::setFrei0rManager(Frei0rPluginManager* m) {
+    m_frei0rManager = m;
+    if (m_frameWorker) m_frameWorker->setEffectManagers(m_ofxManager, m_frei0rManager);
+}
+
 void PreviewWidget::updateFrame() {
     updateTimecodeLabel();
     if (!m_project) { m_frame = QImage(); m_transAlpha = -1.0; m_underFrame = QImage(); m_underRequested = false; m_underPending = false; m_clipMasks.clear(); update(); return; }
@@ -3606,7 +3634,7 @@ void PreviewWidget::updateFrame() {
         m_underRequested = false;
         m_underPending = false;
         m_clipLainkaEnabled = false;
-        m_clipOfxFx.clear();
+        m_clipOfxFx.clear(); m_clipMotionEnabled = false; m_clipFrei0rFx.clear();
     m_clipMasks.clear();
         update();
         return;
@@ -3625,7 +3653,7 @@ void PreviewWidget::updateFrame() {
         m_underPending = false;
         m_transAlpha = -1.0;
         m_clipLainkaEnabled = false;
-        m_clipOfxFx.clear();
+        m_clipOfxFx.clear(); m_clipMotionEnabled = false; m_clipFrei0rFx.clear();
     m_clipMasks.clear();
         update();
         return;
@@ -3639,7 +3667,7 @@ void PreviewWidget::updateFrame() {
         m_underRequested = false;
         m_underPending = false;
         m_clipLainkaEnabled = false;
-        m_clipOfxFx.clear();
+        m_clipOfxFx.clear(); m_clipMotionEnabled = false; m_clipFrei0rFx.clear();
     m_clipMasks.clear();
         update();
         return;
@@ -3834,20 +3862,20 @@ void PreviewWidget::updateFrame() {
         m_underPending = false;
     }
 
-    // Snapshot do caminho rápido: clipes sem efeitos temporais levam crop +
-    // efeitos básicos + máscaras para a thread de vídeo (FrameWorker), tirando
-    // o C2/C3 do tiquinho da UI. O snapshot usa os MESMOS valores que
-    // applyCrop() usaria (crop avaliado em m_playhead e máscaras em srcT).
+    // Snapshot do caminho rápido: crop + efeitos básicos + máscaras + MotiOn/
+    // OFX/frei0r vão para a thread de vídeo (FrameWorker), tirando a cadeia
+    // inteira per-pixel do tiquinho da UI. Só LAINKA desliga o fast path
+    // (onion skin/motion blur dependem do quadro anterior da UI).
+    // O snapshot usa os MESMOS valores que applyCrop() usaria (crop avaliado
+    // em m_playhead e máscaras em srcT).
     FrameFx topFx;
-    topFx.active = !m_clipLainkaEnabled
-                   && !(m_clipMotionEnabled && m_clipMotionAmount > 0.0)
-                   && m_clipOfxFx.isEmpty()
-                   && m_clipFrei0rFx.isEmpty();
+    topFx.active = !m_clipLainkaEnabled;
     topFx.cropL = m_lastCropL;
     topFx.cropR = m_lastCropR;
     topFx.cropT = m_lastCropT;
     topFx.cropB = m_lastCropB;
     topFx.rel = srcT;
+    topFx.absTime = m_playhead;
     if (topFx.active) topFx.clip = *clip;
 
     // Path efetivo de vídeo do clipe do topo: proxy se houver (consistente com
@@ -4018,14 +4046,17 @@ void PreviewWidget::requestLowerLayers(int decW) {
                 continue; // já em cache (3 frames: evita re-decode de background a cada frame)
         }
         requestFrame(c->id, vpath, srcT, decW, [&] {
-            // Camada inferior sem LAINKA: crop + efeitos básicos vão para a
-            // thread do worker (era o H6: per-pixel na UI a cada quadro).
+            // Camada inferior sem LAINKA: crop + efeitos básicos + MotiOn/OFX/
+            // frei0r vão para a thread do worker (era o H6: per-pixel na UI a
+            // cada quadro; MotiOn/OFX/frei0r das inferiores nem sequer eram
+            // aplicados — lacuna de paridade com a exportação).
             FrameFx fx;
             fx.active = !c->lainkaEnabled;
             if (fx.active) {
                 const double rel = m_playhead - c->pos;
                 clipCrop(*c, rel, fx.cropL, fx.cropR, fx.cropT, fx.cropB);
                 fx.rel = rel;
+                fx.absTime = m_playhead;
                 fx.clip = *c;
             }
             return fx;
@@ -4290,6 +4321,10 @@ void PreviewWidget::onFrameReady(const QString& clipId, const QString& path, dou
         }
         // Aplica efeitos básicos também em camadas inferiores.
         applyBasicEffectsOn(cropped, *clip, m_playhead - clip->pos);
+        // MotiOn/OFX/frei0r das camadas inferiores (paridade com a exportação —
+        // antes só o topo recebia; com LAINKA o worker não pôde aplicar).
+        applyTemporalFxOn(cropped, *clip, m_playhead, m_playhead - clip->pos,
+                          m_ofxManager, m_frei0rManager);
     }
     {
         QMutexLocker l(&m_frameMutex);
@@ -5080,6 +5115,38 @@ void PreviewWidget::applyBasicEffectsOn(QImage& img, const Clip& c, double rel) 
 }
 
 // Aplica pan/crop sobre o quadro cheio (m_frameFull) e guarda em m_frame.
+void PreviewWidget::applyMotionOn(QImage& img, const Clip& c) {
+    if (img.isNull() || !c.motionEnabled || c.motionAmount <= 0.0) return;
+    const double rad = c.motionAngle * M_PI / 180.0;
+    const double dist = c.motionAmount * 0.4;
+    const int sx = (int)std::lround(std::cos(rad) * dist);
+    const int sy = (int)std::lround(std::sin(rad) * dist);
+    const int ns = std::clamp(c.motionSamples, 1, 32);
+    QImage result = ImgPool::get(img.format(), img.width(), img.height());
+    {
+        QPainter p(&result);
+        p.drawImage(0, 0, img);
+        p.setRenderHint(QPainter::SmoothPixmapTransform);
+        for (int i = 1; i < ns; ++i) {
+            const double alpha = 1.0 - (double)i / ns;
+            p.setOpacity(alpha / ns);
+            p.drawImage(sx * i, sy * i, img);
+        }
+    }
+    ImgPool::release(img);
+    img = result;
+}
+
+void PreviewWidget::applyTemporalFxOn(QImage& img, const Clip& c, double absTime, double rel,
+                                      OfxPluginManager* ofxMgr, Frei0rPluginManager* frei0rMgr) {
+    if (img.isNull()) return;
+    applyMotionOn(img, c);
+    if (!c.ofxFx.isEmpty() && ofxMgr)
+        img = OfxRenderer::applyOfxEffects(img, c.ofxFx, ofxMgr, absTime);
+    if (!c.frei0rFx.isEmpty() && frei0rMgr)
+        img = Frei0rPluginManager::applyEffects(img, c.frei0rFx, frei0rMgr, rel);
+}
+
 void PreviewWidget::applyCrop() {
     // Memo LAINKA: em stop motion o tempo quantizado é constante por N quadros,
     // mas esta cadeia inteira é cara e síncrona na thread da UI (o warp 8x8 são
@@ -5131,55 +5198,42 @@ void PreviewWidget::applyCrop() {
                                 prevFrame);
     }
     if (m_clipMotionEnabled && m_clipMotionAmount > 0.0 && !m_frame.isNull()) {
-        const double rad = m_clipMotionAngle * M_PI / 180.0;
-        const double dist = m_clipMotionAmount * 0.4;
-        const int sx = (int)std::lround(std::cos(rad) * dist);
-        const int sy = (int)std::lround(std::sin(rad) * dist);
-        const int ns = std::clamp(m_clipMotionSamples, 1, 32);
-        QImage result = ImgPool::get(m_frame.format(), m_frame.width(), m_frame.height());
-        {
-            QPainter p(&result);
-            p.drawImage(0, 0, m_frame);
-            p.setRenderHint(QPainter::SmoothPixmapTransform);
-            for (int i = 1; i < ns; ++i) {
-                const double alpha = 1.0 - (double)i / ns;
-                p.setOpacity(alpha / ns);
-                p.drawImage(sx * i, sy * i, m_frame);
-            }
-        }
-        ImgPool::release(m_frame);
-        m_frame = result;
+        Clip motionSnap;
+        motionSnap.motionEnabled = true;
+        motionSnap.motionAmount = m_clipMotionAmount;
+        motionSnap.motionAngle = m_clipMotionAngle;
+        motionSnap.motionSamples = m_clipMotionSamples;
+        applyMotionOn(m_frame, motionSnap);
     }
     // Aplica efeitos básicos (brilho, contraste, saturação, etc.)
     applyBasicEffects(m_frame);
 
-    // Aplica efeitos OFX do clipe.
-    if (!m_clipOfxFx.isEmpty() && m_ofxManager && !m_frame.isNull()) {
-        qInfo() << "[OFX] Aplicando" << m_clipOfxFx.size() << "efeito(s) OFX no preview"
-                << "- efeitos:" << [this]() {
-                    QStringList ids;
-                    for (const auto& fx : m_clipOfxFx) ids << fx.pluginId;
-                    return ids.join(", ");
-                }();
-        m_frame = OfxRenderer::applyOfxEffects(m_frame, m_clipOfxFx, m_ofxManager,
-                                                m_playhead);
-    }
-    // Efeitos frei0r (padrão Kdenlive/Shotcut) — depois dos OFX; export usa
-    // o mesmo filtro ffmpeg `frei0r=` (paridade preview↔export).
-    if (!m_clipFrei0rFx.isEmpty() && m_frei0rManager && !m_frame.isNull()) {
-        double f0rTime = m_playhead;
+    // MotiOn/OFX/frei0r — mesma pilha do worker (applyTemporalFxOn). O tempo
+    // do frei0r é o relativo do clipe do topo (paridade com o fast path).
+    {
+        Clip temporal;
+        temporal.motionEnabled = false; // MotiOn já aplicado acima (snapshot)
+        temporal.ofxFx = m_clipOfxFx;
+        temporal.frei0rFx = m_clipFrei0rFx;
+        double f0rRel = m_lastSrcT;
         if (m_project && !m_clipLainkaId.isEmpty()) {
             for (const Track& tr : m_project->videoTracks) {
                 for (const Clip& c : tr.clips) {
                     if (c.id == m_clipLainkaId) {
-                        f0rTime = m_playhead - c.pos;
+                        f0rRel = m_playhead - c.pos;
                         break;
                     }
                 }
             }
         }
-        m_frame = Frei0rPluginManager::applyEffects(m_frame, m_clipFrei0rFx,
-                                                    m_frei0rManager, f0rTime);
+        if (!temporal.ofxFx.isEmpty() && m_ofxManager && !m_frame.isNull())
+            m_frame = OfxRenderer::applyOfxEffects(m_frame, temporal.ofxFx, m_ofxManager,
+                                                   m_playhead);
+        // Efeitos frei0r (padrão Kdenlive/Shotcut) — depois dos OFX; export
+        // usa o mesmo filtro ffmpeg `frei0r=` (paridade preview↔export).
+        if (!temporal.frei0rFx.isEmpty() && m_frei0rManager && !m_frame.isNull())
+            m_frame = Frei0rPluginManager::applyEffects(m_frame, temporal.frei0rFx,
+                                                        m_frei0rManager, f0rRel);
     }
 
     if (memoOk) {

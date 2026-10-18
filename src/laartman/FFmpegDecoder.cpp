@@ -586,6 +586,12 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
                     cc = nullptr;
                 }
                 if (cc) {
+                    // Imagem estática (JPEG/PNG/WebP…): SEM frame-threading.
+                    // O WebP abre threads av:webp:df e com imagens grandes o
+                    // avcodec_send_packet podia estourar SIGSEGV dentro do
+                    // libavcodec (issue #3). Single-frame não ganha nada com
+                    // thread_count > 1 — só arrisca.
+                    const bool imageLike = isImagePath(filePath);
                     cc->thread_type = decThreadType();
                     AVBufferRef* hwDev = (hwDisabled() || !m_hwAllowed) ? nullptr : vaapiDevice();
                     if (hwDev) {
@@ -621,8 +627,8 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
                             cc->get_format = nullptr;
                         }
                     } else {
-                        cc->thread_count = qMin(4, QThread::idealThreadCount());
-                        if (fastDecode()) cc->flags2 |= AV_CODEC_FLAG2_FAST;
+                        cc->thread_count = imageLike ? 1 : qMin(4, QThread::idealThreadCount());
+                        if (fastDecode() && !imageLike) cc->flags2 |= AV_CODEC_FLAG2_FAST;
                     }
                     int openErr = avcodec_open2(cc, codec, nullptr);
                     if (openErr != 0 && hwDev) {
@@ -635,9 +641,9 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
                                 avcodec_free_context(&cc);
                                 cc = nullptr;
                             } else {
-                                cc->thread_count = qMin(4, QThread::idealThreadCount());
+                                cc->thread_count = imageLike ? 1 : qMin(4, QThread::idealThreadCount());
                                 cc->thread_type = decThreadType();
-                                if (fastDecode()) cc->flags2 |= AV_CODEC_FLAG2_FAST;
+                                if (fastDecode() && !imageLike) cc->flags2 |= AV_CODEC_FLAG2_FAST;
                                 openErr = avcodec_open2(cc, codec, nullptr);
                                 if (openErr != 0) {
                                     avcodec_free_context(&cc);
@@ -984,11 +990,16 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
     // quadro em m_lastFrame e os pedidos seguintes reutilizam o cache,
     // independentemente do pts do frame (que nem sempre é 0).
     if (m_isImage) {
+        if (!cc || !m_pkt || !m_frame) return result;
         if (!m_lastFrame || m_lastFrameSec < 0.0) {
             av_packet_unref(m_pkt);
             av_frame_unref(m_frame);
+            // Estado limpo: um decode anterior que falhou no meio pode ter
+            // deixado o codec com erro pendente (issue #3: retry sem flush).
+            avcodec_flush_buffers(cc);
             bool got = false;
-            while (!got) {
+            int guard = 0; // teto de pacotes: image2 entrega 1; gifs/webp animados, N
+            while (!got && guard++ < 4096) {
                 while (avcodec_receive_frame(cc, m_frame) == 0) {
                     keepAsDisplay(m_frame, frameSec(m_frame));
                     av_frame_unref(m_frame);
@@ -1006,8 +1017,13 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
                     }
                     break;
                 }
-                if (m_pkt->stream_index == m_stream)
-                    avcodec_send_packet(cc, m_pkt);
+                if (m_pkt->stream_index == m_stream) {
+                    const int sr = avcodec_send_packet(cc, m_pkt);
+                    if (sr < 0 && sr != AVERROR(EAGAIN)) {
+                        av_packet_unref(m_pkt);
+                        break; // codec em erro: não insiste (evita loop/crash)
+                    }
+                }
                 av_packet_unref(m_pkt);
             }
         }

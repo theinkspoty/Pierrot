@@ -8,7 +8,10 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
+#include <QHash>
 #include <QImage>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QSet>
 #include <QSettings>
 #include <QStandardPaths>
@@ -48,6 +51,9 @@ quint32 toF0rColor(const QColor& col) {
          | (quint32(col.green()) << 8) | quint32(col.red());
 }
 
+// Definido junto do cache de instâncias (applyEffects); limpado no cleanupLibs.
+void clearF0rInstanceCache();
+
 // Metadados de posição: cada POSITION ocupa DOIS slots em Frei0rEffect::values
 // (x, y). `paramSlot[i]` = índice inicial em values para o parâmetro i.
 struct ParamLayout {
@@ -77,6 +83,8 @@ Frei0rPluginManager::Frei0rPluginManager(QObject* parent) : QObject(parent) {}
 Frei0rPluginManager::~Frei0rPluginManager() { cleanupLibs(); }
 
 void Frei0rPluginManager::cleanupLibs() {
+    // Destroi instâncias cacheadas ANTES de dlclose (destruct precisa do .so).
+    clearF0rInstanceCache();
     for (LibEntry& le : m_libs) {
         if (le.handle && le.deinit) le.deinit();
         if (le.handle) dlclose(le.handle);
@@ -255,8 +263,8 @@ int Frei0rPluginManager::scanPlugins() {
               [](const Frei0rPluginInfo& a, const Frei0rPluginInfo& b) {
                   return a.label.localeAwareCompare(b.label) < 0;
               });
-    qInfo() << "[frei0r]" << m_plugins.size() << "plugin(s) em" << m_libs.size()
-            << "biblioteca(s)";
+    // qInfo() << "[frei0r]" << m_plugins.size() << "plugin(s) em" << m_libs.size()
+    //         << "biblioteca(s)";
     return int(m_plugins.size());
 }
 
@@ -268,6 +276,36 @@ Frei0rPluginManager::libForPlugin(const QString& pluginName) const {
     }
     return nullptr;
 }
+
+// ── Cache de instâncias frei0r ───────────────────────────────────────────
+// Reusa construct/destruct e os buffers in/out entre frames: antes cada
+// efeito a cada quadro construía a instância, alocava 2× w·h·4 bytes e
+// destruía — puro overhead no preview em reprodução. Protegido por mutex
+// (preview worker × export podem coincidir; o update roda com o lock —
+// plugins frei0r são pesados o suficiente para serializar sem perda real).
+namespace {
+struct F0rCacheEntry {
+    f0r_instance_t inst = nullptr;
+    f0r_destruct_fn destruct = nullptr;
+    int w = 0;
+    int h = 0;
+    std::vector<quint32> in;
+    std::vector<quint32> out;
+};
+QMutex g_f0rCacheMutex;
+QHash<QString, F0rCacheEntry> g_f0rCache;
+
+void clearF0rCache() {
+    QMutexLocker lock(&g_f0rCacheMutex);
+    for (auto it = g_f0rCache.begin(); it != g_f0rCache.end(); ++it) {
+        if (it->inst && it->destruct) it->destruct(it->inst);
+        it->inst = nullptr;
+    }
+    g_f0rCache.clear();
+}
+
+void clearF0rInstanceCache() { clearF0rCache(); }
+} // namespace
 
 QImage Frei0rPluginManager::applyEffects(const QImage& input,
                                          const QVector<Frei0rEffect>& effects,
@@ -287,8 +325,29 @@ QImage Frei0rPluginManager::applyEffects(const QImage& input,
         const int h = img.height();
         if (w <= 0 || h <= 0) continue;
 
-        f0r_instance_t inst = le->construct(unsigned(w), unsigned(h));
-        if (!inst) continue;
+        f0r_instance_t inst = nullptr;
+        std::vector<quint32>* inBuf = nullptr;
+        std::vector<quint32>* outBuf = nullptr;
+        {
+            QMutexLocker lock(&g_f0rCacheMutex);
+            F0rCacheEntry& e = g_f0rCache[fx.pluginName];
+            if (e.inst && (e.w != w || e.h != h)) {
+                if (e.destruct) e.destruct(e.inst);
+                e.inst = nullptr;
+            }
+            if (!e.inst) {
+                e.inst = le->construct(unsigned(w), unsigned(h));
+                if (!e.inst) continue;
+                e.destruct = le->destruct;
+                e.w = w;
+                e.h = h;
+                e.in.assign(size_t(w) * size_t(h), 0);
+                e.out.assign(size_t(w) * size_t(h), 0);
+            }
+            inst = e.inst;
+            inBuf = &e.in;
+            outBuf = &e.out;
+        }
 
         const ParamLayout L = layoutFor(*info);
         int ci = 0; // índice em fx.colors (paralelo aos COLOR params)
@@ -317,11 +376,9 @@ QImage Frei0rPluginManager::applyEffects(const QImage& input,
             }
         }
 
-        std::vector<quint32> in(size_t(w) * size_t(h));
-        std::vector<quint32> out(size_t(w) * size_t(h));
         for (int y = 0; y < h; ++y) {
             const QRgb* line = reinterpret_cast<const QRgb*>(img.constScanLine(y));
-            quint32* dst = in.data() + size_t(y) * size_t(w);
+            quint32* dst = inBuf->data() + size_t(y) * size_t(w);
             for (int x = 0; x < w; ++x) {
                 const QRgb px = line[x];
                 dst[x] = (quint32(qAlpha(px)) << 24) | (quint32(qBlue(px)) << 16)
@@ -330,25 +387,23 @@ QImage Frei0rPluginManager::applyEffects(const QImage& input,
         }
 
         if (le->update)
-            le->update(inst, time, in.data(), out.data());
+            le->update(inst, time, inBuf->data(), outBuf->data());
         else if (le->update2)
-            le->update2(inst, time, in.data(), nullptr, nullptr, out.data());
+            le->update2(inst, time, inBuf->data(), nullptr, nullptr, outBuf->data());
         else {
-            le->destruct(inst);
             continue;
         }
 
         QImage result(w, h, QImage::Format_ARGB32);
         for (int y = 0; y < h; ++y) {
             QRgb* line = reinterpret_cast<QRgb*>(result.scanLine(y));
-            const quint32* src = out.data() + size_t(y) * size_t(w);
+            const quint32* src = outBuf->data() + size_t(y) * size_t(w);
             for (int x = 0; x < w; ++x) {
                 const quint32 c = src[x];
                 line[x] = qRgba(int(c & 0xFF), int((c >> 8) & 0xFF),
                                 int((c >> 16) & 0xFF), int((c >> 24) & 0xFF));
             }
         }
-        le->destruct(inst);
         img = result;
     }
     return img;

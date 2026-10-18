@@ -9,12 +9,18 @@
 #include "colombina/models/Project.h"
 
 #include <QDebug>
+#include <QMutex>
+#include <QMutexLocker>
 
-// Cache estático de instâncias OFX por pluginId.
+// Cache estático de instâncias OFX por pluginId. O mutex protege o hash e a
+// instância em uso: o preview (FrameWorker, thread de vídeo) e a exportação
+// podem aplicar o mesmo pluginId ao mesmo tempo.
 QHash<QString, OfxEffectInstance*> OfxRenderer::s_instanceCache;
+QMutex OfxRenderer::s_cacheMutex;
 
 void OfxRenderer::clearCache()
 {
+    QMutexLocker lock(&s_cacheMutex);
     OfxHostImpl& host = OfxHostImpl::instance();
     for (auto it = s_instanceCache.begin(); it != s_instanceCache.end(); ++it) {
         OfxEffectInstance* inst = it.value();
@@ -56,36 +62,28 @@ QImage OfxRenderer::applySingleOfx(const QImage& input,
         return input;
     }
 
+    // Serializa acesso ao cache/instância (preview × export podem coincidir).
+    QMutexLocker lock(&s_cacheMutex);
     OfxHostImpl& host = OfxHostImpl::instance();
 
     OfxEffectInstance* inst = nullptr;
     auto cacheIt = s_instanceCache.find(effect.pluginId);
     if (cacheIt != s_instanceCache.end()) {
         inst = cacheIt.value();
-        qInfo() << "[OFX] Reutilizando instância cacheada para" << effect.pluginId
-                << "- clips:" << inst->clips.keys()
-                << "- params:" << inst->params.size();
     } else {
         inst = new OfxEffectInstance;
         host.initPlugin(*inst, lib->handle, lib->entry, effect.pluginId);
 
-        qInfo() << "[OFX] Chamando describe para" << effect.pluginId;
         if (!host.describe(*inst)) {
             qWarning() << "[OFX] Describe falhou para" << effect.pluginId;
             delete inst;
             return input;
         }
-        qInfo() << "[OFX] Describe OK - clips:" << inst->clips.keys()
-                << "- paramDefs:" << inst->paramDefs.size();
-
-        qInfo() << "[OFX] Chamando createInstance para" << effect.pluginId;
         if (!host.createInstance(*inst)) {
             qWarning() << "[OFX] createInstance falhou para" << effect.pluginId;
             delete inst;
             return input;
         }
-        qInfo() << "[OFX] createInstance OK - clips:" << inst->clips.keys()
-                << "- params:" << inst->params.size();
 
         s_instanceCache[effect.pluginId] = inst;
     }
@@ -125,5 +123,7 @@ QImage OfxRenderer::applySingleOfx(const QImage& input,
         return input;
     }
 
+    if (output.format() == QImage::Format_ARGB32_Premultiplied)
+        return output;
     return output.convertToFormat(QImage::Format_ARGB32_Premultiplied);
 }

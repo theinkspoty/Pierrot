@@ -155,7 +155,6 @@ private:
     static const OfxMemorySuiteV1 s_memorySuite;
     static const OfxMultiThreadSuiteV1 s_multiThreadSuite;
     static const OfxMessageSuiteV2 s_messageSuite;
-    static const OfxProgressSuiteV1 s_progressSuite;
 
     // fetchSuite callback
     static const void* fetchSuite(OfxPropertySetHandle host, const char* suiteName, int suiteVersion);
@@ -222,11 +221,6 @@ private:
     static OfxStatus msgMessage(void* handle, const char* messageType, const char* messageId, const char* format, ...);
     static OfxStatus msgSetPersistentMessage(void* handle, const char* messageType, const char* messageId, const char* format, ...);
     static OfxStatus msgClearPersistentMessage(void* handle);
-
-    // Progress suite callbacks
-    static OfxStatus progStart(void* effectInstance, const char* label);
-    static OfxStatus progUpdate(void* effectInstance, double progress);
-    static OfxStatus progEnd(void* effectInstance);
 
     // MultiThread suite callbacks
     static OfxStatus mtMultiThread(OfxThreadFunctionV1 func, unsigned int n, void* arg);

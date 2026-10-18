@@ -113,7 +113,7 @@ int OfxPluginManager::scanPlugins()
             scanDirectory(dir);
     }
 
-    qInfo() << "[OFX]" << m_plugins.size() << "plugin(s) encontrado(s)";
+    // qInfo() << "[OFX]" << m_plugins.size() << "plugin(s) encontrado(s)";
     return m_plugins.size();
 }
 
@@ -194,7 +194,7 @@ bool OfxPluginManager::loadPluginBundle(const QString& bundlePath)
 
 bool OfxPluginManager::loadOfxLibrary(const QString& libPath, const QString& fallbackId)
 {
-    qInfo() << "[OFX] Tentando carregar:" << libPath;
+    // qInfo() << "[OFX] Tentando carregar:" << libPath;
 
     void* lib = ofxLoadLibrary(libPath);
     if (!lib) {
@@ -233,7 +233,7 @@ bool OfxPluginManager::loadOfxLibrary(const QString& libPath, const QString& fal
 
         // Verifica API
         if (std::strcmp(plugin->pluginApi, kOfxImageEffectPluginApi) != 0) {
-            qInfo() << "[OFX] Plugin" << i << "não é ImageEffect, ignorando (api:" << plugin->pluginApi << ")";
+            // qInfo() << "[OFX] Plugin" << i << "não é ImageEffect, ignorando (api:" << plugin->pluginApi << ")";
             continue;
         }
 
@@ -247,7 +247,7 @@ bool OfxPluginManager::loadOfxLibrary(const QString& libPath, const QString& fal
         info.versionMinor = plugin->pluginVersionMinor;
 
         if (findPlugin(info.id)) {
-            qInfo() << "[OFX] Plugin duplicado, ignorando:" << info.id;
+            // qInfo() << "[OFX] Plugin duplicado, ignorando:" << info.id;
             continue;
         }
 
@@ -266,11 +266,11 @@ bool OfxPluginManager::loadOfxLibrary(const QString& libPath, const QString& fal
         OfxEffectInstance tempInst;
         tempInst.pluginId = info.id;
         host.initPlugin(tempInst, lib, plugin->mainEntry, info.id);
-        qInfo() << "[OFX] Chamando describe para" << info.id;
+        // qInfo() << "[OFX] Chamando describe para" << info.id;
         if (host.describe(tempInst)) {
-            qInfo() << "[OFX] Describe OK para" << info.id
-                    << "- clips:" << tempInst.clips.keys()
-                    << "- paramDefs:" << tempInst.paramDefs.size();
+            // qInfo() << "[OFX] Describe OK para" << info.id
+            //         << "- clips:" << tempInst.clips.keys()
+            //         << "- paramDefs:" << tempInst.paramDefs.size();
             // Extrai dados do describe — label e grouping são propriedades padrão OFX
             char* plabel = nullptr;
             char* pgrouping = nullptr;
@@ -378,9 +378,9 @@ bool OfxPluginManager::loadOfxLibrary(const QString& libPath, const QString& fal
         m_plugins.append(info);
         anyLoaded = true;
 
-        qInfo() << "[OFX] Plugin carregado:" << info.id
-                << "v" << info.versionMajor << "." << info.versionMinor
-                << (info.name != info.id ? ("(" + info.name + ")") : "");
+        // qInfo() << "[OFX] Plugin carregado:" << info.id
+        //         << "v" << info.versionMajor << "." << info.versionMinor
+        //         << (info.name != info.id ? ("(" + info.name + ")") : "");
         emit pluginLoaded(info.id);
     }
 

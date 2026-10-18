@@ -12,6 +12,8 @@
 #include <QString>
 #include <QHash>
 
+class QMutex;
+
 struct OfxPluginInstance;
 struct OfxEffectInstance;
 class OfxPluginManager;
@@ -37,5 +39,7 @@ public:
 private:
     // Cache de instâncias OFX por pluginId (evita re-criação a cada frame).
     // A chave é o pluginId; o valor é a instância persistente.
+    // Protegido por s_cacheMutex (preview worker × export).
     static QHash<QString, OfxEffectInstance*> s_instanceCache;
+    static QMutex s_cacheMutex;
 };

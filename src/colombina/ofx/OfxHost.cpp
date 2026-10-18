@@ -170,8 +170,6 @@ const void* OfxHostImpl::fetchSuite(OfxPropertySetHandle, const char* suiteName,
         return const_cast<OfxMultiThreadSuiteV1*>(&s_multiThreadSuite);
     if (!std::strcmp(suiteName, kOfxMessageSuite))
         return const_cast<OfxMessageSuiteV2*>(&s_messageSuite);
-    if (!std::strcmp(suiteName, kOfxProgressSuite))
-        return const_cast<OfxProgressSuiteV1*>(&s_progressSuite);
     return nullptr;
 }
 
@@ -567,7 +565,7 @@ OfxStatus OfxHostImpl::ieClipGetHandle(OfxImageEffectHandle h, const char* name,
         qWarning() << "[OFX] ieClipGetHandle: clip" << qname << "not found (available:" << inst->clips.keys() << ")";
         return kOfxStatErrUnknown;
     }
-    qInfo() << "[OFX] ieClipGetHandle:" << qname;
+    // qInfo() << "[OFX] ieClipGetHandle:" << qname;
 
     if (clip) *clip = reinterpret_cast<OfxImageClipHandle>(&inst->clips[qname]);
     if (props) *props = reinterpret_cast<OfxPropertySetHandle>(&inst->clips[qname].props);
@@ -589,8 +587,8 @@ OfxStatus OfxHostImpl::ieClipGetImage(OfxImageClipHandle h, OfxTime t, const Ofx
         qWarning() << "[OFX] ieClipGetImage: null image for clip" << clip->name;
         return kOfxStatFailed;
     }
-    qInfo() << "[OFX] ieClipGetImage:" << clip->name << "time" << t
-            << "size" << clip->image.width() << "x" << clip->image.height();
+    // qInfo() << "[OFX] ieClipGetImage:" << clip->name << "time" << t
+    //         << "size" << clip->image.width() << "x" << clip->image.height();
 
     // Cria um property set com ponteiro para a QImage
     // Usamos propSetPointer com um ponteiro para a QImage
@@ -690,7 +688,7 @@ OfxStatus OfxHostImpl::msgMessage(void*, const char* messageType, const char*, c
     va_end(args);
     QByteArray buf = raw ? QByteArray(raw) : QByteArray();
     free(raw);
-    qInfo() << "[OFX Plugin]" << messageType << ":" << buf.constData();
+    // // log removido;
     return kOfxStatOK;
 }
 
@@ -707,27 +705,6 @@ OfxStatus OfxHostImpl::msgSetPersistentMessage(void*, const char* messageType, c
 }
 
 OfxStatus OfxHostImpl::msgClearPersistentMessage(void*) {
-    return kOfxStatOK;
-}
-
-// ── Progress Suite ───────────────────────────────────────────────────────
-
-const OfxProgressSuiteV1 OfxHostImpl::s_progressSuite = {
-    progStart, progUpdate, progEnd
-};
-
-OfxStatus OfxHostImpl::progStart(void*, const char* label) {
-    qInfo() << "[OFX Progress]" << label;
-    return kOfxStatOK;
-}
-
-OfxStatus OfxHostImpl::progUpdate(void*, double progress) {
-    qInfo() << "[OFX Progress]" << qRound(progress * 100) << "%";
-    return kOfxStatOK;
-}
-
-OfxStatus OfxHostImpl::progEnd(void*) {
-    qInfo() << "[OFX Progress] done";
     return kOfxStatOK;
 }
 
@@ -931,10 +908,10 @@ bool OfxHostImpl::render(OfxEffectInstance& inst, const QImage& input, QImage& o
                       double time, int width, int height) {
     if (!inst.entry || input.isNull()) return false;
 
-    qInfo() << "[OFX] Render" << inst.pluginId
-            << "- clips disponíveis:" << inst.clips.keys()
-            << "- params:" << inst.params.size()
-            << "- input:" << input.width() << "x" << input.height();
+    // qInfo() << "[OFX] Render" << inst.pluginId
+    //         << "- clips disponíveis:" << inst.clips.keys()
+    //         << "- params:" << inst.params.size()
+    //         << "- input:" << input.width() << "x" << input.height();
 
     // Encontra o clip de entrada (Source ou primeiro clip não-Output)
     QString sourceName = QStringLiteral("Source");
@@ -963,7 +940,10 @@ bool OfxHostImpl::render(OfxEffectInstance& inst, const QImage& input, QImage& o
     // Atribui a imagem de entrada ao clip de source e suas propriedades
     // Converte para RGBA8888 para corresponder ao que o plugin espera
     if (inst.clips.contains(sourceName)) {
-        inst.clips[sourceName].image = input.convertToFormat(QImage::Format_RGBA8888);
+        if (input.format() == QImage::Format_RGBA8888)
+            inst.clips[sourceName].image = input;
+        else
+            inst.clips[sourceName].image = input.convertToFormat(QImage::Format_RGBA8888);
         inst.clips[sourceName].props.setString(kOfxImageEffectPropPixelDepth, 0, kOfxBitDepthByte);
         inst.clips[sourceName].props.setString(kOfxImageEffectPropComponents, 0, kOfxImageComponentRGBA);
     }
@@ -999,12 +979,6 @@ bool OfxHostImpl::render(OfxEffectInstance& inst, const QImage& input, QImage& o
     OfxImageEffectHandle effectHandle = reinterpret_cast<OfxImageEffectHandle>(&inst);
     OfxStatus s = callEntry(inst, kOfxImageEffectActionRender,
                             effectHandle, inHandle, outHandle);
-
-    qInfo() << "[OFX] Render resultado para" << inst.pluginId
-            << "- status:" << s
-            << "- source:" << sourceName
-            << "- output:" << outputName;
-
     if (s == kOfxStatOK) {
         if (inst.clips.contains(outputName))
             output = inst.clips[outputName].image;
