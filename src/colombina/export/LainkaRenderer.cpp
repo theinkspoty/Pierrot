@@ -15,6 +15,7 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QDebug>
+#include <QPainter>
 #include <QStandardPaths>
 
 // Decodifica um frame do vídeo no tempo dado (segundos), retornando QImage RGB.
@@ -121,10 +122,19 @@ QString LainkaRenderer::renderClip(const Project& project,
             frame.fill(Qt::transparent);
         }
 
-        // Redimensiona se a resolução do frame diverge da esperada.
+        // Encaixa no canvas do projeto preservando o aspect ratio (contain +
+        // letterbox transparente). IgnoreAspectRatio ESTICAVA a imagem para
+        // 16:9 e o filtro de export depois não recuperava (issue #8).
         if (frame.width() != clipW || frame.height() != clipH) {
-            frame = frame.scaled(clipW, clipH, Qt::IgnoreAspectRatio,
-                                 Qt::SmoothTransformation);
+            const QImage fitted = frame.scaled(clipW, clipH, Qt::KeepAspectRatio,
+                                               Qt::SmoothTransformation);
+            QImage canvas(clipW, clipH, QImage::Format_RGBA8888);
+            canvas.fill(Qt::transparent);
+            QPainter p(&canvas);
+            p.drawImage((clipW - fitted.width()) / 2,
+                        (clipH - fitted.height()) / 2, fitted);
+            p.end();
+            frame = canvas;
         }
 
         // Aplica efeito LAINKA.

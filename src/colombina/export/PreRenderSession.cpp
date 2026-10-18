@@ -34,6 +34,7 @@ bool PreRenderSession::start(QString* error, const QString& label) {
          << "-c:v" << "prores_ks"
          << "-profile:v" << "4444"
          << "-pix_fmt" << "yuva444p10le"
+         << "-sample_aspect_ratio" << "1:1"
          << "-vendor" << "apl0"
          << m_tmpPath;
 
