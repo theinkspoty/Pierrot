@@ -165,8 +165,20 @@ protected:
     void onBgWarmDone(const QString& path);
     void kickWarmQueue();
     void updatePrefetch();
+    // Agenda (debounce) o aquecimento do clipe sob a agulha parada. Chamado a
+    // cada seek/scrub fora da reprodução; durante o play o prefetch/warm-ahead
+    // já cobre. Ver warmPlayhead().
+    void scheduleIdleWarm();
+    // Abre+posiciona o decoder do clipe sob a agulha (vídeo) e começa a
+    // conformar a janela de áudio dele, para o próximo play sair quente — sem
+    // o open() frio de 500-800ms nem o "começa mudo". Best-effort; nunca roda
+    // durante o play.
+    void warmPlayhead();
     void stopAudio();
     void startAudio(double t);
+    // Cria o QAudioSink (se ainda não existir) fora do caminho do play: a 1ª
+    // criação inicializa o backend de áudio do Qt (~1s) e freezeava o 1º play.
+    void prewarmAudioSink();
     void updateMixAudio(double t, bool reseek);
     // Se o clipe ativo pertence a um grupo Mesa, renderiza a composição
     // (com transform de câmera) e devolve true preenchendo m_frameFull/m_frame.
@@ -290,6 +302,10 @@ protected:
     };
     QVector<WarmReq> m_warmQueue;       // alvos; um por vez despachado
     QString m_warmInFlight;             // caminho com warm() em andamento na thread bg
+    // Aquecimento do playhead parado (debounce): ao parar a agulha fora da
+    // reprodução, abre+posiciona o decoder e conforma o áudio do clipe sob ela
+    // para o próximo play sair quente. Ver warmPlayhead().
+    QTimer* m_idleWarmTimer = nullptr;
     // Pedido de decodificação. clipId diz para qual clipe o quadro se destina:
     // o clipe do topo alimenta m_frame; os demais alimentam m_layerCache.
     struct FrameReq {
@@ -336,6 +352,9 @@ protected:
     QElapsedTimer m_perfT;
     qint64 m_perfWorkerStartNs = 0;
     qint64 m_perfPrefetchStartNs = 0;
+    // Instante do início do play (agora do 1º quadro): usado para medir a
+    // latência "apertar play -> 1º quadro na tela" (log com PIERROT_PLAY_DEBUG).
+    qint64 m_playStartNs = 0;
     QString m_profTopClipId;   // clipe do topo no tick anterior (detecta corte)
     struct PerfDbg {
         qint64 seekMs = 0;      // applySeek() dentro do tick

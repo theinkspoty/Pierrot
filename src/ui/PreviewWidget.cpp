@@ -73,6 +73,24 @@ static bool audioDbg() {
     return on;
 }
 
+// Formato PCM S16/48 kHz/estéreo do sink do preview. Um só lugar para o
+// startAudio e o pré-aquecimento do sink não divergirem (o reuso do sink exige
+// a mesma saída, não compara o formato).
+static QAudioFormat previewAudioFormat() {
+    QAudioFormat fmt;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    fmt.setSampleFormat(QAudioFormat::Int16);
+#else
+    fmt.setCodec(QStringLiteral("audio/pcm"));
+    fmt.setSampleSize(16);
+    fmt.setSampleType(QAudioFormat::SignedInt);
+    fmt.setByteOrder(QAudioFormat::LittleEndian);
+#endif
+    fmt.setSampleRate(48000);
+    fmt.setChannelCount(2);
+    return fmt;
+}
+
 // Diagnóstico da composição multi-faixa do preview: ligue com PIERROT_COMPOSE_DEBUG=1.
 static bool composeDbg() {
     static const bool on = qEnvironmentVariableIsSet("PIERROT_COMPOSE_DEBUG");
@@ -2044,6 +2062,19 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
             this, &PreviewWidget::onBgWarmDone, Qt::QueuedConnection);
     m_bgPrefetchThread->start();
 
+    // Debounce do aquecimento do playhead parado (F1): ao parar a agulha fora
+    // da reprodução, abre+posiciona o decoder e conforma o áudio do clipe sob
+    // ela. 180ms evita disparar a cada passo de um scrub contínuo.
+    m_idleWarmTimer = new QTimer(this);
+    m_idleWarmTimer->setSingleShot(true);
+    m_idleWarmTimer->setInterval(180);
+    connect(m_idleWarmTimer, &QTimer::timeout, this, &PreviewWidget::warmPlayhead);
+
+    // Pré-aquece o backend de áudio do Qt (1ª criação do QAudioSink inicializa
+    // o plugin ffmpeg do Qt multimedia, ~1s) assim que o event loop começa —
+    // fora do caminho do play, que era onde esse custo aparecia como freeze.
+    QTimer::singleShot(0, this, [this]() { prewarmAudioSink(); });
+
     setMinimumSize(320, 200);
 }
 
@@ -2106,6 +2137,8 @@ void PreviewWidget::setProject(Project* p) {
     }
     updateFrame();
     update();
+    // Projeto recém-aberto com a agulha em repouso: aquece o clipe sob ela.
+    scheduleIdleWarm();
 }
 
 void PreviewWidget::refreshView() {
@@ -2789,6 +2822,8 @@ void PreviewWidget::applySeekVisual(double t) {
         }
     }
     updateFrame();
+    // Agulha parada: aquece o clipe sob ela para o próximo play sair quente.
+    scheduleIdleWarm();
     update();
 }
 
@@ -2850,6 +2885,9 @@ void PreviewWidget::onStateChanged(bool playing) {
         m_playBtn->setText(QString());
     }
     if (m_timeLabel) m_timeLabel->setText(fmtTimecode(m_playhead, projFps(m_project)));
+    // Marco do play para medir "apertar play -> 1º quadro" (o log sai em
+    // onFrameReady, com PIERROT_PLAY_DEBUG=1).
+    m_playStartNs = playing ? PreviewProfiler::nowNs() : 0;
     emit stateChanged(playing);
 }
 
@@ -3168,8 +3206,46 @@ QVector<AudioMixer::SourceInfo> buildWarmSources(
     return out;
 }
 
+void PreviewWidget::prewarmAudioSink() {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    if (m_audioSink) {
+        const QAudioDevice def = QMediaDevices::defaultAudioOutput();
+        if (def.isNull() || m_audioSinkDevice == QString::fromUtf8(def.id())) return;
+    }
+    const QAudioDevice def = QMediaDevices::defaultAudioOutput();
+    if (def.isNull()) return;
+    const QString devId = QString::fromUtf8(def.id());
+    if (m_audioSink) {
+        m_audioSink->stop();
+        m_audioSink->deleteLater();
+        m_audioSink = nullptr;
+    }
+    // Primeira criação = inicializa o backend de áudio do Qt (~1s). Paga aqui,
+    // ocioso, em vez de travar o 1º play.
+    m_audioSink = new QAudioSink(def, previewAudioFormat(), this);
+    m_audioSinkDevice = devId;
+#else
+    if (m_audioOut) {
+        const QAudioDeviceInfo def = QAudioDeviceInfo::defaultOutputDevice();
+        if (def.isNull() || m_audioOutDevice == def.deviceName()) return;
+    }
+    const QAudioDeviceInfo def = QAudioDeviceInfo::defaultOutputDevice();
+    if (def.isNull()) return;
+    const QString devId = def.deviceName();
+    if (m_audioOut) {
+        m_audioOut->stop();
+        m_audioOut->deleteLater();
+        m_audioOut = nullptr;
+    }
+    m_audioOut = new QAudioOutput(def, previewAudioFormat(), this);
+    m_audioOutDevice = devId;
+#endif
+}
+
 void PreviewWidget::startAudio(double t) {
     if (!m_project) return;
+    QElapsedTimer tStage;
+    tStage.start();
     stopAudio();
     const QVector<AudioMixer::SourceInfo> sources = buildMixSources(m_project, t);
     if (sources.isEmpty() && audioDbg())
@@ -3183,17 +3259,7 @@ void PreviewWidget::startAudio(double t) {
         qDebug() << "[audio]   defaultAudioOutput() válido?" << def.isNull() << "-" << def.description();
     }
 
-    QAudioFormat fmt;
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-    fmt.setSampleFormat(QAudioFormat::Int16);
-#else
-    fmt.setCodec(QStringLiteral("audio/pcm"));
-    fmt.setSampleSize(16);
-    fmt.setSampleType(QAudioFormat::SignedInt);
-    fmt.setByteOrder(QAudioFormat::LittleEndian);
-#endif
-    fmt.setSampleRate(48000);
-    fmt.setChannelCount(2);
+    const QAudioFormat fmt = previewAudioFormat();
 
     m_audioFeed = new AudioMixer(this);
     m_audioFeed->setMasterVolume(m_project ? m_project->masterVolume : 1.0);
@@ -3211,6 +3277,7 @@ void PreviewWidget::startAudio(double t) {
     // background; aceitamos 1-2 frames de silêncio no warm-up frio.
     m_audioFeed->updateSources(sources, /*reseek=*/true,
                                QVector<AudioMixer::SourceInfo>(), -1, t);
+    const qint64 afterSourcesMs = tStage.elapsed();
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     const QAudioDevice def = QMediaDevices::defaultAudioOutput();
@@ -3249,6 +3316,11 @@ void PreviewWidget::startAudio(double t) {
     }
     m_audioOut->start(m_audioFeed);
 #endif
+    if (playDbg())
+        qDebug().noquote()
+            << QStringLiteral("[play] startAudio: updateSources=%1ms sink=%2ms")
+                   .arg(afterSourcesMs)
+                   .arg(tStage.elapsed() - afterSourcesMs);
 }
 
 void PreviewWidget::stopAudio() {
@@ -3849,6 +3921,15 @@ void PreviewWidget::onFrameReady(const QString& clipId, const QString& path, dou
         profFrame().decSeekNs = qint64(FFmpegDecoder::lastSeekNs());
         profFrame().decDiscard = FFmpegDecoder::lastDiscard();
         profFrame().decWorkNs = FFmpegDecoder::lastWorkNs();
+    // Latência "apertar play -> 1º quadro na tela" (só diagnostica; com o
+    // warmPlayhead no playhead parado deve cair de centenas de ms para dezenas).
+    if (m_playStartNs > 0 && !img.isNull()) {
+        const double dtMs = (PreviewProfiler::nowNs() - m_playStartNs) / 1e6;
+        if (playDbg())
+            qDebug().noquote()
+                << QStringLiteral("[play] 1º quadro %1ms após o play").arg(dtMs, 0, 'f', 0);
+        m_playStartNs = 0; // mede só o primeiro quadro de cada play
+    }
     {
         QMutexLocker l(&m_frameMutex);
         m_workerBusy = false;
@@ -4195,6 +4276,73 @@ void PreviewWidget::onBgWarmDone(const QString& path) {
         if (m_warmInFlight == path) m_warmInFlight.clear();
     }
     kickWarmQueue(); // próximo da fila, se houver
+}
+
+// Agenda (debounce) o aquecimento do clipe sob a agulha. Só fora da reprodução:
+// durante o play o prefetch e o warm-ahead já mantêm o pool quente. O timer de
+// play ativo é a fonte da verdade do transporte (m_playing pode estar defasado).
+void PreviewWidget::scheduleIdleWarm() {
+    if (!m_idleWarmTimer) return;
+    if (m_timer && m_timer->isActive()) return;
+    m_idleWarmTimer->start();
+}
+
+// Aquece o clipe sob a agulha parada: abre+posiciona o decoder (vídeo) e
+// começa a conformar a janela de áudio. Assim o próximo play não paga o open()
+// frio (~500-800ms) nem o "começa mudo" do conform. Best-effort: se o decoder
+// já está no pool (o FrameWorker decodificou o quadro da agulha), nada a fazer.
+void PreviewWidget::warmPlayhead() {
+    if (!m_project) return;
+    if (m_timer && m_timer->isActive()) return;
+    // Sink já criado no startup; revalida caso a saída padrão tenha mudado.
+    prewarmAudioSink();
+    const Clip* clip = clipAt(m_playhead);
+    if (!clip) return;
+    const MediaItem* media = m_project->findMedia(clip->mediaId);
+    if (!media) return;
+
+    const int widgetW = m_videoRect.width() > 0 ? m_videoRect.width() : 960;
+    const int decW = qMax(160, qMax(m_previewQuality, widgetW));
+
+    // Vídeo: aquece na thread de prefetch (ociosa fora do play). O acquire é
+    // exclusivo; se o FrameWorker já estiver decodificando o mesmo arquivo, o
+    // warm apenas não encontra slot e segue — o quadro chega de qualquer forma.
+    if (media->hasVideo && m_bgPrefetchWorker && m_decPool
+        && !media->filePath.isEmpty()) {
+        const QString vpath = resolvePreviewVideo(media->filePath);
+        if (!vpath.isEmpty() && !m_decPool->contains(vpath)) {
+            bool dispatch = false;
+            {
+                QMutexLocker l(&m_frameMutex);
+                if (m_warmInFlight.isEmpty()) {
+                    m_warmInFlight = vpath;
+                    dispatch = true;
+                }
+            }
+            if (dispatch) {
+                // Mesmo tempo-fonte que o quadro da agulha (respeita in/speed).
+                const double srcT = clipSrcTime(*clip, m_playhead - clip->pos);
+                QMetaObject::invokeMethod(m_bgPrefetchWorker, "warm",
+                                          Qt::QueuedConnection,
+                                          Q_ARG(QString, vpath),
+                                          Q_ARG(double, srcT),
+                                          Q_ARG(int, decW));
+            }
+        }
+    }
+
+    // Áudio: pede (async) a janela de conform do trecho sob a agulha. No play,
+    // updateSources() pede a MESMA janela — já preenchida, o sink parte com o
+    // conteúdo certo em vez de silêncio.
+    const QVector<AudioMixer::SourceInfo> sources = buildMixSources(m_project, m_playhead);
+    if (!sources.isEmpty()) {
+        AudioConformCache& conform = AudioConformCache::instance();
+        for (const AudioMixer::SourceInfo& w : sources) {
+            if (w.path.isEmpty()) continue;
+            const AudioConformCache::Ref c = conform.get(w.path, w.audioStream);
+            conform.request(c, w.mediaPos, 6.0);
+        }
+    }
 }
 
 // Aplica pan/crop sobre um quadro e devolve o recorte.
