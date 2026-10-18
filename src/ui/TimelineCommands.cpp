@@ -91,20 +91,32 @@ static void doRemoveClipsByIds(TimelineWidget* tl, const QStringList& ids) {
     for (Track& t : p->audioTracks) remove(t.clips);
 }
 
-// Ripple delete em uma faixa.
-static void rippleDeleteInTrack(Track& t, const QStringList& sel) {
-    QVector<Clip> keep;
+// Remove os clipes de `sel` de uma faixa.
+static void removeSelectedInTrack(Track& t, const QStringList& sel) {
+    t.clips.erase(std::remove_if(t.clips.begin(), t.clips.end(),
+                                 [&sel](const Clip& c) { return sel.contains(c.id); }),
+                  t.clips.end());
+}
+
+// Ripple delete com sync: remove `sel` e fecha o vão em TODAS as faixas.
+// Os intervalos excluídos são a união global (vídeo+áudio) e o deslocamento
+// vale para todas as faixas, mesmo onde nada foi removido. O ripple antigo
+// era por faixa: excluir um clipe SEM áudio deixava `removed` vazio na pista
+// de áudio e os pares de áudio dos clipes seguintes ficavam para trás — o
+// vídeo era puxado, o som dessincronizava.
+static void rippleDeleteSelected(TimelineWidget* tl, const QStringList& sel) {
+    if (!tl || !tl->project()) return;
+    Project* p = tl->project();
+
     QVector<QPair<double, double>> removed;
-    for (Clip& c : t.clips) {
-        if (sel.contains(c.id))
-            removed.append(qMakePair(c.pos, c.pos + c.dur));
-        else
-            keep.append(c);
-    }
-    if (removed.isEmpty()) {
-        t.clips = keep;
-        return;
-    }
+    auto scan = [&](const QVector<Clip>& clips) {
+        for (const Clip& c : clips)
+            if (sel.contains(c.id))
+                removed.append(qMakePair(c.pos, c.pos + c.dur));
+    };
+    for (const Track& t : p->videoTracks) scan(t.clips);
+    for (const Track& t : p->audioTracks) scan(t.clips);
+    if (removed.isEmpty()) return;
     std::sort(removed.begin(), removed.end());
     QVector<QPair<double, double>> merged;
     for (const auto& iv : removed) {
@@ -113,14 +125,19 @@ static void rippleDeleteInTrack(Track& t, const QStringList& sel) {
         else
             merged.last().second = std::max(merged.last().second, iv.second);
     }
-    for (Clip& c : keep) {
-        double shift = 0.0;
-        for (const auto& iv : merged)
-            if (c.pos >= iv.second - 1e-6)
-                shift += iv.second - iv.first;
-        c.pos = std::max(0.0, c.pos - shift);
-    }
-    t.clips = keep;
+
+    auto apply = [&](Track& t) {
+        removeSelectedInTrack(t, sel);
+        for (Clip& c : t.clips) {
+            double shift = 0.0;
+            for (const auto& iv : merged)
+                if (c.pos >= iv.second - 1e-6)
+                    shift += iv.second - iv.first;
+            if (shift > 0.0) c.pos = std::max(0.0, c.pos - shift);
+        }
+    };
+    for (Track& t : p->videoTracks) apply(t);
+    for (Track& t : p->audioTracks) apply(t);
 }
 
 // ── Corte ──────────────────────────────────────────────────────────────
@@ -243,8 +260,7 @@ void TimelineCommands::cutAndDelete(TimelineWidget* tl, bool ripple) {
     // 2) Remove os clipes da direita (com grupos expandidos).
     QStringList toRemove = expandToGroups(tl, newClipIds);
     if (ripple) {
-        for (Track& t : tl->project()->videoTracks) rippleDeleteInTrack(t, toRemove);
-        for (Track& t : tl->project()->audioTracks) rippleDeleteInTrack(t, toRemove);
+        rippleDeleteSelected(tl, toRemove);
     } else {
         doRemoveClipsByIds(tl, toRemove);
     }
@@ -296,8 +312,7 @@ void TimelineCommands::deleteSelected(TimelineWidget* tl) {
     }
     if (sel.isEmpty()) return;
 
-    for (Track& t : tl->project()->videoTracks) rippleDeleteInTrack(t, sel);
-    for (Track& t : tl->project()->audioTracks) rippleDeleteInTrack(t, sel);
+    rippleDeleteSelected(tl, sel);
 
     tl->clearSelection();
     tl->invalidateScene();
@@ -464,6 +479,10 @@ void TimelineCommands::deleteClipAfterPlayhead(TimelineWidget* tl) {
 }
 
 // ── Ripple Edit ────────────────────────────────────────────────────────
+// Sync AV: o trim vale para o par vinculado (grupo) e o deslocamento dos
+// subsequentes vale em TODAS as faixas — o ripple antigo mexia só na faixa
+// do clipe, então o áudio (par ou clipes seguintes em outra faixa) ficava
+// para trás e o AV dessincronizava.
 
 void TimelineCommands::rippleTrimLeft(TimelineWidget* tl, Clip* c, double newIn) {
     if (!c || !tl || !tl->project()) return;
@@ -471,19 +490,31 @@ void TimelineCommands::rippleTrimLeft(TimelineWidget* tl, Clip* c, double newIn)
     const double delta = newIn - c->in;
     if (std::fabs(delta) < 1e-6) return;
 
+    // Par vinculado (mesma fonte/posição) recebe o mesmo ajuste — mesmas
+    // operações do clipe principal, para o AV permanecer exatamente em sync.
+    if (!c->groupId.isEmpty())
+        for (Clip* m : groupMembers(tl, c->groupId))
+            if (m && m->id != c->id) {
+                m->in += delta;
+                m->pos += delta;
+                m->dur -= delta;
+            }
+
     c->in = std::max(0.0, newIn);
     c->dur -= delta;
     c->pos += delta;
 
-    Track* tr = trackOf(tl, c);
-    if (!tr) return;
-
-    for (Clip& other : tr->clips) {
-        if (other.id == c->id) continue;
-        if (other.pos >= c->pos + c->dur - 1e-6) {
-            other.pos -= delta;
+    // Subsequentes (em qualquer faixa) são puxados junto.
+    const double end = c->pos + c->dur;
+    auto shift = [&](Track& tr) {
+        for (Clip& other : tr.clips) {
+            if (other.id == c->id) continue;
+            if (!c->groupId.isEmpty() && other.groupId == c->groupId) continue;
+            if (other.pos >= end - 1e-6) other.pos -= delta;
         }
-    }
+    };
+    for (Track& t : tl->project()->videoTracks) shift(t);
+    for (Track& t : tl->project()->audioTracks) shift(t);
 }
 
 void TimelineCommands::rippleTrimRight(TimelineWidget* tl, Clip* c, double newDur) {
@@ -492,18 +523,25 @@ void TimelineCommands::rippleTrimRight(TimelineWidget* tl, Clip* c, double newDu
     const double delta = newDur - c->dur;
     if (std::fabs(delta) < 1e-6) return;
 
+    const double oldEnd = c->pos + c->dur;
+
+    // Par vinculado acompanha a duração (mesma fonte, mesmo in).
+    if (!c->groupId.isEmpty())
+        for (Clip* m : groupMembers(tl, c->groupId))
+            if (m && m->id != c->id)
+                m->dur = std::max(kMinDur, m->dur + delta);
+
     c->dur = std::max(kMinDur, newDur);
 
-    Track* tr = trackOf(tl, c);
-    if (!tr) return;
-
-    const double cEnd = c->pos + c->dur;
-    for (Clip& other : tr->clips) {
-        if (other.id == c->id) continue;
-        if (other.pos >= cEnd - delta - 1e-6) {
-            other.pos += delta;
+    auto shift = [&](Track& tr) {
+        for (Clip& other : tr.clips) {
+            if (other.id == c->id) continue;
+            if (!c->groupId.isEmpty() && other.groupId == c->groupId) continue;
+            if (other.pos >= oldEnd - 1e-6) other.pos += delta;
         }
-    }
+    };
+    for (Track& t : tl->project()->videoTracks) shift(t);
+    for (Track& t : tl->project()->audioTracks) shift(t);
 }
 
 // ── Rolling Edit ───────────────────────────────────────────────────────

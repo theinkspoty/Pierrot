@@ -266,6 +266,30 @@ em tom claro, volume da faixa atrás de **Shift+V** (como Premiere), seleção
   (`.intersected()`).
 - [x] **Save de janelas dockáveis** — layout persistido + validado
   (`saneLayoutArray`), autosave 500 ms, workspaces nomeados.
+- [x] **`m_playing` começava `true`** — o motor acreditava estar tocando com o
+  timer parado: o 1º Espaço caía no ramo "parar" (o 2º é que dava play) e o
+  monitor externo abria em estado de play. Agora `false` por default
+  (`PlaybackEngine.h`).
+- [x] **Abrir/criar projeto não mexia no preview** — `PreviewWidget::setProject`
+  só rodava na construção da janela (`MainWindow.cpp:221`), então o play, a
+  agulha e os caches ficavam do projeto anterior (agulha além da duração nova =
+  "Sem clipe"). `newProject()`/`openProjectFile()` agora chamam
+  `setProject` + `setPlayhead(0.0)`; rótulo "Program: <nome>" atualizado no
+  `refreshView()`.
+- [x] **Presets com acento não aplicavam** — `applyPreset` comparava
+  `QString == QLatin1String` (UTF-8 vs Latin-1): nomes como "Pop Elástico"
+  nunca casavam e o clique era silenciosamente ignorado. `QString::fromUtf8`
+  nos dois lados.
+- [x] **Interpolação inerte nos presets** — a interp do segmento mora na1ª
+  key (a última é ignorada): "Giro 360" saía linear; e os laços perdiam a
+  interp do1º ciclo para `upsertKeyframe` (Wiggle retinho, Flicker com fade).
+  `setKf` substitui a key duplicada inteira.
+- [x] **Ripple delete dessincronizava AV** — o fechamento do vão era por
+  faixa: excluir um clipe **sem áudio** deixava `removed` vazio na pista de
+  áudio e os pares dos clipes seguintes ficavam para trás (vídeo puxado, som
+  parado). Intervalos agora são a união global e o deslocamento vale em todas
+  as faixas. `rippleTrimLeft/Right` (ferramenta B) corrigidos igualmente +
+  par vinculado (grupo) ajustado; snapshot de rollback alargado.
 
 ### Timeline
 
@@ -342,22 +366,26 @@ em tom claro, volume da faixa atrás de **Shift+V** (como Premiere), seleção
 ### Performance de playback — `Relatorio-Performance-Playback.md` (10 fixes)
 
 - [x] **Fix 10 — throttle de `scopesFrame()`** — timer de 70 ms (já existia).
-- [ ] **Fix 1 — `applyCrop()`/`applyBasicEffects()` no worker** — maior
-  impacto/risco; falta o snapshot (pré-requisito).
-- [ ] **Fix 2 — limitar `requestLowerLayers()` a 1/tick** — correção barata:
-  um `break`.
+- [ ] **Fix 1 — `applyCrop()`/`applyBasicEffects()` no worker** — **parcial**:
+  snapshot `FrameFx` pronto e crop+efeitos básicos no worker (clipes sem
+  LAINKA/MotiOn/OFX/frei0r); falta mover esses efeitos para o worker com
+  paridade preview↔export.
+- [x] **Fix 2 — limitar `requestLowerLayers()` a 1/tick** — já limitado a 1 camada inferior nova por tick.
 - [ ] **Fix 3 — pré-alocar o buffer de compositing** — hoje alocado por paint;
   `ImgPool` já existe para chroma/blur/motionblur.
-- [ ] **Fix 4 — `QPainter::setOpacity()` no lugar do COW manual** — avaliar
-  contra blend modes antes de trocar.
+- [x] **Fix 4 — `QPainter::setOpacity()` no lugar do COW manual** — já usado
+  em `drawLayer()` (substituiu o `DestinationIn` que despreendia o COW a cada
+  paint com alpha < 1); ver comentário em `PreviewWidget.cpp:2330`.
 - [ ] **Fix 5 — double-buffer no `AudioMixer`** — classe intestável (dentro do
   `.cpp`), lock segura o chunk inteiro.
 - [ ] **Fix 6 — cache de mix sources** — separar topologia (invariante) dos
   valores por tick (`vol`/`mediaPos` variam).
-- [ ] **Fix 7 — `desengasga` adaptativo** — intervalo literal fixo de 10 s.
-- [ ] **Fix 8 — pré-criar/reusar `QAudioSink`** — new/destroy em todo play.
-- [ ] **Fix 9 — remover `waitReadyBeforeSink()` da UI** — bloqueia ~300 ms com
-  `sleep_for(2ms)`.
+- [x] **Fix 7 — `desengasga` adaptativo** — **FEITO**: default **desligado**
+  (0 = off; `PIERROT_DESENGASGA_MS=<ms>` religa). Medição em 1080p60: com
+  flush a cada 30 s, 7 travamentos de 114–338 ms; desligado, zero picos e p95
+  de decode plano (0,35→0,37 ms em 4 min).
+- [x] **Fix 8 — pré-criar/reusar `QAudioSink`** — adicionado `prewarmAudioSink()` no startup e reuso entre play/stop.
+- [x] **Fix 9 — remover `waitReadyBeforeSink()` da UI** — removido (mixer inicia direto e conform é aquecido antecipadamente).
 - [ ] **M2 — rebuild O(n) do índice do LRU** (`FFmpegDecoder`), ~6 µs/decode.
 
 ### Gaps Vegas/FCE — `Relatorio-Features-Vegas-FCE.md`, seção 4

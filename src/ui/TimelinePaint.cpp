@@ -492,20 +492,42 @@ void TimelineWidget::renderScene(QPainter& p) {
         }
     }
 
+    // Marcadores: linha vertical + balão colorido com o nome. Tudo clipado
+    // DENTRO da régua — a cor nunca vaza para a faixa de baixo (antes a
+    // linha passava raspando pela borda inferior e o nome ficava solto,
+    // colado na faixa, quase ilegível).
     for (const Marker& mk : m_project->markers) {
         const int mx = (int)(H + (mk.time - m_viewStart) * m_pps);
-        if (mx < H || mx > width()) continue;
+        if (mx < H - 1 || mx > width()) continue;
+        p.save();
+        p.setClipRect(H - 1, 0, width() - H + 1, R);
         p.setPen(QPen(mk.color, 1));
-        p.drawLine(mx, 2, mx, R - 4);
-        QPolygon flag;
-        flag << QPoint(mx, 2) << QPoint(mx + 6, 2) << QPoint(mx + 6, 8) << QPoint(mx, 8);
-        p.setPen(Qt::NoPen);
-        p.setBrush(mk.color);
-        p.drawPolygon(flag);
-        if (!mk.name.isEmpty()) {
-            p.setPen(mk.color);
-            p.drawText(mx + 8, R - 8, mk.name);
+        p.drawLine(mx, 0, mx, R - 1);
+        if (mk.name.isEmpty()) {
+            // defensivo (todo marcador novo ganha nome): só a "cabeça"
+            p.setPen(Qt::NoPen);
+            p.setBrush(mk.color);
+            p.drawRect(mx, 2, 5, 5);
+        } else {
+            QFont f = p.font();
+            f.setPointSizeF(8);
+            f.setBold(true);
+            p.setFont(f);
+            const QFontMetrics fm(f);
+            const int pad = 4;
+            const int bh = R - 8; // régua22px → balão14px
+            const QRect badge(mx + 4, (R - bh) / 2,
+                              fm.horizontalAdvance(mk.name) + pad * 2, bh);
+            p.setPen(Qt::NoPen);
+            p.setBrush(mk.color);
+            p.drawRoundedRect(badge, 3, 3);
+            p.setPen(QPen(mk.color.darker(160), 1));
+            p.setBrush(Qt::NoBrush);
+            p.drawRoundedRect(badge, 3, 3);
+            p.setPen(readableTextOn(mk.color));
+            p.drawText(badge, Qt::AlignCenter, mk.name);
         }
+        p.restore();
     }
 
     const int zx0 = 6;

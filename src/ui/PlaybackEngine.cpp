@@ -28,11 +28,15 @@ PlaybackEngine::PlaybackEngine() = default;
 PlaybackEngine::~PlaybackEngine() = default;
 
 void PlaybackEngine::setProject(Project* p) {
-    m_project = p;
-    if (!p) {
+    // Troca/reset de projeto: o transporte antigo não vale mais. Para também
+    // quando p não é nulo — MainWindow reusa o mesmo endereço (&m_project),
+    // então "p mudou" não é um teste confiável; o que importa é haver algo
+    // rodando (antes só parava com p == nullptr e o play seguia em cima do
+    // projeto trocado).
+    if (m_playing || (m_timer && m_timer->isActive()))
         stopPlaybackInternal();
-        m_playhead = 0.0;
-    }
+    m_project = p;
+    if (!p) m_playhead = 0.0;
 }
 
 void PlaybackEngine::setFrameInterval() {

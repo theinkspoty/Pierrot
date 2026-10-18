@@ -26,7 +26,12 @@
 - **Faixas de áudio independentes**: arquivos com vários streams (OBS/câmera) geram um clipe por faixa.
 - **Reordenar faixas** por arraste do cabeçalho.
 - **Pastas (grupos)**: arraste faixas para criar/grupos, presets de tamanho (minimizada/normal/grande).
-- **Marcadores** na régua (`M` para adicionar/remover na agulha; menu do botão direito).
+- **Marcadores** na régua (`M` para adicionar/remover na agulha; menu do
+  botão direito). Nome automático ("Marcador 1", …) e **balão colorido** com
+  o nome dentro da régua (a cor não vaza para a faixa). Paleta de **4 cores**
+  — vermelho, azul, amarelo (default), roxo — escolhível ao criar (submenu)
+  ou depois (clique-direito sobre o marcador: renomear/cor/excluir); a cor
+  é salva no `.Blanc`.
 - **Botões de zoom** (`−`/`+`) na régua.
 - **Grade de fundo** e **régua de tempo** toggáveis na barra de ferramentas.
 - **Região de loop** (arraste na régua; Q ativa/desativa; Delete com ripple ou sem).
@@ -140,10 +145,16 @@
 - **Âncora visual** (gizmo branco) no viewfinder, arrastrável.
 - **Dock "Animação"** (presets de keyframes): aplica presets aos clipes
   **selecionados** na timeline (tempos escalados pela duração real; as props
-  tocadas são substituídas). Grupos: Entradas, Saídas, Idle (laço), Efeitos e
-  **Elásticos** — trio profissional **Slam Elástico** (queda + squash
-  antifase), **Estica e Some** (anticipation + fuga elástica) e **Mola (laço)**
-  (bob + twist antifase em loop), todos com `KfElastic`/`KfBounce`/`KfBack`.
+  tocadas são substituídas). **48 presets em 6 grupos**:
+  **Entradas** (12: pop elástico, slides, quedas com bounce/squash, giro,
+  cortina vertical, fades, semear estilo AE), **Saídas** (8: pop,
+  direcionais, encolher/girar, dissolve), **Câmera (Ken Burns)** (6: Push In,
+  Pull Out, pans L/R, subida suave, Dr. Holandês — duração inteira), **Idle
+  (laço)** (8: respiração, wiggle, flutuação, pêndulo, órbita, pulso/latida,
+  deriva lenta, tremida), **Efeitos** (8: giro 360/180, impacto, flip
+  horizontal, squash & stretch, zoom por cortes, flicker, estroboscópio) e
+  **Elásticos** (6: Slam Elástico, Salto Elástico, Recoil, Estalo, Estica e
+  Some, Mola (laço)), com `KfElastic`/`KfBounce`/`KfBack`.
   Cada preset tem **miniatura animada estilo Vegas Pro**: simulação em clipe
   dummy 1920×1080 redesenhada em loop a ~30 fps (timer único só roda com o
   dock visível), com fantasma de repouso e ícone play que orienta rotação e
@@ -170,11 +181,12 @@
 - **Áudio** (Qt Multimedia, via libswresample).
 - Composição multi-faixa no preview (blend, opacidade, fades, cor sólida).
 - **Transições** (dissolve, wipes 4 direções + 4 diagonais) no preview e exportação.
-- **Program Monitor** (central): transporte no monitor, quadro anterior/próximo, loop, qualidade de preview, timecode flutuante, rótulo `Program: <projeto>`.
+- **Program Monitor** (central): transporte no monitor, quadro anterior/próximo, loop, qualidade de preview, rótulo `Program: <projeto>`. Timecode **posição / duração**, chip `720p`/`4K` no canto, **faixa de scrub arrastável** sob o vídeo (região de loop sombreada + **picotes dos marcadores nas suas cores**), sombra suave atrás do quadro e tela vazia com dica. Zoom/qualidade/margens lembram entre sessões.
 - **Source Monitor** (dock, estilo Premiere): duplo-clique na Central de Mídias abre a mídia aqui; `I`/`O` marcam In/Out; **Insert** (`,`) insere o trecho no playhead empurrando os clipes seguintes; **Overwrite** (`.`) sobrescreve o intervalo no playhead.
 - Qualidade de preview configurável (resolução de decodificação).
 - Sincronização A/V pelo relógio do áudio (slew suave, correção de drift).
 - **Relógio de áudio** como mestre para evitar dessincronia.
+- **Partida de play quente**: o backend de áudio é inicializado no startup e o decoder/conform do clipe sob a agulha são aquecidos quando ela para (debounce) — o 1º play sai sem freeze. Latência medida com `PIERROT_PLAY_DEBUG=1`.
 
 ## Mixer (dock)
 
@@ -214,6 +226,17 @@
 | `I` / `O` | Source Monitor: marcar In / Out |
 | `,` | Inserir trecho do Source no playhead (Insert) |
 | `.` | Sobrescrever timeline no playhead com o Source (Overwrite) |
+
+## Idioma
+
+- **Português (Brasil)** e **日本語** (Ajustes ▸ Interface ▸ Idioma). O japonês
+  traduz o app inteiro — menus, diálogos, mensagens e atalhos (1159 entradas,
+  `%1`… preservados) — e troca a fonte da interface pela pilha de gothics
+  japoneses (em qualquer tema). Requer reiniciar o app.
+- **Inglês** reservado ("v0.7.5"), por ora cai no pt-BR.
+- Tradução **embutida em C++** (`src/ui/JaTranslator`), sem `lupdate`/`.qm`:
+  string sem tradução aparece no original em pt-BR. A fonte fica em
+  `tools/i18n/` (`gen_ja.py` regenera a tabela no `.cpp`).
 
 ## Undo/Redo
 

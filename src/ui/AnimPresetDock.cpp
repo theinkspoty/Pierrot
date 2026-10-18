@@ -29,13 +29,22 @@
 namespace {
 
 // Helper: grava keyframes ABSOLUTOS (segundos) numa prop, substituindo os
-// existentes; base = primeiro valor (mesmo critério do Lazzi).
+// existentes; base = valor do primeiro key efetivo.
 struct K { double t; double v; int i; };
 
 void setKf(QVector<Keyframe>& kf, double& base, const QVector<K>& keys) {
     kf.clear();
-    for (const K& k : keys) upsertKeyframe(kf, k.t, k.v, k.i);
-    if (!keys.isEmpty()) base = keys.first().v;
+    for (const K& k : keys) {
+        // Mesmo instante: substitui a key INTEIRA. O upsertKeyframe global só
+        // troca o valor e preserva a interpolação do primeiro — os presets de
+        // laço semeiam t=0 com Linear e o key real (Sm/Bo/Bk) do1º ciclo era
+        // descartado (Wiggle começava retinho, Flicker em vez de corte seco
+        // fazia fade, Respiração perdia o quique inicial).
+        for (int i = kf.size() - 1; i >= 0; --i)
+            if (qAbs(kf[i].time - k.t) < 1e-9) kf.removeAt(i);
+        upsertKeyframe(kf, k.t, k.v, k.i);
+    }
+    if (!kf.isEmpty()) base = kf.first().value;
 }
 
 using PresetFn = void (*)(Clip&, double W, double H);
@@ -83,6 +92,51 @@ void pFadeUp(Clip& c, double, double H) {
     setKf(c.kfTy, c.ty, {{0, 0.10 * H, Sm}, {d * 0.28, 0, KfLinear}});
 }
 
+// Queda com quique real (bounceOut assenta sozinho no "chão") e squash
+// desenhado no instante do primeiro impacto — antecipação de peso.
+void pBounceCima(Clip& c, double, double H) {
+    const double d = qBound(0.7, c.dur, 2.5);
+    const double tQ = d * 0.55;  // fim da sequência de quiques
+    const double ti = tQ * 0.36; // 1º impacto (bounceOut chega a 1 em 1/2.75)
+    setKf(c.kfOpacity, c.opacity, {{0, 0, Sm}, {qMin(0.1, d * 0.08), 1, KfLinear}});
+    setKf(c.kfTy, c.ty, {{0, -0.45 * H, Bo}, {tQ, 0, KfLinear}});
+    setKf(c.kfScaleX, c.scaleX, {{0, 1, KfLinear}, {ti, 1.16, Bk},
+                                 {ti + d * 0.12, 0.96, Sm}, {ti + d * 0.30, 1, KfLinear}});
+    setKf(c.kfScaleY, c.scaleY, {{0, 1, KfLinear}, {ti, 0.84, Bk},
+                                 {ti + d * 0.12, 1.05, Sm}, {ti + d * 0.30, 1, KfLinear}});
+}
+
+// Entra deslizando de baixo — espelho vertical dos slides laterais.
+void pSlideBaixo(Clip& c, double, double H) {
+    const double d = qBound(0.6, c.dur, 2.5);
+    setKf(c.kfOpacity, c.opacity, {{0, 0, Sm}, {qMin(0.12, d * 0.1), 1, KfLinear}});
+    setKf(c.kfTy, c.ty, {{0, 0.42 * H, Bk}, {d * 0.32, 0, KfLinear}});
+}
+
+// Entra girando: quase de lado (−90°) e miúdo, assenta com back-out.
+void pGiraEntra(Clip& c, double, double) {
+    const double d = qBound(0.7, c.dur, 2.5);
+    setKf(c.kfOpacity, c.opacity, {{0, 0, Sm}, {qMin(0.14, d * 0.12), 1, KfLinear}});
+    setKf(c.kfRotation, c.rotation, {{0, -90, Bk}, {d * 0.45, 0, KfLinear}});
+    setKf(c.kfScale, c.scale, {{0, 0.35, El}, {d * 0.5, 1, KfLinear}});
+}
+
+// Cortina: abre na vertical como persiana, com leve estica na horizontal.
+void pCortina(Clip& c, double, double) {
+    const double d = qBound(0.6, c.dur, 2.5);
+    setKf(c.kfOpacity, c.opacity, {{0, 0, Sm}, {qMin(0.12, d * 0.1), 1, KfLinear}});
+    setKf(c.kfScaleY, c.scaleY, {{0, 0.06, Bk}, {d * 0.4, 1, KfLinear}});
+    setKf(c.kfScaleX, c.scaleX, {{0, 1.08, KfLinear}, {d * 0.4, 1, KfLinear}});
+}
+
+// Fade cinematográfico: dissolve lento (meio da janela) com recuo sutil de
+// escala — para B-roll, entrevistas e transições de cena.
+void pFadeCine(Clip& c, double, double) {
+    const double d = qBound(0.8, c.dur, 3.0);
+    setKf(c.kfOpacity, c.opacity, {{0, 0, Sm}, {d * 0.45, 1, KfLinear}});
+    setKf(c.kfScale, c.scale, {{0, 1.06, Sm}, {d * 0.55, 1, KfLinear}});
+}
+
 // ─── SAÍDAS ───────────────────────────────────────────────────────────────
 void pSairPop(Clip& c, double, double) {
     const double t0 = qMax(0.0, c.dur - qBound(0.5, c.dur * 0.25, 1.0));
@@ -100,6 +154,46 @@ void pSairSobe(Clip& c, double, double H) {
     const double t0 = qMax(0.0, c.dur - qBound(0.5, c.dur * 0.25, 1.0));
     setKf(c.kfTy, c.ty, {{0, 0, KfLinear}, {t0, 0, El}, {c.dur, -0.35 * H, KfLinear}});
     setKf(c.kfOpacity, c.opacity, {{0, 1, KfLinear}, {t0, 1, Sm}, {c.dur, 0, KfLinear}});
+}
+
+void pSairEsq(Clip& c, double W, double) {
+    const double t0 = qMax(0.0, c.dur - qBound(0.5, c.dur * 0.25, 1.0));
+    setKf(c.kfTx, c.tx, {{0, 0, KfLinear}, {t0, 0, Bk}, {c.dur, -0.45 * W, KfLinear}});
+    setKf(c.kfOpacity, c.opacity, {{0, 1, KfLinear}, {t0, 1, Sm}, {c.dur, 0, KfLinear}});
+}
+
+void pSairBaixo(Clip& c, double, double H) {
+    const double t0 = qMax(0.0, c.dur - qBound(0.5, c.dur * 0.25, 1.0));
+    setKf(c.kfTy, c.ty, {{0, 0, KfLinear}, {t0, 0, Bk}, {c.dur, 0.40 * H, KfLinear}});
+    setKf(c.kfOpacity, c.opacity, {{0, 1, KfLinear}, {t0, 1, Sm}, {c.dur, 0, KfLinear}});
+}
+
+// Recolhe no lugar (back-out = não passa do alvo) e ainda gira no caminho.
+void pSairEncolhe(Clip& c, double, double) {
+    const double t0 = qMax(0.0, c.dur - qBound(0.5, c.dur * 0.3, 1.1));
+    setKf(c.kfScale, c.scale, {{0, 1, KfLinear}, {t0, 1, Bk}, {c.dur, 0.14, KfLinear}});
+    setKf(c.kfRotation, c.rotation, {{0, 0, KfLinear}, {t0, 0, Sm}, {c.dur, 20, KfLinear}});
+    setKf(c.kfOpacity, c.opacity, {{0, 1, KfLinear}, {t0, 1, KfLinear},
+                                   {t0 + (c.dur - t0) * 0.7, 0.5, Sm},
+                                   {c.dur, 0, KfLinear}});
+}
+
+// Sai girando para fora de quadro (meia volta suave + encolhimento).
+void pSairGira(Clip& c, double, double) {
+    const double t0 = qMax(0.0, c.dur - qBound(0.5, c.dur * 0.3, 1.1));
+    setKf(c.kfRotation, c.rotation, {{0, 0, KfLinear}, {t0, 0, Sm},
+                                     {c.dur, -150, KfLinear}});
+    setKf(c.kfScale, c.scale, {{0, 1, KfLinear}, {t0, 1, Sm},
+                               {c.dur, 0.35, KfLinear}});
+    setKf(c.kfOpacity, c.opacity, {{0, 1, KfLinear}, {t0, 1, KfLinear},
+                                   {c.dur, 0, KfLinear}});
+}
+
+// Dissolve lento na metade final — transição de cena dentro do próprio clipe.
+void pSairFade(Clip& c, double, double) {
+    const double t0 = qMax(0.0, c.dur - qBound(0.6, c.dur * 0.45, 2.0));
+    setKf(c.kfOpacity, c.opacity, {{0, 1, KfLinear}, {t0, 1, Sm}, {c.dur, 0, KfLinear}});
+    setKf(c.kfScale, c.scale, {{0, 1, KfLinear}, {t0, 1, Sm}, {c.dur, 1.05, KfLinear}});
 }
 
 // ─── IDLE (laço até o fim do clipe) ───────────────────────────────────────
@@ -139,10 +233,86 @@ void pFlutua(Clip& c, double, double H) {
     setKf(c.kfTx, c.tx, kfX);
 }
 
+// Pêndulo: balanço de rotação passando por0 (quadrantes em Suave ≈ seno).
+void pPendulo(Clip& c, double, double) {
+    const double passo = 1.6;
+    QVector<K> kf{{0, 0, KfLinear}};
+    bool up = true;
+    for (double t = 0; t + passo < c.dur; t += passo) {
+        const double dir = up ? 1.0 : -1.0;
+        kf << K{t + passo * 0.25, dir * 7, Sm}
+           << K{t + passo * 0.75, -dir * 7, Sm}
+           << K{t + passo, 0, KfLinear};
+        up = !up;
+    }
+    setKf(c.kfRotation, c.rotation, kf);
+}
+
+// Órbita: círculo lento — tx/ty em quadratura (90° fora de fase).
+void pOrbita(Clip& c, double, double H) {
+    const double passo = 1.6;
+    const double a = 0.03 * H;
+    QVector<K> x{{0, a, KfLinear}}, y{{0, 0, KfLinear}};
+    for (double t = 0; t + passo < c.dur; t += passo) {
+        const double q = passo * 0.25;
+        x << K{t + q, 0, Sm} << K{t + 2 * q, -a, Sm}
+          << K{t + 3 * q, 0, Sm} << K{t + passo, a, KfLinear};
+        y << K{t + q, a, Sm} << K{t + 2 * q, 0, Sm}
+          << K{t + 3 * q, -a, Sm} << K{t + passo, 0, KfLinear};
+    }
+    setKf(c.kfTx, c.tx, x);
+    setKf(c.kfTy, c.ty, y);
+}
+
+// Pulso (latida): dois batidos curtos de escala, tipo "coração".
+void pPulso(Clip& c, double, double) {
+    const double passo = 0.8;
+    QVector<K> kf{{0, 1, KfLinear}};
+    for (double t = 0; t + passo < c.dur; t += passo) {
+        kf << K{t + 0.10, 1.07, Bk} << K{t + 0.28, 1.0, KfLinear}
+           << K{t + 0.40, 1.045, Bk} << K{t + passo, 1, KfLinear};
+    }
+    setKf(c.kfScale, c.scale, kf);
+}
+
+// Deriva lenta: pan de um lado ao outro (Ken Burns) preenchendo o clipe.
+void pDeriva(Clip& c, double W, double) {
+    const double passo = qBound(0.8, c.dur * 0.5, 2.5);
+    QVector<K> kf{{0, -0.02 * W, KfLinear}};
+    bool pos = true;
+    for (double t = 0; t + passo < c.dur; t += passo) {
+        kf << K{t + passo, pos ? 0.02 * W : -0.02 * W, Sm};
+        pos = !pos;
+    }
+    // Fecha voltando ao outro lado (e cobre clipe curto, onde o laço não roda).
+    const double volta = -kf.last().v;
+    if (c.dur - kf.last().t > 0.15) kf << K{c.dur, volta, Sm};
+    setKf(c.kfTx, c.tx, kf);
+}
+
+// Tremida leve: vibração rápida de posição (câmera na mão / corte energético).
+void pTremida(Clip& c, double W, double) {
+    const double passo = 0.16;
+    const double amp = 0.006 * W;
+    QVector<K> x{{0, 0, KfLinear}}, y{{0, 0, KfLinear}};
+    bool up = true;
+    for (double t = 0; t + passo < c.dur; t += passo) {
+        x << K{t + passo * 0.5, up ? amp : -amp, KfSmooth};
+        y << K{t + passo * 0.5, up ? -amp * 0.8 : amp * 0.8, KfSmooth};
+        up = !up;
+    }
+    x << K{c.dur, 0, KfLinear};
+    y << K{c.dur, 0, KfLinear};
+    setKf(c.kfTx, c.tx, x);
+    setKf(c.kfTy, c.ty, y);
+}
+
 // ─── EFEITOS ──────────────────────────────────────────────────────────────
 void pGiro(Clip& c, double, double) {
     const double d = qBound(0.8, c.dur, 3.0);
-    setKf(c.kfRotation, c.rotation, {{0, 0, KfLinear}, {d * 0.75, 360, Sm}});
+    // A interpolação mora no1º key do segmento (Sm = S no par isolado); a que
+    // estava no último era inerte e o giro saía reto (linear cru).
+    setKf(c.kfRotation, c.rotation, {{0, 0, Sm}, {d * 0.75, 360, KfLinear}});
     setKf(c.kfScale, c.scale, {{0, 0.4, El}, {d * 0.4, 1, KfLinear}});
     setKf(c.kfOpacity, c.opacity, {{0, 0, Sm}, {qMin(0.15, d * 0.1), 1, KfLinear}});
 }
@@ -169,6 +339,55 @@ void pFlicker(Clip& c, double, double) {
         on = !on;
     }
     kf << K{qMax(0.0, c.dur - 0.15), 1, KfLinear};
+    setKf(c.kfOpacity, c.opacity, kf);
+}
+
+// Meia volta com assentamento — reveal de verso (títulos, cartões).
+void pGiro180(Clip& c, double, double) {
+    const double d = qBound(0.7, c.dur, 2.5);
+    setKf(c.kfRotation, c.rotation, {{0, 0, Sm}, {d * 0.6, 180, KfLinear}});
+}
+
+// Impacto: soco de escala uma única vez (hit/trailer) + tranco de rotação.
+void pImpacto(Clip& c, double, double) {
+    const double d = qBound(0.5, c.dur, 2.0);
+    setKf(c.kfScale, c.scale, {{0, 1, Bk}, {d * 0.12, 1.16, Sm},
+                               {d * 0.26, 0.97, Sm}, {d * 0.42, 1, KfLinear}});
+    setKf(c.kfRotation, c.rotation, {{0, 0, Bk}, {d * 0.14, -3, Sm},
+                                     {d * 0.42, 0, KfLinear}});
+}
+
+// Flip: vira como cartinha — passa por scaleX 0 (canto de vista) e volta.
+void pFlip(Clip& c, double, double) {
+    const double d = qBound(0.6, c.dur, 2.5);
+    setKf(c.kfOpacity, c.opacity, {{0, 0, KfLinear},
+                                   {qMin(0.06, d * 0.05), 1, KfLinear}});
+    setKf(c.kfScaleX, c.scaleX, {{0, 1, Sm}, {d * 0.45, -1, Bk},
+                                 {d * 0.9, 1, KfLinear}});
+    setKf(c.kfRotation, c.rotation, {{0, -6, Sm}, {d * 0.45, 6, Sm},
+                                     {d * 0.9, 0, KfLinear}});
+}
+
+// Zoom por cortes: saltos secos de escala estilo vlog/TikTok (Degrau).
+void pJumpZoom(Clip& c, double, double) {
+    const double passo = 0.7;
+    QVector<K> kf{{0, 1.0, KfStep}};
+    int n = 0;
+    for (double t = 0; t + passo < c.dur; t += passo)
+        kf << K{t + passo, (++n % 2) ? 1.09 : 1.0, KfStep};
+    setKf(c.kfScale, c.scale, kf);
+}
+
+// Estroboscópio: corte seco de opacidade a cada ~0,16 s (acende/apaga).
+void pStrobe(Clip& c, double, double) {
+    const double passo = 0.16;
+    QVector<K> kf{{0, 1, KfStep}};
+    bool on = true;
+    for (double t = 0; t + passo < c.dur; t += passo) {
+        kf << K{t, on ? 1.0 : 0.0, KfStep};
+        on = !on;
+    }
+    kf << K{qMax(0.1, c.dur - 0.08), 1, KfLinear};
     setKf(c.kfOpacity, c.opacity, kf);
 }
 
@@ -245,6 +464,95 @@ void pMola(Clip& c, double, double H) {
     setKf(c.kfScale, c.scale, sc);
 }
 
+// Recoil: recuo tipo arma/câmera — soco seco para trás, volta com contragolpe
+// elástico e micro-ring na posição.
+void pRecoil(Clip& c, double W, double) {
+    const double d = qBound(0.5, c.dur, 2.0);
+    const double ti = d * 0.14; // pico do recuo
+    setKf(c.kfTx, c.tx, {{0, 0, KfLinear}, {ti, -0.05 * W, Bk},
+                         {ti + d * 0.20, 0.012 * W, El},
+                         {ti + d * 0.45, 0, KfLinear}});
+    setKf(c.kfRotation, c.rotation, {{0, 0, KfLinear}, {ti, -7, Bk},
+                                     {ti + d * 0.26, 1.5, El},
+                                     {ti + d * 0.50, 0, KfLinear}});
+    setKf(c.kfScale, c.scale, {{0, 1, KfLinear}, {ti, 1.10, Bk},
+                               {ti + d * 0.24, 0.98, El},
+                               {ti + d * 0.50, 1, KfLinear}});
+    // squash antifase acompanhando o tranco
+    setKf(c.kfScaleX, c.scaleX, {{0, 1, KfLinear}, {ti, 1.14, Bk},
+                                 {ti + d * 0.24, 0.95, Sm},
+                                 {ti + d * 0.50, 1, KfLinear}});
+    setKf(c.kfScaleY, c.scaleY, {{0, 1, KfLinear}, {ti, 0.86, Bk},
+                                 {ti + d * 0.24, 1.06, Sm},
+                                 {ti + d * 0.50, 1, KfLinear}});
+}
+
+// Salto: antecipação (esmaga no chão) + voo com elástico no topo +
+// aterrissagem quicando, com squash na recepção.
+void pSalto(Clip& c, double, double H) {
+    const double d = qBound(0.8, c.dur, 3.0);
+    const double t1 = d * 0.18; // fim da antecipação
+    const double t2 = d * 0.55; // topo do salto
+    const double t3 = d * 0.78; // aterrissagem
+    setKf(c.kfOpacity, c.opacity, {{0, 0, KfLinear},
+                                   {qMin(0.08, d * 0.06), 1, KfLinear}});
+    setKf(c.kfTy, c.ty, {{0, 0, KfLinear}, {t1, 0.06 * H, Sm},
+                         {t2, -0.30 * H, Bo}, {t3, 0, KfLinear}});
+    setKf(c.kfScaleY, c.scaleY, {{0, 1, KfLinear}, {t1, 0.80, Bk},
+                                 {t1 + d * 0.10, 1.12, KfLinear},
+                                 {t2, 1.0, KfLinear}, {t3, 0.86, Bo},
+                                 {d, 1, KfLinear}});
+    setKf(c.kfScaleX, c.scaleX, {{0, 1, KfLinear}, {t1, 1.18, Bk},
+                                 {t1 + d * 0.10, 0.92, KfLinear},
+                                 {t2, 1.0, KfLinear}, {t3, 1.12, Bo},
+                                 {d, 1, KfLinear}});
+}
+
+// Estalo (snap): entra miúdo e elástico, com giro e squash que assentam.
+void pSnap(Clip& c, double, double) {
+    const double d = qBound(0.6, c.dur, 2.5);
+    setKf(c.kfOpacity, c.opacity, {{0, 0, KfLinear},
+                                   {qMin(0.05, d * 0.04), 1, KfLinear}});
+    setKf(c.kfScale, c.scale, {{0, 0.55, El}, {d * 0.30, 1, KfLinear}});
+    setKf(c.kfRotation, c.rotation, {{0, 14, El}, {d * 0.32, 0, KfLinear}});
+    setKf(c.kfScaleX, c.scaleX, {{0, 1.28, El}, {d * 0.30, 1, KfLinear}});
+    setKf(c.kfScaleY, c.scaleY, {{0, 0.78, El}, {d * 0.30, 1, KfLinear}});
+}
+
+// ─── CÂMERA (Ken Burns — movimento lento na duração inteira) ─────────────
+// Par de keys com Suave: S macia ponta a ponta (sem tranco nas bordas).
+
+void pPushIn(Clip& c, double, double) {
+    const double d = qMax(0.3, c.dur);
+    setKf(c.kfScale, c.scale, {{0, 1.0, Sm}, {d, 1.12, KfLinear}});
+}
+
+void pPullOut(Clip& c, double, double) {
+    const double d = qMax(0.3, c.dur);
+    setKf(c.kfScale, c.scale, {{0, 1.14, Sm}, {d, 1.0, KfLinear}});
+}
+
+void pPanDir(Clip& c, double W, double) {
+    const double d = qMax(0.3, c.dur);
+    setKf(c.kfTx, c.tx, {{0, -0.055 * W, Sm}, {d, 0.055 * W, KfLinear}});
+}
+
+void pPanEsq(Clip& c, double W, double) {
+    const double d = qMax(0.3, c.dur);
+    setKf(c.kfTx, c.tx, {{0, 0.055 * W, Sm}, {d, -0.055 * W, KfLinear}});
+}
+
+void pSobe(Clip& c, double, double H) { // subida tipo drone
+    const double d = qMax(0.3, c.dur);
+    setKf(c.kfTy, c.ty, {{0, 0.07 * H, Sm}, {d, -0.07 * H, KfLinear}});
+}
+
+void pDutch(Clip& c, double, double) { // giro holandês sutil + leve zoom
+    const double d = qMax(0.3, c.dur);
+    setKf(c.kfRotation, c.rotation, {{0, -2.5, Sm}, {d, 2.5, KfLinear}});
+    setKf(c.kfScale, c.scale, {{0, 1.0, Sm}, {d, 1.07, KfLinear}});
+}
+
 struct Preset {
     const char* name;
     PresetFn fn;
@@ -255,31 +563,63 @@ const Preset kEntradas[] = {
     {"Slide Esquerda", pSlideEsq},
     {"Slide Direita", pSlideDir},
     {"Cai de Cima", pCai},
+    {"Slide Baixo", pSlideBaixo},
+    {"Bounce de Cima", pBounceCima},
+    {"Girar Entrando", pGiraEntra},
+    {"Cortina Vertical", pCortina},
     {"Zoom Back", pZoomBack},
     {"Fade Up", pFadeUp},
+    {"Fade Cinemático", pFadeCine},
     {"Semeia (AE)", pSemear},
 };
 
 const Preset kSaidas[] = {
     {"Sair Pop", pSairPop},
     {"Sair p/ Direita", pSairDir},
+    {"Sair p/ Esquerda", pSairEsq},
     {"Sair Subindo", pSairSobe},
+    {"Sair Descendo", pSairBaixo},
+    {"Sair Encolhendo", pSairEncolhe},
+    {"Sair Girando", pSairGira},
+    {"Saída em Fade", pSairFade},
+};
+
+const Preset kCamera[] = {
+    {"Push In", pPushIn},
+    {"Pull Out", pPullOut},
+    {"Pan Direita", pPanDir},
+    {"Pan Esquerda", pPanEsq},
+    {"Subida Suave", pSobe},
+    {"Dr. Holandês", pDutch},
 };
 
 const Preset kIdle[] = {
     {"Respiração", pRespira},
     {"Wiggle", pWiggle},
     {"Flutuação", pFlutua},
+    {"Pêndulo", pPendulo},
+    {"Órbita", pOrbita},
+    {"Pulso (latida)", pPulso},
+    {"Deriva Lenta", pDeriva},
+    {"Tremida Leve", pTremida},
 };
 
 const Preset kEfeitos[] = {
     {"Giro 360", pGiro},
+    {"Giro 180", pGiro180},
+    {"Impacto", pImpacto},
+    {"Flip Horizontal", pFlip},
     {"Squash & Stretch", pSquash},
+    {"Zoom por Cortes", pJumpZoom},
     {"Flicker", pFlicker},
+    {"Stroboscópio", pStrobe},
 };
 
 const Preset kElasticos[] = {
     {"Slam Elástico", pSlam},
+    {"Salto Elástico", pSalto},
+    {"Recoil", pRecoil},
+    {"Estalo", pSnap},
     {"Estica e Some", pEsticaSome},
     {"Mola (laço)", pMola},
 };
@@ -471,6 +811,9 @@ AnimPresetDock::AnimPresetDock(QWidget* parent) : QWidget(parent) {
     v->addWidget(makeGroup(tr("Saídas"), kSaidas,
                            int(sizeof(kSaidas) / sizeof(kSaidas[0])),
                            this, QStringLiteral("#C62828")));
+    v->addWidget(makeGroup(tr("Câmera (Ken Burns)"), kCamera,
+                           int(sizeof(kCamera) / sizeof(kCamera[0])),
+                           this, QStringLiteral("#00838F")));
     v->addWidget(makeGroup(tr("Idle (laço)"), kIdle,
                            int(sizeof(kIdle) / sizeof(kIdle[0])),
                            this, QStringLiteral("#1565C0")));
@@ -524,12 +867,20 @@ void AnimPresetDock::applyPreset(const QString& name) {
 
     PresetFn fn = nullptr;
     auto findIn = [&](const Preset* list, int n) {
+        // fromUtf8 nos DOIS lados: QString == QLatin1String lê os bytes como
+        // Latin-1, e os nomes vêm do UTF-8 da fonte — "Pop Elástico" nunca
+        // casava e o clique era silenciosamente ignorado.
+        const QString alvo = name;
         for (int i = 0; i < n; ++i)
-            if (name == QLatin1String(list[i].name)) { fn = list[i].fn; return true; }
+            if (alvo == QString::fromUtf8(list[i].name)) {
+                fn = list[i].fn;
+                return true;
+            }
         return false;
     };
     if (!findIn(kEntradas, int(sizeof(kEntradas) / sizeof(kEntradas[0])))
         && !findIn(kSaidas, int(sizeof(kSaidas) / sizeof(kSaidas[0])))
+        && !findIn(kCamera, int(sizeof(kCamera) / sizeof(kCamera[0])))
         && !findIn(kIdle, int(sizeof(kIdle) / sizeof(kIdle[0])))
         && !findIn(kEfeitos, int(sizeof(kEfeitos) / sizeof(kEfeitos[0])))
         && !findIn(kElasticos, int(sizeof(kElasticos) / sizeof(kElasticos[0]))))

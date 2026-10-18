@@ -15,7 +15,7 @@
 
 // Os valores sao o indice no combo de Ajustes>Interface e o valor gravado
 // em QSettings. Adicionar um tema = acrescentar aqui E no combo, nessa ordem.
-enum class AppTheme { Dark = 0, Light = 1, RidgeRacer = 2 };
+enum class AppTheme { Dark = 0, Light = 1, RidgeRacer = 2, Japan95 = 3 };
 
 struct ThemeColors {
     // ── Janela / fundo ──────────────────────────────────────────
@@ -110,6 +110,8 @@ struct ThemeColors {
     // ── Tab bar ─────────────────────────────────────────────────
     QColor tabBg;             // fundo das tabs
     QColor tabSelected;       // tab selecionada
+    QColor tabSelectedText;   // texto da aba selecionada (era #FFFFFF fixo,
+                              // ilegível em temas claros)
     QColor tabBorder;         // borda inferior da tab ativa
 
     // ── Scrollbar ───────────────────────────────────────────────
@@ -152,10 +154,17 @@ struct ThemeColors {
 
     // ── Scrollbar (global) ──────────────────────────────────────
     QString scrollbarStyle;   // stylesheet completo da scrollbar
+
+    // ── Tipografia ──────────────────────────────────────────────
+    QString uiFont;           // pilha de famílias da UI (separada por vírgula);
+                              // vazio = fonte do sistema. Usado pelo main().
 };
 
 // Acessa a paleta do tema atual.
 const ThemeColors& themeColors();
+
+// Acessa o tema atual (índice/enum, para stylesheets condicionais).
+AppTheme currentTheme();
 
 // Aplica a paleta QPalette ao QApplication.
 void applyAppPalette(QApplication* app, AppTheme theme);
@@ -165,6 +174,13 @@ AppTheme savedTheme();
 
 // Salva o tema nas configurações.
 void saveTheme(AppTheme theme);
+
+// Idioma da UI salvo: "pt" (0), "en" (1), "ja" (2) — índices do combo de
+// Ajustes ▸ Interface ▸ Idioma.
+QString savedLanguage();
+
+// Pilha de fontes gothic japonesas (usada pelo Japan95 e pela UI em japonês).
+QString japaneseUiFontStack();
 
 // Retorna um stylesheet global para a aplicação (dock titles, etc.).
 QString globalStyleSheet(AppTheme theme);

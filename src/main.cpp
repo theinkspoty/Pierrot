@@ -4,13 +4,16 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include <QApplication>
+#include <QFont>
 #include <QIcon>
 #include <QPalette>
+#include <QStringList>
 #include <QStyleFactory>
 #include <QDialog>
 #include "MainWindow.h"
 #include "ui/WelcomeWindow.h"
 #include "ui/ClickLogger.h"
+#include "ui/JaTranslator.h"
 #include "ui/Theme.h"
 #include "Bench.h"
 #include "colombina/CrashReporter.h"
@@ -65,6 +68,32 @@ int main(int argc, char** argv) {
 
     app.setStyle(QStyleFactory::create("Fusion"));
     applyAppPalette(&app, savedTheme());
+
+    // Idioma da UI: 0=pt, 1=en (0.7.5), 2=ja. Instala ANTES de criar
+    // qualquer janela, senão os textos fixos ficam em pt-BR.
+    const QString lang = savedLanguage();
+    static JaTranslator jaTranslator;
+    if (lang == QLatin1String("ja"))
+        app.installTranslator(&jaTranslator);
+
+    // Pilha de fontes: o tema pode definir (Japan95) e a UI em japonês
+    // força a pilha de gothics japoneses em QUALQUER tema.
+    const QString uiFont = (lang == QLatin1String("ja"))
+                               ? japaneseUiFontStack()
+                               : themeColors().uiFont;
+    if (!uiFont.isEmpty()) {
+        QStringList families;
+        const auto parts = uiFont.split(QLatin1Char(','));
+        for (const QString& part : parts) {
+            const QString f = part.trimmed();
+            if (!f.isEmpty()) families.append(f);
+        }
+        if (!families.isEmpty()) {
+            QFont appFont = app.font();
+            appFont.setFamilies(families);
+            app.setFont(appFont);
+        }
+    }
     app.setStyleSheet(flatControlStyleSheet(savedTheme()));
 
     // Harness de stress (sem GUI):

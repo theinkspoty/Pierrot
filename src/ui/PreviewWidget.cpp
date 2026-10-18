@@ -48,6 +48,7 @@
 #include <QFontMetrics>
 #include <QMouseEvent>
 #include <QResizeEvent>
+#include <QSettings>
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 #include <QAudioSink>
 #include <QMediaDevices>
@@ -1796,6 +1797,115 @@ void PreviewWidget::refreshTimeLabelStyle() {
             "}").arg(c.accent.name(), c.monitorBg.name(), c.canvasBorder.name()));
 }
 
+// ── Faixa de scrub do Program Monitor ────────────────────────────────
+// Índices do combo de zoom do monitor (0 = Ajustar à área).
+const double kMonitorZooms[] = {0.0, 0.25, 0.50, 0.75, 1.0, 1.5, 2.0};
+// Widget filho de 14px entre o vídeo e a barra de transporte: playhead
+// arrastável, região de loop sombreada e picotes dos marcadores na cor de
+// cada um (mesma paleta do model). O mouse dela não briga com o overlay de
+// máscara do vídeo porque é um widget separado.
+class MonitorScrubBar : public QWidget {
+public:
+    explicit MonitorScrubBar(PreviewWidget* owner) : QWidget(owner), m_owner(owner) {
+        setFixedHeight(14);
+        setCursor(Qt::PointingHandCursor);
+        setToolTip(QStringLiteral(
+            "Arraste para navegar na sequência — picotes coloridos = marcadores"));
+    }
+protected:
+    void paintEvent(QPaintEvent*) override;
+    void mousePressEvent(QMouseEvent* e) override;
+    void mouseMoveEvent(QMouseEvent* e) override;
+    void mouseReleaseEvent(QMouseEvent* e) override;
+private:
+    double tAt(int x) const;
+    void seekAt(const QPoint& pos);
+    PreviewWidget* m_owner;
+    bool m_dragging = false;
+};
+
+double MonitorScrubBar::tAt(int x) const {
+    const double dur = m_owner->m_project ? m_owner->m_project->duration() : 0.0;
+    if (dur <= 0.0 || width() <= 0) return 0.0;
+    return std::clamp(x * dur / width(), 0.0, dur);
+}
+
+void MonitorScrubBar::seekAt(const QPoint& pos) {
+    m_owner->seek(tAt(pos.x()));
+}
+
+void MonitorScrubBar::mousePressEvent(QMouseEvent* e) {
+    if (e->button() != Qt::LeftButton) return QWidget::mousePressEvent(e);
+    m_dragging = true;
+    seekAt(e->pos());
+}
+
+void MonitorScrubBar::mouseMoveEvent(QMouseEvent* e) {
+    if (m_dragging) seekAt(e->pos());
+    else QWidget::mouseMoveEvent(e);
+}
+
+void MonitorScrubBar::mouseReleaseEvent(QMouseEvent* e) {
+    if (m_dragging && e->button() == Qt::LeftButton) {
+        m_dragging = false;
+        seekAt(e->pos());
+        return;
+    }
+    QWidget::mouseReleaseEvent(e);
+}
+
+void MonitorScrubBar::paintEvent(QPaintEvent*) {
+    QPainter p(this);
+    const auto& c = themeColors();
+    p.fillRect(rect(), c.base);
+    p.setPen(c.trackBorder);
+    p.drawLine(0, 0, width(), 0);
+
+    const double dur = m_owner->m_project ? m_owner->m_project->duration() : 0.0;
+    if (dur <= 0.0) return;
+
+    // Trilha.
+    const QRectF track(2.0, 4.0, width() - 4.0, 6.0);
+    p.setPen(Qt::NoPen);
+    QColor trackCol = c.canvasBorder;
+    trackCol.setAlpha(120);
+    p.setBrush(trackCol);
+    p.drawRoundedRect(track, 3, 3);
+
+    // Região de loop (in/out), por cima da trilha.
+    if (m_owner->m_loopEnabled && m_owner->m_loopOut > m_owner->m_loopIn
+        && m_owner->m_loopIn >= 0.0) {
+        const double x0 = track.left() + track.width() * (m_owner->m_loopIn / dur);
+        const double x1 = track.left() + track.width() * (m_owner->m_loopOut / dur);
+        QColor loopCol = c.accent;
+        loopCol.setAlpha(110);
+        p.setBrush(loopCol);
+        p.drawRoundedRect(QRectF(x0, track.top(), std::max(1.0, x1 - x0), track.height()),
+                          3, 3);
+    }
+
+    // Picotes dos marcadores: haste fina + cabeça arredondada na cor do marker.
+    for (const Marker& mk : m_owner->m_project->markers) {
+        if (mk.time < 0.0 || mk.time > dur) continue;
+        const double mx = track.left() + track.width() * (mk.time / dur);
+        p.setPen(Qt::NoPen);
+        p.setBrush(mk.color);
+        p.drawRoundedRect(QRectF(mx - 1.0, 2.0, 2.0, 10.0), 1, 1);
+        p.drawEllipse(QPointF(mx, 3.0), 2.2, 2.2);
+    }
+
+    // Playhead: haste fina + ponta.
+    const double px =
+        track.left() + track.width() * std::clamp(m_owner->m_playhead / dur, 0.0, 1.0);
+    p.setPen(QPen(c.monitorLabel, 1));
+    p.drawLine(QPointF(px, 1.0), QPointF(px, height() - 1.0));
+    p.setPen(Qt::NoPen);
+    p.setBrush(c.monitorLabel);
+    QPolygonF tip;
+    tip << QPointF(px - 3.0, 0.0) << QPointF(px + 3.0, 0.0) << QPointF(px, 4.0);
+    p.drawPolygon(tip);
+}
+
 PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     qRegisterMetaType<FrameFx>("FrameFx"); // snapshot de efeitos p/ o worker
     // O QElapsedTimer da instrumentação precisa estar rodando antes do primeiro
@@ -1860,7 +1970,7 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     tcFont.setBold(true);
     m_timeLabel->setFont(tcFont);
     refreshTimeLabelStyle();
-    m_timeLabel->setMinimumWidth(150);
+    m_timeLabel->setMinimumWidth(230); // "00:00:05:12 / 00:01:23:00"
 
     // Rótulo da sequência no topo, como o "Program: <nome>" do Premiere.
     m_programLabel = new QLabel(tr("Program: "), this);
@@ -1980,6 +2090,7 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     m_gridBtn->setCursor(Qt::PointingHandCursor);
     connect(m_gridBtn, &QToolButton::clicked, this, [this](bool checked) {
         m_showGrid = checked;
+        QSettings().setValue(QStringLiteral("monitor/safeAreas"), checked);
         update();
     });
     bar->addWidget(m_gridBtn);
@@ -1991,6 +2102,7 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     connect(gridShortcut, &QShortcut::activated, this, [this]() {
         m_showGrid = !m_showGrid;
         m_gridBtn->setChecked(m_showGrid);
+        QSettings().setValue(QStringLiteral("monitor/safeAreas"), m_showGrid);
         update();
     });
 
@@ -2001,9 +2113,7 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     m_zoomCombo->setCurrentIndex(0);
     m_zoomCombo->setToolTip(tr("Zoom do preview"));
     connect(m_zoomCombo, &QComboBox::currentIndexChanged, this, [this](int idx) {
-        static const double kZooms[] = {0.0, 0.25, 0.50, 0.75, 1.0, 1.5, 2.0};
-        m_zoom = kZooms[qBound(0, idx, 6)];
-        update();
+        setZoom(kMonitorZooms[qBound(0, idx, 6)]); // setZoom grava o QSettings
     });
     bar->addWidget(m_zoomCombo);
     bar->addSpacing(4);
@@ -2014,7 +2124,23 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     lay->setSpacing(0);
     lay->addWidget(m_topBar);
     lay->addStretch(1);
+    // Faixa de scrub: playhead arrastável + loop + picotes dos marcadores,
+    // logo acima da barra de transporte (estilo DaVinci/Premiere).
+    m_scrubBar = new MonitorScrubBar(this);
+    lay->addWidget(m_scrubBar);
     lay->addWidget(m_bottomBar);
+
+    // Preferências do monitor (zoom/qualidade/margens) persistem entre
+    // sessões — antes eram esquecidas ao fechar o app.
+    {
+        QSettings s;
+        setZoom(kMonitorZooms[qBound(0, s.value(QStringLiteral("monitor/zoom"), 0).toInt(), 6)]);
+        const int q = s.value(QStringLiteral("monitor/quality"), 720).toInt();
+        for (const PreviewQOpt& o : kPreviewQualities)
+            if (o.width == q) { setPreviewQuality(q); break; }
+        m_showGrid = s.value(QStringLiteral("monitor/safeAreas"), false).toBool();
+        m_gridBtn->setChecked(m_showGrid);
+    }
 
     // O PlaybackEngine controla o transporte; o timer é deste widget (tem
     // QObject/parent) e repassa o timeout para o motor via tick().
@@ -2103,10 +2229,7 @@ PreviewWidget::~PreviewWidget() {
 
 void PreviewWidget::setProject(Project* p) {
     PlaybackEngine::setProject(p); // seta m_project e para o transporte
-    if (m_programLabel) {
-        const QString nome = (p && !p->name.isEmpty()) ? p->name : tr("Sem projeto");
-        m_programLabel->setText(tr("Program: %1").arg(nome));
-    }
+    updateProgramLabel();
     m_playhead = 0.0;
     m_mesaRenderer.clearCompositeCache(); // composto do projeto anterior não vale
     m_frame = QImage();
@@ -2141,6 +2264,23 @@ void PreviewWidget::setProject(Project* p) {
     scheduleIdleWarm();
 }
 
+void PreviewWidget::updateProgramLabel() {
+    if (!m_programLabel) return;
+    const QString nome =
+        (m_project && !m_project->name.isEmpty()) ? m_project->name : tr("Sem projeto");
+    m_programLabel->setText(tr("Program: %1").arg(nome));
+}
+
+// "HH:MM:SS:FF / HH:MM:SS:FF": posição atual / duração da sequência, como no
+// Premiere — antes só a posição, sem referência do tamanho total.
+void PreviewWidget::updateTimecodeLabel() {
+    if (!m_timeLabel) return;
+    const double fps = projFps(m_project);
+    const double dur = m_project ? std::max(0.0, m_project->duration()) : 0.0;
+    m_timeLabel->setText(fmtTimecode(m_playhead, fps) + QStringLiteral(" / ") +
+                         fmtTimecode(dur, fps));
+}
+
 void PreviewWidget::refreshView() {
     // Todo caminho de EDIÇÃO passa por aqui: TimelineWidget::modified,
     // MediaPoolWidget::mediaChanged (mídia trocada), GraphEditorWidget::modified
@@ -2161,7 +2301,11 @@ void PreviewWidget::refreshView() {
     // a máscara); editar o clipe (ex.: criar máscara no Pantalone) deixa ele
     // velho. Limpa para o efeito aparecer no preview.
     m_layerCache.clear();
+    // O nome do projeto pode ter mudado desde o setProject (createProject só
+    // define m_project.name depois dele); o rótulo acompanha aqui.
+    updateProgramLabel();
     updateFrame();
+    if (m_scrubBar) m_scrubBar->update(); // duração/marcadores podem ter mudado
     update();
 }
 
@@ -2209,8 +2353,40 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
     // eles ficavam no fim de renderFrame(), que tem vários `return` antecipado
     // (projeto vazio, cache de composição, caminho de clip único) — ou seja,
     // em projetos com 2+ camadas o overlay de perf nunca aparecia, que é
-    // justamente o cenário que se quer diagnosticar.
+    // justamente o cenário que se quer diagnosticar. A margem de segurança
+    // tinha o mesmo problema (sumia no caminho do composto).
+    drawGrid(p, m_lastCanvas);
+    drawQualityChip(p);
     drawPlaybackBadges(p);
+}
+
+// Chip "720p"/"4K" no canto superior direito do vídeo: lembra que a imagem
+// pode não estar na resolução cheia (estilo Premiere). Sutil: fundo preto
+// translúcido, texto claro 8pt.
+void PreviewWidget::drawQualityChip(QPainter& p) {
+    if (m_videoRect.isEmpty()) return;
+    QString code;
+    for (const PreviewQOpt& o : kPreviewQualities)
+        if (o.width == m_previewQuality) {
+            code = QString::fromUtf8(o.code);
+            break;
+        }
+    if (code.isEmpty()) return;
+    p.save();
+    p.setClipRect(m_videoRect);
+    QFont f = p.font();
+    f.setPointSizeF(8);
+    f.setBold(true);
+    p.setFont(f);
+    const QFontMetrics fm(f);
+    const QRect chip(m_videoRect.right() - fm.horizontalAdvance(code) - 18,
+                     m_videoRect.top() + 10, fm.horizontalAdvance(code) + 12, 16);
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(0, 0, 0, 150));
+    p.drawRoundedRect(chip, 3, 3);
+    p.setPen(QColor(255, 255, 255, 220));
+    p.drawText(chip, Qt::AlignCenter, code);
+    p.restore();
 }
 
 void PreviewWidget::drawPlaybackBadges(QPainter& p) {
@@ -2264,6 +2440,7 @@ void PreviewWidget::renderFrame(QPainter& p) {
     p.fillRect(m_videoRect, themeColors().monitorBg);
 
     if (!m_project || m_project->width <= 0 || m_project->height <= 0) {
+        m_lastCanvas = QRect(); // sem canvas válido: sem margens de segurança
         drawEmptyMonitor(p, m_videoRect);
         return;
     }
@@ -2280,9 +2457,17 @@ void PreviewWidget::renderFrame(QPainter& p) {
     QRect canvas(QPoint(0, 0), QSize(qMax(1, (int)(pw * k)), qMax(1, (int)(ph * k))));
     canvas.moveCenter(work.center());
     canvas = canvas.intersected(work); // centraliza e recorta quando zoom > 1
+    m_lastCanvas = canvas; // margens de segurança desenhadas no paintEvent
 
-    // Monitor: o quadro assenta direto no fundo do painel, sem moldura — como
-    // no Premiere (a resolução fica no menu do rodapé, não sobre a imagem).
+    // Monitor: o quadro assenta direto no fundo do painel, com uma sombra
+    // suave atrás (3 anéis pretos translúcidos — custo ~zero, sem blur) para
+    // separar o "programa" do fundo do console.
+    for (int i = 3; i >= 1; --i) {
+        QColor sh(0, 0, 0, 12 / i);
+        p.setPen(Qt::NoPen);
+        p.setBrush(sh);
+        p.drawRect(canvas.adjusted(-i, -i, i, i));
+    }
     p.fillRect(canvas, themeColors().canvasBg);
 
     // Texto independente ativo no playhead (desenhado mesmo sem quadro de vídeo).
@@ -2603,10 +2788,9 @@ void PreviewWidget::renderFrame(QPainter& p) {
     if (clip && !clip->isText)
         drawClipText(p, canvas, clip, k);
 
-    // Grade de referência visual (estilo Vegas), sobre todo o conteúdo.
-    drawGrid(p, canvas);
-
     // Overlay de edição de máscara (formas + alças do clipe sob edição).
+    // (A margem de segurança saiu daqui: os caminhos do composto retornam
+    // antes, e ela sumia em projetos com 2+ camadas — ver paintEvent.)
     drawMaskOverlay(p, canvas, k);
 }
 
@@ -2733,16 +2917,49 @@ void PreviewWidget::drawClipText(QPainter& p, const QRect& canvas, const Clip* c
     p.restore();
 }
 
-// Tela vazia: o Premiere não escreve nada no miolo do Program Monitor quando
-// não há sequência — só o painel escuro. Mantemos uma dica discreta, mas sem
-// moldura nem caixa, só o texto centralizado em cinza apagado.
+// Tela vazia: ícone de play grande + título + dica de como começar, no tom
+// monitorLabel com alfa (respeita o tema claro/escuro).
 void PreviewWidget::drawEmptyMonitor(QPainter& p, const QRect& canvas) {
     if (canvas.isEmpty()) return;
+    const auto& c = themeColors();
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing);
+    // Ícone de play grande (círculo + triângulo), desenhado sem asset.
+    const QPointF ctr(canvas.center().x(), canvas.center().y() - 22);
+    QColor circ = c.monitorLabel;
+    circ.setAlpha(60);
+    p.setPen(Qt::NoPen);
+    p.setBrush(circ);
+    p.drawEllipse(ctr, 26, 26);
+    QColor tri = c.monitorLabel;
+    tri.setAlpha(140);
+    p.setBrush(tri);
+    QPolygonF play;
+    const QPointF tip(ctr.x() + 9.0, ctr.y());
+    play << QPointF(ctr.x() - 6.0, ctr.y() - 10.0) << tip
+         << QPointF(ctr.x() - 6.0, ctr.y() + 10.0);
+    p.drawPolygon(play);
+    // Título + dica.
     QFont f = p.font();
-    f.setPointSizeF(9.0);
+    f.setPointSizeF(10.0);
+    f.setBold(true);
     p.setFont(f);
-    p.setPen(QColor(110, 110, 120));
-    p.drawText(canvas, Qt::AlignCenter, tr("Sem clipe de vídeo aqui"));
+    QColor title = c.monitorLabel;
+    title.setAlpha(200);
+    p.setPen(title);
+    const QRect titleR = QRect(canvas.center().x() - 200, ctr.y() + 34, 400, 20);
+    p.drawText(titleR, Qt::AlignCenter, tr("Sem clipe de vídeo aqui"));
+    f.setPointSizeF(8.5);
+    f.setBold(false);
+    p.setFont(f);
+    QColor hint = c.monitorLabel;
+    hint.setAlpha(120);
+    p.setPen(hint);
+    const QRect hintR = QRect(canvas.center().x() - 200, ctr.y() + 54, 400, 36);
+    p.drawText(hintR, Qt::AlignCenter,
+               tr("Selecione uma mídia no painel Projeto\n"
+                  "e arraste para a linha do tempo (Espaço reproduz)"));
+    p.restore();
 }
 
 void PreviewWidget::seek(double t) {
@@ -2793,7 +3010,8 @@ static qint64 desengasgaIntervalMs() {
 // PlaybackEngine; aqui só a parte visual/decodificação).
 void PreviewWidget::applySeekVisual(double t) {
     Q_UNUSED(t);
-    if (m_timeLabel) m_timeLabel->setText(fmtTimecode(m_playhead, projFps(m_project)));
+    updateTimecodeLabel();
+    if (m_scrubBar) m_scrubBar->update();
 
     // Desengasgo periódico: a cada ~10s durante playback contínuo, libera os
     // buffers internos do decoder (DPB + caches de 2 frames) que degradam o
@@ -2850,10 +3068,12 @@ void PreviewWidget::playFrom(double t) {
 
 void PreviewWidget::setLoopRange(double in, double out) {
     PlaybackEngine::setLoopRange(in, out);
+    if (m_scrubBar) m_scrubBar->update(); // região de loop sombreada
 }
 
 void PreviewWidget::setLoopEnabled(bool enabled) {
     PlaybackEngine::setLoopEnabled(enabled);
+    if (m_scrubBar) m_scrubBar->update();
 }
 
 // Hooks do PlaybackEngine: o transporte decide quando; aqui a PreviewWidget
@@ -2874,6 +3094,8 @@ void PreviewWidget::onStopPlaybackUI() {
 }
 
 void PreviewWidget::onPlayheadMoved(double t) {
+    updateTimecodeLabel();
+    if (m_scrubBar) m_scrubBar->update();
     emit playheadMoved(t);
 }
 
@@ -2884,7 +3106,7 @@ void PreviewWidget::onStateChanged(bool playing) {
         m_playBtn->setIcon(playing ? m_pauseIcon : m_playIcon);
         m_playBtn->setText(QString());
     }
-    if (m_timeLabel) m_timeLabel->setText(fmtTimecode(m_playhead, projFps(m_project)));
+    updateTimecodeLabel();
     // Marco do play para medir "apertar play -> 1º quadro" (o log sai em
     // onFrameReady, com PIERROT_PLAY_DEBUG=1).
     m_playStartNs = playing ? PreviewProfiler::nowNs() : 0;
@@ -2894,11 +3116,11 @@ void PreviewWidget::onStateChanged(bool playing) {
 void PreviewWidget::setZoom(double z) {
     m_zoom = z;
     if (m_zoomCombo) {
-        static const double kZooms[] = {0.0, 0.25, 0.50, 0.75, 1.0, 1.5, 2.0};
         int idx = 0;
         for (int i = 0; i < 7; ++i) {
-            if (std::fabs(kZooms[i] - z) < 1e-6) { idx = i; break; }
+            if (std::fabs(kMonitorZooms[i] - z) < 1e-6) { idx = i; break; }
         }
+        QSettings().setValue(QStringLiteral("monitor/zoom"), idx);
         QSignalBlocker b(m_zoomCombo);
         m_zoomCombo->setCurrentIndex(idx);
     }
@@ -2907,6 +3129,7 @@ void PreviewWidget::setZoom(double z) {
 
 void PreviewWidget::setPreviewQuality(int width) {
     m_previewQuality = width;
+    QSettings().setValue(QStringLiteral("monitor/quality"), width);
     // Se o usuário mudou manualmente, reseta o estado adaptativo.
     m_adaptiveSlowCount = 0;
     m_adaptiveActive = false;
@@ -3372,7 +3595,7 @@ QString PreviewWidget::resolvePreviewVideo(const QString& srcPath) {
 }
 
 void PreviewWidget::updateFrame() {
-    m_timeLabel->setText(fmtTimecode(m_playhead, projFps(m_project)));
+    updateTimecodeLabel();
     if (!m_project) { m_frame = QImage(); m_transAlpha = -1.0; m_underFrame = QImage(); m_underRequested = false; m_underPending = false; m_clipMasks.clear(); update(); return; }
 
     const Clip* clip = clipAt(m_playhead);

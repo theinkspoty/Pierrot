@@ -93,7 +93,7 @@ protected:
     qint64 m_awaitAudioDeadlineMs = -1;
     qint64 m_currentFrameIndex = -1;
     double m_lastTickSec = -1.0;   // momento do tick anterior (rate-limit do slew)
-    bool m_playing = true;
+    bool m_playing = false;
     double m_playRate = 1.0;
     QPushButton* m_playBtn = nullptr;
     qint64 m_droppedFrames = 0;

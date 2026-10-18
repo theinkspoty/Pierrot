@@ -8,6 +8,7 @@
 #include <QSettings>
 
 static ThemeColors s_current;
+static AppTheme s_currentTheme = AppTheme::Dark;
 
 
 static ThemeColors makeDarkPalette() {
@@ -93,6 +94,7 @@ static ThemeColors makeDarkPalette() {
 
     c.tabBg             = QColor(0x1A, 0x1A, 0x1A);
     c.tabSelected       = QColor(0x26, 0x26, 0x26);
+    c.tabSelectedText   = Qt::white;
     c.tabBorder         = QColor(0x26, 0x80, 0xEB);
 
     c.scrollbarBg       = QColor(0x12, 0x12, 0x12);
@@ -208,6 +210,7 @@ static ThemeColors makeLightPalette() {
 
     c.tabBg             = QColor(188, 188, 192);
     c.tabSelected       = QColor(225, 225, 228);
+    c.tabSelectedText   = QColor(30, 30, 30);   // aba clara: texto escuro
     c.tabBorder         = QColor(0, 100, 225);
 
     c.scrollbarBg       = QColor(205, 205, 208);
@@ -247,6 +250,10 @@ static ThemeColors makeLightPalette() {
 
 const ThemeColors& themeColors() {
     return s_current;
+}
+
+AppTheme currentTheme() {
+    return s_currentTheme;
 }
 
 static ThemeColors makeRidgePalette() {
@@ -336,6 +343,7 @@ static ThemeColors makeRidgePalette() {
 
     c.tabBg             = QColor(0xF5, 0xC0, 0x00);
     c.tabSelected       = QColor(0xE6, 0xB0, 0x00);
+    c.tabSelectedText   = Qt::black;           // aba amarela: texto preto
     c.tabBorder         = QColor(0x80, 0x66, 0x00);
 
     c.scrollbarBg       = QColor(0xE6, 0xB0, 0x00);
@@ -373,13 +381,148 @@ static ThemeColors makeRidgePalette() {
     return c;
 }
 
+static ThemeColors makeJapan95Palette() {
+    // Japan 95 — tema CLARO com vermelho hinomaru. Referência: gráfica
+    // japonesa de meados dos anos 90 (embalagens Sony/Nintendo, rótulos de
+    // VHS, o disco vermelho da bandeira). Papel off-white quente, tinta
+    // preta e um único vermelho forte para tudo que é ativo: seleção,
+    // playhead, foco, botão primário, tab ativa.
+    //
+    // O monitor continua escuro (o vídeo precisa de fundo neutro). Clipes
+    // são brancos sobre as faixas cor de papel, com borda de seleção
+    // vermelha — mais limpo que o azul do tema Claro.
+    ThemeColors c;
+    c.window            = QColor(0xF2, 0xEF, 0xE7);   // papel off-white
+    c.windowText        = QColor(0x1F, 0x1D, 0x1A);   // tinta preta
+    c.base              = QColor(0xFB, 0xFA, 0xF5);   // branco-papel dos inputs
+    c.alternateBase     = QColor(0xEC, 0xE7, 0xDB);
+    c.text              = QColor(0x1F, 0x1D, 0x1A);
+    c.button            = QColor(0xFF, 0xFF, 0xFF);
+    c.buttonText        = QColor(0x1F, 0x1D, 0x1A);
+    c.brightText        = QColor(0xC8, 0x10, 0x2E);   // vermelho hinomaru
+    c.link              = QColor(0xC8, 0x10, 0x2E);
+    c.highlight         = QColor(0xC8, 0x10, 0x2E);   // seleção = vermelho
+    c.highlightedText   = Qt::white;
+    c.toolTipBase       = QColor(0x26, 0x23, 0x1F);   // tooltip = bloco de tinta
+    c.toolTipText       = Qt::white;
+    c.placeholderText   = QColor(0x8C, 0x85, 0x77);
+    c.disabledText      = QColor(0xAB, 0xA4, 0x95);
+    c.disabledWindowText= QColor(0xAB, 0xA4, 0x95);
+
+    c.monitorBg         = QColor(0x24, 0x22, 0x20);   // preto quente (vídeo)
+    c.canvasBg          = QColor(0x00, 0x00, 0x00);
+    c.canvasBorder      = QColor(0x3B, 0x38, 0x33);
+    c.monitorLabel      = QColor(0xCF, 0xC8, 0xBB);
+
+    c.timelineBg        = QColor(0xEC, 0xE7, 0xDB);
+    c.timelineGrid      = QColor(0xDB, 0xD4, 0xC4);
+    c.rulerBg           = QColor(0xF2, 0xEF, 0xE7);
+    c.rulerText         = QColor(0x3B, 0x37, 0x2F);
+    c.rulerTick         = QColor(0xC9, 0xC2, 0xB2);
+    c.rulerTickMajor    = QColor(0x3B, 0x37, 0x2F);
+    c.trackBg           = QColor(0xFB, 0xFA, 0xF5);
+    c.trackBgAlt        = QColor(0xF0, 0xEB, 0xE0);
+    c.trackBorder       = QColor(0xC2, 0xBB, 0xAC);
+    c.trackLabelBg      = QColor(0xE8, 0xE3, 0xD7);
+    c.trackLabelText    = QColor(0x1F, 0x1D, 0x1A);
+    c.clipBg            = QColor(0xF5, 0xE9, 0xCF);   // papel-manilha: aparece
+                                                      // sobre a faixa branca
+    c.clipBorder        = QColor(0xBC, 0xB3, 0x9D);
+    c.clipBorderSelect  = QColor(0xC8, 0x10, 0x2E);   // seleção vermelha
+    c.clipBorderSecondary = QColor(0xC8, 0x10, 0x2E, 120);
+    c.clipText          = QColor(0x1F, 0x1D, 0x1A);
+    c.clipThumbBorder   = QColor(0xC7, 0xC0, 0xB2);
+    c.playhead          = QColor(0xC8, 0x10, 0x2E);   // agulha vermelha
+    c.playheadHandle    = QColor(0xC8, 0x10, 0x2E);
+    c.selectionRect     = QColor(0xC8, 0x10, 0x2E, 40);
+    c.selectionFill     = QColor(0xC8, 0x10, 0x2E, 18);
+
+    c.transportBg       = QColor(0xF2, 0xEF, 0xE7);
+    c.transportBorder   = QColor(0xC2, 0xBB, 0xAC);
+
+    c.dockTitleBg       = QColor(0xE5, 0xDE, 0xCC);   // mais escuro que a
+                                                      // janela: título aparece
+    c.dockTitleBgHover  = QColor(0xDC, 0xD4, 0xBE);
+    c.dockTitleText     = QColor(0x1F, 0x1D, 0x1A);
+    c.dockBorder        = QColor(0xC2, 0xBB, 0xAC);
+    c.dockCloseHover    = QColor(0xC8, 0x10, 0x2E);
+
+    c.inputBg           = QColor(0xFF, 0xFF, 0xFF);
+    c.inputBorder       = QColor(0xC2, 0xBB, 0xAC);
+    c.inputFocus        = QColor(0xC8, 0x10, 0x2E);   // foco vermelho
+    c.inputFocusNeutral = QColor(0xD6, 0xD0, 0xC2);
+    c.ctrlHover         = QColor(0xEA, 0xE2, 0xCB);
+    c.ctrlPress         = QColor(0xDE, 0xD5, 0xB9);
+    c.toolBtnBg         = QColor(0, 0, 0, 0);         // transparente (como
+                                                      // Dark/Light; hoverchecked faz o trabalho)
+    c.toolBtnHover      = QColor(0x1F, 0x1D, 0x1A, 60);
+    c.toolBtnChecked    = QColor(0xC8, 0x10, 0x2E, 55); // ferramenta ativa
+    c.spinText          = QColor(0xA0, 0x0C, 0x24);
+
+    c.btnPrimary        = QColor(0xC8, 0x10, 0x2E);
+    c.btnPrimaryText    = Qt::white;
+    // Hover/pressed dos botões brancos: creme claro (texto tinta continua
+    // legível). O hover dos botões PRIMÁRIOS vem de inputFocus (vermelho).
+    c.btnHover          = QColor(0xED, 0xE5, 0xD0);
+    c.btnActive         = QColor(0xDF, 0xD5, 0xBC);
+
+    c.accent            = QColor(0xC8, 0x10, 0x2E);
+    c.accentGold        = QColor(0xD4, 0xA0, 0x17);
+    c.iconNormal        = QColor(0x3B, 0x37, 0x2F);
+    c.iconMuted         = QColor(0x8C, 0x85, 0x77);
+
+    c.tabBg             = QColor(0xEC, 0xE7, 0xDB);
+    c.tabSelected       = QColor(0xFB, 0xFA, 0xF5);
+    c.tabSelectedText   = c.windowText;        // papel: texto tinta
+    c.tabBorder         = QColor(0xC8, 0x10, 0x2E);   // sublinhado vermelho
+
+    // Tipografia: pilha de gothics japoneses (padrão em UIs japonesas).
+    c.uiFont            = japaneseUiFontStack();
+
+    c.scrollbarBg       = QColor(0xEC, 0xE7, 0xDB);
+    c.scrollbarHandle   = QColor(0xB5, 0xAE, 0x9E);
+    c.scrollbarHover    = QColor(0x8C, 0x85, 0x77);
+
+    c.welcomeBgTop      = QColor(0xF7, 0xF4, 0xEC);
+    c.welcomeBgBottom   = QColor(0xE6, 0xE0, 0xD2);
+    c.welcomeBtnGradStart = QColor(0xC8, 0x10, 0x2E);
+    c.welcomeBtnGradEnd   = QColor(0x7F, 0x09, 0x1C); // gradiente vermelho
+
+    c.expressBg         = QColor(0xEC, 0xE7, 0xDB);
+    c.expressCardBg     = QColor(0xFF, 0xFF, 0xFF);
+    c.expressDescText   = QColor(0x6B, 0x64, 0x59);
+    c.effectsSearchBg   = QColor(0xFB, 0xFA, 0xF5);
+    c.effectsTreeBg     = QColor(0xF0, 0xEB, 0xE0);
+    c.effectsPreviewBg  = QColor(0xFF, 0xFF, 0xFF);
+
+    c.graphBg           = QColor(0xF0, 0xEB, 0xE0);
+    c.graphGrid         = QColor(0xDB, 0xD4, 0xC4);
+    c.graphLine         = QColor(0xC8, 0x10, 0x2E);   // curvas vermelhas
+    c.graphKeyframe     = QColor(0x5A, 0x54, 0x4A);
+    c.graphLabel        = QColor(0x3B, 0x37, 0x2F);
+    c.graphRuler        = QColor(0xF2, 0xEF, 0xE7);
+    c.graphAxis         = QColor(0x8C, 0x85, 0x77);
+    c.graphRulerText    = QColor(0x3B, 0x37, 0x2F);
+    c.graphHandle       = QColor(0xC8, 0x10, 0x2E);   // alças vermelhas
+
+    c.pantaloneBg         = QColor(0xF0, 0xEB, 0xE0);
+    c.pantaloneRegion     = QColor(0xC8, 0x10, 0x2E, 50);
+    c.pantaloneHandle     = QColor(0xC8, 0x10, 0x2E);
+
+    c.sectionDivider    = QColor(0xC8, 0x10, 0x2E);
+
+    return c;
+}
+
 static const ThemeColors& paletteFor(AppTheme theme) {
-    static const ThemeColors dark  = makeDarkPalette();
-    static const ThemeColors light = makeLightPalette();
-    static const ThemeColors ridge = makeRidgePalette();
+    static const ThemeColors dark   = makeDarkPalette();
+    static const ThemeColors light  = makeLightPalette();
+    static const ThemeColors ridge  = makeRidgePalette();
+    static const ThemeColors japan  = makeJapan95Palette();
     switch (theme) {
     case AppTheme::Light:      return light;
     case AppTheme::RidgeRacer: return ridge;
+    case AppTheme::Japan95:    return japan;
     case AppTheme::Dark:       break;
     }
     return dark;
@@ -387,6 +530,7 @@ static const ThemeColors& paletteFor(AppTheme theme) {
 
 void applyAppPalette(QApplication* app, AppTheme theme) {
     s_current = paletteFor(theme);
+    s_currentTheme = theme;
     const auto& c = s_current;
 
     QPalette pal;
@@ -422,7 +566,7 @@ AppTheme savedTheme() {
     QSettings s;
     const int v = s.value("theme", int(AppTheme::Dark)).toInt();
     // leitura defensiva: config antiga/corrompida nunca deve sair do enum
-    return (v >= int(AppTheme::Dark) && v <= int(AppTheme::RidgeRacer))
+    return (v >= int(AppTheme::Dark) && v <= int(AppTheme::Japan95))
         ? static_cast<AppTheme>(v) : AppTheme::Dark;
 }
 
@@ -431,8 +575,29 @@ void saveTheme(AppTheme theme) {
     s.setValue("theme", int(theme));
 }
 
+QString savedLanguage() {
+    // Casar com os índices do combo de idioma em SettingsDialog.
+    QSettings s;
+    switch (s.value("language", 0).toInt()) {
+    case 2:  return QStringLiteral("ja");
+    case 1:  return QStringLiteral("en");
+    default: return QStringLiteral("pt");
+    }
+}
+
+QString japaneseUiFontStack() {
+    // Pilha de gothics japoneses (padrão em UIs japonesas). Qt usa a
+    // primeira família instalada; sem nenhuma, cai no sans padrão.
+    return QStringLiteral(
+        "Noto Sans CJK JP, IPAGothic, IPAPAGothic, TakaoGothic, "
+        "Hiragino Kaku Gothic ProN, Yu Gothic UI, Meiryo, sans-serif");
+}
+
 QString globalStyleSheet(AppTheme theme) {
     const auto& c = paletteFor(theme);
+    const QString wDock = theme == AppTheme::Japan95
+                              ? QStringLiteral("font-weight: 600;")
+                              : QString();
     return QStringLiteral(R"(
         QDockWidget {
             color: %1;
@@ -442,6 +607,7 @@ QString globalStyleSheet(AppTheme theme) {
             border-bottom: 1px solid %3;
             padding: 2px 4px 2px 8px;
             spacing: 4px;
+            %7
         }
         QDockWidget::title:hover {
             background-color: %5;
@@ -464,7 +630,8 @@ QString globalStyleSheet(AppTheme theme) {
             c.dockBorder.name(),
             c.dockTitleBg.name(),
             c.dockTitleBgHover.name(),
-            theme == AppTheme::Light ? QStringLiteral("#e0b0b0") : c.dockCloseHover.name());
+            theme == AppTheme::Light ? QStringLiteral("#e0b0b0") : c.dockCloseHover.name(),
+            wDock);
 }
 
 QString flatControlStyleSheet(AppTheme theme) {
@@ -500,12 +667,18 @@ QString flatControlStyleSheet(AppTheme theme) {
     const QString fneut = c.inputFocusNeutral.name();
     // Divisória entre painéis: quase invisível, como no Premiere.
     const QString div   = c.dockBorder.name();
+    // Japan95: menu e abas em negrito (tipografia de UI japonesa).
+    const QString wChrome = theme == AppTheme::Japan95
+                                ? QStringLiteral("font-weight: 600;")
+                                : QString();
+    const QString tabTxt = c.tabSelectedText.name();
 
     return QStringLiteral(R"(
         QMenuBar {
             background: %1; color: %2;
             border-bottom: 1px solid %4;
             padding: 1px;
+            %30
         }
         QMenuBar::item { background: transparent; padding: 4px 10px; border-radius: 2px; }
         QMenuBar::item:selected { background: %5; border-radius: 2px; }
@@ -642,9 +815,10 @@ QString flatControlStyleSheet(AppTheme theme) {
             background: transparent; color: %2;
             border: 1px solid transparent;
             padding: 5px 12px;
+            %30
         }
         QTabBar::tab:selected {
-            background: %29; color: #FFFFFF;
+            background: %29; color: %31;
         }
         QTabBar::tab:hover:!selected { background: %5; }
 
@@ -702,11 +876,15 @@ QString flatControlStyleSheet(AppTheme theme) {
      hl, hltxt, disabled, press, primary,
      input, tooltip, tiptext, btnPrimaryTxt, focus,
      accent, titleTxt, alt, scBg, scH, scHo,
-     fneut, div, tabSel);
+     fneut, div, tabSel, wChrome, tabTxt);
 }
 
 QString dialogStyleSheet() {
     const auto& c = themeColors();
+    // Japan95: títulos de grupo em negrito forte.
+    const QString wTitle = currentTheme() == AppTheme::Japan95
+                               ? QStringLiteral("font-weight: 700;")
+                               : QString();
     return QStringLiteral(R"(
         QDialog { background: %1; }
         QLabel { color: %2; }
@@ -724,6 +902,7 @@ QString dialogStyleSheet() {
             top: 4px;
             padding: 0 4px;
             color: %6;
+            %21
         }
         QLineEdit, QComboBox, QSpinBox {
             background: %7;
@@ -758,5 +937,5 @@ QString dialogStyleSheet() {
              c.inputFocus.name(), c.button.name(), c.inputBorder.name(),
              c.text.name(), c.highlight.name(), c.button.name(),
              c.inputBorder.name(), c.buttonText.name(), c.btnHover.name(),
-             c.dockBorder.name(), c.btnActive.name());
+             c.dockBorder.name(), c.btnActive.name(), wTitle);
 }

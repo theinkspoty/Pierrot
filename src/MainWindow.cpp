@@ -3023,6 +3023,13 @@ void MainWindow::newProject() {
     m_modified = false;
     ProxyManager::instance().setProjectUsesProxies(m_project.useProxies);
     applyUndoState();
+    // Troca de projeto: MainWindow reusa o mesmo &m_project, então o
+    // PreviewWidget::setProject (chamado uma única vez na construção, linha 221)
+    // nunca roda aqui — o transporte, a agulha e os caches ficavam do projeto
+    // anterior (agulha podia parar além da duração nova e o play seguia em cima
+    // do conteúdo trocado). Para o play e recoloca todo mundo no zero.
+    m_preview->setProject(&m_project);
+    m_timeline->setPlayhead(0.0); // setPlayhead não emite playheadChanged
     updateTitle();
     statusBar()->showMessage(tr("Novo projeto criado."));
 }
@@ -3096,6 +3103,11 @@ void MainWindow::openProjectFile(const QString& path) {
         if (mi.hasVideo && !mi.filePath.isEmpty())
             ProxyManager::instance().probeAndQueue(mi.filePath);
     applyUndoState();
+    // Mesmo motivo do newProject: sem setProject, abrir um arquivo mantinha a
+    // agulha/transporte/caches do projeto anterior (arquivo menor = agulha além
+    // da duração, "Sem clipe" e cache velho no monitor).
+    m_preview->setProject(&m_project);
+    m_timeline->setPlayhead(0.0); // setPlayhead não emite playheadChanged
     updateTitle();
     addRecentProject(path);
     statusBar()->showMessage(tr("Projeto aberto: %1").arg(path));

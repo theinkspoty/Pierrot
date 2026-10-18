@@ -31,6 +31,7 @@ class AudioMixer; // QIODevice que mistura o PCM de todos os clipes ativos
 class FrameWorker; // decodifica quadros de vídeo fora da thread da UI
 class BgPrefetchWorker; // prefetch em thread separada (não bloqueia o worker)
 class DecoderPool; // pool de decodificadores quentes por caminho de arquivo
+class MonitorScrubBar; // faixa de scrub do monitor (playhead + loop + marcadores)
 class QAudioSink;
 class QAudioOutput;
 
@@ -118,6 +119,12 @@ protected:
     // A thread de vídeo (FrameWorker) precisa chamar os estáticos de efeito
     // (applyCropTo/applyBasicEffectsOn) para aplicar o caminho rápido.
     friend class FrameWorker;
+    // A faixa de scrub lê playhead/duração/loop/marcadores direto do dono.
+    friend class MonitorScrubBar;
+    // "HH:MM:SS:FF / HH:MM:SS:FF" (posição / duração da sequência).
+    void updateTimecodeLabel();
+    // Chip "720p"/"4K" no canto do vídeo (qualidade de decodificação atual).
+    void drawQualityChip(QPainter& p);
     // Aplica o QSS do contador de tempo a partir dos tokens do tema, para que
     // ele acompanhe a troca claro/escuro.
     void refreshTimeLabelStyle();
@@ -169,6 +176,11 @@ protected:
     // cada seek/scrub fora da reprodução; durante o play o prefetch/warm-ahead
     // já cobre. Ver warmPlayhead().
     void scheduleIdleWarm();
+    // Rótulo "Program: <nome>" do topo: refaz a partir de m_project. Chamado no
+    // setProject e no refreshView — o nome do projeto só é conhecido depois do
+    // JSON (openProject) e pode ser definido depois (createProject), e o
+    // setProject em si só roda UMA vez na construção da janela.
+    void updateProgramLabel();
     // Abre+posiciona o decoder do clipe sob a agulha (vídeo) e começa a
     // conformar a janela de áudio dele, para o próximo play sair quente — sem
     // o open() frio de 500-800ms nem o "começa mudo". Best-effort; nunca roda
@@ -200,10 +212,15 @@ protected:
     QToolButton* m_stepFwdBtn = nullptr;
     QToolButton* m_loopBtn = nullptr;
     QToolButton* m_fullscreenBtn = nullptr;
+    MonitorScrubBar* m_scrubBar = nullptr; // faixa sob o vídeo (arrastável)
     QLabel* m_programLabel = nullptr; // "Program: <nome da sequência>"
     QIcon m_playIcon;
     QIcon m_pauseIcon;
     QRect m_videoRect;
+    // Último canvas (retângulo do quadro no monitor) computado pelo
+    // renderFrame — a margem de segurança é desenhada no paintEvent por cima
+    // de QUALQUER caminho de render (o renderFrame tem returns antecipados).
+    QRect m_lastCanvas;
     double m_lastSrcT = -1.0;
     int m_lastDecodeW = -1;
     QString m_lastFile;

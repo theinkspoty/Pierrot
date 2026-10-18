@@ -69,6 +69,8 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QColorDialog>
+#include <QIcon>
+#include <QPixmap>
 #include <QTabWidget>
 #include <QGroupBox>
 #include <QListWidget>
@@ -1402,7 +1404,56 @@ void TimelineWidget::animateZoomTo(double targetPps, double anchorT) {
     m_zoomAnim->start();
 }
 
-void TimelineWidget::toggleMarker(double t) {
+namespace {
+// Paleta escolhível de marcador: vermelho, azul, amarelo, roxo. O amarelo é
+// o default (é o mais próximo do âmbar antigo).
+const QColor* markerPalette() {
+    static const QColor c[4] = {
+        QColor(QStringLiteral("#E53935")), // vermelho
+        QColor(QStringLiteral("#1E88E5")), // azul
+        QColor(QStringLiteral("#FDD835")), // amarelo (default)
+        QColor(QStringLiteral("#8E24AA")), // roxo
+    };
+    return c;
+}
+constexpr int kMarkerPaletteN = 4;
+const char* const kMarkerColorNames[kMarkerPaletteN] = {
+    "Vermelho", "Azul", "Amarelo", "Roxo",
+};
+
+// "Amostra" colorida (quadrado arredondado) para o menu.
+QIcon swatchIcon(const QColor& c) {
+    QPixmap pm(16, 16);
+    pm.fill(Qt::transparent);
+    QPainter pt(&pm);
+    pt.setRenderHint(QPainter::Antialiasing);
+    pt.setPen(Qt::NoPen);
+    pt.setBrush(c);
+    pt.drawRoundedRect(QRectF(2, 2, 12, 12), 3, 3);
+    pt.setPen(QPen(c.darker(160), 1));
+    pt.setBrush(Qt::NoBrush);
+    pt.drawRoundedRect(QRectF(2.5, 2.5, 11, 11), 3, 3);
+    return QIcon(pm);
+}
+
+// Nome automático estável: "Marcador N" com o menor N livre. Renomear um
+// marcador para "Marcador 5" manualmente conta como uso do5.
+QString autoMarkerName(const QVector<Marker>& ms) {
+    QSet<int> used;
+    for (const Marker& m : ms) {
+        bool ok = false;
+        const int n = m.name.startsWith(QLatin1String("Marcador "))
+                          ? m.name.mid(9).toInt(&ok)
+                          : -1;
+        if (ok) used.insert(n);
+    }
+    int n = 1;
+    while (used.contains(n)) ++n;
+    return QStringLiteral("Marcador %1").arg(n);
+}
+} // namespace
+
+void TimelineWidget::toggleMarker(double t, const QColor& color) {
     if (!m_project) return;
     emit editStart();
     const double tt = snapTime(std::max(0.0, t));
@@ -1417,9 +1468,20 @@ void TimelineWidget::toggleMarker(double t) {
     Marker m;
     m.id = newId();
     m.time = tt;
+    m.name = autoMarkerName(m_project->markers);
+    m.color = color.isValid() ? color : markerPalette()[2]; // amarelo
     m_project->addMarker(m);
     emit modified();
     update();
+}
+
+int TimelineWidget::markerAt(int x) const {
+    if (!m_project) return -1;
+    for (int i = 0; i < m_project->markers.size(); ++i) {
+        const int mx = (int)timeToX(m_project->markers[i].time);
+        if (std::abs(x - mx) <= 7) return i;
+    }
+    return -1;
 }
 
 
@@ -2319,8 +2381,58 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
             emit modified();
         }
     } else if (e->pos().y() < kRulerH) {
+        // Clique-direito sobre um marcador existente: menu dedicado —
+        // renomear, trocar a cor (paleta de4) ou excluir.
+        const int mi = markerAt(e->pos().x());
+        if (mi >= 0) {
+            Marker& mk = m_project->markers[mi];
+            QMenu mmenu;
+            QAction* ren = mmenu.addAction(tr("Renomear…"));
+            mmenu.addSeparator();
+            QAction* cols[kMarkerPaletteN];
+            for (int i = 0; i < kMarkerPaletteN; ++i) {
+                cols[i] = mmenu.addAction(swatchIcon(markerPalette()[i]),
+                                          tr(kMarkerColorNames[i]));
+                cols[i]->setCheckable(true);
+                cols[i]->setChecked(mk.color == markerPalette()[i]);
+            }
+            mmenu.addSeparator();
+            QAction* del = mmenu.addAction(tr("Excluir marcador"));
+            QAction* mact = mmenu.exec(e->globalPos());
+            if (mact == del) {
+                emit editStart();
+                m_project->markers.removeAt(mi);
+                emit modified();
+                update();
+            } else if (mact == ren) {
+                bool ok = false;
+                const QString name = QInputDialog::getText(
+                    this, tr("Marcador"), tr("Nome do marcador:"),
+                    QLineEdit::Normal, mk.name, &ok);
+                if (ok && !name.isEmpty()) {
+                    emit editStart();
+                    mk.name = name;
+                    emit modified();
+                    update();
+                }
+            } else {
+                for (int i = 0; i < kMarkerPaletteN; ++i) {
+                    if (mact != cols[i]) continue;
+                    emit editStart();
+                    mk.color = markerPalette()[i];
+                    emit modified();
+                    update();
+                    break;
+                }
+            }
+            return;
+        }
         const double t = std::max(0.0, snapTime(xToTime(e->pos().x())));
-        QAction* addM = menu.addAction(tr("Adicionar marcador"));
+        QMenu* addMenu = menu.addMenu(tr("Adicionar marcador"));
+        QAction* addCols[kMarkerPaletteN];
+        for (int i = 0; i < kMarkerPaletteN; ++i)
+            addCols[i] = addMenu->addAction(swatchIcon(markerPalette()[i]),
+                                            tr(kMarkerColorNames[i]));
         QAction* addMN = menu.addAction(tr("Adicionar marcador nomeado…"));
         QAction* clearM = menu.addAction(tr("Limpar todos os marcadores"));
         QAction* delLoopRip = nullptr;
@@ -2333,28 +2445,35 @@ void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
         QAction* act = menu.exec(e->globalPos());
         if (act == delLoopRip) deleteLoopRipple();
         else if (act == delLoopGap) deleteLoopLeaveGap();
-        else if (act == addM) {
-            toggleMarker(t);
-        } else if (act == addMN) {
-            bool ok = false;
-            const QString name =
-                QInputDialog::getText(this, tr("Marcador"), tr("Nome do marcador:"),
-                                      QLineEdit::Normal, QString(), &ok);
-            if (ok && !name.isEmpty()) {
+        else {
+            bool isAdd = false;
+            for (int i = 0; i < kMarkerPaletteN; ++i) {
+                if (act != addCols[i]) continue;
+                toggleMarker(t, markerPalette()[i]);
+                isAdd = true;
+                break;
+            }
+            if (!isAdd && act == addMN) {
+                bool ok = false;
+                const QString name =
+                    QInputDialog::getText(this, tr("Marcador"), tr("Nome do marcador:"),
+                                          QLineEdit::Normal, QString(), &ok);
+                if (ok && !name.isEmpty()) {
+                    emit editStart();
+                    Marker m;
+                    m.id = newId();
+                    m.time = t;
+                    m.name = name;
+                    m_project->addMarker(m);
+                    emit modified();
+                    update();
+                }
+            } else if (!isAdd && act == clearM) {
                 emit editStart();
-                Marker m;
-                m.id = newId();
-                m.time = t;
-                m.name = name;
-                m_project->addMarker(m);
+                m_project->markers.clear();
                 emit modified();
                 update();
             }
-        } else if (act == clearM) {
-            emit editStart();
-            m_project->markers.clear();
-            emit modified();
-            update();
         }
     } else {
         QAction* addV = menu.addAction(tr("Adicionar faixa de vídeo"));

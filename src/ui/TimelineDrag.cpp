@@ -646,14 +646,26 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
                 if (m_dragMode != MoveClip) {
                     // rippleTrimLeft/Right medem o delta contra o estado CORRENTE
                     // do clipe e deslocam os vizinhos, então um arraste ao vivo
-                    // precisa voltar ao estado original a cada mousemove. Guarda a
-                    // faixa inteira: os vizinhos deslocados não estão em
-                    // m_dragOrig (que só traz o clipe e seu grupo).
+                    // precisa voltar ao estado original a cada mousemove. O
+                    // ripple tem sync AV: desloca em TODAS as faixas e ajusta o
+                    // par vinculado, então guarda o clipe, o grupo e todos os
+                    // clipes à frente (candidatos a deslocamento) em qualquer
+                    // faixa — não só a faixa arrastada.
                     m_rippleOrig.clear();
-                    if (Track* tr = trackOf(clip)) {
-                        for (const Clip& other : tr->clips)
-                            m_rippleOrig.insert(other.id, { other.pos, other.in, other.dur });
-                    }
+                    auto snapRipple = [&](QVector<Track>& tracks) {
+                        for (Track& tr : tracks) {
+                            for (const Clip& other : tr.clips) {
+                                const bool grupo = !clip->groupId.isEmpty()
+                                    && other.groupId == clip->groupId;
+                                if (other.id == clip->id || grupo
+                                    || other.pos >= clip->pos - 1e-6)
+                                    m_rippleOrig.insert(other.id,
+                                                        { other.pos, other.in, other.dur });
+                            }
+                        }
+                    };
+                    snapRipple(m_project->videoTracks);
+                    snapRipple(m_project->audioTracks);
                 }
             } else if (m_tool == ToolRolling) {
                 // Rolling Edit: ajustar fronteira entre 2 clipes

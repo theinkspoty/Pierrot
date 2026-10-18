@@ -1,7 +1,7 @@
 # Relatório: Performance de Reprodução de Vídeo
 
-**Data:** 2026-09-28  
-**Status:** Análise completa  
+**Data:** 2026-09-28 (atualizado 2026-10-17)  
+**Status:** Análise completa; fixes 2/8/9/10 aplicados — ver "Causa raiz do freeze" na seção 7  
 **Arquivos analisados:** PlaybackEngine.cpp/h, PreviewWidget.cpp/h, FFmpegDecoder.cpp, AudioMixer
 
 ---
@@ -16,7 +16,7 @@ QTimer (8ms, Qt::PreciseTimer)
        ├─ Loop boundary check
        ├─ applySeekInternal(t) → onSeek(t)
        │    └─ PreviewWidget::applySeekVisual(t)     [UI thread]
-       │         ├─ desengasga() a cada ~10s → worker thread
+       │         ├─ desengasga() se habilitado via env (padrão: desligado)
        │         ├─ updateFrame()                     [UI thread]
        │         │    ├─ clipAt(m_playhead)           [UI thread, O(tracks*clips)]
        │         │    ├─ tryRenderMesa() se Mesa track
@@ -79,10 +79,10 @@ paintEvent():
 
 | # | Problema | Local | Impacto |
 |---|----------|-------|---------|
-| C1 | `waitReadyBeforeSink()` bloqueia UI thread até 300ms | PreviewWidget.cpp:2674 | Freeze no play (após 1ª vez) |
-| C2 | `applyCrop()` faz deep copy de frame inteiro (8MB 1080p / 33MB 4K) | PreviewWidget.cpp:3411 | 1-15ms/frame |
-| C3 | Efeitos (masks+chroma+blur+color) itera pixels na UI thread | PreviewWidget.cpp:3497 | 5-80ms/frame |
-| C4 | `QAudioSink` criado na UI thread a cada play | PreviewWidget.cpp:2680 | 10-50ms |
+| C1 | `waitReadyBeforeSink()` bloqueia UI thread até 300ms | PreviewWidget.cpp:1301 | **RESOLVIDO** — removido. O mixer já inicia sem aguardar e o conform é aquecido em background; adição do pré-aquecimento do sink e do warm do playhead reduziu o freeze do 1º play. |
+| C2 | `applyCrop()` faz deep copy de frame inteiro (8MB 1080p / 33MB 4K) | PreviewWidget.cpp:3411 | ALTO — ainda na UI. Há uso de `ImgPool` local para chroma/desfoque/MotiOn, mas o caminho de efeitos como LAINKA/OFX/frei0r ainda pode rolar na UI em alguns casos. |
+| C3 | Efeitos (masks+chroma+blur+color) itera pixels na UI thread | PreviewWidget.cpp:3497 | ALTO — o caminho rápido (crop+efeitos básicos+máscaras) foi movido ao worker para clipes sem LAINKA/MotiOn/OFX/frei0r, com snapshot `FrameFx` (Fix 1 parcial). Faltam mover LAINKA/MotiOn/OFX/frei0r para o worker com paridade preview↔export. |
+| C4 | `QAudioSink` criado na UI thread a cada play | PreviewWidget.cpp:3230 | **RESOLVIDO** — o sink é reutilizado entre play/stop. A 1ª criação foi pré-aquecida no startup (`prewarmAudioSink`) via `QTimer::singleShot(0)`, eliminando o freeze de ~1s no 1º play. |
 
 ### ALTO
 
@@ -100,8 +100,8 @@ paintEvent():
 | # | Problema | Local | Impacto |
 |---|----------|-------|---------|
 | M1 | QTimer 8ms = 3-4 fires por frame a 30fps | PreviewWidget.cpp:1527 | 0.5-2ms overhead |
-| M2 | LRU cache index rebuild O(120) a cada decode | FFmpegDecoder.cpp:718 | ~6us/decode |
-| M3 | `releaseBuffers()` a cada 10s causa cold re-seek (50-200ms) | PreviewWidget.cpp:2235 | 1-2 frames stall |
+| M2 | LRU cache index rebuild O(n) a cada decode | FFmpegDecoder.cpp:878 | ~6us/decode — **PENDENTE** (ainda há o loop de reconstrução do índice LRU) |
+| M3 | `releaseBuffers()` a cada 10s causa cold re-seek (50-200ms) | PreviewWidget.cpp:2235 | 1-2 frames stall — **RESOLVIDO** (flush desligado por padrão; ver `desengasgaIntervalMs()`) |
 | M4 | `drawClipText()` recria QPainterPath a cada paint | PreviewWidget.cpp:2072 | 0.5-2ms/text |
 | M5 | `scopesFrame()` copia+escala frame a cada chamada | PreviewWidget.cpp:1620 | 1-3ms |
 
@@ -119,7 +119,7 @@ paintEvent():
 
 | Sintoma | Causas primárias | Severidade |
 |---------|-----------------|------------|
-| Freeze no play (1ª vez) | C1 (waitReady 300ms) + C4 (sink creation) | CRÍTICO |
+| Freeze no play (1ª vez) | **RESOLVIDO** — C1 (`waitReadyBeforeSink` removido) + C4 (1ª criação do sink paga no startup via `prewarmAudioSink()`) + decoder/conform aquecidos (`warmPlayhead`) | RESOLVIDO |
 | Video trava mas áudio continua | H3 (lower layers roubam worker) + H6 (efeitos na UI) | ALTO |
 | Stall nos pontos de corte | M3 (desengasga cold re-seek) + H3 (novo clipe compete) | MÉDIO |
 | Degradação progressiva | M3 (flush do codec a cada 10s) | MÉDIO |
@@ -161,16 +161,16 @@ Segura: `BgPrefetchWorker::decode()` termina antes de emitir `done()` → `done(
 
 | Prioridade | Fix | Esforço | Impacto |
 |------------|-----|---------|---------|
-| 1 | Mover `applyCrop()` + `applyBasicEffects()` para o worker thread | Alto | CRÍTICO — elimina C2, C3, H6 |
-| 2 | Limitar requests de camadas inferiores a 1 por tick | Baixo | ALTO — prioriza frame do topo |
+| 1 | Mover `applyCrop()` + `applyBasicEffects()` para o worker thread | Alto | CRÍTICO — elimina C2, C3, H6 — **PARCIAL** (crop+efeitos básicos+máscaras no worker via snapshot `FrameFx`; falta LAINKA/MotiOn/OFX/frei0r) |
+| 2 | Limitar requests de camadas inferiores a 1 por tick | Baixo | ALTO — prioriza frame do topo — **FEITO** (`break` após 1 camada) |
 | 3 | Pré-alocar buffer de compositing (reutilizar entre frames) | Baixo | ALTO — elimina H1 |
-| 4 | Usar `QPainter::setOpacity()` em vez de COW manual | Baixo | ALTO — elimina H2 |
+| 4 | Usar `QPainter::setOpacity()` em vez de COW manual | Baixo | ALTO — elimina H2 — **FEITO** (`drawLayer()`, ver `PreviewWidget.cpp:2330`) |
 | 5 | Double-buffer no AudioMixer (staging + swap atômico) | Médio | ALTO — elimina H5 |
 | 6 | Cache de mix sources (reconstruir só na troca de clipe) | Baixo | MÉDIO — elimina H4 |
-| 7 | Tornar `desengasga` adaptativo (intervalo > 10s para clipes curtos) | Baixo | MÉDIO — reduz M3 |
-| 8 | Pré-criar `QAudioSink` e reutilizar entre play/stop | Baixo | CRÍTICO — elimina C4 |
-| 9 | Remover `waitReadyBeforeSink()` do path da UI thread | Baixo | CRÍTICO — elimina C1 |
-| 10 | Throttle `scopesFrame()` a 10-15fps | Baixo | MÉDIO — reduz M5 |
+| 7 | Tornar `desengasga` adaptativo (intervalo > 10s para clipes curtos) | Baixo | MÉDIO — reduz M3 — **FEITO** (default desligado; env `PIERROT_DESENGASGA_MS` religa) |
+| 8 | Pré-criar `QAudioSink` e reutilizar entre play/stop | Baixo | CRÍTICO — **FEITO** (pré-aquecido no startup; reutilizado entre play/stop) |
+| 9 | Remover `waitReadyBeforeSink()` do path da UI thread | Baixo | CRÍTICO — **FEITO** |
+| 10 | Throttle `scopesFrame()` a 10-15fps | Baixo | MÉDIO — feito (throttle existente) |
 
 ---
 
@@ -186,9 +186,29 @@ A mudança principal é mover `applyCrop()` + `applyBasicEffects()` para dentro 
 - `PreviewWidget.h`: novos campos no `FrameReq` ou parâmetros de `decodeOne()`
 
 **Risco:** O clipe ativo pode mudar enquanto o worker decoda. Mitigação: snapshot dos parâmetros no momento do request.
+### Fix 9: Remover waitReadyBeforeSink — **FEITO**
 
-### Fix 9: Remover waitReadyBeforeSink
+O `waitReadyBeforeSink()` existe para evitar áudio mudo nos primeiros 300ms.
+Removido do path do play: o mixer inicia direto e o conform é aquecido em
+background (aceitamos 1-2 frames de silêncio no warm-up frio).
 
-O `waitReadyBeforeSink()` existe para evitar áudio mudo nos primeiros 300ms. Alternativa: iniciar o sink imediatamente e aceitar silêncio momentâneo (1-2 frames). O áudio conform já existe no cache; a demora é só o primeiro chunk.
+**Arquivo afetado:** `PreviewWidget.cpp` — `startAudio()` não chama mais
+`waitReadyBeforeSink()` (definição em ~1319 permanece, fora do caminho).
 
-**Arquivo afetado:** `PreviewWidget.cpp:2669-2678` — remover o `if (m_audioConformWarmed)` e chamar `waitReadyBeforeSink()` de forma assíncrona ou não chamar.
+### Causa raiz do freeze no 1º play (documentada 2026-10-17)
+
+Evidência com `PIERROT_PLAY_DEBUG=1`:
+
+```
+[tick] 1º tick após o play: t=1.233s skip=37   ← freeze de ~1,2 s
+FFmpeg+OpenAL failed to initialize FFmpeg audio (0x8000000c)  ← backend de áudio
+qt.multimedia.ffmpeg                                             inicializado AQUI
+```
+
+A 1ª criação do `QAudioSink` em `startAudio()` custava ~1 s (inicialização do
+`qt.multimedia.ffmpeg`). Fix: `prewarmAudioSink()` no startup via
+`QTimer::singleShot(0, ...)` + revalidação em `warmPlayhead()`; `startAudio`
+só reusa o sink pré-criado (log `[play] startAudio: updateSources=Xms sink=Yms`).
+Complemento: `warmPlayhead()` (debounce 180 ms em `applySeekVisual`/`setProject`)
+abre+posiciona o decoder do clipe sob a agulha (evita `open()` frio de 500–800 ms)
+e chama `conform.request()` (evita "começa mudo").

@@ -87,7 +87,9 @@ struct Marker {
     QString id;
     double time = 0.0;
     QString name;
-    QColor color{QColor(255, 200, 40)};
+    // Default = amarelo da paleta escolhível de marcador (vermelho/azul/
+    // amarelo/roxo — TimelineWidget). Serializado como #rrggbb.
+    QColor color{QColor(QStringLiteral("#FDD835"))};
 };
 
 // Modos de interpolação de keyframe.

@@ -153,7 +153,8 @@ public slots:
     void deleteClipBeforePlayhead();
     void deleteClipAfterPlayhead();
     void zoomBy(double factor, double centerT);
-    void toggleMarker(double t);
+    void toggleMarker(double t, const QColor& color = QColor());
+    int markerAt(int x) const; // índice do marcador perto de x na régua (-1 = nenhum)
     void setTool(int tool);
     void setSnap(bool on);
     void setPlaying(bool p); // sincroniza a agulha branca com a vermelha

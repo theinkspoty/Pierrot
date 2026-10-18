@@ -48,8 +48,10 @@ O áudio do Pierrot tem **duas cadeias independentes que convergem em paridade**
 - Depois, por **barramento de faixa**: DSP de faixa (cpp:1060-1077) →
   master volume → RMS/VU.
 - Dedupe de sobreposições por `path|stream` (GeomRec + SeenWin) evita soma 2x.
-- `waitReadyBeforeSink` (cpp:756-779) bloqueia até o head do playhead estar
-  conformado — evita começo "mudo/dessincronizado".
+- ~~`waitReadyBeforeSink` (cpp:756-779) bloqueia até o head do playhead estar
+  conformado~~ — **fora do caminho do play desde 2026-10-17** (Fix 9): o mixer
+  inicia direto; o aquecimento é feito por `warmPlayhead()` (conform
+  antecipada) e o sink é pré-criado no startup (`prewarmAudioSink()`).
 
 ### DSP — `src/rust/pierrot_audiofx/src/lib.rs` (via FFI, header AudioFxBridge.h)
 - EQ Express: 3 biquads peaking (120/1000/6000 Hz, Q=1, ±12 dB) —
