@@ -158,6 +158,10 @@ private:
 
     // Imagem estática (JPEG, PNG, BMP, etc.): frame único, sem seek.
     bool m_isImage = false;
+    // Cache do still decodificado via QImage (NÃO via libavcodec). O caminho
+    // FFmpeg de imagem estourava SIGSEGV em imagens grandes (issues #3/#4/#5);
+    // stills não precisam de avcodec — o Qt carrega via plugins de imagem.
+    QImage m_imageCache;
     // GIF animado (múltiplos quadros + NETSCAPE com loop). frameAt() embrulha
     // o tempo pedido com fmod sobre a duração real do arquivo, repetindo a
     // animação para preencher o clipe (paridade com o export, que passa

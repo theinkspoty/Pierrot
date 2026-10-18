@@ -811,6 +811,7 @@ void FFmpegDecoder::freeAllLocked() {
     m_isImage = false;
     m_isLoopGif = false;
     m_gifDurationSec = -1.0;
+    m_imageCache = QImage();
     m_audioStream = -1;
     m_requestedAudioStream = -1;
     m_audioSkipFrames = 0;
@@ -990,6 +991,31 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
     // quadro em m_lastFrame e os pedidos seguintes reutilizam o cache,
     // independentemente do pts do frame (que nem sempre é 0).
     if (m_isImage) {
+        // Stills via QImage — NÃO via libavcodec. O caminho FFmpeg de imagem
+        // estourava SIGSEGV em imagens grandes (issues #3/#4/#5: PNG/WebP com
+        // frame-threading e também sem threads). O Qt carrega via plugins de
+        // imagem, sem avcodec no caminho. Fallback: se o plugin não abrir,
+        // cai no decode FFmpeg antigo abaixo (thread_count=1).
+        if (m_imageCache.isNull()) {
+            QImage src(m_source);
+            if (!src.isNull())
+                m_imageCache = src.convertToFormat(QImage::Format_RGBA8888);
+        }
+        if (!m_imageCache.isNull()) {
+            int sw = m_imageCache.width();
+            int sh = m_imageCache.height();
+            int dw = sw, dh = sh;
+            if (maxWidth > 0 && sw > maxWidth) {
+                dw = maxWidth;
+                dh = qMax(2, sh * dw / sw);
+                if (dh & 1) dh += 1;
+            }
+            if (dw != sw || dh != sh)
+                return m_imageCache.scaled(dw, dh, Qt::IgnoreAspectRatio,
+                                           Qt::FastTransformation);
+            return m_imageCache;
+        }
+        // Fallback FFmpeg (ex.: SVG sem plugin Qt correspondente).
         if (!cc || !m_pkt || !m_frame) return result;
         if (!m_lastFrame || m_lastFrameSec < 0.0) {
             av_packet_unref(m_pkt);
