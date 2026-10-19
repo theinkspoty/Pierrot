@@ -15,13 +15,17 @@ Atualizado em 2026-09-22 (v0.6 alpha). Código em 2026-10-02: v0.7 alpha
 | Kernel no total do projeto | ~1/3 |
 
 O kernel = `models` + `ffmpeg` + `render` + `export` + `ofx` + `util/generators`.
+O motor de codecs (`FFmpegDecoder`/`FFmpegEncoder`) vive na camada **Laartman**
+(`src/laartman/`, v0.3), abaixo da Colombina (v0.1) — `colombina/ffmpeg/` ficou
+só com as camadas de cache (`MediaCache`, `ProxyManager`, `AudioConformCache`).
 
 ## Módulos e responsabilidades
 
 | Camada | Arquivos | LOC | Papel |
 |---|---|---|---|
 | `models/` | `Project.h/.cpp` | ~1.500 | O coração: `Project`, `Track`, `Clip`, `MediaItem`, `Keyframe`, Mesas, recursos de texto, serialização `.Blanc` |
-| `ffmpeg/` | `FFmpegDecoder`, `MediaCache`, `ProxyManager`, `AudioConformCache` | ~2.050 | Decodificação, picos/waveforms, thumbs, proxies, buffer de áudio tipo Olive |
+| `ffmpeg/` | `MediaCache`, `ProxyManager`, `AudioConformCache` | ~1.600 | Picos/waveforms, thumbs, proxies, buffer de áudio tipo Olive |
+| `src/laartman/` (Laartman v0.3) | `FFmpegDecoder` (Open/Audio/Probe + Priv.h), `FFmpegEncoder` | ~1.800 | Motor de codecs: decodificação frame/áudio (libav*), VAAPI, LRU; encode in-process (hoje só em testes). Fragmentado em 4 TUs (2026-10-19). |
 | `render/` | `MesaRenderer` | ~630 | Composição 2D (estilo AE): câmera, motion blur, warmTracks paralelo, cache de composto |
 | `export/` | `ProjectExporter`, pré-renders, `NleInterchange` | ~2.300 | Geração do `filter_complex`/CLI do ffmpeg, LAINKA, OFX, EDL CMX3600 |
 | `ofx/` | Host + Manager + Renderer | ~1.900 | Host OFX com 7 suites (`dlopen` de plugins de terceiros) |

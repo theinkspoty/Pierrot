@@ -25,12 +25,15 @@ Marcamos `[x]` (feito) / `[~]` (parcial) / `[ ]` (não feito).
 
 ## Fase 1 — Performance (o "não trava" de verdade)
 
-- [ ] **Proxy files** — versões leves em background, alternância automática
-  (reusa `MediaCache`).
+- [~] **Proxy files** — geração automática em background para fontes ≥2560 px
+  (`ProxyManager`, ver §4 "Proxy workflow"); **falta**: toggle por faixa
+  (`Track::proxyPreview`), perfil editável e proxy in-process.
 - [x] **Cache de render** — quadro composto cacheado por timestamp no
   `MesaRenderer` (LRU 8 quadros), invalidação via `Project::revision`.
-- [ ] **Decode multi-thread** — decodificar faixas em paralelo no preview
-  (hoje o mutex do `MesaRenderer` serializa isso no paint).
+- [~] **Decode multi-thread** — `warmTracks()` do `MesaRenderer` decodifica
+  faixas em paralelo (ver §4); **falta**: decode paralelo do preview "de
+  verdade" (hoje um `FrameWorker` serial para topo + camadas, mitigado por
+  prioridade) e unificação dos dois pools de decoder (preview × Mesa).
 - [ ] **Smart render** — re-exportar trechos intactos com `stream copy`
   (importante para cortes simples).
 
@@ -376,8 +379,9 @@ em tom claro, volume da faixa atrás de **Shift+V** (como Premiere), seleção
 - [x] **Fix 4 — `QPainter::setOpacity()` no lugar do COW manual** — já usado
   em `drawLayer()` (substituiu o `DestinationIn` que despreendia o COW a cada
   paint com alpha < 1); ver comentário em `PreviewWidget.cpp:2330`.
-- [ ] **Fix 5 — double-buffer no `AudioMixer`** — classe intestável (dentro do
-  `.cpp`), lock segura o chunk inteiro.
+- [ ] **Fix 5 — double-buffer no `AudioMixer`** — lock ainda segura o chunk
+  inteiro; a classe em si deixou de ser intestável: extraída para
+  `src/ui/audio/AudioMixer.*` (ver `Relatorio-Estudo-Decodificacao.md`, F4).
 - [ ] **Fix 6 — cache de mix sources** — separar topologia (invariante) dos
   valores por tick (`vol`/`mediaPos` variam).
 - [x] **Fix 7 — `desengasga` adaptativo** — **FEITO**: default **desligado**
