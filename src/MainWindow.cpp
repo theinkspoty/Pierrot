@@ -933,6 +933,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             case PantaloneWidget::P_PanX:  gp = GPropTx; break;
             case PantaloneWidget::P_PanY:  gp = GPropTy; break;
             case PantaloneWidget::P_Rotation: gp = GPropRotation; break;
+            case PantaloneWidget::P_Opacity: gp = GPropOpacity; break;
             default: return;
         }
         m_graph->setProperty(gp);
