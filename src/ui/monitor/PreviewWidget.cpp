@@ -2065,10 +2065,13 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
         .arg(themeColors().base.name(), themeColors().trackBorder.name(),
              hoverBg.name(QColor::HexArgb), checkBg.name(QColor::HexArgb)));
     // Atualiza o mini-scope a ~15 fps quando o monitor está visível.
+    // Durante a reprodução pula: copiar+escalar o frame inteiro na GUI a cada
+    // 70ms competia com o paint e gerava micro-stutter ("frameback" leve).
     auto* miniTimer = new QTimer(this);
     miniTimer->setInterval(70);
     connect(miniTimer, &QTimer::timeout, this, [this]() {
         if (!m_miniScope || !isVisible()) return;
+        if (m_playing) return; // não rouba tempo da GUI durante o play
         m_miniScope->refreshFrom(scopesFrame());
     });
     miniTimer->start();
@@ -2328,7 +2331,8 @@ QImage PreviewWidget::scopesFrame() const {
         src = m_compositedCache.isNull() ? m_frame : m_compositedCache;
     }
     if (src.isNull() || src.width() < 2 || src.height() < 2) return QImage();
-    return src.scaled(160, 90, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+    // FastTransformation: o mini-scope é 96×24 px — suavização é desperdício.
+    return src.scaled(160, 90, Qt::IgnoreAspectRatio, Qt::FastTransformation)
                .convertToFormat(QImage::Format_ARGB32);
 }
 

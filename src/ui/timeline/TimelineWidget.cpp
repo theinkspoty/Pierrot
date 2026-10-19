@@ -1350,11 +1350,10 @@ void TimelineWidget::ensurePlayheadVisible() {
     const double px = timeToX(m_playhead);
     const int viewW = width() - m_vbar->sizeHint().width();
     // Follow contínuo (estilo Vegas): durante a reprodução a rolagem acompanha
-    // a agulha mantendo-a perto do CENTRO da view (~1/2), em vez de 2/3 que
-    // deixava a agulha muito à direita. A view avança suavemente a cada frame.
-    const double rightEdge = kHeaderW + (viewW - kHeaderW) * 0.6;
+    // a agulha mantendo-a perto do CENTRO da view (~1/2). Margem generosa
+    // (25%) antes de rolar: evita repaint da timeline a cada frame.
+    const double rightEdge = kHeaderW + (viewW - kHeaderW) * 0.75;
     if (px < kHeaderW || px > rightEdge) {
-        // Fração da área útil onde a agulha deve pousar depois de rolar.
         const double frac = px < kHeaderW ? 0.3 : 0.5;
         const int before = m_hbar->value();
         // scroll alvo = tempo×pps − fração×largura_útil  (não misturar
