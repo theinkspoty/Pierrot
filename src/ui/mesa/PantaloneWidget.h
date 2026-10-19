@@ -34,7 +34,7 @@ public:
     // Propriedades de transformação do pantalone (mesmas usadas nos sliders).
     enum Prop {
         P_CropL = 0, P_CropR, P_CropT, P_CropB, P_Scale, P_PanX, P_PanY,
-        P_Rotation, P_ScaleX, P_ScaleY, P_AnchorX, P_AnchorY,
+        P_Rotation, P_ScaleX, P_ScaleY, P_AnchorX, P_AnchorY, P_Opacity,
         // Propriedades da máscara ATIVA (valem enquanto houver m_maskSel).
         P_MaskCx, P_MaskCy, P_MaskRx, P_MaskRy, P_MaskRot, P_MaskFeather
     };
@@ -167,7 +167,7 @@ private:
     QSlider* m_scaleY = nullptr;
     QSlider* m_anchorX = nullptr;
     QSlider* m_anchorY = nullptr;
-
+    QSlider* m_opacity = nullptr;
     QLabel* m_cropLVal = nullptr;
     QLabel* m_cropRVal = nullptr;
     QLabel* m_cropTVal = nullptr;
@@ -180,7 +180,7 @@ private:
     QLabel* m_scaleYVal = nullptr;
     QLabel* m_anchorXVal = nullptr;
     QLabel* m_anchorYVal = nullptr;
-
+    QLabel* m_opacityVal = nullptr;
     QHash<int, QPushButton*> m_kfDiamonds;
     QHash<int, QToolButton*> m_resetBtns;
     QPushButton* m_kfAuto = nullptr;

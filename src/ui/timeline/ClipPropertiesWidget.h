@@ -67,7 +67,8 @@ private:
                                int dec, int minW, double dim,
                                std::function<double()> read,
                                std::function<void(double)> write,
-                               std::function<QVector<Keyframe>*()> keys = {});
+                               std::function<QVector<Keyframe>*()> keys = {},
+                               std::function<double()> time = {});
     QCheckBox* addCheckRow(const QString& label, const QString& tip,
                            std::function<bool()> read,
                            std::function<void(bool)> write);
@@ -109,6 +110,7 @@ private:
         std::function<double()> read;      // leitura RAW (já interpolada no playhead)
         std::function<void(double)> write; // grava RAW (base ou keyframe no playhead)
         std::function<QVector<Keyframe>*()> keys;
+        std::function<double()> time;      // instante usado para keyframes (relativo ao clipe ou playhead)
         double dim = 1.0;                  // raw * dim = valor exibido no spin
     };
     QVector<SpinRow> m_spinRows;

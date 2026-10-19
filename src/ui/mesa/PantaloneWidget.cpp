@@ -289,7 +289,8 @@ PantaloneWidget::PantaloneWidget(QWidget* parent) : QWidget(parent) {
     m_scaleY->setValue((int)std::lround(kStretchCenter * 100.0));
     m_anchorX = makeSlider(-100, 100);
     m_anchorY = makeSlider(-100, 100);
-
+    m_opacity = makeSlider(0, 100);
+    m_opacity->setValue(100);
     m_cropLVal = makeValLabel();
     m_cropRVal = makeValLabel();
     m_cropTVal = makeValLabel();
@@ -302,7 +303,7 @@ PantaloneWidget::PantaloneWidget(QWidget* parent) : QWidget(parent) {
     m_scaleYVal = makeValLabel();
     m_anchorXVal = makeValLabel();
     m_anchorYVal = makeValLabel();
-
+    m_opacityVal = makeValLabel();
     auto addValRow = [&](QGridLayout* g, int r, const QString& label,
                          QSlider* s, QLabel* v, int prop) {
         auto* lab = new QLabel(label, this);
@@ -363,7 +364,7 @@ PantaloneWidget::PantaloneWidget(QWidget* parent) : QWidget(parent) {
     addValRow(rotSec.grid, 2, tr("Flatt Y:"), m_scaleY, m_scaleYVal, P_ScaleY);
     addValRow(rotSec.grid, 3, tr("Âncora X:"), m_anchorX, m_anchorXVal, P_AnchorX);
     addValRow(rotSec.grid, 4, tr("Âncora Y:"), m_anchorY, m_anchorYVal, P_AnchorY);
-
+    addValRow(rotSec.grid, 5, tr("Opacidade:"), m_opacity, m_opacityVal, P_Opacity);
     // ── Máscaras (retângulo/elipse) ────────────────────────────────────
     // A máscara fica ancorada ao quadro (0..1) e aparece como gizmo no
     // viewfinder, ao lado do box de recorte — o mesmo modelo Mask/preview.
@@ -507,7 +508,9 @@ PantaloneWidget::PantaloneWidget(QWidget* parent) : QWidget(parent) {
     connectSlider(m_anchorY, P_AnchorY, [this]() {
         return m_anchorY->value() / 100.0;
     });
-
+    connectSlider(m_opacity, P_Opacity, [this]() {
+        return m_opacity->value() / 100.0;
+    });
     // Conecta botões de reset por propriedade.
     auto connectReset = [this](int prop, QSlider* s, double defVal,
                                std::function<void(Clip*)> resetFn) {
@@ -540,7 +543,7 @@ PantaloneWidget::PantaloneWidget(QWidget* parent) : QWidget(parent) {
     connectReset(P_ScaleY, m_scaleY, 1.0, [](Clip* c) { c->scaleY = 1.0; c->kfScaleY.clear(); });
     connectReset(P_AnchorX, m_anchorX, 0.0, [](Clip* c) { c->anchorX = 0.0; c->kfAnchorX.clear(); });
     connectReset(P_AnchorY, m_anchorY, 0.0, [](Clip* c) { c->anchorY = 0.0; c->kfAnchorY.clear(); });
-
+    connectReset(P_Opacity, m_opacity, 1.0, [](Clip* c) { c->opacity = 1.0; c->kfOpacity.clear(); });
     auto* resetBtn = new QPushButton(tr("Redefinir Tudo"), this);
     resetBtn->setMinimumHeight(22);
     resetBtn->setToolTip(tr("Zera recorte, zoom, posição, rotação, achatamento "
@@ -925,11 +928,10 @@ void PantaloneWidget::syncFromClip() {
     const double sy = c ? kfValue(c->kfScaleY, c->scaleY, rel) : 1.0;
     const double ax = c ? kfValue(c->kfAnchorX, c->anchorX, rel) : 0.0;
     const double ay = c ? kfValue(c->kfAnchorY, c->anchorY, rel) : 0.0;
-
+    const double op = c ? kfValue(c->kfOpacity, c->opacity, rel) : 1.0;
     QSignalBlocker b1(m_cropL), b2(m_cropR), b3(m_cropT), b4(m_cropB);
     QSignalBlocker b5(m_scale), b6(m_panX), b7(m_panY), b8(m_rotation);
-    QSignalBlocker b9(m_scaleX), b10(m_scaleY), b11(m_anchorX), b12(m_anchorY);
-    m_cropL->setValue((int)std::lround(L * 100.0));
+    QSignalBlocker b9(m_scaleX), b10(m_scaleY), b11(m_anchorX), b12(m_anchorY), b13(m_opacity);    m_cropL->setValue((int)std::lround(L * 100.0));
     m_cropR->setValue((int)std::lround(R * 100.0));
     m_cropT->setValue((int)std::lround(T * 100.0));
     m_cropB->setValue((int)std::lround(B * 100.0));
@@ -941,8 +943,8 @@ void PantaloneWidget::syncFromClip() {
     m_scaleY->setValue((int)std::lround(std::clamp(sy, kMinStretch / 100.0, kMaxStretch / 100.0) * 100.0));
     m_anchorX->setValue((int)std::lround(std::clamp(ax * 100.0, -100.0, 100.0)));
     m_anchorY->setValue((int)std::lround(std::clamp(ay * 100.0, -100.0, 100.0)));
-    updateValueLabels();
-    refreshDiamonds();
+    m_opacity->setValue((int)std::lround(std::clamp(op, 0.0, 1.0) * 100.0));
+    updateValueLabels();    refreshDiamonds();
 }
 
 void PantaloneWidget::updateValueLabels() {
@@ -958,7 +960,7 @@ void PantaloneWidget::updateValueLabels() {
     const int sy = m_scaleY->value();
     const int ax = m_anchorX->value();
     const int ay = m_anchorY->value();
-    auto pct = [](int v) { return QStringLiteral("%1%").arg(v); };
+    const int op = m_opacity->value();    auto pct = [](int v) { return QStringLiteral("%1%").arg(v); };
     if (m_cropLVal) m_cropLVal->setText(pct(L));
     if (m_cropRVal) m_cropRVal->setText(pct(R));
     if (m_cropTVal) m_cropTVal->setText(pct(T));
@@ -971,7 +973,7 @@ void PantaloneWidget::updateValueLabels() {
     if (m_scaleYVal) m_scaleYVal->setText(pct(sy));
     if (m_anchorXVal) m_anchorXVal->setText(pct(ax));
     if (m_anchorYVal) m_anchorYVal->setText(pct(ay));
-}
+    if (m_opacityVal) m_opacityVal->setText(pct(op));}
 
 double PantaloneWidget::relPlayhead() {
     Clip* c = activeClip();
@@ -995,7 +997,7 @@ QVector<Keyframe>* PantaloneWidget::keyframesFor(int prop) {
         case P_ScaleY: return &c->kfScaleY;
         case P_AnchorX: return &c->kfAnchorX;
         case P_AnchorY: return &c->kfAnchorY;
-        // Propriedades da máscara ATIVA (nullptr se não há máscara selecionada).
+        case P_Opacity: return &c->kfOpacity;        // Propriedades da máscara ATIVA (nullptr se não há máscara selecionada).
         case P_MaskCx:      { Mask* m = activeMask(); return m ? &m->kfCx : nullptr; }
         case P_MaskCy:      { Mask* m = activeMask(); return m ? &m->kfCy : nullptr; }
         case P_MaskRx:      { Mask* m = activeMask(); return m ? &m->kfRx : nullptr; }
@@ -1012,8 +1014,8 @@ QVector<int> PantaloneWidget::activeProps() {
     QVector<int> props;
     props << P_CropL << P_CropR << P_CropT << P_CropB
           << P_Scale << P_PanX << P_PanY << P_Rotation
-          << P_ScaleX << P_ScaleY << P_AnchorX << P_AnchorY;
-    if (activeMask())
+          << P_ScaleX << P_ScaleY << P_AnchorX << P_AnchorY
+          << P_Opacity;    if (activeMask())
         props << P_MaskCx << P_MaskCy << P_MaskRx << P_MaskRy
               << P_MaskRot << P_MaskFeather;
     return props;
@@ -1068,7 +1070,8 @@ double PantaloneWidget::propValue(int prop) {
             return m_anchorX->value() / 100.0;
         case P_AnchorY:
             return m_anchorY->value() / 100.0;
-        case P_MaskCx:      { Mask* m = activeMask(); const double r = std::max(0.0, relPlayhead()); return m ? m->cxAt(r) : 0.0; }
+        case P_Opacity:
+            return m_opacity->value() / 100.0;        case P_MaskCx:      { Mask* m = activeMask(); const double r = std::max(0.0, relPlayhead()); return m ? m->cxAt(r) : 0.0; }
         case P_MaskCy:      { Mask* m = activeMask(); const double r = std::max(0.0, relPlayhead()); return m ? m->cyAt(r) : 0.0; }
         case P_MaskRx:      { Mask* m = activeMask(); const double r = std::max(0.0, relPlayhead()); return m ? m->rxAt(r) : 0.0; }
         case P_MaskRy:      { Mask* m = activeMask(); const double r = std::max(0.0, relPlayhead()); return m ? m->ryAt(r) : 0.0; }
@@ -1198,7 +1201,7 @@ void PantaloneWidget::commitSlider(int prop, double baseValue) {
         case P_ScaleY: c->scaleY = baseValue; break;
         case P_AnchorX: c->anchorX = baseValue; break;
         case P_AnchorY: c->anchorY = baseValue; break;
-    }
+        case P_Opacity: c->opacity = baseValue; break;    }
     if (m_kfAuto && m_kfAuto->isChecked())
         writeKeyframe(prop, baseValue);
     else if (QVector<Keyframe>* kf = keyframesFor(prop))
@@ -2513,8 +2516,8 @@ static void kfLaneProps(QVector<int> lanes[3]) {
     lanes[1] = {P::P_MaskCx, P::P_MaskCy, P::P_MaskRx, P::P_MaskRy,
                 P::P_MaskRot, P::P_MaskFeather};
     lanes[2] = {P::P_Scale, P::P_PanX, P::P_PanY, P::P_Rotation,
-                P::P_ScaleX, P::P_ScaleY, P::P_AnchorX, P::P_AnchorY};
-}
+                P::P_ScaleX, P::P_ScaleY, P::P_AnchorX, P::P_AnchorY,
+                P::P_Opacity};}
 
 void PantaloneWidget::paintKeyframeStrip(QWidget* view) {
     QPainter p(view);
@@ -2783,7 +2786,7 @@ void PantaloneWidget::stripDoubleClick(QWidget* view, QMouseEvent* e) {
             case P_ScaleY: k.value = kfValue(c->kfScaleY, c->scaleY, rel); break;
             case P_AnchorX: k.value = kfValue(c->kfAnchorX, c->anchorX, rel); break;
             case P_AnchorY: k.value = kfValue(c->kfAnchorY, c->anchorY, rel); break;
-        }
+            case P_Opacity: k.value = kfValue(c->kfOpacity, c->opacity, rel); break;        }
         kf->append(k);
         std::sort(kf->begin(), kf->end(),
                   [](const Keyframe& a, const Keyframe& b) { return a.time < b.time; });

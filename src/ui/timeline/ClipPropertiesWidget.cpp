@@ -210,7 +210,7 @@ void ClipPropertiesWidget::clearBody() {
 QDoubleSpinBox* ClipPropertiesWidget::addSpinRow(
         const QString& label, double lo, double hi, double step, int dec, int minW,
         double dim, std::function<double()> read, std::function<void(double)> write,
-        std::function<QVector<Keyframe>*()> keys) {
+        std::function<QVector<Keyframe>*()> keys, std::function<double()> time) {
     auto* spin = new QDoubleSpinBox(m_body);
     spin->setRange(lo, hi);
     spin->setSingleStep(step);
@@ -247,15 +247,16 @@ QDoubleSpinBox* ClipPropertiesWidget::addSpinRow(
                                          " border:none; }"));
         h->addWidget(sw, 0);
         connect(sw, &QToolButton::clicked, this,
-                [this, read, keys]() {
+                [this, read, keys, time]() {
                     QVector<Keyframe>* ks = keys();
                     if (!ks) return;
+                    const double kt = time ? time() : m_playhead;
                     beginEdit();
-                    const int i = keyframeAt(*ks, m_playhead);
+                    const int i = keyframeAt(*ks, kt);
                     if (i >= 0)
                         ks->removeAt(i);
                     else
-                        upsertKeyframe(*ks, m_playhead, read());
+                        upsertKeyframe(*ks, kt, read());
                     refreshValues();
                     refreshStopwatches();
                     emitEdited();
@@ -272,7 +273,7 @@ QDoubleSpinBox* ClipPropertiesWidget::addSpinRow(
             });
 
     m_spinRows.append({ spin, sw, std::move(read), std::move(write),
-                        std::move(keys), dim });
+                        std::move(keys), std::move(time), dim });
     m_body->layout()->addWidget(row);
     return spin;
 }
@@ -429,6 +430,27 @@ void ClipPropertiesWidget::rebuild() {
                     else clip->volume = v;
                 },
                 [this, clip]() { return &clip->kfVolume; });
+            addSpinRow(tr("Opacidade (%):"), 0, 100, 1, 0, 60, 100.0,
+                [this, clip]() {
+                    const double rel = clip ? std::clamp(m_playhead - clip->pos, 0.0,
+                                                          std::max(0.0, clip->dur))
+                                            : m_playhead;
+                    return kfValue(clip->kfOpacity, clip->opacity, rel);
+                },
+                [this, clip](double v) {
+                    const double rel = clip ? std::clamp(m_playhead - clip->pos, 0.0,
+                                                          std::max(0.0, clip->dur))
+                                            : m_playhead;
+                    if (!clip->kfOpacity.isEmpty())
+                        upsertKeyframe(clip->kfOpacity, rel, v);
+                    else clip->opacity = v;
+                },
+                [this, clip]() { return &clip->kfOpacity; },
+                [this, clip]() {
+                    return clip ? std::clamp(m_playhead - clip->pos, 0.0,
+                                             std::max(0.0, clip->dur))
+                                : m_playhead;
+                });
             addSpinRow(tr("Fade in (s):"), 0, 10, 0.1, 2, 60, 1.0,
                 [clip]() { return clip->fadeIn; },
                 [clip](double v) { clip->fadeIn = v; });
@@ -850,7 +872,8 @@ void ClipPropertiesWidget::refreshValues() {
 void ClipPropertiesWidget::refreshStopwatches() {
     for (const SpinRow& r : m_spinRows) {
         if (!r.sw || !r.keys || !r.keys()) continue;
-        const bool on = keyframeAt(*r.keys(), m_playhead) >= 0;
+        const double kt = r.time ? r.time() : m_playhead;
+        const bool on = keyframeAt(*r.keys(), kt) >= 0;
         const QSignalBlocker b(r.sw);
         r.sw->setChecked(on);
         r.sw->setIcon(stopwatchIcon(on));
