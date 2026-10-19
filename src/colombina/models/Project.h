@@ -406,6 +406,13 @@ struct Clip {
     double chromaKeySoftness = 0.10;    // suavidade da borda (0=dura, 1=muito suave)
     double chromaKeySpillSuppress = 0.5; // supressão de spill (0=nenhuma, 1=máxima)
 
+    // ── Grão de filme (estética de película 16/35mm) ─────────────────────
+    // Ruído monocromático animado por quadro, aplicado por cima de tudo
+    // (assim como o grão real da película fica na emulsão).
+    bool   filmGrain = false;
+    double filmGrainAmount = 0.5; // intensidade (0..1)
+    int    filmGrainSize = 1;     // tamanho do grão em pixels (1..4)
+
     // ── PSX (estética retrô PlayStation 1) ────────────────────────────────
     // Granulado = dithering ordenado (padrão Bayer 4x4) + quantização de cor
     // para profundidade baixa (5 bits/canal = RGB555, como o PS1).

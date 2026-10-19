@@ -126,6 +126,7 @@ void ExpressWidget::rebuildTabs()
     if (m_currentClip->grayscale)         createBuiltInTab("pierrot_grayscale");
     if (m_currentClip->chromaKey)         createBuiltInTab("pierrot_chromakey");
     if (m_currentClip->psxEnabled)        createBuiltInTab("pierrot_psx");
+    if (m_currentClip->filmGrain)         createBuiltInTab("pierrot_filmgrain");
     if (m_currentClip->brightness != 0.0) createBuiltInTab("pierrot_brightness");
     if (m_currentClip->contrast != 1.0)   createBuiltInTab("pierrot_contrast");
     if (m_currentClip->saturation != 1.0) createBuiltInTab("pierrot_saturation");
@@ -200,6 +201,11 @@ bool ExpressWidget::applyEffectToClip(Clip* clip, const QString& effectId)
         clip->psxEnabled = true;
         clip->psxDither = 1.0;
         clip->psxBits = 5;
+        changed = true;
+    } else if (effectId == "pierrot_filmgrain" && !clip->filmGrain) {
+        clip->filmGrain = true;
+        clip->filmGrainAmount = 0.5;
+        clip->filmGrainSize = 1;
         changed = true;
     } else if (effectId == "pierrot_audio_eq") {
         if (std::fabs(clip->eqLow) <= 0.01
@@ -351,6 +357,8 @@ bool ExpressWidget::removeEffectFromClip(Clip* clip, const QString& effectId)
         if (clip->blur != 0.0) { clip->blur = 0.0; changed = true; }
     } else if (effectId == "pierrot_psx") {
         if (clip->psxEnabled) { clip->psxEnabled = false; changed = true; }
+    } else if (effectId == "pierrot_filmgrain") {
+        if (clip->filmGrain) { clip->filmGrain = false; changed = true; }
     } else if (effectId == "pierrot_audio_eq") {
         if (std::fabs(clip->eqLow) > 0.01 || std::fabs(clip->eqMid) > 0.01
             || std::fabs(clip->eqHigh) > 0.01) {
@@ -442,6 +450,7 @@ static const QHash<QString, QString>& effectDisplayNames()
         { QStringLiteral("pierrot_lainka"),     QStringLiteral("LAINKA") },
         { QStringLiteral("pierrot_motion"),     QStringLiteral("MotiOn") },
         { QStringLiteral("pierrot_psx"),        QStringLiteral("PSX") },
+        { QStringLiteral("pierrot_filmgrain"),  QStringLiteral("Grão de Filme") },
         { QStringLiteral("pierrot_audio_eq"),   QStringLiteral("EQ Express") },
         { QStringLiteral("pierrot_audio_reverb"), QStringLiteral("Reverb EX") },
     };
@@ -546,6 +555,34 @@ void ExpressWidget::createBuiltInTab(const QString& effectId)
         bitsRow->addWidget(bitsSl, 1);
         bitsRow->addWidget(bitsLbl);
         form->addRow(tr("Profundidade:"), bitsRow);
+    }
+    else if (effectId == "pierrot_filmgrain") {
+        auto* chk = new QCheckBox(tr("Ativar Grão de Filme"));
+        chk->setChecked(c && c->filmGrain);
+        connect(chk, &QCheckBox::toggled, this, [this](bool v) { applyBuiltInBool("filmGrain", v); });
+        form->addRow(chk);
+
+        auto* amtSl = new QSlider(Qt::Horizontal);
+        amtSl->setRange(0, 100);
+        amtSl->setValue(c ? (int)llround(c->filmGrainAmount * 100.0) : 50);
+        auto* amtLbl = new QLabel(QStringLiteral("%1%").arg(amtSl->value()));
+        connect(amtSl, &QSlider::valueChanged, amtLbl, [amtLbl](int v) { amtLbl->setText(QStringLiteral("%1%").arg(v)); });
+        connect(amtSl, &QSlider::valueChanged, this, [this](int v) { applyBuiltInValue("filmGrainAmount", v / 100.0); });
+        auto* amtRow = new QHBoxLayout;
+        amtRow->addWidget(amtSl, 1);
+        amtRow->addWidget(amtLbl);
+        form->addRow(tr("Intensidade:"), amtRow);
+
+        auto* sizeSl = new QSlider(Qt::Horizontal);
+        sizeSl->setRange(1, 4);
+        sizeSl->setValue(c ? std::clamp(c->filmGrainSize, 1, 4) : 1);
+        auto* sizeLbl = new QLabel(QStringLiteral("%1 px").arg(sizeSl->value()));
+        connect(sizeSl, &QSlider::valueChanged, sizeLbl, [sizeLbl](int v) { sizeLbl->setText(QStringLiteral("%1 px").arg(v)); });
+        connect(sizeSl, &QSlider::valueChanged, this, [this](int v) { applyBuiltInValue("filmGrainSize", v); });
+        auto* sizeRow = new QHBoxLayout;
+        sizeRow->addWidget(sizeSl, 1);
+        sizeRow->addWidget(sizeLbl);
+        form->addRow(tr("Tamanho do grão:"), sizeRow);
     }
     else if (effectId == "pierrot_chromakey") {
         auto* chk = new QCheckBox(tr("Ativar Chroma Key"));
@@ -1230,6 +1267,8 @@ void ExpressWidget::applyBuiltInValue(const QString& key, double value)
     else if (key == "chromaKeySpillSuppress") m_currentClip->chromaKeySpillSuppress = value;
     else if (key == "psxDither") m_currentClip->psxDither = std::clamp(value, 0.0, 1.0);
     else if (key == "psxBits") m_currentClip->psxBits = qBound(3, (int)value, 8);
+    else if (key == "filmGrainAmount") m_currentClip->filmGrainAmount = std::clamp(value, 0.0, 1.0);
+    else if (key == "filmGrainSize") m_currentClip->filmGrainSize = qBound(1, (int)value, 4);
     else if (key == "lainkaSkip") m_currentClip->lainkaSkip = qMax(1, (int)value);
     else if (key == "lainkaJitterPos") m_currentClip->lainkaJitterPos = value;
     else if (key == "lainkaJitterRot") m_currentClip->lainkaJitterRot = value;
@@ -1263,6 +1302,7 @@ void ExpressWidget::applyBuiltInBool(const QString& key, bool value)
     if (key == "grayscale") m_currentClip->grayscale = value;
     else if (key == "chromaKey") m_currentClip->chromaKey = value;
     else if (key == "psxEnabled") m_currentClip->psxEnabled = value;
+    else if (key == "filmGrain") m_currentClip->filmGrain = value;
     else if (key == "lainkaEnabled") m_currentClip->lainkaEnabled = value;
     else if (key == "motionEnabled") m_currentClip->motionEnabled = value;
     else if (key == "reverb") {

@@ -76,6 +76,9 @@ static Project makeProject() {
     c.saturation = 0.8;
     c.blur = 0.3;
     c.grayscale = true;
+    c.filmGrain = true;
+    c.filmGrainAmount = 0.7;
+    c.filmGrainSize = 3;
     c.chromaKey = true;
     c.chromaKeyColor = QColor(0, 255, 0);
     c.chromaKeySimilarity = 0.2;
@@ -269,6 +272,9 @@ void TestSerialization::roundTripPreservesKeyFields() {
     QCOMPARE(c.mediaId, QStringLiteral("m1"));
     QCOMPARE(c.transitionType, QStringLiteral("wipeleft"));
     QVERIFY(c.grayscale);
+    QVERIFY(c.filmGrain);
+    QVERIFY(qAbs(c.filmGrainAmount - 0.7) < 1e-9);
+    QCOMPARE(c.filmGrainSize, 3);
     QVERIFY(c.chromaKey);
     QVERIFY(qAbs(c.chromaKeySoftness - 0.35) < 1e-9);
     QVERIFY(qAbs(c.chromaKeySpillSuppress - 0.8) < 1e-9);

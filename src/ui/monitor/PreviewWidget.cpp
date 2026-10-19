@@ -4,6 +4,7 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "ui/monitor/PreviewWidget.h"
+#include <cstdint>
 
 #include "ui/dialogs/SettingsDialog.h"
 #include "ui/timeline/TlLog.h"
@@ -1638,6 +1639,9 @@ void PreviewWidget::updateFrame() {
     m_clipPsxEnabled = clip->psxEnabled;
     m_clipPsxDither = clip->psxDither;
     m_clipPsxBits = clip->psxBits;
+    m_clipFilmGrain = clip->filmGrain;
+    m_clipFilmGrainAmount = clip->filmGrainAmount;
+    m_clipFilmGrainSize = clip->filmGrainSize;
     m_clipOfxFx = clip->ofxFx;
     m_clipFrei0rFx = clip->frei0rFx;
     m_clipMasks = clip->masks;
@@ -2576,6 +2580,9 @@ void PreviewWidget::applyBasicEffects(QImage& img) {
     c.psxEnabled = m_clipPsxEnabled;
     c.psxDither = m_clipPsxDither;
     c.psxBits = m_clipPsxBits;
+    c.filmGrain = m_clipFilmGrain;
+    c.filmGrainAmount = m_clipFilmGrainAmount;
+    c.filmGrainSize = m_clipFilmGrainSize;
     // Máscaras do clipe do topo: aplicadas na mesma ordem (início) e espaço
     // (quadro já cortado) que nas camadas inferiores — o topo também respeita
     // o recorte por forma. `m_lastSrcT` é o tempo relativo do clipe.
@@ -3050,6 +3057,39 @@ void PreviewWidget::applyBasicEffectsOn(QImage& img, const Clip& c, double rel) 
                     v = std::lround(std::clamp(v, 0.0, 255.0) / step) * step;
                     line[si + ch] = (uchar)std::clamp((int)std::lround(v), 0, 255);
                 }
+            }
+        }
+    }
+
+    // Grão de filme: ruído monocromático animado por quadro. A semente é
+    // derivada do tempo relativo do clipe, então o grão "ferve" a cada quadro
+    // (como a película) em vez de ficar estático. O mesmo deslocamento é
+    // aplicado a R/G/B (grão de luminância, não chroma), com um valor por
+    // célula de `size`×`size` pixels.
+    if (c.filmGrain && c.filmGrainAmount > 0.0) {
+        const int w = img.width();
+        const int h = img.height();
+        const int size = std::clamp(c.filmGrainSize, 1, 4);
+        const double amount = std::clamp(c.filmGrainAmount, 0.0, 1.0);
+        const double range = amount * 255.0 * 0.5; // desvio máximo do ruído
+        const uint32_t seed = (uint32_t)std::llround(rel * 1000.0);
+        const uint32_t state = seed * 2654435761u + 0x9E3779B9u;
+        for (int y = 0; y < h; ++y) {
+            uchar* line = img.scanLine(y);
+            const int cy = y / size;
+            for (int x = 0; x < w; ++x) {
+                const int si = x * 4;
+                // Hash determinístico de (seed, célula, linha) → ruído estável
+                // dentro da célula, distinto a cada quadro.
+                uint32_t s = state ^ (uint32_t)((x / size) * 73856093u)
+                                   ^ (uint32_t)(cy * 19349663u);
+                s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+                // Mapeia para [-1, 1].
+                const double n = ((double)(s & 0xFFFFu) / 32767.5) - 1.0;
+                const int off = (int)std::lround(n * range);
+                line[si + 0] = (uchar)std::clamp(line[si + 0] + off, 0, 255);
+                line[si + 1] = (uchar)std::clamp(line[si + 1] + off, 0, 255);
+                line[si + 2] = (uchar)std::clamp(line[si + 2] + off, 0, 255);
             }
         }
     }

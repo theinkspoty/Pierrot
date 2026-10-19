@@ -701,6 +701,18 @@ static QString psxFilter(const Clip& c) {
         .arg(expr, expr, expr);
 }
 
+// Filtro ffmpeg para o grão de filme (paridade com o preview). O ruído é
+// monocromático (mesma força em todos os componentes) e temporal (`t`: o
+// padrão muda a cada quadro) e uniforme (`u`). `alls` é a intensidade 0..100.
+static QString filmGrainFilter(const Clip& c) {
+    if (!c.filmGrain || c.filmGrainAmount <= 0.0) return QString();
+    const double amount = std::clamp(c.filmGrainAmount, 0.0, 1.0);
+    const double strength = amount * 100.0;
+    // `noise=alls=<str>:allf=t+u` aplica ruído temporal uniforme em todos os
+    // componentes com a mesma força (grão de luminância, não chroma).
+    return QStringLiteral(",noise=alls=%1:allf=t+u").arg(num(strength));
+}
+
 // Fonte TTF disponível no sistema para o drawtext (com fallback fontconfig).
 // Busca em diretórios padrão + ~/.local/share/fonts + XDG_DATA_HOME/fonts.
 QString fontFilePath() {
@@ -1650,6 +1662,7 @@ QStringList ProjectExporter::buildCommand(const Project& project,
             if (v.trackOpacity < 1.0)
                 fc.last().append(QStringLiteral(",colorchannelmixer=aa=%1").arg(num(v.trackOpacity)));
             fc.last().append(psxFilter(*v.c));
+            fc.last().append(filmGrainFilter(*v.c));
             fc.last().append(QStringLiteral("[%1]").arg(lbl));
             // Wipe: o clipe da frente desliza de um dos lados sobre o anterior
             // durante a sobreposição (progresso = min(1,(t-pos)/dur)).

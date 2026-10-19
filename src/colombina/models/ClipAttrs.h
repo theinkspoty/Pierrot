@@ -68,6 +68,9 @@ inline QJsonObject toJson(const Clip& c) {
     o["chromaKeySimilarity"] = c.chromaKeySimilarity;
     o["chromaKeySoftness"] = c.chromaKeySoftness;
     o["chromaKeySpillSuppress"] = c.chromaKeySpillSuppress;
+    o["filmGrain"] = c.filmGrain;
+    o["filmGrainAmount"] = c.filmGrainAmount;
+    o["filmGrainSize"] = c.filmGrainSize;
     o["psxEnabled"] = c.psxEnabled;
     o["psxDither"] = c.psxDither;
     o["psxBits"] = c.psxBits;
@@ -217,6 +220,9 @@ inline void applyJson(Clip& c, const QJsonObject& o) {
     if (key("chromaKeySimilarity")) c.chromaKeySimilarity = d("chromaKeySimilarity", c.chromaKeySimilarity);
     if (key("chromaKeySoftness")) c.chromaKeySoftness = d("chromaKeySoftness", c.chromaKeySoftness);
     if (key("chromaKeySpillSuppress")) c.chromaKeySpillSuppress = d("chromaKeySpillSuppress", c.chromaKeySpillSuppress);
+    if (key("filmGrain")) c.filmGrain = b("filmGrain", c.filmGrain);
+    if (key("filmGrainAmount")) c.filmGrainAmount = d("filmGrainAmount", c.filmGrainAmount);
+    if (key("filmGrainSize")) c.filmGrainSize = qBound(1, o["filmGrainSize"].toInt(c.filmGrainSize), 4);
     if (key("psxEnabled")) c.psxEnabled = b("psxEnabled", c.psxEnabled);
     if (key("psxDither")) c.psxDither = d("psxDither", c.psxDither);
     if (key("psxBits")) c.psxBits = qBound(3, o["psxBits"].toInt(c.psxBits), 8);

@@ -1725,6 +1725,9 @@ void TimelineWidget::pasteAttributes() {
             dst->psxEnabled = src.psxEnabled;
             dst->psxDither = src.psxDither;
             dst->psxBits = src.psxBits;
+            dst->filmGrain = src.filmGrain;
+            dst->filmGrainAmount = src.filmGrainAmount;
+            dst->filmGrainSize = src.filmGrainSize;
         }
         if (chkOfxFx->isChecked()) {
             dst->ofxFx = src.ofxFx;

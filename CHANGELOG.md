@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Grão de filme
+
+- **Efeito "Grão de filme" por clipe** (estética de película 16/35mm):
+  ruído monocromático animado por quadro aplicado por cima do clipe —
+  intensidade (0..1) e tamanho do grão (1..4 px). Presente no painel de
+  efeitos, no Express (atributo `filmGrain`/`filmGrainAmount`/`filmGrainSize`),
+  no Propriedades do clipe e serializado no `.Blanc` (com teste de
+  round-trip).
+- **Paridade preview ↔ export**: o export gera `noise=alls=<str>:allf=t+u`
+  (ruído temporal uniforme em luminância) no `filter_complex`, reproduzindo
+  o mesmo grão desenhado no preview.
+- Tradução JP dos novos rótulos incluída.
+
 ### Tema Japan 95
 
 - **Novo tema claro com vermelho** (Ajustes ▸ Interface ▸ Tema ▸ Japan 95):

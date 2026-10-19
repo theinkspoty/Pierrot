@@ -609,6 +609,14 @@ void ClipPropertiesWidget::rebuild() {
                 clip->grayscale = on;
                 emitEdited();
             });
+        addCheckRow(tr("Grão de filme"),
+            tr("Aplica ruído monocromático animado (estética de película)."),
+            [clip]() { return clip->filmGrain; },
+            [this, clip](bool on) {
+                beginEdit();
+                clip->filmGrain = on;
+                emitEdited();
+            });
         addCheckRow(tr("Chroma key"),
             tr("Remove o fundo da cor selecionada no preview."),
             [clip]() { return clip->chromaKey; },

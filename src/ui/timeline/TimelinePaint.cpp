@@ -2067,6 +2067,7 @@ QString TimelineWidget::fxEffectLabel(const QString& id) const {
     if (id == QStringLiteral("pierrot_grayscale"))    return tr("Preto e Branco");
     if (id == QStringLiteral("pierrot_chromakey"))    return tr("Chroma Key");
     if (id == QStringLiteral("pierrot_psx"))          return tr("PSX");
+    if (id == QStringLiteral("pierrot_filmgrain"))    return tr("Grão de Filme");
     if (id == QStringLiteral("pierrot_lainka"))       return tr("LAINKA (stop motion)");
     if (id == QStringLiteral("pierrot_motion"))       return tr("MotiOn (motion blur)");
     if (id == QStringLiteral("pierrot_lumetri"))      return tr("Correção de cor (Lumetri)");
@@ -2193,6 +2194,8 @@ bool TimelineWidget::setFxEffectEnabled(Clip* clip, const QString& effectId, boo
         return setIf(clip->chromaKey, enabled);
     if (effectId == QStringLiteral("pierrot_psx"))
         return setIf(clip->psxEnabled, enabled);
+    if (effectId == QStringLiteral("pierrot_filmgrain"))
+        return setIf(clip->filmGrain, enabled);
     // Parâmetros numéricos: 0.2/1.2/5.0 = ligado (padrão do Express).
     if (effectId == QStringLiteral("pierrot_brightness")
         || effectId == QStringLiteral("pierrot_contrast")
@@ -2329,6 +2332,7 @@ void TimelineWidget::buildFxAddMenu(QMenu* menu) {
         { "pierrot_grayscale",  QT_TR_NOOP("Preto e Branco") },
         { "pierrot_chromakey",  QT_TR_NOOP("Chroma Key") },
         { "pierrot_psx",        QT_TR_NOOP("PSX") },
+        { "pierrot_filmgrain",  QT_TR_NOOP("Grão de Filme") },
         { "pierrot_lainka",     QT_TR_NOOP("LAINKA (stop motion)") },
         { "pierrot_motion",     QT_TR_NOOP("MotiOn (motion blur)") },
         { "pierrot_lumetri",    QT_TR_NOOP("Correção de cor (Lumetri)") },

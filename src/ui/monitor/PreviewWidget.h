@@ -295,6 +295,9 @@ protected:
     bool m_clipPsxEnabled = false;
     double m_clipPsxDither = 1.0;
     int m_clipPsxBits = 5;
+    bool m_clipFilmGrain = false;
+    double m_clipFilmGrainAmount = 0.5;
+    int m_clipFilmGrainSize = 1;
     QVector<Mask> m_clipMasks; // máscaras do clipe ativo (aplicadas no crop)
 
     // Áudio do preview (mixer com um decoder por clipe ativo).

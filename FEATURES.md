@@ -116,7 +116,8 @@
 - **Fade in/out**.
 - **Transformação**: posição X/Y, escala, escala X/Y, rotação, âncora X/Y.
 - **Recorte**: crop L/R/T/B.
-- **Efeitos de vídeo**: brilho, contraste, saturação, desfoque, preto e branco, chroma key.
+- **Efeitos de vídeo**: brilho, contraste, saturação, desfoque, preto e branco, chroma key,
+  **grão de filme** (intensidade + tamanho, paridade preview↔export via `noise`).
 - **Efeitos de áudio**: **EQ Express** (graves/médios/agudos, −12 a +12 dB) e **Reverb EX** (mix e tamanho) por clipe — com DSP em tempo real no preview (reverb Schroeder) e reproduzidos na exportação (cadeia dry/wet via `asplit`/`aecho`/`amix`).
 - **Painel Effects (réplica Premiere)**: árvore única com busca — Presets,
   Audio Effects, Audio Transitions, Video Effects (Adjust/Blur/Key/Stylize +

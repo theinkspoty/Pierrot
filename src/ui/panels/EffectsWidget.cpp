@@ -190,6 +190,8 @@ void EffectsWidget::buildTree() {
                   tr("Remove cor (verde por padrão) para transparência"));
 
     auto* stylize = addFolder(videoTree, videoFx, tr("Stylize"));
+    addEffectItem(stylize, tr("Film Grain"), QStringLiteral("pierrot_filmgrain"),
+                  tr("Grão de filme: ruído monocromático animado por quadro (estética de película)"));
     addEffectItem(stylize, tr("PSX"), QStringLiteral("pierrot_psx"),
                   tr("Granulado retrô: quantização de cor + dithering estilo PlayStation 1"));
     addEffectItem(stylize, tr("LAINKA (stop motion)"), QStringLiteral("pierrot_lainka"),
