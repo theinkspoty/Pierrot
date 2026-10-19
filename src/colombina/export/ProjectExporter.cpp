@@ -1080,6 +1080,18 @@ QStringList ProjectExporter::buildCommand(const Project& project,
 
     args << "-y" << "-hide_banner" << "-loglevel" << "info";
 
+    // GPU para encode por hardware (Configurações → Encode acelerado).
+    // VAAPI: -vaapi_device é opção de INPUT e precisa vir antes do primeiro -i.
+    // NVENC: -gpu vai junto do encoder (mais abaixo).
+    {
+        QSettings hwSet;
+        const bool hwOn = hwSet.value("exportHwEncode", false).toBool()
+                          && s.format != ExportSettings::WEBM;
+        const QString hwDev = hwSet.value("exportHwDevice").toString();
+        if (hwOn && hwDev.startsWith(QLatin1String("vaapi:")))
+            args << QStringLiteral("-vaapi_device") << hwDev.mid(6);
+    }
+
     // Input 0: background color. Then video clips, then audio clips.
     // No modo transparente a cor de fundo precisa nascer já em rgba (com alfa 0)
     // — o `format=rgba` precisa estar DENTRO da entrada lavfi, senão a fonte
@@ -1962,10 +1974,18 @@ QStringList ProjectExporter::buildCommand(const Project& project,
         // Codificação por hardware (opt-in nas configurações): usa h264_nvenc ou
         // h264_vaapi para MP4/MKV quando o ffmpeg do sistema tiver o encoder; se
         // não houver, cai no libx264/VP9 normal (comportamento anterior).
+        // GPU selecionável em Configurações (exportHwDevice: "nvenc:N" ou
+        // "vaapi:/dev/dri/renderDNN"); vazio = automática.
+        QSettings hwSet;
+        const QString hwDevice = hwSet.value("exportHwDevice").toString();
         const QString hwCodec = (s.format != ExportSettings::WEBM
-                                 && QSettings().value("exportHwEncode", false).toBool())
+                                 && hwSet.value("exportHwEncode", false).toBool())
                                     ? detectHwEncoder() : QString();
         args << "-c:v" << (hwCodec.isEmpty() ? codecFor(s.format, true) : hwCodec);
+        // NVENC: seleciona a placa (Configurações → GPU). "-gpu N" é opção do
+        // h264_nvenc; com "Automática" (vazio) o ffmpeg escolhe.
+        if (hwCodec == QStringLiteral("h264_nvenc") && hwDevice.startsWith(QLatin1String("nvenc:")))
+            args << QStringLiteral("-gpu") << hwDevice.mid(6);
         if (s.videoBitrateKbps > 0) {
             // Bitrate fixo
             args << "-b:v" << QStringLiteral("%1k").arg(s.videoBitrateKbps);

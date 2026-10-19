@@ -37,6 +37,7 @@
 #include <QKeySequence>
 #include <QFileDialog>
 #include <QLineEdit>
+#include <QProcess>
 
 // Registro dos atalhos remapeáveis (id, rótulo, padrão, categoria).
 namespace {
@@ -427,6 +428,50 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
         auto* hwBox = new QGroupBox(tr("Encode acelerado"), page);
         auto* hwLay = new QVBoxLayout(hwBox);
         hwLay->addWidget(m_hwEncode);
+
+        // Seletor de GPU: lista placas NVIDIA (nvidia-smi) e render nodes VAAPI.
+        m_hwGpu = new QComboBox(hwBox);
+        m_hwGpu->addItem(tr("Automática"), QString());
+        {
+            // NVIDIA (NVENC): uma entrada por placa via nvidia-smi.
+            QProcess nvi;
+            nvi.start(QStringLiteral("nvidia-smi"),
+                      {QStringLiteral("--query-gpu=index,name"),
+                       QStringLiteral("--format=csv,noheader")});
+            if (nvi.waitForFinished(3000)) {
+                const QStringList lines = QString::fromUtf8(nvi.readAllStandardOutput())
+                                              .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+                for (const QString& line : lines) {
+                    const QStringList parts = line.split(QLatin1String(", "), Qt::SkipEmptyParts);
+                    if (parts.size() >= 2) {
+                        const QString id = QStringLiteral("nvenc:") + parts[0].trimmed();
+                        m_hwGpu->addItem(
+                            tr("NVIDIA %1 — GPU %2").arg(parts[1].trimmed(), parts[0].trimmed()),
+                            id);
+                    }
+                }
+            }
+            // VAAPI (Intel/AMD Linux): render nodes em /dev/dri.
+            const QStringList renders = QDir(QStringLiteral("/dev/dri"))
+                                            .entryList({QStringLiteral("renderD*")},
+                                                       QDir::System, QDir::Name);
+            for (const QString& r : renders)
+                m_hwGpu->addItem(tr("VAAPI — %1").arg(r),
+                                 QStringLiteral("vaapi:/dev/dri/") + r);
+        }
+        const QString savedGpu = s.value("exportHwDevice").toString();
+        const int gpuIdx = m_hwGpu->findData(savedGpu);
+        m_hwGpu->setCurrentIndex(gpuIdx >= 0 ? gpuIdx : 0);
+        m_hwGpu->setEnabled(m_hwEncode->isChecked());
+        connect(m_hwEncode, &QCheckBox::toggled, m_hwGpu, &QWidget::setEnabled);
+        m_hwGpu->setToolTip(tr("Placa usada na codificação por hardware.\n"
+                               "\"Automática\" deixa o ffmpeg escolher."));
+
+        auto* gpuRow = new QHBoxLayout;
+        gpuRow->addWidget(new QLabel(tr("GPU:"), hwBox));
+        gpuRow->addWidget(m_hwGpu, 1);
+        hwLay->addLayout(gpuRow);
+
         auto* hwHint = new QLabel(tr("Descarga a codificação da CPU para a placa de vídeo "
                                      "(útil em 4K e projetos longos). Equivale à aceleração "
                                      "por GPU que o Vega oferece na renderização; o retorno "
@@ -658,6 +703,7 @@ void SettingsDialog::accept() {
     s.setValue("proxiesEnabled", m_proxies->isChecked());
     ProxyManager::instance().setEnabled(m_proxies->isChecked());
     s.setValue("exportHwEncode", m_hwEncode->isChecked());
+    s.setValue("exportHwDevice", m_hwGpu ? m_hwGpu->currentData().toString() : QString());
     s.setValue("graphSensitivity", m_graphSens->value());
     saveTheme(static_cast<AppTheme>(m_themeCombo->currentIndex()));
     saveExternalPalette(m_extPaletteCombo->currentIndex() <= 0

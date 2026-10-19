@@ -67,6 +67,7 @@ private:
     QCheckBox* m_hwDecode = nullptr;
     QCheckBox* m_proxies = nullptr;
     QCheckBox* m_hwEncode = nullptr;
+    QComboBox* m_hwGpu = nullptr; // GPU para o encode por hardware (export)
     QDoubleSpinBox* m_graphSens = nullptr;
     // Navegação por categorias (sidebar estilo DaVinci).
     QListWidget*   m_catList = nullptr;
