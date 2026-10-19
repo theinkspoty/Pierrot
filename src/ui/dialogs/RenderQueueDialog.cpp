@@ -31,6 +31,8 @@ const char* formatLabel(int fmt) {
     case ExportSettings::MKV: return "MKV";
     case ExportSettings::WEBM: return "WebM";
     case ExportSettings::GIF: return "GIF";
+    case ExportSettings::WAV: return "WAV";
+    case ExportSettings::MP3: return "MP3";
     default: return "MP4";
     }
 }

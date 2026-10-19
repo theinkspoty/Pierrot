@@ -266,6 +266,10 @@ QString codecFor(ExportSettings::Format f, bool video) {
         return video ? QStringLiteral("libx264") : QStringLiteral("aac");
     case ExportSettings::WEBM:
         return video ? QStringLiteral("libvpx-vp9") : QStringLiteral("libopus");
+    case ExportSettings::WAV:
+        return QStringLiteral("pcm_s16le");
+    case ExportSettings::MP3:
+        return QStringLiteral("libmp3lame");
     }
     return QStringLiteral("libx264");
 }
@@ -830,6 +834,9 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     const int W = s.width;
     const int H = s.height;
     const int FPS = s.fps;
+    // Só áudio (WAV/MP3): pula o graph de vídeo e os inputs de mídia de
+    // vídeo; o mix de áudio (efeitos, fades, master) roda igual.
+    const bool audioOnly = s.audioOnly();
     // GIF com fundo transparente: o que não tiver clipe por cima fica alfa 0.
     const bool transparent =
         (s.format == ExportSettings::GIF) && s.transparentBackground;
@@ -858,7 +865,7 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     };
     // Passo 1: mede as bandas (Z, intervalo e nº de frames) sem renderizar.
     QVector<MesaBandPrep> mesaPreps;
-    {
+    if (!audioOnly) {
         int k = 0;
         for (const MesaComposition& m : project.mesas) {
             if (project.width <= 0 || project.height <= 0) continue;
@@ -1001,7 +1008,8 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     // sequência PNG — a velocidade variável não é expressável num setpts simples
     // e a pré-renderização garante paridade exata com o preview (mesma
     // clipSrcTime). Clipes sem envelope seguem o caminho normal (setpts /speed).
-    {
+    // Só áudio: sem vídeo, sem sequência.
+    if (!audioOnly) {
         int vk = 0;
         for (int i = 0; i < (int)vclips.size(); ++i) {
             const VideoClipRef& v = vclips[i];
@@ -1082,8 +1090,8 @@ QStringList ProjectExporter::buildCommand(const Project& project,
 
     // GPU para encode por hardware (Configurações → Encode acelerado).
     // VAAPI: -vaapi_device é opção de INPUT e precisa vir antes do primeiro -i.
-    // NVENC: -gpu vai junto do encoder (mais abaixo).
-    {
+    // NVENC: -gpu vai junto do encoder (mais abaixo). Só áudio: sem GPU de vídeo.
+    if (!audioOnly) {
         QSettings hwSet;
         const bool hwOn = hwSet.value("exportHwEncode", false).toBool()
                           && s.format != ExportSettings::WEBM;
@@ -1096,14 +1104,16 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     // No modo transparente a cor de fundo precisa nascer já em rgba (com alfa 0)
     // — o `format=rgba` precisa estar DENTRO da entrada lavfi, senão a fonte
     // negocia para yuv420p e o alfa se perde.
-    args << "-f" << "lavfi"
-         << "-i" << (transparent
-                         ? QString("color=c=black@0.0:s=%1x%2:r=%3:d=%4,format=rgba")
-                               .arg(W).arg(H).arg(FPS).arg(num(total))
-                         : QString("color=c=black:s=%1x%2:r=%3:d=%4")
-                               .arg(W).arg(H).arg(FPS).arg(num(total)));
+    if (!audioOnly)
+        args << "-f" << "lavfi"
+             << "-i" << (transparent
+                             ? QString("color=c=black@0.0:s=%1x%2:r=%3:d=%4,format=rgba")
+                                   .arg(W).arg(H).arg(FPS).arg(num(total))
+                             : QString("color=c=black:s=%1x%2:r=%3:d=%4")
+                                   .arg(W).arg(H).arg(FPS).arg(num(total)));
 
     for (int i = 0; i < (int)vclips.size(); ++i) {
+        if (audioOnly) break; // sem inputs de vídeo no export de só áudio
         const VideoClipRef& v = vclips[i];
         const MesaBandRef& mb = i < mesaBands.size() ? mesaBands[i] : MesaBandRef();
         if (mb.mc != nullptr) {
@@ -1203,7 +1213,10 @@ QStringList ProjectExporter::buildCommand(const Project& project,
 
     // ---- Video graph ----
     QString vout = QStringLiteral("[0:v]");
-    if (vclips.isEmpty()) {
+    if (audioOnly) {
+        // Sem graph de vídeo: aout (se houver) é o único mapeamento da saída.
+        vout.clear();
+    } else if (vclips.isEmpty()) {
         fc << QStringLiteral("[0:v]null[vout]");
     } else {
         bool anyBlend = false;
@@ -1708,7 +1721,10 @@ QStringList ProjectExporter::buildCommand(const Project& project,
         for (const AudioClipRef& ar : aclips) {
             ++n;
             const Clip* c = ar.c;
-            const int inIdx = 1 + (int)vclips.size() + (n - 1);
+            // Só áudio: sem lavfi/fundos nem inputs de vídeo → índice 0-based.
+            const int inIdx = audioOnly
+                ? (n - 1)
+                : (1 + (int)vclips.size() + (n - 1));
             const MediaItem* m = project.findMedia(c->mediaId);
             const QString lbl = QStringLiteral("a%1").arg(n);
             const double dur = c->dur;
@@ -1964,7 +1980,21 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                 "[gbase2][gpal]paletteuse=dither=bayer:bayer_scale=5[gvout]");
         }
     }
-    args << "-filter_complex" << fc.join(QLatin1Char(';'));
+    if (!fc.isEmpty())
+        args << "-filter_complex" << fc.join(QLatin1Char(';'));
+
+    if (audioOnly) {
+        if (aout.isEmpty())
+            return fail(QStringLiteral("Projeto sem faixas de áudio para exportar."));
+        args << "-map" << aout << "-vn";
+        args << "-c:a" << codecFor(s.format, false);
+        const int abr = std::clamp(s.audioBitrateKbps, 32, 640);
+        if (s.format == ExportSettings::MP3)
+            args << "-b:a" << QStringLiteral("%1k").arg(abr);
+        // WAV é PCM: bitrate irrelevante (qualidade cheia).
+        args << s.outputPath;
+        return args;
+    }
 
     args << "-map" << (isGif ? QStringLiteral("[gvout]") : QStringLiteral("[vout]"));
     if (!isGif && !aout.isEmpty()) args << "-map" << aout;

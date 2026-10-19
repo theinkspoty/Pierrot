@@ -82,6 +82,8 @@ ExportDialog::ExportDialog(Project* project, QWidget* parent, Mode mode)
     m_formatCombo->addItem("MKV (H.264 + AAC)", (int)ExportSettings::MKV);
     m_formatCombo->addItem("WebM (VP9 + Opus)", (int)ExportSettings::WEBM);
     m_formatCombo->addItem("GIF (animação)", (int)ExportSettings::GIF);
+    m_formatCombo->addItem(tr("WAV (só áudio, PCM)"), (int)ExportSettings::WAV);
+    m_formatCombo->addItem(tr("MP3 (só áudio)"), (int)ExportSettings::MP3);
 
     m_crfSpin = new QSpinBox(this);
     m_crfSpin->setRange(0, 51);
@@ -106,15 +108,19 @@ ExportDialog::ExportDialog(Project* project, QWidget* parent, Mode mode)
     m_transparentCheck->setToolTip(tr("GIF: deixa transparente tudo o que não tem clipe\n"
                                       "por cima (o fundo preto vira alfa 0)."));
 
-    // GIF não tem áudio nem CRF/bitrate: desativa os campos irrelevantes.
+    // GIF não tem áudio nem CRF/bitrate. WAV/MP3 são só áudio (sem vídeo/CRF).
     const auto fmtChanged = [this]() {
-        const bool gif = ((ExportSettings::Format)m_formatCombo->currentData().toInt())
-                         == ExportSettings::GIF;
-        m_crfSpin->setEnabled(!gif);
-        m_vbitrateSpin->setEnabled(!gif);
-        m_abitrateSpin->setEnabled(!gif);
+        const auto fmt = (ExportSettings::Format)m_formatCombo->currentData().toInt();
+        const bool gif = fmt == ExportSettings::GIF;
+        const bool audioOnly = fmt == ExportSettings::WAV || fmt == ExportSettings::MP3;
+        m_crfSpin->setEnabled(!gif && !audioOnly);
+        m_vbitrateSpin->setEnabled(!gif && !audioOnly);
+        m_abitrateSpin->setEnabled(!gif && (audioOnly ? fmt == ExportSettings::MP3 : true));
         // Fundo transparente só faz sentido para GIF (com alpha).
         m_transparentCheck->setEnabled(gif);
+        // Resolução/fps não influenciam export de só áudio.
+        m_resCombo->setEnabled(!audioOnly);
+        m_fpsCombo->setEnabled(!audioOnly);
     };
     connect(m_formatCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, fmtChanged);
@@ -246,6 +252,8 @@ void ExportDialog::browseOutput() {
     if (fmt == ExportSettings::MKV) { filter = tr("MKV (*.mkv)"); ext = "mkv"; }
     if (fmt == ExportSettings::WEBM) { filter = tr("WebM (*.webm)"); ext = "webm"; }
     if (fmt == ExportSettings::GIF) { filter = tr("GIF (*.gif)"); ext = "gif"; }
+    if (fmt == ExportSettings::WAV) { filter = tr("WAV (*.wav)"); ext = "wav"; }
+    if (fmt == ExportSettings::MP3) { filter = tr("MP3 (*.mp3)"); ext = "mp3"; }
 
     // Abre na pasta padrão de render se o usuário ativou essa opção.
     QString startDir = QDir::homePath();
@@ -254,8 +262,10 @@ void ExportDialog::browseOutput() {
         if (!d.isEmpty() && QDir(d).exists()) startDir = d;
     }
 
-    QString f = QFileDialog::getSaveFileName(this, tr("Salvar vídeo"),
-                                             startDir + "/export." + ext, filter);
+    const bool audioOnly = fmt == ExportSettings::WAV || fmt == ExportSettings::MP3;
+    QString f = QFileDialog::getSaveFileName(
+        this, audioOnly ? tr("Salvar áudio") : tr("Salvar vídeo"),
+        startDir + "/export." + ext, filter);
     if (f.isEmpty()) return;
     if (!f.endsWith("." + ext)) f += "." + ext;
     m_outEdit->setText(f);
@@ -307,8 +317,9 @@ void ExportDialog::startExport() {
     // ── Pré-renderização LAINKA ────────────────────────────────────────
     // Antes de montar o comando ffmpeg, renderiza clipes com LAINKA
     // frame-a-frame para garantir consistência preview↔export.
+    // Export de só áudio (WAV/MP3) não precisa — pula o pré-render de vídeo.
     QHash<QString, QString> lainkaRenders; // clipId → arquivo temporário
-    {
+    if (!s.audioOnly()) {
         bool hasLainka = false;
         for (const Track& t : work.videoTracks)
             for (const Clip& c : t.clips)
@@ -370,9 +381,9 @@ void ExportDialog::startExport() {
 
     // ── Pré-renderização OFX ─────────────────────────────────────────────
     // Renderiza clipes com efeitos OFX frame-a-frame para garantir
-    // consistência preview↔export.
+    // consistência preview↔export. Só áudio: pula.
     QHash<QString, QString> ofxRenders; // clipId → arquivo temporário
-    if (m_ofxManager) {
+    if (m_ofxManager && !s.audioOnly()) {
         bool hasOfx = false;
         for (const Track& t : work.videoTracks)
             for (const Clip& c : t.clips)
