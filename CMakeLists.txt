@@ -64,12 +64,14 @@ set(LAARTMAN_SOURCES
     src/laartman/FFmpegDecoderAudio.cpp
     src/laartman/FFmpegDecoderProbe.cpp
     src/laartman/FFmpegEncoder.cpp
+    src/laartman/DecoderPool.cpp
 )
 
 set(LAARTMAN_HEADERS
     src/laartman/FFmpegDecoder.h
     src/laartman/FFmpegDecoderPriv.h
     src/laartman/FFmpegEncoder.h
+    src/laartman/DecoderPool.h
 )
 
 # ── Colombina: o kernel, a camada blindada (quase não muda) ─────────────
@@ -135,7 +137,6 @@ set(PIERROT_APP_SOURCES
     src/ui/monitor/PlaybackEngine.cpp
     src/ui/monitor/PreviewProfiler.cpp
     src/ui/monitor/PreviewWidget.cpp
-    src/ui/monitor/DecoderPool.cpp
     src/ui/monitor/BgPrefetchWorker.cpp
     src/ui/monitor/FrameWorker.cpp
     src/ui/monitor/MonitorScrubBar.cpp
@@ -199,7 +200,6 @@ set(PIERROT_APP_HEADERS
     src/ui/timeline/TimelineWidget.h
     src/ui/timeline/TimelineCommands.h
     src/ui/monitor/PreviewWidget.h
-    src/ui/monitor/DecoderPool.h
     src/ui/monitor/BgPrefetchWorker.h
     src/ui/monitor/PreviewDebug.h
     src/ui/monitor/FrameWorker.h
@@ -421,6 +421,7 @@ add_executable(tst_exporter
     src/laartman/FFmpegDecoderOpen.cpp
     src/laartman/FFmpegDecoderAudio.cpp
     src/laartman/FFmpegDecoderProbe.cpp
+    src/laartman/DecoderPool.cpp
     src/colombina/render/MesaRenderer.cpp
     src/colombina/export/ProjectExporter.cpp
     src/colombina/ffmpeg/ProxyManager.cpp
@@ -500,7 +501,7 @@ add_test(NAME tst_concurrency COMMAND tst_concurrency)
 # open roda; com ele gera clipes sintéticos e exercita busy/eviction/concorrência.
 add_executable(tst_decoderpool
     tests/tst_decoderpool.cpp
-    src/ui/monitor/DecoderPool.cpp
+    src/laartman/DecoderPool.cpp
     src/laartman/FFmpegDecoder.cpp
     src/laartman/FFmpegDecoderOpen.cpp
     src/laartman/FFmpegDecoderAudio.cpp
@@ -596,6 +597,7 @@ add_executable(tst_export_pipeline
     src/laartman/FFmpegDecoderOpen.cpp
     src/laartman/FFmpegDecoderAudio.cpp
     src/laartman/FFmpegDecoderProbe.cpp
+    src/laartman/DecoderPool.cpp
     src/colombina/render/MesaRenderer.cpp
     src/colombina/export/ProjectExporter.cpp
     src/colombina/ffmpeg/ProxyManager.cpp

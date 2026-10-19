@@ -24,12 +24,12 @@
 #include "colombina/render/TextRender.h"
 // DSP dos efeitos de áudio (AudioFx/GraphicEq/ParametricEqDsp) e os helpers
 // de diagnóstico/config do preview (playDbg/audioDbg/composeDbg/
-// previewAudioFormat/decoderPoolCapacity/desengasgaIntervalMs) — vidrados em
+// previewAudioFormat/desengasgaIntervalMs) — vidrados em
 // headers próprios, compartilhados com FrameWorker/BgPrefetchWorker/AudioMixer.
 #include "ui/audio/AudioFxDsp.h"
 #include "ui/audio/AudioMixer.h"
 #include "ui/monitor/PreviewDebug.h"
-#include "ui/monitor/DecoderPool.h"
+#include "laartman/DecoderPool.h"
 #include "ui/monitor/BgPrefetchWorker.h"
 #include "ui/monitor/FrameWorker.h"
 #include "ui/monitor/MonitorScrubBar.h"
@@ -388,7 +388,7 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
 
     // Pool de decodificadores quentes: os workers emprestam / devolvem entradas
     // por caminho de arquivo (o prefetch só aquece; o main leva no corte).
-    m_decPool = new DecoderPool(decoderPoolCapacity());
+    m_decPool = &DecoderPool::instance();
 
     // Thread de vídeo: decodificar quadros aqui tira a decodificação (que é
     // cara em arquivos grandes/4K/MKV) do caminho da UI.
@@ -451,9 +451,9 @@ PreviewWidget::~PreviewWidget() {
         m_bgPrefetchThread->quit();
         m_bgPrefetchThread->wait(5000);
     }
-    // Threads paradas e workers destruídos (deleteLater): nenhum lease ativo —
-    // seguro fechar os decoders restantes do pool.
-    delete m_decPool;
+    // Threads paradas e workers destruídos (deleteLater): nenhum lease ativo.
+    // O pool é o singleton global (laartman/DecoderPool) — não é daqui;
+    // ele fecha os decoders restantes no fim do processo.
     m_decPool = nullptr;
 }
 

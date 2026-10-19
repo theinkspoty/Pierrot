@@ -390,7 +390,9 @@ em tom claro, volume da faixa atrás de **Shift+V** (como Premiere), seleção
   de decode plano (0,35→0,37 ms em 4 min).
 - [x] **Fix 8 — pré-criar/reusar `QAudioSink`** — adicionado `prewarmAudioSink()` no startup e reuso entre play/stop.
 - [x] **Fix 9 — remover `waitReadyBeforeSink()` da UI** — removido (mixer inicia direto e conform é aquecido antecipadamente).
-- [ ] **M2 — rebuild O(n) do índice do LRU** (`FFmpegDecoder`), ~6 µs/decode.
+- [x] **M2 — rebuild O(n) do índice do LRU** (`FFmpegDecoder`) — **FEITO**:
+  LRU intrusivo O(1) (`std::list` + índice de iteradores, move-to-front via
+  splice) no lugar de QList + rebuild do índice a cada acesso.
 
 ### Gaps Vegas/FCE — `Relatorio-Features-Vegas-FCE.md`, seção 4
 

@@ -12,6 +12,7 @@
 #include <QHash>
 #include <QList>
 #include <atomic>
+#include <list>
 
 // Ponteiros p/ tipos do FFmpeg (definidos em libavcodec/avcodec.h, incluído
 // pelos .cpp). Só há membros por ponteiro, então forward declaration basta e
@@ -204,13 +205,18 @@ private:
         QImage img;
     };
     static constexpr int kFrameCacheMax = 120; // ~2min a 30fps, ~240MB
-    QList<FrameCacheEntry> m_frameCacheLru;     // frente = mais recente
-    QHash<FrameCacheKey, int> m_frameCacheIdx;  // key → índice no LRU
+    // LRU intrusivo O(1): lista duplamente encadeada + índice para os
+    // ITERADORES (move-to-front via splice, evicção via pop_back). Antes era
+    // QList + índice de inteiros reconstruído INTEIRO a cada move/insert
+    // (O(n), ~6 µs/decode — o débito M2 do relatório de performance).
+    using FrameCacheList = std::list<FrameCacheEntry>;
+    FrameCacheList m_frameCacheLru;                     // frente = mais recente
+    QHash<FrameCacheKey, FrameCacheList::iterator> m_frameCacheIdx;
 
     // O cache é válido SOMENTE sob m_mutex (por isso o sufixo Locked, mesmo
-    // idioma de freeAllLocked). O índice é reconstruído a cada inserção e
-    // frameAt() roda em thread própria: tocar a lista fora do lock já
-    // racingaria com o decode e corromperia o índice.
+    // idioma de freeAllLocked). O índice (iteradores) é válido mesmo após
+    // splice — std::list não invalida iteradores ao mover elementos entre
+    // posições da própria lista.
     QImage frameFromCacheLocked(const FrameCacheKey& key);
 
 public:

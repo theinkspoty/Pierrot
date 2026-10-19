@@ -50,16 +50,6 @@ inline QAudioFormat previewAudioFormat() {
     return fmt;
 }
 
-// Capacidade do pool (padrão 6; PIERROT_DECODER_POOL=<n> ajusta). 6 dá folga
-// para o main + prefetch em andamento + warm-ahead + quentes ociosos sem
-// estourar memória (o warm de um arquivo não enche o cache de ~240MB de cada
-// decoder; só o clipe tocado o faz).
-inline int decoderPoolCapacity() {
-    bool ok = false;
-    const int n = qEnvironmentVariableIntValue("PIERROT_DECODER_POOL", &ok);
-    return (ok && n >= 2) ? n : 6;
-}
-
 // Flush periódico do DPB (desengasga). Padrão 0 = desligado; religue com
 // PIERROT_DESENGASGA_MS=<ms> se o engasgo reaparecer em alguma fonte.
 //

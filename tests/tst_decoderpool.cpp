@@ -14,7 +14,7 @@
 
 #include <QtTest>
 
-#include "ui/monitor/DecoderPool.h"
+#include "laartman/DecoderPool.h"
 
 #include "laartman/FFmpegDecoder.h"
 

@@ -159,8 +159,9 @@ private:
         int maxW = 0;
     };
 
-    QHash<QString, std::shared_ptr<FFmpegDecoder>> m_decoders;
-
+    // Pool GLOBAL de decoders (laartman/DecoderPool): a composição usa a visão
+    // compartilhada (acquireShared — N leitores, mutex interno do decoder
+    // serializa); o preview usa a visão de lease exclusivo. Um budget só.
     // Cache de frames decodificados (evita re-decode no mesmo timestamp)
     struct FrameKey { QString path; double time; int maxW; };
     struct FrameCache { FrameKey key; QImage frame; };

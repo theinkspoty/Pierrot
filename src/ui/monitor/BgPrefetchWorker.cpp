@@ -7,7 +7,7 @@
 
 #include "colombina/CrashReporter.h"
 #include "laartman/FFmpegDecoder.h"
-#include "ui/monitor/DecoderPool.h"
+#include "laartman/DecoderPool.h"
 #include "ui/monitor/PreviewDebug.h"
 
 #include <QDebug>

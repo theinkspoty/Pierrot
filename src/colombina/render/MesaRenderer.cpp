@@ -4,6 +4,7 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "MesaRenderer.h"
+#include "laartman/DecoderPool.h"
 #include "laartman/FFmpegDecoder.h"
 #include "colombina/ffmpeg/ProxyManager.h"
 #include "colombina/generators.h"
@@ -18,14 +19,14 @@
 #include <algorithm>
 #include <cmath>
 
-MesaRenderer::MesaRenderer() {}
+MesaRenderer::MesaRenderer() = default;
 
 MesaRenderer::~MesaRenderer() { clearCache(); }
 
 void MesaRenderer::clearCache() {
     QMutexLocker l(&m_mutex);
-    // shared_ptr ensures decoders are only deleted when no longer in use.
-    m_decoders.clear();
+    // Os decoders são do pool GLOBAL (laartman/DecoderPool) — aqui só se
+    // limpa o cache local de quadros; o pool gerencia a vida dos decoders.
     m_compositeLru.clear();
 }
 
@@ -69,22 +70,18 @@ QImage MesaRenderer::decodeFrame(const QString& filePath, double time, int maxW)
 
     std::shared_ptr<FFmpegDecoder> dec;
     {
-        // Seção CURTA com o lock global: só o mapa de decoders e o cache de
-        // quadro único são compartilhados entre threads. O decode pesado fica
-        // FORA do lock para arquivos distintos decodarem em paralelo.
+        // Seção CURTA com o lock global: só o cache de quadro único é
+        // compartilhado entre threads. O decoder vem do pool GLOBAL
+        // (acquireShared — visão compartilhada, F1); o decode pesado fica
+        // FORA do lock para arquivos distintos decodificarem em paralelo.
         QMutexLocker l(&m_mutex);
         if (m_frameCache.key.path == vpath && qFuzzyCompare(m_frameCache.key.time, time)
             && m_frameCache.key.maxW == maxW && !m_frameCache.frame.isNull()) {
             return m_frameCache.frame;
         }
-        auto it = m_decoders.find(vpath);
-        if (it != m_decoders.end()) {
-            dec = it.value();
-        } else {
-            dec = std::make_shared<FFmpegDecoder>();
-            m_decoders.insert(vpath, dec);
-        }
     }
+    dec = DecoderPool::instance().acquireShared(vpath);
+    if (!dec) return {};
 
     // Decode sem o lock global: cada FFmpegDecoder serializa o PRÓPRIO acesso
     // internamente (m_mutex do decoder), então dois arquivos diferentes podem

@@ -154,10 +154,15 @@ Motor próprio em C++ sobre libav* (`FFmpegDecoder`, 1.531 linhas):
 ## 5. Plano de evolução — Laartman v0.3 e depois
 
 ### F1 — Unificar o decode (fecha H3)
-1. Pool global de decoders com orçamento de memória (substituir o par `DecoderPool` ×
-   `m_decoders` ilimitado do Mesa).
-2. Workers por faixa/prioridade: `FrameWorker` deixa de ser serial para topo+camadas.
-3. Corrigir M2: LRU com lista intrusiva (O(1)) em vez de rebuild do `QHash`.
+1. [x] **Pool global de decoders** — `DecoderPool` movido para
+   `src/laartman/` como singleton com DUAS visões sobre o mesmo entry:
+   lease exclusivo (preview) e `acquireShared()` (Mesa/composição), budget
+   único (PIERROT_DECODER_POOL, padrão 10) + eviction LRU de ociosas.
+   O mapa ilimitado de `shared_ptr` do MesaRenderer saiu.
+2. Workers por faixa/prioridade: `FrameWorker` deixa de ser serial para
+   topo+camadas. (pendente — H3)
+3. [x] Corrigir M2: LRU com lista intrusiva (O(1)) em vez de rebuild do
+   `QHash`.
 
 ### F2 — Latência e visibilidade (roubar do Kdenlive/FilmCraft)
 4. Preview renderizado por região (chunks com barra verde/amarelo/vermelha) usando o

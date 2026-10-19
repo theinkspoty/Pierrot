@@ -89,39 +89,27 @@ QImage FFmpegDecoder::frameFromCacheLocked(const FrameCacheKey& key) {
     auto it = m_frameCacheIdx.find(key);
     if (it == m_frameCacheIdx.end()) { ++s_cacheMisses; return QImage(); }
     ++s_cacheHits;
-    const int idx = it.value();
-    if (idx < 0 || idx >= m_frameCacheLru.size()) return QImage();
-    // Move para frente (mais recente)
-    m_frameCacheLru.move(idx, 0);
-    // Rebuild index após move (O(n) mas n ≤ 120)
-    m_frameCacheIdx.clear();
-    for (int i = 0; i < m_frameCacheLru.size(); ++i)
-        m_frameCacheIdx.insert(m_frameCacheLru[i].key, i);
-    return m_frameCacheLru.first().img;
+    // Move-to-front O(1): splice move o nó para a frente sem realocar e sem
+    // invalidar o iterador guardado no índice (M2: era O(n) com rebuild).
+    m_frameCacheLru.splice(m_frameCacheLru.begin(), m_frameCacheLru, it.value());
+    return it.value()->img;
 }
 
 void FFmpegDecoder::frameToCacheLocked(const FrameCacheKey& key, const QImage& img) {
     if (img.isNull()) return;
     auto it = m_frameCacheIdx.find(key);
     if (it != m_frameCacheIdx.end()) {
-        m_frameCacheLru[it.value()].img = img;
-        m_frameCacheLru.move(it.value(), 0);
-        m_frameCacheIdx.clear();
-        for (int i = 0; i < m_frameCacheLru.size(); ++i)
-            m_frameCacheIdx.insert(m_frameCacheLru[i].key, i);
+        it.value()->img = img;
+        m_frameCacheLru.splice(m_frameCacheLru.begin(), m_frameCacheLru, it.value());
         return;
     }
-    // Insere na frente; remove do fundo se cheio
-    m_frameCacheLru.prepend({key, img});
-    while (m_frameCacheLru.size() > kFrameCacheMax) {
-        const FrameCacheEntry& oldest = m_frameCacheLru.last();
-        m_frameCacheIdx.remove(oldest.key);
-        m_frameCacheLru.removeLast();
+    // Insere na frente; evicção O(1) do mais antigo se cheio.
+    m_frameCacheLru.push_front({key, img});
+    m_frameCacheIdx.insert(key, m_frameCacheLru.begin());
+    while ((int)m_frameCacheLru.size() > kFrameCacheMax) {
+        m_frameCacheIdx.remove(m_frameCacheLru.back().key);
+        m_frameCacheLru.pop_back();
     }
-    // Rebuild index
-    m_frameCacheIdx.clear();
-    for (int i = 0; i < m_frameCacheLru.size(); ++i)
-        m_frameCacheIdx.insert(m_frameCacheLru[i].key, i);
 }
 
 void FFmpegDecoder::frameCacheClearLocked() {
