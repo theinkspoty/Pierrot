@@ -168,6 +168,7 @@ protected:
     void mousePressEvent(QMouseEvent* e) override { m_owner->viewportPress(this, e); }
     void mouseMoveEvent(QMouseEvent* e) override { m_owner->viewportMove(this, e); }
     void mouseReleaseEvent(QMouseEvent* e) override { m_owner->viewportRelease(this, e); }
+    void mouseDoubleClickEvent(QMouseEvent* e) override { m_owner->viewportDoubleClick(this, e); }
     void wheelEvent(QWheelEvent* e) override { m_owner->viewportWheel(this, e); }
     void contextMenuEvent(QContextMenuEvent* e) override { m_owner->viewportContextMenu(this, e); }
     void leaveEvent(QEvent*) override {
@@ -1897,6 +1898,27 @@ void PantaloneWidget::viewportPress(QWidget* view, QMouseEvent* e) {
         e->ignore();
         return;
     }
+
+    // Alt+clique: move o ponto de âncora direto para o clique (sem trocar de
+    // modo). Liberdade estilo AE — reposiciona o pivot de escala/rotação.
+    if ((e->modifiers() & Qt::AltModifier) && m_mode == ModeTransform) {
+        const double w0 = m_frame.width();
+        const double h0 = m_frame.height();
+        double sx, sy;
+        screenToSource(view->rect(), e->pos(), &sx, &sy);
+        const double ax = std::clamp((sx / w0 - 0.5) / 0.5, -1.0, 1.0);
+        const double ay = std::clamp((sy / h0 - 0.5) / 0.5, -1.0, 1.0);
+        QSignalBlocker bax(m_anchorX), bay(m_anchorY);
+        m_anchorX->setValue((int)std::lround(ax * 100.0));
+        m_anchorY->setValue((int)std::lround(ay * 100.0));
+        updateValueLabels();
+        if (!m_undoPushed) { emit editStart(); m_undoPushed = true; }
+        commitSlider(P_AnchorX, ax);
+        commitSlider(P_AnchorY, ay);
+        m_view->update();
+        e->accept();
+        return;
+    }
     double sx, sy;
     screenToSource(view->rect(), e->pos(), &sx, &sy);
     const int w0 = m_frame.width();
@@ -2261,16 +2283,108 @@ void PantaloneWidget::viewportMove(QWidget* view, QMouseEvent* e) {
             m_view->update();
             break;
         }
-        case DragCropL:  setCropValues(sx / w0, R0, T0, B0); break;
-        case DragCropR:  setCropValues(L0, (w0 - sx) / w0, T0, B0); break;
-        case DragCropT:  setCropValues(L0, R0, sy / h0, B0); break;
-        case DragCropB:  setCropValues(L0, R0, T0, (h0 - sy) / h0); break;
-        case DragCropTL: setCropValues(sx / w0, R0, sy / h0, B0); break;
-        case DragCropTR: setCropValues(L0, (w0 - sx) / w0, sy / h0, B0); break;
-        case DragCropBL: setCropValues(sx / w0, R0, T0, (h0 - sy) / h0); break;
-        case DragCropBR: setCropValues(L0, (w0 - sx) / w0, T0, (h0 - sy) / h0); break;
+        case DragCropL: case DragCropR:
+        case DragCropT: case DragCropB:
+        case DragCropTL: case DragCropTR:
+        case DragCropBL: case DragCropBR: {
+            // Crop interativo. Shift = uniforme:
+            //  • borda: recorta os DOIS lados igualmente (centro fixo);
+            //  • canto: mantém a proporção da área recortada (aspect do source).
+            const bool shift = (e->modifiers() & Qt::ShiftModifier);
+            double nL = L0, nR = R0, nT = T0, nB = B0;
+            const double aspect = (h0 > 0) ? (double)w0 / (double)h0 : 16.0 / 9.0;
+            const bool isEdge = (m_dragMode == DragCropL || m_dragMode == DragCropR
+                                 || m_dragMode == DragCropT || m_dragMode == DragCropB);
+            if (shift && isEdge) {
+                // Borda: recorta os DOIS lados pelo mesmo delta (centro fixo).
+                if (m_dragMode == DragCropL) {
+                    const double d = sx / w0 - L0; // negativo = corta mais p/ esq
+                    nL = std::clamp(L0 + d, 0.0, 1.0 - R0 - 0.01);
+                    nR = std::clamp(R0 - d, 0.0, 1.0 - nL - 0.01);
+                } else if (m_dragMode == DragCropR) {
+                    const double newR = (w0 - sx) / w0;
+                    const double d = newR - R0;
+                    nR = std::clamp(R0 + d, 0.0, 1.0 - L0 - 0.01);
+                    nL = std::clamp(L0 - d, 0.0, 1.0 - nR - 0.01);
+                } else if (m_dragMode == DragCropT) {
+                    const double d = sy / h0 - T0;
+                    nT = std::clamp(T0 + d, 0.0, 1.0 - B0 - 0.01);
+                    nB = std::clamp(B0 - d, 0.0, 1.0 - nT - 0.01);
+                } else if (m_dragMode == DragCropB) {
+                    const double newB = (h0 - sy) / h0;
+                    const double d = newB - B0;
+                    nB = std::clamp(B0 + d, 0.0, 1.0 - T0 - 0.01);
+                    nT = std::clamp(T0 - d, 0.0, 1.0 - nB - 0.01);
+                }
+            } else if (shift && !isEdge) {
+                // Canto: mantém a proporção da área visível.
+                // A dimensão arrastada manda; a outra é derivada pelo aspect.
+                const double maxW = 1.0 - L0 - R0;
+                const double maxH = 1.0 - T0 - B0;
+                if (m_dragMode == DragCropTL || m_dragMode == DragCropTR) {
+                    const double newW = (m_dragMode == DragCropTL)
+                        ? std::clamp(sx / w0 - L0, 0.01, maxW)
+                        : std::clamp((w0 - sx) / w0 - R0, 0.01, maxW);
+                    const double newH = std::clamp(newW / aspect, 0.01, maxH);
+                    // Ancora no topo: T e o lado arrastado mudam; B/L/R fixos.
+                    nT = T0 + maxH - newH; // empurra de cima p/ baixo
+                    if (m_dragMode == DragCropTL) nL = L0 + maxW - newW;
+                    else                          nR = R0 + maxW - newW;
+                } else {
+                    const double newH = (m_dragMode == DragCropBL)
+                        ? std::clamp(sy / h0 - T0, 0.01, maxH)
+                        : std::clamp((h0 - sy) / h0 - B0, 0.01, maxH);
+                    const double newW = std::clamp(newH * aspect, 0.01, maxW);
+                    // Ancora embaixo: B e o lado arrastado mudam; T/L/R fixos.
+                    nB = B0 + maxH - newH;
+                    if (m_dragMode == DragCropBL) nL = L0 + maxW - newW;
+                    else                          nR = R0 + maxW - newW;
+                }
+            } else {
+                // Livre (sem Shift).
+                switch (m_dragMode) {
+                case DragCropL:  nL = sx / w0; break;
+                case DragCropR:  nR = (w0 - sx) / w0; break;
+                case DragCropT:  nT = sy / h0; break;
+                case DragCropB:  nB = (h0 - sy) / h0; break;
+                case DragCropTL: nL = sx / w0; nT = sy / h0; break;
+                case DragCropTR: nR = (w0 - sx) / w0; nT = sy / h0; break;
+                case DragCropBL: nL = sx / w0; nB = (h0 - sy) / h0; break;
+                case DragCropBR: nR = (w0 - sx) / w0; nB = (h0 - sy) / h0; break;
+                default: break;
+                }
+            }
+            setCropValues(nL, nR, nT, nB);
+            break;
+        }
         default: break;
     }
+}
+
+// Duplo-clique no viewport, modo Transform: se acertar o gizmo da âncora,
+// reseta ao centro do source (liberdade estilo AE).
+void PantaloneWidget::viewportDoubleClick(QWidget* view, QMouseEvent* e) {
+    if (m_mode != ModeTransform || m_frame.isNull()) return;
+    const double w0 = m_frame.width();
+    const double h0 = m_frame.height();
+    const double axPct = m_anchorX->value() / 100.0;
+    const double ayPct = m_anchorY->value() / 100.0;
+    const QRectF disp = computeDisp(view->rect());
+    const QPointF anchorDisp(
+        disp.left() + (w0 * 0.5 + axPct * w0 * 0.5) / w0 * disp.width(),
+        disp.top() + (h0 * 0.5 + ayPct * h0 * 0.5) / h0 * disp.height());
+    if (std::hypot(e->pos().x() - anchorDisp.x(),
+                   e->pos().y() - anchorDisp.y()) > 8.0)
+        return;
+    QSignalBlocker bax(m_anchorX), bay(m_anchorY);
+    m_anchorX->setValue(0);
+    m_anchorY->setValue(0);
+    updateValueLabels();
+    if (!m_undoPushed) { emit editStart(); m_undoPushed = true; }
+    commitSlider(P_AnchorX, 0.0);
+    commitSlider(P_AnchorY, 0.0);
+    m_view->update();
+    e->accept();
 }
 
 void PantaloneWidget::viewportRelease(QWidget* view, QMouseEvent* e) {

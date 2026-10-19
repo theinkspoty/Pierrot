@@ -592,6 +592,137 @@ void SettingsDialog::buildShortcutsPage() {
     auto* v = new QVBoxLayout(page);
     v->setContentsMargins(4, 4, 4, 4);
 
+    // ── Perfis de atalhos (presets) ────────────────────────────────────
+    auto* profRow = new QHBoxLayout;
+    auto* profLabel = new QLabel(tr("Perfil:"), page);
+    auto* profCombo = new QComboBox(page);
+    profCombo->addItem(tr("Padrão (Pierrot)"), "pierrot");
+    profCombo->addItem(tr("Estilo Premiere"), "premiere");
+    profCombo->addItem(tr("Estilo Vegas"), "vegas");
+    auto* profApply = new QPushButton(tr("Aplicar perfil"), page);
+    auto* profExport = new QPushButton(tr("Exportar…"), page);
+    auto* profImport = new QPushButton(tr("Importar…"), page);
+    profRow->addWidget(profLabel);
+    profRow->addWidget(profCombo, 1);
+    profRow->addWidget(profApply);
+    profRow->addWidget(profExport);
+    profRow->addWidget(profImport);
+    profRow->addStretch(1);
+
+    // Perfis: id → tecla. O que não está no mapa volta ao padrão (def).
+    const auto presetFor = [](const QString& profile) -> QHash<QString, QString> {
+        QHash<QString, QString> m;
+        if (profile == QLatin1String("premiere")) {
+            m = {
+                {"new", "Ctrl+N"}, {"open", "Ctrl+O"}, {"save", "Ctrl+S"},
+                {"saveas", "Ctrl+Shift+S"}, {"import", "Ctrl+I"}, {"export", "Ctrl+M"},
+                {"undo", "Ctrl+Z"}, {"redo", "Ctrl+Shift+Z"}, {"delete", "Del"},
+                {"cut", "Ctrl+K"}, // Premiere: razor = C, mas Ctrl+K é add edit
+                {"tool0", "V"}, {"tool1", "V"}, {"tool2", "C"},
+                {"tool3", "P"}, {"tool4", "Z"}, {"tool5", "N"},
+                {"tool6", "N"}, {"tool7", "Y"}, {"tool8", "U"},
+                {"tool9", "W"}, {"snap", "S"},
+                {"play", "Space"}, {"shuttleRev", "J"}, {"shuttleFwd", "L"},
+                {"shuttlePause", "K"}, {"stepL", "Left"}, {"stepR", "Right"},
+                {"nudgeL", ","}, {"nudgeR", "."},
+                {"goStart", "Home"}, {"goEnd", "End"},
+            };
+        } else if (profile == QLatin1String("vegas")) {
+            m = {
+                {"new", "Ctrl+N"}, {"open", "Ctrl+O"}, {"save", "Ctrl+S"},
+                {"saveas", "Ctrl+Shift+S"}, {"import", "Ctrl+I"}, {"export", "Ctrl+E"},
+                {"undo", "Ctrl+Z"}, {"redo", "Ctrl+Y"}, {"delete", "Del"},
+                {"cut", "S"},
+                {"tool0", "Ctrl+D"}, {"tool1", "Ctrl+D"}, {"tool2", "S"},
+                {"tool3", "E"}, {"tool4", "Z"}, {"tool5", "Ctrl+Q"},
+                {"tool6", "Ctrl+T"}, {"tool7", "Ctrl+Alt+Y"}, {"tool8", "Ctrl+U"},
+                {"tool9", "Ctrl+Alt+Q"}, {"snap", "Ctrl+Shift+G"},
+                {"play", "Space"}, {"shuttleRev", "J"}, {"shuttleFwd", "L"},
+                {"shuttlePause", "K"}, {"stepL", "Left"}, {"stepR", "Right"},
+                {"nudgeL", "Alt+Left"}, {"nudgeR", "Alt+Right"},
+                {"goStart", "Home"}, {"goEnd", "End"},
+            };
+        }
+        return m; // pierrot = vazio (usa defs)
+    };
+
+    connect(profApply, &QPushButton::clicked, this, [this, profCombo, presetFor]() {
+        const QHash<QString, QString> hm = presetFor(profCombo->currentData().toString());
+        m_shortcutMap.clear();
+        for (auto it = hm.constBegin(); it != hm.constEnd(); ++it)
+            m_shortcutMap.insert(it.key(), it.value());
+        // Atualiza TODAS as linhas.
+        for (int r = 0; r < m_shortcuts->topLevelItemCount(); ++r) {
+            QTreeWidgetItem* cat = m_shortcuts->topLevelItem(r);
+            for (int c = 0; c < cat->childCount(); ++c) {
+                QTreeWidgetItem* it = cat->child(c);
+                const QString id = it->data(0, Qt::UserRole).toString();
+                for (int i = 0; i < kShortcutCount; ++i)
+                    if (QString::fromLatin1(kShortcutDefs[i].id) == id) {
+                        const QString v = m_shortcutMap.value(id);
+                        it->setText(1, v.isEmpty()
+                                        ? QKeySequence(QString::fromUtf8(kShortcutDefs[i].def)).toString()
+                                        : v);
+                        break;
+                    }
+            }
+        }
+    });
+
+    // Exportar atalhos como JSON simples (id=seq por linha).
+    connect(profExport, &QPushButton::clicked, this, [this]() {
+        const QString path = QFileDialog::getSaveFileName(
+            this, tr("Exportar atalhos"), QStringLiteral("pierrot-atalhos.txt"),
+            tr("Texto (*.txt)"));
+        if (path.isEmpty()) return;
+        QFile f(path);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) return;
+        // Grava o mapa atual (temporário) com fallback para o def.
+        for (int i = 0; i < kShortcutCount; ++i) {
+            const ShortcutDef& sd = kShortcutDefs[i];
+            const QString v = m_shortcutMap.value(QLatin1String(sd.id),
+                                                   QKeySequence(QString::fromUtf8(sd.def)).toString());
+            f.write(QByteArray(sd.id) + "=" + v.toUtf8() + "\n");
+        }
+    });
+
+    // Importar atalhos de um arquivo id=seq.
+    connect(profImport, &QPushButton::clicked, this, [this]() {
+        const QString path = QFileDialog::getOpenFileName(
+            this, tr("Importar atalhos"), QString(), tr("Texto (*.txt)"));
+        if (path.isEmpty()) return;
+        QFile f(path);
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return;
+        m_shortcutMap.clear();
+        while (!f.atEnd()) {
+            const QByteArray line = f.readLine().trimmed();
+            const int eq = line.indexOf('=');
+            if (eq <= 0) continue;
+            const QString id = QString::fromUtf8(line.left(eq)).trimmed();
+            const QString seq = QString::fromUtf8(line.mid(eq + 1)).trimmed();
+            bool known = false;
+            for (int i = 0; i < kShortcutCount; ++i)
+                if (QLatin1String(kShortcutDefs[i].id) == id) { known = true; break; }
+            if (known) m_shortcutMap.insert(id, seq);
+        }
+        // Atualiza todas as linhas.
+        for (int r = 0; r < m_shortcuts->topLevelItemCount(); ++r) {
+            QTreeWidgetItem* cat = m_shortcuts->topLevelItem(r);
+            for (int c = 0; c < cat->childCount(); ++c) {
+                QTreeWidgetItem* it = cat->child(c);
+                const QString id = it->data(0, Qt::UserRole).toString();
+                for (int i = 0; i < kShortcutCount; ++i)
+                    if (QString::fromLatin1(kShortcutDefs[i].id) == id) {
+                        const QString v = m_shortcutMap.value(id);
+                        it->setText(1, v.isEmpty()
+                                        ? QKeySequence(QString::fromUtf8(kShortcutDefs[i].def)).toString()
+                                        : v);
+                        break;
+                    }
+            }
+        }
+    });
+
     m_shortcuts = new QTreeWidget(page);
     m_shortcuts->setColumnCount(2);
     m_shortcuts->setHeaderLabels({tr("Ação"), tr("Atalho")});
@@ -633,6 +764,7 @@ void SettingsDialog::buildShortcutsPage() {
         refreshShortcutRow();
     });
 
+    v->addLayout(profRow);
     v->addWidget(m_shortcuts, 1);
     v->addWidget(hint);
     v->addWidget(reset, 0, Qt::AlignLeft);

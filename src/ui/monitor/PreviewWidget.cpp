@@ -2938,47 +2938,8 @@ void PreviewWidget::drawClipText(QPainter& p, const QRect& canvas, const Clip* c
 
 // Tela vazia: ícone de play grande + título + dica de como começar, no tom
 // monitorLabel com alfa (respeita o tema claro/escuro).
-void PreviewWidget::drawEmptyMonitor(QPainter& p, const QRect& canvas) {
-    if (canvas.isEmpty()) return;
-    const auto& c = themeColors();
-    p.save();
-    p.setRenderHint(QPainter::Antialiasing);
-    // Ícone de play grande (círculo + triângulo), desenhado sem asset.
-    const QPointF ctr(canvas.center().x(), canvas.center().y() - 22);
-    QColor circ = c.monitorLabel;
-    circ.setAlpha(60);
-    p.setPen(Qt::NoPen);
-    p.setBrush(circ);
-    p.drawEllipse(ctr, 26, 26);
-    QColor tri = c.monitorLabel;
-    tri.setAlpha(140);
-    p.setBrush(tri);
-    QPolygonF play;
-    const QPointF tip(ctr.x() + 9.0, ctr.y());
-    play << QPointF(ctr.x() - 6.0, ctr.y() - 10.0) << tip
-         << QPointF(ctr.x() - 6.0, ctr.y() + 10.0);
-    p.drawPolygon(play);
-    // Título + dica.
-    QFont f = p.font();
-    f.setPointSizeF(10.0);
-    f.setBold(true);
-    p.setFont(f);
-    QColor title = c.monitorLabel;
-    title.setAlpha(200);
-    p.setPen(title);
-    const QRect titleR = QRect(canvas.center().x() - 200, ctr.y() + 34, 400, 20);
-    p.drawText(titleR, Qt::AlignCenter, tr("Sem clipe de vídeo aqui"));
-    f.setPointSizeF(8.5);
-    f.setBold(false);
-    p.setFont(f);
-    QColor hint = c.monitorLabel;
-    hint.setAlpha(120);
-    p.setPen(hint);
-    const QRect hintR = QRect(canvas.center().x() - 200, ctr.y() + 54, 400, 36);
-    p.drawText(hintR, Qt::AlignCenter,
-               tr("Selecione uma mídia no painel Projeto\n"
-                  "e arraste para a linha do tempo (Espaço reproduz)"));
-    p.restore();
+void PreviewWidget::drawEmptyMonitor(QPainter&, const QRect&) {
+    // Tela preta limpa quando não há clipe — sem ícone nem texto.
 }
 
 void PreviewWidget::seek(double t) {

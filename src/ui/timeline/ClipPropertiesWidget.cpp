@@ -10,6 +10,7 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QFontComboBox>
 #include <QDoubleSpinBox>
 #include <QFrame>
 #include <QIcon>
@@ -434,8 +435,66 @@ void ClipPropertiesWidget::rebuild() {
             addSpinRow(tr("Fade out (s):"), 0, 10, 0.1, 2, 60, 1.0,
                 [clip]() { return clip->fadeOut; },
                 [clip](double v) { clip->fadeOut = v; });
+            // Controles de texto inline (fonte/tamanho/contorno) + editor.
+            if (clip->isText && m_project) {
+                if (TextStyle* ts = m_project->textStyleFor(*clip)) {
+                    addSectionTitle(tr("TEXTO"));
+                    // Fonte
+                    {
+                        auto* row = new QWidget(m_body);
+                        auto* h = new QHBoxLayout(row);
+                        h->setContentsMargins(0, 0, 0, 0);
+                        h->setSpacing(6);
+                        h->addWidget(new QLabel(tr("Fonte:"), row));
+                        auto* combo = new QFontComboBox(row);
+                        combo->setObjectName("propCombo");
+                        if (!ts->fontFamily.isEmpty())
+                            combo->setCurrentText(ts->fontFamily);
+                        combo->setToolTip(tr("Família da fonte do texto"));
+                        connect(combo, &QComboBox::currentTextChanged, this,
+                                [this, ts](const QString& f) {
+                                    beginEdit();
+                                    ts->fontFamily = f;
+                                    emitEdited();
+                                });
+                        h->addWidget(combo, 1);
+                        m_body->layout()->addWidget(row);
+                    }
+                    // Tamanho (% da altura do quadro)
+                    addSpinRow(tr("Tamanho (%):"), 1, 200, 0.5, 1, 60, 1.0,
+                        [ts]() { return ts->textSize * 100.0; },
+                        [this, ts](double v) {
+                            beginEdit();
+                            ts->textSize = v / 100.0;
+                            emitEdited();
+                        });
+                    // Negrito
+                    addCheckRow(tr("Negrito"), tr("Fonte em negrito"),
+                        [ts]() { return ts->textBold; },
+                        [this, ts](bool v) {
+                            beginEdit();
+                            ts->textBold = v;
+                            emitEdited();
+                        });
+                    // Contorno: ligado + largura
+                    addCheckRow(tr("Contorno"), tr("Desenhar contorno atrás do texto"),
+                        [ts]() { return ts->textOutline > 0.0; },
+                        [this, ts](bool v) {
+                            beginEdit();
+                            ts->textOutline = v ? qMax(0.005, ts->textOutline) : 0.0;
+                            emitEdited();
+                        });
+                    addSpinRow(tr("Espessura contorno (%):"), 0, 20, 0.1, 1, 60, 1.0,
+                        [ts]() { return ts->textOutline * 100.0; },
+                        [this, ts](double v) {
+                            beginEdit();
+                            ts->textOutline = v / 100.0;
+                            emitEdited();
+                        });
+                }
+            }
             addActionRow(tr("Texto:"), tr("Editar…"),
-                tr("Abrir o editor de texto do clipe"),
+                tr("Abrir o editor de texto completo do clipe"),
                 [this, clip]() {
                     TextEditorDialog dlg(m_project, clip, this);
                     if (dlg.exec() == QDialog::Accepted) {

@@ -81,6 +81,7 @@ private:
     void viewportPress(QWidget* view, QMouseEvent* e);
     void viewportMove(QWidget* view, QMouseEvent* e);
     void viewportRelease(QWidget* view, QMouseEvent* e);
+    void viewportDoubleClick(QWidget* view, QMouseEvent* e);
     void viewportWheel(QWidget* view, QWheelEvent* e);
     void viewportContextMenu(QWidget* view, QContextMenuEvent* e);
 
