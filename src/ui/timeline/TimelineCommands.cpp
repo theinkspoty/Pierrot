@@ -91,53 +91,71 @@ static void doRemoveClipsByIds(TimelineWidget* tl, const QStringList& ids) {
     for (Track& t : p->audioTracks) remove(t.clips);
 }
 
-// Remove os clipes de `sel` de uma faixa.
-static void removeSelectedInTrack(Track& t, const QStringList& sel) {
-    t.clips.erase(std::remove_if(t.clips.begin(), t.clips.end(),
-                                 [&sel](const Clip& c) { return sel.contains(c.id); }),
-                  t.clips.end());
-}
-
-// Ripple delete com sync: remove `sel` e fecha o vão em TODAS as faixas.
-// Os intervalos excluídos são a união global (vídeo+áudio) e o deslocamento
-// vale para todas as faixas, mesmo onde nada foi removido. O ripple antigo
-// era por faixa: excluir um clipe SEM áudio deixava `removed` vazio na pista
-// de áudio e os pares de áudio dos clipes seguintes ficavam para trás — o
-// vídeo era puxado, o som dessincronizava.
+// Ripple delete com sync: remove `sel` e fecha o vão APENAS nas faixas onde
+// algo foi removido. O ripple antigo deslocava TODAS as faixas (vídeo+áudio),
+// então apagar um clipe independente puxava faixas sem relação — o usuário
+// via a "faixa de baixo" ser arrastada sem motivo.
+// Faixas do MESMO grupo (par AV) continuam juntas: se o grupo foi expandido,
+// ambos os lados têm clipes em `sel` e ambos são deslocados.
 static void rippleDeleteSelected(TimelineWidget* tl, const QStringList& sel) {
     if (!tl || !tl->project()) return;
     Project* p = tl->project();
 
-    QVector<QPair<double, double>> removed;
-    auto scan = [&](const QVector<Clip>& clips) {
-        for (const Clip& c : clips)
-            if (sel.contains(c.id))
-                removed.append(qMakePair(c.pos, c.pos + c.dur));
+    // Coleta os intervalos removidos POR FAIXA (não global).
+    struct TrackRipple {
+        QVector<QPair<double, double>> removed; // intervalos removidos nesta faixa
+        bool anyRemoved = false;
     };
-    for (const Track& t : p->videoTracks) scan(t.clips);
-    for (const Track& t : p->audioTracks) scan(t.clips);
-    if (removed.isEmpty()) return;
-    std::sort(removed.begin(), removed.end());
-    QVector<QPair<double, double>> merged;
-    for (const auto& iv : removed) {
-        if (merged.isEmpty() || iv.first > merged.last().second + 1e-6)
-            merged.append(iv);
-        else
-            merged.last().second = std::max(merged.last().second, iv.second);
-    }
+    auto scanTrack = [&](const QVector<Clip>& clips) {
+        TrackRipple tr;
+        for (const Clip& c : clips)
+            if (sel.contains(c.id)) {
+                tr.removed.append(qMakePair(c.pos, c.pos + c.dur));
+                tr.anyRemoved = true;
+            }
+        // Merge dos intervalos da faixa.
+        std::sort(tr.removed.begin(), tr.removed.end());
+        QVector<QPair<double, double>> merged;
+        for (const auto& iv : tr.removed) {
+            if (merged.isEmpty() || iv.first > merged.last().second + 1e-6)
+                merged.append(iv);
+            else
+                merged.last().second = std::max(merged.last().second, iv.second);
+        }
+        tr.removed = merged;
+        return tr;
+    };
 
-    auto apply = [&](Track& t) {
-        removeSelectedInTrack(t, sel);
+    // Faixas de vídeo: scan e aplica por faixa.
+    for (Track& t : p->videoTracks) {
+        TrackRipple tr = scanTrack(t.clips);
+        if (!tr.anyRemoved) continue; // nada removido nesta faixa → não mexe
+        t.clips.erase(std::remove_if(t.clips.begin(), t.clips.end(),
+                                     [&sel](const Clip& c) { return sel.contains(c.id); }),
+                      t.clips.end());
         for (Clip& c : t.clips) {
             double shift = 0.0;
-            for (const auto& iv : merged)
+            for (const auto& iv : tr.removed)
                 if (c.pos >= iv.second - 1e-6)
                     shift += iv.second - iv.first;
             if (shift > 0.0) c.pos = std::max(0.0, c.pos - shift);
         }
-    };
-    for (Track& t : p->videoTracks) apply(t);
-    for (Track& t : p->audioTracks) apply(t);
+    }
+    // Faixas de áudio: idem.
+    for (Track& t : p->audioTracks) {
+        TrackRipple tr = scanTrack(t.clips);
+        if (!tr.anyRemoved) continue;
+        t.clips.erase(std::remove_if(t.clips.begin(), t.clips.end(),
+                                     [&sel](const Clip& c) { return sel.contains(c.id); }),
+                      t.clips.end());
+        for (Clip& c : t.clips) {
+            double shift = 0.0;
+            for (const auto& iv : tr.removed)
+                if (c.pos >= iv.second - 1e-6)
+                    shift += iv.second - iv.first;
+            if (shift > 0.0) c.pos = std::max(0.0, c.pos - shift);
+        }
+    }
 }
 
 // ── Corte ──────────────────────────────────────────────────────────────
