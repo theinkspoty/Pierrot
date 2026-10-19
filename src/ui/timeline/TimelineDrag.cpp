@@ -99,7 +99,9 @@ void TimelineWidget::autoScrollTick() {
         return;
     }
     const int viewW = width() - m_vbar->sizeHint().width();
-    const int step = qMax(8, viewW / 24) * m_autoScrollDir;
+    // Passo sutil: ~1/60 da largura por tick (16ms) → ~1 tela/s, em vez de
+    // ~5 telas/s do viewW/24 que "arrastava" a timeline agressivamente.
+    const int step = qMax(4, viewW / 60) * m_autoScrollDir;
     int v = m_hbar->value() + step;
     if (v < m_hbar->minimum()) v = m_hbar->minimum();
     if (v > m_hbar->maximum()) v = m_hbar->maximum();
