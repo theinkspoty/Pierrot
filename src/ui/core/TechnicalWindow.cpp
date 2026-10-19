@@ -8,10 +8,20 @@
 #include <QAction>
 #include <QCloseEvent>
 #include <QDockWidget>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
+#include <QHideEvent>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMimeData>
 #include <QSet>
+#include <QShowEvent>
 #include <QVariant>
+
+// Mime interno do Qt para o arrasto de um QDockWidget (usado pelo mecanismo
+// interno de docking). O payload é o objectName do dock.
+static const char kDockDragMime[] = "application/x-qdockwidget";
 
 TechnicalWindow::TechnicalWindow(QWidget* parent)
     : QMainWindow(parent) {
@@ -20,6 +30,9 @@ TechnicalWindow::TechnicalWindow(QWidget* parent)
     setDockOptions(QMainWindow::AllowTabbedDocks | QMainWindow::AllowNestedDocks
                    | QMainWindow::AnimatedDocks);
     setTabPosition(Qt::AllDockWidgetAreas, QTabWidget::North);
+    // Precisa aceitar drops para receber o drag de docks vindos da janela
+    // principal (o Qt não move docks entre QMainWindows sozinho).
+    setAcceptDrops(true);
 
     m_panelsMenu = menuBar()->addMenu(tr("Painéis"));
 }
@@ -56,6 +69,45 @@ void TechnicalWindow::closeEvent(QCloseEvent* e) {
     returnAllDocks();
     hide();
     e->ignore();
+}
+
+void TechnicalWindow::showEvent(QShowEvent* e) {
+    QMainWindow::showEvent(e);
+    emit visibleChanged(true);
+}
+
+void TechnicalWindow::hideEvent(QHideEvent* e) {
+    QMainWindow::hideEvent(e);
+    emit visibleChanged(false);
+}
+
+QDockWidget* TechnicalWindow::dockByObjectName(const QByteArray& objectName) const {
+    const QString n = QString::fromUtf8(objectName);
+    for (const auto& cand : m_candidates) {
+        if (cand.first && cand.first->objectName() == n) return cand.first;
+    }
+    return nullptr;
+}
+
+void TechnicalWindow::dragEnterEvent(QDragEnterEvent* e) {
+    if (!e->mimeData()->hasFormat(kDockDragMime)) return;
+    QDockWidget* d = dockByObjectName(e->mimeData()->data(kDockDragMime));
+    // Só aceita docks que moram em OUTRA janela — drags internos (reabas,
+    // redock) são do mecanismo próprio do Qt e não devem ser interceptados.
+    if (d && !m_inside.contains(d)) e->acceptProposedAction();
+}
+
+void TechnicalWindow::dragMoveEvent(QDragMoveEvent* e) {
+    if (e->mimeData()->hasFormat(kDockDragMime)) e->acceptProposedAction();
+}
+
+void TechnicalWindow::dropEvent(QDropEvent* e) {
+    if (!e->mimeData()->hasFormat(kDockDragMime)) return;
+    QDockWidget* d = dockByObjectName(e->mimeData()->data(kDockDragMime));
+    if (!d || m_inside.contains(d)) return;
+    if (m_onToggle) m_onToggle(d, true);
+    noteDockMoved(d, true);
+    e->acceptProposedAction();
 }
 
 void TechnicalWindow::rebuildMenu() {

@@ -77,6 +77,10 @@ QString recolorSvg(const QByteArray& raw, const QColor& color) {
 #include <QMouseEvent>
 #include <QActionGroup>
 #include <QSignalBlocker>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
+#include <QMimeData>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFile>
@@ -232,6 +236,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     m_centralLay->setSpacing(2);
     m_centralLay->addWidget(m_preview, 1);
     setCentralWidget(centralHost);
+    // Aceita o drop de docks vindos da janela técnica (drag entre janelas —
+    // o Qt não move docks entre QMainWindows sozinho).
+    setAcceptDrops(true);
 
     m_pantalone = new PantaloneWidget(this);
     m_pantalone->setProject(&m_project);
@@ -1176,24 +1183,61 @@ void MainWindow::arrangeBancadaScreens() {
         QScreen* right = screens.last();
         QScreen* center = screens[screens.size() / 2];
 
-        // Janela principal no centro da bancada.
-        setGeometry(center->availableGeometry());
-        showMaximized();
+        // Geometrias salvas (bancada/…): a coordenada global encodeia a
+        // TELA — se ela ainda intersecta um monitor conectado, restaura;
+        // senão cai no arranjo determinístico de novo.
+        QSettings settings;
+        const QRect techSaved =
+            settings.value(QStringLiteral("bancada/techGeometry")).toRect();
+        const QRect monSaved =
+            settings.value(QStringLiteral("bancada/monitorGeometry")).toRect();
+        const bool monFullScreen =
+            settings.value(QStringLiteral("bancada/monitorFullScreen"), true).toBool();
+        auto screenOf = [](const QRect& r) -> QScreen* {
+            return r.isValid() ? QGuiApplication::screenAt(r.center()) : nullptr;
+        };
+        QScreen* techScreen = screenOf(techSaved);
+        QScreen* monScreen = screenOf(monSaved);
 
-        // Janela técnica à esquerda com o set técnico padrão. O usuário
-        // refina pelo menu "Painéis" (mistura/move docks entre as janelas).
+        // Janela principal: com arranjo salvo, a geometria restaurada do app
+        // (restoreGeometry) já a devolveu para a tela certa — não mexe.
+        // Sem arranjo (primeira vez / telas mudaram), distribui de novo.
+        if (!techScreen || !monScreen) {
+            setGeometry(center->availableGeometry());
+            showMaximized();
+        }
+
+        // Janela técnica à esquerda (ou na tela salva) com o set técnico
+        // padrão. O usuário refina pelo menu "Painéis".
         ensureTechnicalWindow();
         for (QDockWidget* d : {m_mixerDock, m_effectsDock, m_expressDock, m_scopesDock})
             if (d) moveDockToTechnical(d, true);
-        m_techWindow->setGeometry(left->availableGeometry());
+        QRect techGeom = techScreen ? techSaved.intersected(techScreen->availableGeometry())
+                                    : left->availableGeometry();
+        if (techGeom.width() < 360 || techGeom.height() < 240)
+            techGeom = (techScreen ? techScreen : left)->availableGeometry();
+        m_techWindow->setGeometry(techGeom);
         m_techWindow->show();
         m_techWindow->raise();
 
-        // Monitor de referência à direita, em tela cheia.
+        // Monitor de referência: na tela salva (tela cheia ou flutuando como
+        // o usuário deixou), ou à direita em tela cheia no primeiro setup.
         if (m_monitor && !m_monitor->isVisible() && m_monitorAction
             && !m_monitorAction->isChecked())
             m_monitorAction->setChecked(true);
-        if (m_monitor) m_monitor->placeFullScreenOn(right);
+        if (m_monitor) {
+            if (monScreen && monFullScreen) {
+                m_monitor->placeFullScreenOn(monScreen);
+            } else if (monScreen) {
+                QRect g = monSaved.intersected(monScreen->availableGeometry());
+                if (g.width() < 200 || g.height() < 120) g = monScreen->availableGeometry();
+                m_monitor->showNormal(); // sai de tela cheia se estava
+                m_monitor->setGeometry(g);
+                m_monitor->show();
+            } else {
+                m_monitor->placeFullScreenOn(right);
+            }
+        }
     } else {
         // 1–2 telas: sem janela técnica; referência na tela secundária.
         if (m_techWindow) {
@@ -1228,6 +1272,14 @@ void MainWindow::ensureTechnicalWindow() {
     };
     m_techWindow->setCandidates(cands, [this](QDockWidget* d, bool in) {
         moveDockToTechnical(d, in);
+    });
+    // Mantém o check de "Exibir → Painel técnico" em dia quando a janela
+    // mostra/esconde por outros caminhos (fechar no X, preset, arrange).
+    connect(m_techWindow, &TechnicalWindow::visibleChanged, this, [this](bool v) {
+        if (m_techPanelAction) {
+            const QSignalBlocker blocker(m_techPanelAction);
+            m_techPanelAction->setChecked(v);
+        }
     });
 }
 
@@ -1416,6 +1468,19 @@ void MainWindow::saveSettings() {
                           kLayoutVersion);
     }
     settings.setValue("currentWorkspace", m_currentWorkspace);
+    // Bancada: geometria das janelas auxiliares (janela técnica + preview
+    // externo) — a coordenada global encodeia a TELA, então reabrir na mesma
+    // tela é restaurar a geometria. Salva mesmo com as janelas ocultas
+    // (fechar/preset não apaga o objeto).
+    if (m_techWindow)
+        settings.setValue(QStringLiteral("bancada/techGeometry"),
+                          m_techWindow->geometry());
+    if (m_monitor) {
+        settings.setValue(QStringLiteral("bancada/monitorGeometry"),
+                          m_monitor->geometry());
+        settings.setValue(QStringLiteral("bancada/monitorFullScreen"),
+                          m_monitor->isFullScreen());
+    }
     m_layoutStateCached = true;
 }
 
@@ -1534,6 +1599,40 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* e) {
     return QMainWindow::eventFilter(obj, e);
 }
 
+// Mime interno do Qt para arrasto de QDockWidget (o payload é o objectName).
+static const char kDockDragMime[] = "application/x-qdockwidget";
+
+// Resolve um dock pelo objectName entre todos os docks da janela principal.
+static QDockWidget* dockByNameIn(const QVector<QDockWidget*>& docks,
+                                 const QByteArray& objectName) {
+    const QString n = QString::fromUtf8(objectName);
+    for (QDockWidget* d : docks)
+        if (d && d->objectName() == n) return d;
+    return nullptr;
+}
+
+// Drag&drop entre a janela técnica e a principal: aceita o mime interno de
+// docks quando o dock mora na OUTRA janela (drags internos continuam sendo
+// do mecanismo próprio do Qt). Sem isso, "docar" um painel na janela técnica
+// só funcionaria pelo menu Painéis.
+void MainWindow::dragEnterEvent(QDragEnterEvent* e) {
+    if (!e->mimeData()->hasFormat(kDockDragMime)) return;
+    QDockWidget* d = dockByNameIn(m_allDocks, e->mimeData()->data(kDockDragMime));
+    if (d && m_techWindow && m_techWindow->hasDock(d)) e->acceptProposedAction();
+}
+
+void MainWindow::dragMoveEvent(QDragMoveEvent* e) {
+    if (e->mimeData()->hasFormat(kDockDragMime)) e->acceptProposedAction();
+}
+
+void MainWindow::dropEvent(QDropEvent* e) {
+    if (!e->mimeData()->hasFormat(kDockDragMime)) return;
+    QDockWidget* d = dockByNameIn(m_allDocks, e->mimeData()->data(kDockDragMime));
+    if (!d || !m_techWindow || !m_techWindow->hasDock(d)) return;
+    moveDockToTechnical(d, false);
+    e->acceptProposedAction();
+}
+
 void MainWindow::restoreSettings() {
     m_restoringSettings = true;
     QSettings settings;
@@ -1596,6 +1695,15 @@ void MainWindow::restoreSettings() {
     // Garante que a Mesa encontra suas tracks mesmo quando o dock é restaurado
     // como visível — autoSelectMesa() precisa rodar após restoreState().
     m_mesa->autoSelectMesa();
+
+    // Reaplica o preset "Bancada" se ele era o workspace corrente: o
+    // saveState() não cobre a janela técnica nem o preview externo, então o
+    // arranjo completo (monitores, painéis técnicos, telas) só volta com a
+    // reaplicação do preset.
+    if (m_currentWorkspace == QStringLiteral("Bancada")) {
+        applyWorkspacePreset(QStringLiteral("Bancada"));
+        rebuildWorkspaceMenu();
+    }
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
@@ -2335,6 +2443,37 @@ void MainWindow::createActions() {
         }
     });
     viewMenu->addAction(m_monitorAction);
+    // Painel técnico: janela de docks da bancada (Mixer/Efeitos/Express/…),
+    // independente do número de telas — no preset Bancada com 3+ telas ela
+    // vai para a tela da esquerda; aqui o usuário pode abrir/fechar a qualquer
+    // momento e docar docks nela por arrasto ou pelo menu Painéis dela.
+    m_techPanelAction = new QAction(tr("Painel técnico"), this);
+    m_techPanelAction->setCheckable(true);
+    m_techPanelAction->setToolTip(tr("Janela de painéis técnicos (Mixer, Efeitos, Express, …) — "
+                                     "arraste docks até ela ou use o menu Painéis."));
+    connect(m_techPanelAction, &QAction::toggled, this, [this](bool on) {
+        if (on) {
+            ensureTechnicalWindow();
+            // Com 2+ telas, abre na tela da esquerda em tamanho útil; com 1,
+            // flutua onde estiver (o usuário arrasta).
+            QList<QScreen*> screens = QGuiApplication::screens();
+            if (screens.size() >= 2) {
+                std::sort(screens.begin(), screens.end(),
+                          [](QScreen* a, QScreen* b) {
+                              return a->geometry().x() < b->geometry().x();
+                          });
+                const QRect g = screens.first()->availableGeometry();
+                m_techWindow->setGeometry(g.adjusted(24, 24, -qMax(200, g.width() / 3), -24));
+            }
+            m_techWindow->show();
+            m_techWindow->raise();
+            m_techWindow->activateWindow();
+        } else if (m_techWindow) {
+            m_techWindow->returnAllDocks();
+            m_techWindow->hide();
+        }
+    });
+    viewMenu->addAction(m_techPanelAction);
     viewMenu->addSeparator();
     m_monitorTimer = new QTimer(this);
     m_monitorTimer->setInterval(33); // ~30 Hz: basta para acompanhar o preview

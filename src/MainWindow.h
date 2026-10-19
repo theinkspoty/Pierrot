@@ -76,6 +76,11 @@ protected:
     void showEvent(QShowEvent* event) override;
     bool event(QEvent* e) override;
     bool eventFilter(QObject* obj, QEvent* e) override;
+    // Arrastar um dock da janela técnica até a principal (o Qt não move docks
+    // entre QMainWindows nativamente — aceitamos o mime interno do dock).
+    void dragEnterEvent(QDragEnterEvent* e) override;
+    void dragMoveEvent(QDragMoveEvent* e) override;
+    void dropEvent(QDropEvent* e) override;
 private slots:
     void pushUndo();
     void setModified();
@@ -316,6 +321,7 @@ private:
     QAction* m_saveAsAction = nullptr;
     QAction* m_snapAction = nullptr;
     QAction* m_monitorAction = nullptr;
+    QAction* m_techPanelAction = nullptr; // Exibir → Painel técnico (janela técnica)
     QVector<QAction*> m_toolActions;
     QTimer* m_autoSaveTimer = nullptr;
     QTimer* m_layoutSaveTimer = nullptr;

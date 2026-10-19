@@ -45,13 +45,26 @@ public:
 
     bool hasDock(QDockWidget* dock) const { return m_inside.contains(dock); }
 
+signals:
+    // Avisos de show/hide para a MainWindow sincronizar o action do menu.
+    void visibleChanged(bool visible);
+
 protected:
     // Fechar = devolver os docks e esconder (a janela é reaproveitada pelo
     // preset Bancada; não destruir evita perder os candidatos/conexões).
     void closeEvent(QCloseEvent* e) override;
+    void showEvent(QShowEvent* e) override;
+    void hideEvent(QHideEvent* e) override;
+    // Arrastar um dock de outra janela até aqui: o Qt não move docks entre
+    // QMainWindows nativamente, então aceitamos o mime interno
+    // "application/x-qdockwidget" e pedimos para a MainWindow movê-lo.
+    void dragEnterEvent(QDragEnterEvent* e) override;
+    void dragMoveEvent(QDragMoveEvent* e) override;
+    void dropEvent(QDropEvent* e) override;
 
 private:
     void rebuildMenu();
+    QDockWidget* dockByObjectName(const QByteArray& objectName) const;
 
     QVector<QPair<QDockWidget*, QString>> m_candidates;
     std::function<void(QDockWidget*, bool)> m_onToggle;
