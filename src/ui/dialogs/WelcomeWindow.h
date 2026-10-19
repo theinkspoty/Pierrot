@@ -32,6 +32,10 @@ public:
     int projectHeight() const { return m_h; }
     int projectFps() const { return m_fps; }
 
+protected:
+    void dragEnterEvent(QDragEnterEvent* e) override;
+    void dropEvent(QDropEvent* e) override;
+
 private slots:
     void openSelected();
     void removeSelected();

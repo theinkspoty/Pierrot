@@ -82,6 +82,7 @@ QString recolorSvg(const QByteArray& raw, const QColor& color) {
 #include <QSaveFile>
 #include <algorithm>
 #include <QDir>
+#include <QStandardPaths>
 #include <QDateTime>
 #include <QRegularExpression>
 #include <QSvgRenderer>
@@ -3198,8 +3199,24 @@ void MainWindow::createProject(int width, int height, int fps, const QString& na
     m_project.fps = fps;
     m_project.name = name;
     applyUndoState();
+
+    // Salva automaticamente em Documentos/ sem pedir o nome de novo — a
+    // tela de boas-vindas já perguntou o nome do projeto; o segundo
+    // diálogo "Salvar projeto" só confundia (usuário tinha que digitar o
+    // nome duas vezes). Se já existir, acrescenta um número.
+    QString base = name.trimmed();
+    if (base.isEmpty()) base = tr("Sem título");
+    base.replace(QLatin1Char('/'), QLatin1Char('-'));
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    QDir().mkpath(dir);
+    QString path = dir + QLatin1Char('/') + base + QStringLiteral(".Blanc");
+    int n = 2;
+    while (QFile::exists(path)) {
+        path = dir + QLatin1Char('/') + base
+               + QStringLiteral(" (%1).Blanc").arg(n++);
+    }
+    writeProjectFile(path);
     updateTitle();
-    saveProjectAs();
 }
 
 bool MainWindow::saveProject() {

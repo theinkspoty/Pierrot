@@ -38,6 +38,10 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QMimeData>
+#include <QUrl>
 
 namespace {
 QStringList loadRecentList() {
@@ -125,6 +129,7 @@ WelcomeWindow::WelcomeWindow(QWidget* parent) : QDialog(parent) {
     setWindowTitle(tr("Bem-vindo ao Pierrot"));
     setMinimumSize(900, 620);
     resize(1060, 680);
+    setAcceptDrops(true); // arrastar .Blanc/.ovp de fora abre o projeto
 
     buildUi();
     loadRecentProjects();
@@ -154,19 +159,38 @@ WelcomeWindow::WelcomeWindow(QWidget* parent) : QDialog(parent) {
     }
     onAutoIntervalChanged(m_autoInterval->currentIndex());
 
-    const QSize last(s.value("lastWidth", 1920).toInt(),
-                     s.value("lastHeight", 1080).toInt());
-    int resIdx = 1;
+    // Última resolução: se casar com um preset, seleciona; senão cai em
+    // "Personalizado…" e preenche os spinboxes (antes ficavam 1920×1080
+    // mesmo com o último tamanho custom no settings — issue do tamanho).
+    const int lastW = s.value("lastWidth", 1920).toInt();
+    const int lastH = s.value("lastHeight", 1080).toInt();
+    const QSize last(lastW, lastH);
+    int resIdx = -1;
     for (int i = 0; i < m_resolution->count(); ++i) {
         const QSize r = m_resolution->itemData(i).toSize();
         if (r.width() > 0 && r == last) { resIdx = i; break; }
+    }
+    if (resIdx < 0) {
+        resIdx = m_resolution->count() - 1; // "Personalizado…"
+        m_customW->setValue(qBound(64, lastW, 7680));
+        m_customH->setValue(qBound(64, lastH, 4320));
     }
     m_resolution->setCurrentIndex(resIdx);
     const int fpsIdx = m_fpsBox->findData(s.value("lastFps", 30).toInt());
     if (fpsIdx >= 0) m_fpsBox->setCurrentIndex(fpsIdx);
     onResolutionChanged(m_resolution->currentIndex());
 
-    m_name->setFocus();
+    // Restaura o último nome digitado (evita digitar de novo toda vez).
+    const QString lastName = s.value("lastProjectName").toString();
+    if (!lastName.isEmpty()) m_name->setText(lastName);
+    m_name->selectAll();
+
+    // Enter abre o recente selecionado; se a lista estiver vazia, o foco
+    // vai para o nome e Enter cria o projeto (já ligado ao returnPressed).
+    if (m_recent->count() > 0 && m_recent->currentItem())
+        m_recent->setFocus();
+    else
+        m_name->setFocus();
 }
 
 void WelcomeWindow::buildUi() {
@@ -538,6 +562,9 @@ void WelcomeWindow::loadRecentProjects() {
         auto* it = new QListWidgetItem(tr("Nenhum projeto recente."), m_recent);
         it->setFlags(Qt::NoItemFlags);
         it->setForeground(themeColors().disabledText);
+    } else {
+        // Seleciona o mais recente: Enter abre direto sem precisar clicar.
+        m_recent->setCurrentRow(0);
     }
 }
 
@@ -594,6 +621,34 @@ void WelcomeWindow::browseProject() {
     accept();
 }
 
+static bool isProjectFile(const QString& path) {
+    return path.endsWith(QLatin1String(".Blanc"), Qt::CaseInsensitive)
+           || path.endsWith(QLatin1String(".ovp"), Qt::CaseInsensitive);
+}
+
+void WelcomeWindow::dragEnterEvent(QDragEnterEvent* e) {
+    if (!e->mimeData()->hasUrls()) return;
+    for (const QUrl& u : e->mimeData()->urls()) {
+        if (isProjectFile(u.toLocalFile())) {
+            e->acceptProposedAction();
+            return;
+        }
+    }
+}
+
+void WelcomeWindow::dropEvent(QDropEvent* e) {
+    for (const QUrl& u : e->mimeData()->urls()) {
+        const QString path = u.toLocalFile();
+        if (isProjectFile(path) && QFile::exists(path)) {
+            saveAutoSettings();
+            m_projectPath = path;
+            e->acceptProposedAction();
+            accept();
+            return;
+        }
+    }
+}
+
 void WelcomeWindow::removeSelected() {
     QListWidgetItem* it = m_recent->currentItem();
     if (!it) return;
@@ -641,12 +696,14 @@ void WelcomeWindow::requestNewProject() {
     if (m_fps <= 0) m_fps = 30;
     m_projectName = m_name->text().trimmed();
     if (m_projectName.isEmpty()) m_projectName = tr("Meu projeto");
-    m_newRequested = true;
 
     QSettings s;
     s.setValue("lastWidth", m_w);
     s.setValue("lastHeight", m_h);
     s.setValue("lastFps", m_fps);
+    s.setValue("lastProjectName", m_projectName);
+
+    m_newRequested = true;
     accept();
 }
 
