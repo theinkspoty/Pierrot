@@ -60,11 +60,15 @@ string(TIMESTAMP PIERROT_BUILD_TIME "%Y-%m-%d %H:%M:%S")
 # depende dele; ninguém acima o inclui direto além de incluir seu header.
 set(LAARTMAN_SOURCES
     src/laartman/FFmpegDecoder.cpp
+    src/laartman/FFmpegDecoderOpen.cpp
+    src/laartman/FFmpegDecoderAudio.cpp
+    src/laartman/FFmpegDecoderProbe.cpp
     src/laartman/FFmpegEncoder.cpp
 )
 
 set(LAARTMAN_HEADERS
     src/laartman/FFmpegDecoder.h
+    src/laartman/FFmpegDecoderPriv.h
     src/laartman/FFmpegEncoder.h
 )
 
@@ -131,6 +135,10 @@ set(PIERROT_APP_SOURCES
     src/ui/monitor/PlaybackEngine.cpp
     src/ui/monitor/PreviewProfiler.cpp
     src/ui/monitor/PreviewWidget.cpp
+    src/ui/monitor/DecoderPool.cpp
+    src/ui/monitor/BgPrefetchWorker.cpp
+    src/ui/monitor/FrameWorker.cpp
+    src/ui/monitor/MonitorScrubBar.cpp
     src/ui/timeline/TlLog.cpp
     src/ui/monitor/UiDecode.cpp
     src/ui/mesa/PantaloneWidget.cpp
@@ -138,6 +146,7 @@ set(PIERROT_APP_SOURCES
     src/ui/dialogs/ProjectSettingsDialog.cpp
     src/ui/dialogs/SettingsDialog.cpp
     src/ui/core/Theme.cpp
+    src/ui/core/TechnicalWindow.cpp
     src/ui/core/JaTranslator.cpp
     src/ui/dialogs/TransformDialog.cpp
     src/ui/dialogs/MaskEditorDialog.cpp
@@ -163,6 +172,8 @@ set(PIERROT_APP_SOURCES
     src/ui/monitor/PreviewMonitor.cpp
     src/ui/panels/FileBrowserWidget.cpp
     src/ui/audio/MixerWidget.cpp
+    src/ui/audio/AudioFxDsp.cpp
+    src/ui/audio/AudioMixer.cpp
     src/ui/audio/EqualizerWidget.cpp
     src/ui/audio/EqCurveView.cpp
     src/ui/mesa/MesaWidget.cpp
@@ -188,6 +199,11 @@ set(PIERROT_APP_HEADERS
     src/ui/timeline/TimelineWidget.h
     src/ui/timeline/TimelineCommands.h
     src/ui/monitor/PreviewWidget.h
+    src/ui/monitor/DecoderPool.h
+    src/ui/monitor/BgPrefetchWorker.h
+    src/ui/monitor/PreviewDebug.h
+    src/ui/monitor/FrameWorker.h
+    src/ui/monitor/MonitorScrubBar.h
     src/ui/monitor/PlaybackEngine.h
     src/ui/monitor/PreviewMonitor.h
     src/ui/monitor/MonitorUtils.h
@@ -196,11 +212,14 @@ set(PIERROT_APP_HEADERS
     src/ui/dialogs/ProjectSettingsDialog.h
     src/ui/dialogs/SettingsDialog.h
     src/ui/core/Theme.h
+    src/ui/core/TechnicalWindow.h
     src/ui/dialogs/TransformDialog.h
     src/ui/dialogs/MaskEditorDialog.h
     src/ui/audio/AudioEffectsDialog.h
     src/ui/audio/TrackAudioFxDialog.h
     src/ui/audio/AudioFxHelpers.h
+    src/ui/audio/AudioFxDsp.h
+    src/ui/audio/AudioMixer.h
     src/ui/dialogs/TextEditorDialog.h
     src/ui/motion/LazziDock.h
     src/ui/motion/AnimPresetDock.h
@@ -399,6 +418,9 @@ add_executable(tst_exporter
     tests/tst_exporter.cpp
     src/colombina/models/Project.cpp
     src/laartman/FFmpegDecoder.cpp
+    src/laartman/FFmpegDecoderOpen.cpp
+    src/laartman/FFmpegDecoderAudio.cpp
+    src/laartman/FFmpegDecoderProbe.cpp
     src/colombina/render/MesaRenderer.cpp
     src/colombina/export/ProjectExporter.cpp
     src/colombina/ffmpeg/ProxyManager.cpp
@@ -454,6 +476,9 @@ add_test(NAME tst_crashreporter COMMAND tst_crashreporter)
 add_executable(tst_concurrency
     tests/tst_concurrency.cpp
     src/laartman/FFmpegDecoder.cpp
+    src/laartman/FFmpegDecoderOpen.cpp
+    src/laartman/FFmpegDecoderAudio.cpp
+    src/laartman/FFmpegDecoderProbe.cpp
 )
 target_include_directories(tst_concurrency PRIVATE src src/colombina/ofx/sdk)
 target_link_libraries(tst_concurrency PRIVATE
@@ -469,6 +494,45 @@ target_link_libraries(tst_concurrency PRIVATE
     ${CMAKE_DL_LIBS}
 )
 add_test(NAME tst_concurrency COMMAND tst_concurrency)
+
+# tst_decoderpool: lease/LRU/eviction do pool de decoders quentes (extraído
+# de PreviewWidget.cpp no F4). Sem ffmpeg no PATH só o caminho de falha do
+# open roda; com ele gera clipes sintéticos e exercita busy/eviction/concorrência.
+add_executable(tst_decoderpool
+    tests/tst_decoderpool.cpp
+    src/ui/monitor/DecoderPool.cpp
+    src/laartman/FFmpegDecoder.cpp
+    src/laartman/FFmpegDecoderOpen.cpp
+    src/laartman/FFmpegDecoderAudio.cpp
+    src/laartman/FFmpegDecoderProbe.cpp
+)
+target_include_directories(tst_decoderpool PRIVATE src)
+target_link_libraries(tst_decoderpool PRIVATE
+    ${PIERROT_QT_TEST}
+    ${PIERROT_QT_CORE}
+    ${PIERROT_QT_GUI}
+    FFmpeg::avformat
+    FFmpeg::avcodec
+    FFmpeg::avutil
+    FFmpeg::swscale
+    FFmpeg::swresample
+    ${CMAKE_DL_LIBS}
+)
+add_test(NAME tst_decoderpool COMMAND tst_decoderpool)
+
+# tst_audiofx_dsp: invariantes do DSP do preview (AudioFxDsp extraído no F4):
+# identidade de biquad 0 dB, passthrough neutro, ganho ↑ energia, clamp S16.
+# Base para o futuro tst_audiofx_parity (C++ fallback ↔ Rust) do ROADMAP.
+add_executable(tst_audiofx_dsp
+    tests/tst_audiofx_dsp.cpp
+)
+target_include_directories(tst_audiofx_dsp PRIVATE src)
+target_link_libraries(tst_audiofx_dsp PRIVATE
+    ${PIERROT_QT_TEST}
+    ${PIERROT_QT_CORE}
+    ${PIERROT_QT_GUI}
+)
+add_test(NAME tst_audiofx_dsp COMMAND tst_audiofx_dsp)
 
 # tst_encoder: ciclo encode→mux→decode do motor LaArtman. Gera quadros RGBA,
 # codifica num MP4 (libx264) e decodifica de volta; pula se o FFmpeg não tiver
@@ -489,6 +553,9 @@ add_executable(tst_audio_conform
     tests/tst_audio_conform.cpp
     src/colombina/ffmpeg/AudioConformCache.cpp
     src/laartman/FFmpegDecoder.cpp
+    src/laartman/FFmpegDecoderOpen.cpp
+    src/laartman/FFmpegDecoderAudio.cpp
+    src/laartman/FFmpegDecoderProbe.cpp
 )
 target_include_directories(tst_audio_conform PRIVATE src src/colombina/ofx/sdk)
 target_link_libraries(tst_audio_conform PRIVATE
@@ -526,6 +593,9 @@ add_executable(tst_export_pipeline
     tests/tst_export_pipeline.cpp
     src/colombina/models/Project.cpp
     src/laartman/FFmpegDecoder.cpp
+    src/laartman/FFmpegDecoderOpen.cpp
+    src/laartman/FFmpegDecoderAudio.cpp
+    src/laartman/FFmpegDecoderProbe.cpp
     src/colombina/render/MesaRenderer.cpp
     src/colombina/export/ProjectExporter.cpp
     src/colombina/ffmpeg/ProxyManager.cpp

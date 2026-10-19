@@ -41,7 +41,17 @@
 - **Workspaces nomeados** no menu **Exibir ▸ Workspaces** (estilo Premiere):
   layout de docks salvo por nome; o layout atual vira o workspace **Edição**.
 - **Presets fixos**: **Edição** (timeline + pool), **Áudio** (mixer + scopes),
-  **Composição** (Mesa + Pancrop), **Efeitos** (Efeitos + Express + Propriedades).
+  **Composição** (Mesa + Pancrop), **Efeitos** (Efeitos + Express + Propriedades),
+  **Bancada** (Source + Filtros + Scopes + mixer sob a timeline; inspirado na
+  bancada de editorial dos estúdios Disney):
+  - **2 telas**: o preview externo abre em tela cheia na secundária como
+    monitor de referência.
+  - **3+ telas**: janela principal no **centro**, **janela técnica** (segundo
+    QMainWindow com Mixer, Efeitos, Express e Analisadores por padrão) na
+    tela **esquerda** — menu "Painéis" dessa janela escolhe quais docks moram
+    lá (Equalizador, Propriedades, Source, Cor, Texto, Lazzi, Animação,
+    Histórico…), e eles continuam docks arrastáveis/tabificáveis; monitor de
+    referência em tela cheia na **direita**.
 - **Menu Exibir agrupado** por região (esquerda / direita / embaixo).
 - Layout persistido entre sessões; **Travar layout** (Ctrl+L) evita arrastar
   painéis sem querer.

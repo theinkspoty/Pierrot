@@ -52,6 +52,12 @@ public:
     // botões de loop/play do monitor principal).
     bool loopEnabled() const { return m_loopEnabled; }
     bool isPlaying() const { return m_playing; }
+    // Acesso somente-leitura ao estado do transporte (usado pelo
+    // MonitorScrubBar — extraído sem amizade, via getters).
+    Project* project() const { return m_project; }
+    double playhead() const { return m_playhead; }
+    double loopIn() const { return m_loopIn; }
+    double loopOut() const { return m_loopOut; }
 
     // Chamado pelo timeout do QTimer do widget.
     void tick();

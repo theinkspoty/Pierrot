@@ -36,6 +36,7 @@
 #include "ui/dialogs/ProjectSettingsDialog.h"
 #include "ui/dialogs/SettingsDialog.h"
 #include "ui/core/Theme.h"
+#include "ui/core/TechnicalWindow.h"
 #include "colombina/ofx/OfxPluginManager.h"
 
 #include <QInputDialog>
@@ -1048,6 +1049,12 @@ void MainWindow::captureCurrentWorkspace() {
 // layouts salvos de outras versões de kLayoutVersion.
 
 void MainWindow::applyWorkspacePreset(const QString& name) {
+    // Devolve os docks da janela técnica (preset Bancada) antes de rearranjar:
+    // todo preset começa com os painéis de volta na janela principal.
+    if (m_techWindow) {
+        m_techWindow->returnAllDocks();
+        m_techWindow->hide();
+    }
     auto show = [](QDockWidget* d, bool on) {
         if (!d) return;
         if (on) d->show();
@@ -1096,6 +1103,37 @@ void MainWindow::applyWorkspacePreset(const QString& name) {
         show(m_propsDock, true);
         if (m_effectsDock) m_effectsDock->raise();
         resizeDocks({m_effectsDock, m_expressDock, m_propsDock}, {280}, Qt::Horizontal);
+    } else if (name == QStringLiteral("Bancada")) {
+        // Bancada de editorial (referência: estúdios profissionais, ex. a
+        // bancada da Disney em "Shaping the Story"): centro = monitores
+        // Source + Program, esquerda = bins (Central de Mídias), direita =
+        // parte técnica (Filtros/Analisadores), baixo = timeline grande.
+        // Com 3+ telas o arranjo se estende: janela técnica (Mixer/Efeitos/
+        // Express/…) na tela esquerda, janela principal no centro e o monitor
+        // de REFERÊNCIA em tela cheia na direita (ver arrangeBancadaScreens).
+        show(m_sourceDock, true);
+        show(m_effectsDock, true);
+        show(m_scopesDock, true);
+        show(m_mixerDock, true);
+        if (m_sourceDock) m_sourceDock->raise();
+        if (m_effectsDock) m_effectsDock->raise();
+        const int nScreens = QGuiApplication::screens().size();
+        if (nScreens < 3) {
+            // Sem 3ª tela o mixer fica embaixo da timeline (na própria janela).
+            if (m_timelineDock && m_mixerDock)
+                splitDockWidget(m_timelineDock, m_mixerDock, Qt::Vertical);
+            resizeDocks({m_timelineDock, m_mixerDock}, {65, 35}, Qt::Vertical);
+        } else {
+            // Com 3ª tela mixer/efeitos/express/analisadores vão para a
+            // janela técnica; a timeline fica com a faixa inferior inteira.
+            show(m_expressDock, true);
+        }
+        resizeDocks({m_poolDock}, {340}, Qt::Horizontal);
+        // Monitor de referência: abre o preview externo (se ainda fechado) e,
+        // quando houver telas sobrando, o leva para lá em tela cheia.
+        if (m_monitorAction && !m_monitorAction->isChecked())
+            m_monitorAction->setChecked(true); // toggled → cria e mostra
+        arrangeBancadaScreens();
     } else {
         // Edição / default: timeline grande, pool à esquerda, resto fechado.
         resizeDocks({m_poolDock}, {420}, Qt::Horizontal);
@@ -1104,12 +1142,141 @@ void MainWindow::applyWorkspacePreset(const QString& name) {
     }
 }
 
+// Monitor de referência do preset "Bancada": se houver um segundo monitor,
+// leva o preview externo para lá em tela cheia (a janela fica "fora" da
+// bancada, como na referência dos estúdios). Sem segunda tela, não faz nada —
+// o usuário continua podendo arrastar a janela manualmente.
+void MainWindow::placeMonitorOnSecondaryScreen() {
+    if (!m_monitor) return;
+    QScreen* primary = QGuiApplication::screenAt(frameGeometry().center());
+    if (!primary) primary = QGuiApplication::primaryScreen();
+    QScreen* secondary = nullptr;
+    for (QScreen* s : QGuiApplication::screens()) {
+        if (s != primary) {
+            secondary = s;
+            break;
+        }
+    }
+    if (!secondary) return;
+    m_monitor->placeFullScreenOn(secondary);
+}
+
+// Bancada em 3+ telas: esquerda = janela técnica (Mixer/Efeitos/Express/…,
+// escolhível pelo menu "Painéis" da própria janela), centro = janela
+// principal, direita = monitor de referência. Com 1–2 telas, só o monitor de
+// referência na secundária (comportamento original).
+void MainWindow::arrangeBancadaScreens() {
+    QList<QScreen*> screens = QGuiApplication::screens();
+    std::sort(screens.begin(), screens.end(),
+              [](QScreen* a, QScreen* b) { return a->geometry().x() < b->geometry().x(); });
+    if (screens.isEmpty()) return;
+
+    if (screens.size() >= 3) {
+        QScreen* left = screens.first();
+        QScreen* right = screens.last();
+        QScreen* center = screens[screens.size() / 2];
+
+        // Janela principal no centro da bancada.
+        setGeometry(center->availableGeometry());
+        showMaximized();
+
+        // Janela técnica à esquerda com o set técnico padrão. O usuário
+        // refina pelo menu "Painéis" (mistura/move docks entre as janelas).
+        ensureTechnicalWindow();
+        for (QDockWidget* d : {m_mixerDock, m_effectsDock, m_expressDock, m_scopesDock})
+            if (d) moveDockToTechnical(d, true);
+        m_techWindow->setGeometry(left->availableGeometry());
+        m_techWindow->show();
+        m_techWindow->raise();
+
+        // Monitor de referência à direita, em tela cheia.
+        if (m_monitor && !m_monitor->isVisible() && m_monitorAction
+            && !m_monitorAction->isChecked())
+            m_monitorAction->setChecked(true);
+        if (m_monitor) m_monitor->placeFullScreenOn(right);
+    } else {
+        // 1–2 telas: sem janela técnica; referência na tela secundária.
+        if (m_techWindow) {
+            m_techWindow->returnAllDocks();
+            m_techWindow->hide();
+        }
+        if (m_monitorAction && !m_monitorAction->isChecked())
+            m_monitorAction->setChecked(true);
+        placeMonitorOnSecondaryScreen();
+    }
+}
+
+void MainWindow::ensureTechnicalWindow() {
+    if (m_techWindow) return;
+    m_techWindow = new TechnicalWindow; // janela de nível superior
+    // Candidatos: tudo que é "parte técnica" da bancada. O menu Painéis da
+    // janela lista todos; o default (movido no arrange) é Mixer/Efeitos/
+    // Express/Analisadores.
+    QVector<QPair<QDockWidget*, QString>> cands = {
+        {m_mixerDock, tr("Mixer")},
+        {m_equalizerDock, tr("Equalizador")},
+        {m_effectsDock, tr("Efeitos")},
+        {m_expressDock, tr("Express")},
+        {m_scopesDock, tr("Analisadores")},
+        {m_propsDock, tr("Propriedades")},
+        {m_sourceDock, tr("Source")},
+        {m_colorDock, tr("Cor")},
+        {m_textDock, tr("Texto")},
+        {m_lazziDock, tr("Lazzi")},
+        {m_animPresetDock, tr("Animação")},
+        {m_histDock, tr("Histórico")},
+    };
+    m_techWindow->setCandidates(cands, [this](QDockWidget* d, bool in) {
+        moveDockToTechnical(d, in);
+    });
+}
+
+// Move um dock entre a janela principal e a técnica. Os docks continuam os
+// mesmos objetos (sinais/slots intactos) — só trocam de QMainWindow.
+void MainWindow::moveDockToTechnical(QDockWidget* dock, bool toTechnical) {
+    if (!dock) return;
+    ensureTechnicalWindow();
+    const bool alreadyIn = m_techWindow->hasDock(dock)
+                           || dock->parentWidget() == m_techWindow;
+    if (toTechnical) {
+        if (alreadyIn) return;
+        removeDockWidget(dock);
+        m_techWindow->addDockWidget(Qt::LeftDockWidgetArea, dock);
+        dock->show();
+    } else {
+        if (!alreadyIn && dock->parentWidget() != m_techWindow) {
+            // Nunca foi para lá (ou já voltou): só garante na janela principal.
+            return;
+        }
+        m_techWindow->removeDockWidget(dock);
+        addDockWidget(dockHomeArea(dock), dock);
+        dock->show();
+        // Restaura as abas canônicas quando o parceiro já voltou.
+        auto back = [this](QDockWidget* d) {
+            return d && d->parentWidget() != m_techWindow;
+        };
+        if (dock == m_expressDock && back(m_effectsDock))
+            tabifyDockWidget(m_effectsDock, m_expressDock);
+        if (dock == m_equalizerDock && back(m_mixerDock))
+            tabifyDockWidget(m_mixerDock, m_equalizerDock);
+        if (dock == m_scopesDock && back(m_mesaDock))
+            tabifyDockWidget(m_mesaDock, m_scopesDock);
+    }
+}
+
+Qt::DockWidgetArea MainWindow::dockHomeArea(QDockWidget* dock) const {
+    if (dock == m_mixerDock || dock == m_equalizerDock)
+        return Qt::BottomDockWidgetArea;
+    return Qt::RightDockWidgetArea;
+}
+
 void MainWindow::seedWorkspacePresets() {
     QSettings settings;
     QStringList names = settings.value("workspaces/names").toStringList();
     bool changed = false;
     for (const QString& p : {QStringLiteral("Edição"), QStringLiteral("Áudio"),
-                             QStringLiteral("Composição"), QStringLiteral("Efeitos")}) {
+                             QStringLiteral("Composição"), QStringLiteral("Efeitos"),
+                             QStringLiteral("Bancada")}) {
         if (!names.contains(p)) {
             names.append(p);
             changed = true;
@@ -1123,7 +1290,8 @@ void MainWindow::applyWorkspace(const QString& name) {
     // Presets fixos: rearranjo por show/hide (independente de kLayoutVersion).
     static const QSet<QString> presets = {
         QStringLiteral("Edição"), QStringLiteral("Áudio"),
-        QStringLiteral("Composição"), QStringLiteral("Efeitos")};
+        QStringLiteral("Composição"), QStringLiteral("Efeitos"),
+        QStringLiteral("Bancada")};
     if (presets.contains(name)) {
         captureCurrentWorkspace();
         m_restoringSettings = true;
@@ -1201,7 +1369,8 @@ void MainWindow::rebuildWorkspaceMenu() {
     QMenu* presetMenu = m_workspaceMenu->addMenu(tr("Presets"));
     const QStringList presetNames = {
         QStringLiteral("Edição"), QStringLiteral("Áudio"),
-        QStringLiteral("Composição"), QStringLiteral("Efeitos")};
+        QStringLiteral("Composição"), QStringLiteral("Efeitos"),
+        QStringLiteral("Bancada")};
     for (const QString& p : presetNames) {
         QAction* act = presetMenu->addAction(p);
         connect(act, &QAction::triggered, this, [this, p]() { applyWorkspace(p); });
@@ -2194,7 +2363,10 @@ void MainWindow::createActions() {
             tr("<b>Pierrot</b> — editor de vídeo de código aberto<br>"
                "Versão ") +
             QString::fromLatin1(PIERROT_VERSION) +
-            tr(" — Protótipo 4<br><br>"
+            tr(" — Protótipo 4<br>"
+               "Motores: <b>Colombina</b> v" PIERROT_COLOMBINA_VERSION
+               " (kernel) · <b>Laartman</b> v" PIERROT_LAARTMAN_VERSION
+               " (codecs)<br><br>"
                "<b style='color:#c07800'>Ainda em desenvolvimento:</b> mesa, "
                "velocidade, pivot, analisador e workspace.<br><br>"
                "Pierrot é um editor de vídeo inspirado em 2 programas \"Sony Vegas 8\" "

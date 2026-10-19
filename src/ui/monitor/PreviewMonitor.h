@@ -26,6 +26,7 @@ class QMouseEvent;
 class QWheelEvent;
 class QEnterEvent;
 class QEvent;
+class QScreen;
 
 // Janela dedicada de PREVIEW EXTERNO: mostra o mesmo sinal de vídeo do monitor
 // principal (a composição final, sem overlays) em uma janela própria — arraste
@@ -62,6 +63,11 @@ signals:
     void togglePlayRequested();
     void stepRequested(int dir);      // -1 = quadro anterior, +1 = seguinte
     void loopToggled(bool enabled);
+
+public:
+    // Monitor de referência (preset "Bancada"): move a janela para a tela
+    // dada e entra em tela cheia nela. No-op se `screen` for nulo.
+    void placeFullScreenOn(QScreen* screen);
 
 protected:
     void paintEvent(QPaintEvent*) override;

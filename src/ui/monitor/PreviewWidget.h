@@ -90,6 +90,24 @@ public:
     // monitor, com alças arrastáveis (mover, redimensionar, rotacionar).
     // `masks` vazio ou `clipId` vazio desliga o overlay.
     void setMaskOverlay(const QString& clipId, const QVector<Mask>& masks);
+
+    // Efeitos estáticos compartilhados com a thread de vídeo (FrameWorker,
+    // extraído para ui/monitor/FrameWorker.h): funções puras sobre QImage+
+    // Clip, sem estado da widget — por isso são públicas e não precisam de
+    // amizade.
+    static void applyBasicEffectsOn(QImage& img, const Clip& c, double rel = 0.0);
+    // MotiOn (blur de movimento por amostragem) do clipe — estático p/ o worker.
+    static void applyMotionOn(QImage& img, const Clip& c);
+    // MotiOn + OFX + frei0r do clipe (efeitos "temporais" que vão p/ o worker
+    // junto com o crop). `absTime` = tempo da timeline (OFX); `rel` = tempo
+    // relativo do clipe (frei0r). Managers podem ser nulos (pula aquele estágio).
+    static void applyTemporalFxOn(QImage& img, const Clip& c, double absTime, double rel,
+                                  OfxPluginManager* ofxMgr, Frei0rPluginManager* frei0rMgr);
+    // Aplica as máscaras (shapes rect/ellipse) do clipe ao quadro, multiplicando
+    // o alpha pela cobertura (feather + invert, em união). `rel` = tempo
+    // relativo do clipe (avalia os keyframes das máscaras).
+    static void applyMasks(QImage& img, const Clip& c, double rel);
+    static QImage applyCropTo(const QImage& img, int cL, int cR, int cT, int cB);
 public slots:
     // Transporte: repassa ao PlaybackEngine. Necessário para os connect() de
     // QAction/QPushButton continuarem funcionando via slots do widget.
@@ -117,11 +135,6 @@ protected:
     void mouseReleaseEvent(QMouseEvent*) override;
     double audioClockSec() const override;
  private:
-    // A thread de vídeo (FrameWorker) precisa chamar os estáticos de efeito
-    // (applyCropTo/applyBasicEffectsOn) para aplicar o caminho rápido.
-    friend class FrameWorker;
-    // A faixa de scrub lê playhead/duração/loop/marcadores direto do dono.
-    friend class MonitorScrubBar;
     // "HH:MM:SS:FF / HH:MM:SS:FF" (posição / duração da sequência).
     void updateTimecodeLabel();
     // Chip "720p"/"4K" no canto do vídeo (qualidade de decodificação atual).
@@ -146,19 +159,6 @@ protected:
     void updateFrame();
     void applyCrop();
     void applyBasicEffects(QImage& img);
-    static void applyBasicEffectsOn(QImage& img, const Clip& c, double rel = 0.0);
-    // MotiOn (blur de movimento por amostragem) do clipe — estático p/ o worker.
-    static void applyMotionOn(QImage& img, const Clip& c);
-    // MotiOn + OFX + frei0r do clipe (efeitos "temporais" que vão p/ o worker
-    // junto com o crop). `absTime` = tempo da timeline (OFX); `rel` = tempo
-    // relativo do clipe (frei0r). Managers podem ser nulos (pula aquele estágio).
-    static void applyTemporalFxOn(QImage& img, const Clip& c, double absTime, double rel,
-                                  OfxPluginManager* ofxMgr, Frei0rPluginManager* frei0rMgr);
-    // Aplica as máscaras (shapes rect/ellipse) do clipe ao quadro, multiplicando
-    // o alpha pela cobertura (feather + invert, em união). `rel` = tempo
-    // relativo do clipe (avalia os keyframes das máscaras).
-    static void applyMasks(QImage& img, const Clip& c, double rel);
-    static QImage applyCropTo(const QImage& img, int cL, int cR, int cT, int cB);
     // Pedidos asíncronos de quadro: primário (clipe do topo) e camadas
     // inferiores (empilhamento multi-faixa). clipId identifica o destino.
     void requestFrame(const QString& clipId, const QString& path, double t, int maxW,

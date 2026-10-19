@@ -54,6 +54,7 @@ class QComboBox;
 class ScopeWidget;
 class MaskEditorDialog;
 class PreviewMonitor;
+class TechnicalWindow;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -112,10 +113,22 @@ private:
     void applyWorkspace(const QString& name);
     void captureCurrentWorkspace();
     void saveWorkspaceAs(const QString& name);
-    // Presets fixos estilo Premiere (Edição/Áudio/Composição/Efeitos):
+    // Presets fixos estilo Premiere (Edição/Áudio/Composição/Efeitos/Bancada):
     // mostram/escondem docks e definem larguras — sem restoreState, para
     // não depender de kLayoutVersion.
     void applyWorkspacePreset(const QString& name);
+    // Leva o preview externo (monitor de referência) para a tela secundária,
+    // em tela cheia — usado pelo preset "Bancada" (bancada de editorial).
+    void placeMonitorOnSecondaryScreen();
+    // Bancada em 3+ telas: janela técnica (segundo QMainWindow) na tela da
+    // esquerda com Mixer/Efeitos/Express/…, janela principal no centro,
+    // monitor de referência na direita.
+    void arrangeBancadaScreens();
+    void ensureTechnicalWindow();
+    void moveDockToTechnical(QDockWidget* dock, bool toTechnical);
+    // Área canônica de retorno de um dock para a janela principal (usada
+    // quando o dock sai da janela técnica).
+    Qt::DockWidgetArea dockHomeArea(QDockWidget* dock) const;
     void seedWorkspacePresets();
     QStringList workspaceNames() const;
     void createActions();
@@ -311,4 +324,5 @@ private:
     OfxPluginManager* m_ofxManager = nullptr;
     Frei0rPluginManager* m_frei0rManager = nullptr;
     PreviewMonitor* m_monitor = nullptr; // preview externo (janela própria/2º monitor)
+    TechnicalWindow* m_techWindow = nullptr; // painéis técnicos (Bancada, 3ª tela)
 };

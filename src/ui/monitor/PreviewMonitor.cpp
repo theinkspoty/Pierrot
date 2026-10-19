@@ -20,6 +20,7 @@
 #include <QPixmap>
 #include <QPolygonF>
 #include <QPushButton>
+#include <QScreen>
 #include <QResizeEvent>
 #include <QSignalBlocker>
 #include <QTimer>
@@ -421,6 +422,15 @@ void PreviewMonitor::enterEvent(QEnterEvent* e) {
 void PreviewMonitor::leaveEvent(QEvent* e) {
     if (m_fullScreen) scheduleAutoHide();
     QWidget::leaveEvent(e);
+}
+
+void PreviewMonitor::placeFullScreenOn(QScreen* screen) {
+    if (!screen) return;
+    // showFullScreen() maximiza na tela em que a janela está: move primeiro,
+    // depois aplica o modo tela cheia.
+    setFullScreen(false);
+    setGeometry(screen->geometry());
+    setFullScreen(true);
 }
 
 void PreviewMonitor::setFullScreen(bool fs) {
