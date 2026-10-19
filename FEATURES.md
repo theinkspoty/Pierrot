@@ -237,6 +237,12 @@
 | `,` | Inserir trecho do Source no playhead (Insert) |
 | `.` | Sobrescrever timeline no playhead com o Source (Overwrite) |
 
+Atalhos configuráveis em **Configurações ▸ Atalhos do teclado**: clique num
+atalho e pressione a nova combinação. Perfis: o **Padrão (Pierrot)** é o
+único embutido; a **engrenagem** ao lado do seletor cria/gerencia perfis do
+usuário (salvar como novo, atualizar, renomear, excluir, exportar/importar
+arquivo). O perfil ativo é restaurado na próxima abertura.
+
 ## Idioma
 
 - **Português (Brasil)** e **日本語** (Ajustes ▸ Interface ▸ Idioma). O japonês

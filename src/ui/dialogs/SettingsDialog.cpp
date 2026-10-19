@@ -38,6 +38,10 @@
 #include <QFileDialog>
 #include <QLineEdit>
 #include <QProcess>
+#include <QInputDialog>
+#include <QMenu>
+#include <QToolButton>
+#include <QSignalBlocker>
 
 // Registro dos atalhos remapeáveis (id, rótulo, padrão, categoria).
 namespace {
@@ -80,6 +84,69 @@ constexpr int kShortcutCount = (int)(sizeof(kShortcutDefs) / sizeof(kShortcutDef
 static QString shortcutText(const ShortcutDef& sd) {
     const QString v = QSettings().value(QString("shortcuts/%1").arg(QLatin1String(sd.id))).toString();
     return v.isEmpty() ? QKeySequence(QString::fromUtf8(sd.def)).toString() : v;
+}
+
+// ── Perfis de atalhos ───────────────────────────────────────────────────
+// Todo perfil vive em shortcutProfiles/<nome>/<id> (lista de nomes em
+// shortcutProfiles/names, ativo em "shortcutsProfile"). O "Pierrot" é o
+// único embutido — não pode ser renomeado/excluído — e nasce por migração
+// a partir das chaves vivas shortcuts/<id> (legado de antes dos perfis).
+// As chaves shortcuts/<id> continuam sendo o espelho "vivo" que o app lê
+// (appKey), gravado no OK a partir do perfil ativo.
+static const QString kPierrotProfile = QStringLiteral("Pierrot");
+
+static QStringList shortcutProfileNames() {
+    return QSettings().value(QStringLiteral("shortcutProfiles/names")).toStringList();
+}
+
+static void setShortcutProfileNames(const QStringList& names) {
+    QSettings().setValue(QStringLiteral("shortcutProfiles/names"), names);
+}
+
+// Mapa id → tecla de um perfil (só overrides; o que falta = padrão da def).
+static QMap<QString, QString> loadShortcutProfileMap(const QString& name) {
+    QSettings s;
+    QMap<QString, QString> m;
+    for (int i = 0; i < kShortcutCount; ++i) {
+        const QString id = QString::fromLatin1(kShortcutDefs[i].id);
+        const QString v = s.value(QStringLiteral("shortcutProfiles/%1/%2").arg(name, id))
+                              .toString();
+        if (!v.isEmpty()) m.insert(id, v);
+    }
+    return m;
+}
+
+// Grava (ou apaga, se o id não está no mapa) as entradas de um perfil.
+static void saveShortcutProfileMap(const QString& name, const QMap<QString, QString>& m) {
+    QSettings s;
+    for (int i = 0; i < kShortcutCount; ++i) {
+        const QString id = QString::fromLatin1(kShortcutDefs[i].id);
+        const QString key = QStringLiteral("shortcutProfiles/%1/%2").arg(name, id);
+        if (m.contains(id)) s.setValue(key, m.value(id));
+        else s.remove(key);
+    }
+}
+
+// Apaga todas as chaves de um perfil do usuário (exclusão).
+static void removeShortcutProfile(const QString& name) {
+    QSettings s;
+    for (int i = 0; i < kShortcutCount; ++i)
+        s.remove(QStringLiteral("shortcutProfiles/%1/%2")
+                     .arg(name, QString::fromLatin1(kShortcutDefs[i].id)));
+}
+
+// Migração única: na primeira execução com o sistema de perfis, o que
+// estiver nas chaves vivas (shortcuts/<id>) vira o perfil Pierrot.
+static void migrateLegacyShortcuts() {
+    QSettings s;
+    if (s.contains(QStringLiteral("shortcutsProfile"))) return;
+    for (int i = 0; i < kShortcutCount; ++i) {
+        const QString id = QString::fromLatin1(kShortcutDefs[i].id);
+        const QString v = s.value(QStringLiteral("shortcuts/%1").arg(id)).toString();
+        if (!v.isEmpty())
+            s.setValue(QStringLiteral("shortcutProfiles/%1/%2").arg(kPierrotProfile, id), v);
+    }
+    s.setValue(QStringLiteral("shortcutsProfile"), kPierrotProfile);
 }
 }
 
@@ -588,89 +655,35 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
 }
 
 void SettingsDialog::buildShortcutsPage() {
+    migrateLegacyShortcuts();
     auto* page = new QWidget;
     auto* v = new QVBoxLayout(page);
     v->setContentsMargins(4, 4, 4, 4);
 
-    // ── Perfis de atalhos (presets) ────────────────────────────────────
+    // ── Perfil de atalhos ───────────────────────────────────────────────
+    // Só o "Padrão (Pierrot)" é embutido; os demais perfis são criados e
+    // gerenciados pelo usuário pela engrenagem ao lado (salvar como novo,
+    // atualizar, renomear, excluir, exportar/importar arquivo).
     auto* profRow = new QHBoxLayout;
     auto* profLabel = new QLabel(tr("Perfil:"), page);
     auto* profCombo = new QComboBox(page);
-    profCombo->addItem(tr("Padrão (Pierrot)"), "pierrot");
-    profCombo->addItem(tr("Estilo Premiere"), "premiere");
-    profCombo->addItem(tr("Estilo Vegas"), "vegas");
-    auto* profApply = new QPushButton(tr("Aplicar perfil"), page);
-    auto* profExport = new QPushButton(tr("Exportar…"), page);
-    auto* profImport = new QPushButton(tr("Importar…"), page);
+    profCombo->addItem(tr("Padrão (Pierrot)"), kPierrotProfile);
+    for (const QString& n : shortcutProfileNames())
+        profCombo->addItem(n, n);
+    auto* profGear = new QToolButton(page);
+    profGear->setText(QStringLiteral("⚙"));
+    profGear->setToolTip(tr("Gerenciar perfis de atalhos"));
+    profGear->setAutoRaise(true);
+    profGear->setPopupMode(QToolButton::InstantPopup);
+    auto* gearMenu = new QMenu(profGear);
+    profGear->setMenu(gearMenu);
     profRow->addWidget(profLabel);
     profRow->addWidget(profCombo, 1);
-    profRow->addWidget(profApply);
-    profRow->addWidget(profExport);
-    profRow->addWidget(profImport);
+    profRow->addWidget(profGear);
     profRow->addStretch(1);
 
-    // Perfis: id → tecla. O que não está no mapa volta ao padrão (def).
-    const auto presetFor = [](const QString& profile) -> QHash<QString, QString> {
-        QHash<QString, QString> m;
-        if (profile == QLatin1String("premiere")) {
-            m = {
-                {"new", "Ctrl+N"}, {"open", "Ctrl+O"}, {"save", "Ctrl+S"},
-                {"saveas", "Ctrl+Shift+S"}, {"import", "Ctrl+I"}, {"export", "Ctrl+M"},
-                {"undo", "Ctrl+Z"}, {"redo", "Ctrl+Shift+Z"}, {"delete", "Del"},
-                {"cut", "Ctrl+K"}, // Premiere: razor = C, mas Ctrl+K é add edit
-                {"tool0", "V"}, {"tool1", "V"}, {"tool2", "C"},
-                {"tool3", "P"}, {"tool4", "Z"}, {"tool5", "N"},
-                {"tool6", "N"}, {"tool7", "Y"}, {"tool8", "U"},
-                {"tool9", "W"}, {"snap", "S"},
-                {"play", "Space"}, {"shuttleRev", "J"}, {"shuttleFwd", "L"},
-                {"shuttlePause", "K"}, {"stepL", "Left"}, {"stepR", "Right"},
-                {"nudgeL", ","}, {"nudgeR", "."},
-                {"goStart", "Home"}, {"goEnd", "End"},
-            };
-        } else if (profile == QLatin1String("vegas")) {
-            m = {
-                {"new", "Ctrl+N"}, {"open", "Ctrl+O"}, {"save", "Ctrl+S"},
-                {"saveas", "Ctrl+Shift+S"}, {"import", "Ctrl+I"}, {"export", "Ctrl+E"},
-                {"undo", "Ctrl+Z"}, {"redo", "Ctrl+Y"}, {"delete", "Del"},
-                {"cut", "S"},
-                {"tool0", "Ctrl+D"}, {"tool1", "Ctrl+D"}, {"tool2", "S"},
-                {"tool3", "E"}, {"tool4", "Z"}, {"tool5", "Ctrl+Q"},
-                {"tool6", "Ctrl+T"}, {"tool7", "Ctrl+Alt+Y"}, {"tool8", "Ctrl+U"},
-                {"tool9", "Ctrl+Alt+Q"}, {"snap", "Ctrl+Shift+G"},
-                {"play", "Space"}, {"shuttleRev", "J"}, {"shuttleFwd", "L"},
-                {"shuttlePause", "K"}, {"stepL", "Left"}, {"stepR", "Right"},
-                {"nudgeL", "Alt+Left"}, {"nudgeR", "Alt+Right"},
-                {"goStart", "Home"}, {"goEnd", "End"},
-            };
-        }
-        return m; // pierrot = vazio (usa defs)
-    };
-
-    connect(profApply, &QPushButton::clicked, this, [this, profCombo, presetFor]() {
-        const QHash<QString, QString> hm = presetFor(profCombo->currentData().toString());
-        m_shortcutMap.clear();
-        for (auto it = hm.constBegin(); it != hm.constEnd(); ++it)
-            m_shortcutMap.insert(it.key(), it.value());
-        // Atualiza TODAS as linhas.
-        for (int r = 0; r < m_shortcuts->topLevelItemCount(); ++r) {
-            QTreeWidgetItem* cat = m_shortcuts->topLevelItem(r);
-            for (int c = 0; c < cat->childCount(); ++c) {
-                QTreeWidgetItem* it = cat->child(c);
-                const QString id = it->data(0, Qt::UserRole).toString();
-                for (int i = 0; i < kShortcutCount; ++i)
-                    if (QString::fromLatin1(kShortcutDefs[i].id) == id) {
-                        const QString v = m_shortcutMap.value(id);
-                        it->setText(1, v.isEmpty()
-                                        ? QKeySequence(QString::fromUtf8(kShortcutDefs[i].def)).toString()
-                                        : v);
-                        break;
-                    }
-            }
-        }
-    });
-
-    // Exportar atalhos como JSON simples (id=seq por linha).
-    connect(profExport, &QPushButton::clicked, this, [this]() {
+    // Exportar atalhos como texto simples (id=seq por linha).
+    auto doExport = [this]() {
         const QString path = QFileDialog::getSaveFileName(
             this, tr("Exportar atalhos"), QStringLiteral("pierrot-atalhos.txt"),
             tr("Texto (*.txt)"));
@@ -684,10 +697,11 @@ void SettingsDialog::buildShortcutsPage() {
                                                    QKeySequence(QString::fromUtf8(sd.def)).toString());
             f.write(QByteArray(sd.id) + "=" + v.toUtf8() + "\n");
         }
-    });
+    };
 
-    // Importar atalhos de um arquivo id=seq.
-    connect(profImport, &QPushButton::clicked, this, [this]() {
+    // Importar atalhos de um arquivo id=seq (preenche o mapa em memória;
+    // vira perfil do usuário ao "Salvar como novo perfil…").
+    auto doImport = [this]() {
         const QString path = QFileDialog::getOpenFileName(
             this, tr("Importar atalhos"), QString(), tr("Texto (*.txt)"));
         if (path.isEmpty()) return;
@@ -705,22 +719,93 @@ void SettingsDialog::buildShortcutsPage() {
                 if (QLatin1String(kShortcutDefs[i].id) == id) { known = true; break; }
             if (known) m_shortcutMap.insert(id, seq);
         }
-        // Atualiza todas as linhas.
-        for (int r = 0; r < m_shortcuts->topLevelItemCount(); ++r) {
-            QTreeWidgetItem* cat = m_shortcuts->topLevelItem(r);
-            for (int c = 0; c < cat->childCount(); ++c) {
-                QTreeWidgetItem* it = cat->child(c);
-                const QString id = it->data(0, Qt::UserRole).toString();
-                for (int i = 0; i < kShortcutCount; ++i)
-                    if (QString::fromLatin1(kShortcutDefs[i].id) == id) {
-                        const QString v = m_shortcutMap.value(id);
-                        it->setText(1, v.isEmpty()
-                                        ? QKeySequence(QString::fromUtf8(kShortcutDefs[i].def)).toString()
-                                        : v);
-                        break;
-                    }
+        refreshAllShortcutRows();
+    };
+
+    // Engrenagem: reconstruída a cada abertura, com as ações válidas para o
+    // perfil selecionado (Pierrot não renomeia/exclui).
+    connect(gearMenu, &QMenu::aboutToShow, this, [this, profCombo, gearMenu,
+                                                  doExport, doImport]() {
+        gearMenu->clear();
+        const QString cur = profCombo->currentData().toString();
+        const bool isUser = !cur.isEmpty() && cur != kPierrotProfile;
+
+        gearMenu->addAction(tr("Salvar como novo perfil…"), this, [this, profCombo]() {
+            bool ok = false;
+            const QString name = QInputDialog::getText(
+                this, tr("Novo perfil"), tr("Nome do perfil:"),
+                QLineEdit::Normal, QString(), &ok).trimmed();
+            if (!ok || name.isEmpty()) return;
+            if (name == kPierrotProfile) {
+                QMessageBox::information(this, tr("Novo perfil"),
+                    tr("\"Pierrot\" é o perfil padrão e não pode ser sobrescrito."));
+                return;
             }
+            if (shortcutProfileNames().contains(name)
+                && QMessageBox::question(this, tr("Novo perfil"),
+                        tr("O perfil \"%1\" já existe. Sobrescrever?").arg(name))
+                       != QMessageBox::Yes)
+                return;
+            saveShortcutProfileMap(name, m_shortcutMap);
+            QStringList names = shortcutProfileNames();
+            if (!names.contains(name)) {
+                names << name;
+                setShortcutProfileNames(names);
+            }
+            const QSignalBlocker b(profCombo);
+            if (profCombo->findData(name) < 0) profCombo->addItem(name, name);
+            profCombo->setCurrentIndex(profCombo->findData(name));
+            m_activeProfile = name;
+        });
+        if (isUser) {
+            gearMenu->addAction(tr("Atualizar perfil…"), this, [this, cur]() {
+                saveShortcutProfileMap(cur, m_shortcutMap);
+            });
+            gearMenu->addAction(tr("Renomear perfil…"), this, [this, profCombo, cur]() {
+                bool ok = false;
+                const QString name = QInputDialog::getText(
+                    this, tr("Renomear perfil"), tr("Novo nome:"),
+                    QLineEdit::Normal, cur, &ok).trimmed();
+                if (!ok || name.isEmpty() || name == cur || name == kPierrotProfile)
+                    return;
+                if (shortcutProfileNames().contains(name)) {
+                    QMessageBox::warning(this, tr("Renomear perfil"),
+                        tr("Já existe um perfil chamado \"%1\".").arg(name));
+                    return;
+                }
+                // Copia as chaves para o novo nome e apaga as antigas.
+                saveShortcutProfileMap(name, m_shortcutMap);
+                removeShortcutProfile(cur);
+                QStringList names = shortcutProfileNames();
+                names.removeAll(cur);
+                names << name;
+                setShortcutProfileNames(names);
+                const QSignalBlocker b(profCombo);
+                const int idx = profCombo->findData(cur);
+                if (idx >= 0) {
+                    profCombo->setItemText(idx, name);
+                    profCombo->setItemData(idx, name);
+                }
+                m_activeProfile = name;
+            });
+            gearMenu->addAction(tr("Excluir perfil…"), this, [this, profCombo, cur]() {
+                if (QMessageBox::question(this, tr("Excluir perfil"),
+                        tr("Excluir o perfil \"%1\"?").arg(cur))
+                    != QMessageBox::Yes)
+                    return;
+                removeShortcutProfile(cur);
+                QStringList names = shortcutProfileNames();
+                names.removeAll(cur);
+                setShortcutProfileNames(names);
+                const QSignalBlocker b(profCombo);
+                profCombo->removeItem(profCombo->findData(cur));
+                profCombo->setCurrentIndex(0); // Pierrot
+                loadShortcutProfile(kPierrotProfile);
+            });
         }
+        gearMenu->addSeparator();
+        gearMenu->addAction(tr("Exportar atalhos…"), this, doExport);
+        gearMenu->addAction(tr("Importar atalhos…"), this, doImport);
     });
 
     m_shortcuts = new QTreeWidget(page);
@@ -770,9 +855,45 @@ void SettingsDialog::buildShortcutsPage() {
     v->addWidget(reset, 0, Qt::AlignLeft);
     m_stack->addWidget(page);
 
+    // Perfil ativo (ou Pierrot na primeira vez) → mapa em memória + linhas.
+    const QString active = QSettings().value(QStringLiteral("shortcutsProfile"),
+                                             kPierrotProfile).toString();
+    const int idx = profCombo->findData(active);
+    profCombo->setCurrentIndex(idx >= 0 ? idx : 0);
+    loadShortcutProfile(profCombo->currentData().toString());
+    // Troca de perfil = carrega o mapa dele na tabela (edições não salvas do
+    // perfil anterior se perdem — o esperado de um seletor de perfil).
+    connect(profCombo, &QComboBox::currentIndexChanged, this, [this, profCombo]() {
+        loadShortcutProfile(profCombo->currentData().toString());
+    });
+
     m_shortcuts->setFocus();
     if (m_shortcuts->topLevelItemCount() > 0)
         m_shortcuts->setCurrentItem(m_shortcuts->topLevelItem(0)->child(0));
+}
+
+void SettingsDialog::loadShortcutProfile(const QString& name) {
+    m_activeProfile = name;
+    m_shortcutMap = loadShortcutProfileMap(name);
+    refreshAllShortcutRows();
+}
+
+void SettingsDialog::refreshAllShortcutRows() {
+    for (int r = 0; r < m_shortcuts->topLevelItemCount(); ++r) {
+        QTreeWidgetItem* cat = m_shortcuts->topLevelItem(r);
+        for (int c = 0; c < cat->childCount(); ++c) {
+            QTreeWidgetItem* it = cat->child(c);
+            const QString id = it->data(0, Qt::UserRole).toString();
+            for (int i = 0; i < kShortcutCount; ++i)
+                if (QString::fromLatin1(kShortcutDefs[i].id) == id) {
+                    const QString v = m_shortcutMap.value(id);
+                    it->setText(1, v.isEmpty()
+                                    ? QKeySequence(QString::fromUtf8(kShortcutDefs[i].def)).toString()
+                                    : v);
+                    break;
+                }
+        }
+    }
 }
 
 void SettingsDialog::refreshShortcutRow() {
@@ -848,8 +969,19 @@ void SettingsDialog::accept() {
     s.setValue("ofxSearchPaths", ofxPaths);
     s.setValue("exportDefaultDirEnabled", m_exportDirEnabled->isChecked());
     s.setValue("exportDefaultDir", m_exportDirEdit->text().trimmed());
-    for (auto it = m_shortcutMap.constBegin(); it != m_shortcutMap.constEnd(); ++it)
-        s.setValue(QString("shortcuts/%1").arg(it.key()), it.value());
+    // Atalhos: grava o perfil ativo (qualquer um, inclusive Pierrot) e o
+    // espelho vivo que o app lê. Remove as chaves que voltaram ao padrão
+    // (sem isto o "Restaurar padrão" não persistia e o valor antigo voltava
+    // no restart).
+    s.setValue(QStringLiteral("shortcutsProfile"), m_activeProfile);
+    saveShortcutProfileMap(m_activeProfile, m_shortcutMap);
+    for (int i = 0; i < kShortcutCount; ++i) {
+        const QString id = QString::fromLatin1(kShortcutDefs[i].id);
+        const QString key = QStringLiteral("shortcuts/%1").arg(id);
+        const QString v = m_shortcutMap.value(id);
+        if (v.isEmpty()) s.remove(key);
+        else s.setValue(key, v);
+    }
     QDialog::accept();
 }
 

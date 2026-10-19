@@ -58,6 +58,11 @@ protected:
 private:
     void buildShortcutsPage();
     void refreshShortcutRow();
+    // Perfil de atalhos: "Pierrot" é o embutido (não renomeável/excluível);
+    // os demais são do usuário. Todos em shortcutProfiles/<nome>/<id>, com
+    // espelho vivo em shortcuts/<id> (lido pelo appKey do MainWindow).
+    void loadShortcutProfile(const QString& name);
+    void refreshAllShortcutRows();
     QCheckBox* m_mkvWarn = nullptr;
     QCheckBox* m_autoSave = nullptr;
     QSpinBox*  m_autoInterval = nullptr;
@@ -76,6 +81,7 @@ private:
     QTreeWidget* m_shortcuts = nullptr;
     QMap<QString, QString> m_shortcutMap;
     QString m_recordId; // atalho sendo regravado
+    QString m_activeProfile = QStringLiteral("Pierrot");
     // Configuração de caminhos OFX.
     QListWidget* m_ofxPaths = nullptr;
     // Pasta padrão de renderização (opcional).
