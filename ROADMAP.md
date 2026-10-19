@@ -30,10 +30,11 @@ Marcamos `[x]` (feito) / `[~]` (parcial) / `[ ]` (não feito).
   (`Track::proxyPreview`), perfil editável e proxy in-process.
 - [x] **Cache de render** — quadro composto cacheado por timestamp no
   `MesaRenderer` (LRU 8 quadros), invalidação via `Project::revision`.
-- [~] **Decode multi-thread** — `warmTracks()` do `MesaRenderer` decodifica
-  faixas em paralelo (ver §4); **falta**: decode paralelo do preview "de
-  verdade" (hoje um `FrameWorker` serial para topo + camadas, mitigado por
-  prioridade) e unificação dos dois pools de decoder (preview × Mesa).
+- [~] **Decode multi-thread** — `warmTracks()` decodifica as faixas em
+  paralelo (ver §4); **FEITO o decode paralelo do preview**: worker
+  dedicado (`preview-layers`) para camadas inferiores em paralelo com o
+  do topo (H3) + pool global de decoders. Falta apenas consolidar
+  (unificação já feita; ver `Relatorio-Estudo-Decodificacao.md`).
 - [ ] **Smart render** — re-exportar trechos intactos com `stream copy`
   (importante para cortes simples).
 

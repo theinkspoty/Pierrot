@@ -159,8 +159,11 @@ Motor próprio em C++ sobre libav* (`FFmpegDecoder`, 1.531 linhas):
    lease exclusivo (preview) e `acquireShared()` (Mesa/composição), budget
    único (PIERROT_DECODER_POOL, padrão 10) + eviction LRU de ociosas.
    O mapa ilimitado de `shared_ptr` do MesaRenderer saiu.
-2. Workers por faixa/prioridade: `FrameWorker` deixa de ser serial para
-   topo+camadas. (pendente — H3)
+2. [x] Workers por faixa — **FEITO (H3)**: segundo `FrameWorker`
+   (`preview-layers`) dedicado às camadas inferiores; o `kickFrameWorker`
+   despacha topo → worker principal (prioridade) e camadas → worker de
+   camadas, em paralelo. Fim da serialização que "roubava slot" do topo
+   em multi-track.
 3. [x] Corrigir M2: LRU com lista intrusiva (O(1)) em vez de rebuild do
    `QHash`.
 

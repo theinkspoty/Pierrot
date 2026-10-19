@@ -173,6 +173,10 @@ protected:
     void drawPerfOverlay(QPainter& p);
     void onFrameReady(const QString& clipId, const QString& path, double t, int maxW, const QImage& img,
                       bool processed);
+    // Corpo comum de onFrameReady; `fromLayer` diz se o quadro veio do worker
+    // de camadas inferiores (H3) — aí só o estado do worker de camadas zera.
+    void handleFrameReady(const QString& clipId, const QString& path, double t, int maxW,
+                          const QImage& img, bool processed, bool fromLayer);
     void onPrefetchReady(const QString& path, double t, int maxW, const QImage& img);
     void onBgPrefetchDone(const QString& path, double t, int maxW,
                           const QImage& frame0, const QImage& frame1);
@@ -312,6 +316,12 @@ protected:
     // Decodificação de vídeo em thread própria (não trava a UI na reprodução).
     QThread* m_frameThread = nullptr;
     FrameWorker* m_frameWorker = nullptr;
+    // Worker DEDICADO das camadas inferiores (H3): antes uma única thread
+    // serializava topo + camadas — em multi-track as camadas "roubavam
+    // slot" do topo (vídeo engasgava com áudio perfeito). Agora as camadas
+    // rodam em paralelo com o topo, cada uma com o próprio lease do pool.
+    QThread* m_layerThread = nullptr;
+    FrameWorker* m_layerWorker = nullptr;
     // Pool de decodificadores quentes (vida do PreviewWidget; usado pelos dois
     // workers via acquire/release por caminho de arquivo).
     DecoderPool* m_decPool = nullptr;
@@ -371,6 +381,10 @@ protected:
     // decidir cancelá-la quando um alvo novo a supera; Fase 3).
     FrameReq m_inflightReq;
     bool m_hasInflightReq = false;
+    // Estado do worker de camadas inferiores (H3).
+    bool m_layerBusy = false;
+    FrameReq m_layerInflight;
+    bool m_hasLayerInflight = false;
     QString m_shownPath;
     // true quando o quadro exibido do TOPO veio pronto da thread do worker
     // (já cortado/efeituado): o caminho de "re-crop sem re-decode" não pode

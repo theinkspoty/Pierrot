@@ -403,6 +403,22 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
             this, &PreviewWidget::onPrefetchReady, Qt::QueuedConnection);
     m_frameThread->start();
 
+    // Worker DEDICADO das camadas inferiores (H3): mesmo formato do principal,
+    // thread própria — as camadas decodificam em paralelo com o topo em vez
+    // de serializarem no mesmo worker (multi-track não "rouba slot" mais).
+    m_layerThread = new CrashReporter::TrackedThread("preview-layers", this);
+    m_layerWorker = new FrameWorker(m_decPool);
+    m_layerWorker->setEffectManagers(m_ofxManager, m_frei0rManager);
+    m_layerWorker->moveToThread(m_layerThread);
+    connect(m_layerThread, &QThread::finished, m_layerWorker, &QObject::deleteLater);
+    connect(m_layerWorker, &FrameWorker::frameReady, this,
+            [this](const QString& clipId, const QString& path, double t, int maxW,
+                   const QImage& img, bool processed) {
+                handleFrameReady(clipId, path, t, maxW, img, processed, /*fromLayer=*/true);
+            },
+            Qt::QueuedConnection);
+    m_layerThread->start();
+
     // Thread de prefetch em background: decodifica o próximo clipe fora do
     // caminho do worker (que mantém o pipeline m_ready). Sem isto, o open+2
     // frameAt do prefetch (500-800ms) congelava o worker por corte.
@@ -446,6 +462,15 @@ PreviewWidget::~PreviewWidget() {
         }
         m_frameThread->quit();
         m_frameThread->wait(5000);
+    }
+    if (m_layerThread) {
+        // Mesma razão do worker principal: fila esvaziada antes de parar.
+        {
+            QMutexLocker l(&m_frameMutex);
+            m_reqQueue.clear();
+        }
+        m_layerThread->quit();
+        m_layerThread->wait(5000);
     }
     if (m_bgPrefetchThread) {
         m_bgPrefetchThread->quit();
@@ -1981,7 +2006,8 @@ void PreviewWidget::requestLowerLayers(int decW) {
             // Já em voo (worker ou fila)? Passa adiante — senão a camada de
             // cima, que fica "expirada" até o decode terminar, monopolizava o
             // loop e as camadas 3+ nunca eram pedidas (frame velho/ausente).
-            if (m_hasInflightReq && m_inflightReq.clipId == c->id) {
+            if ((m_hasInflightReq && m_inflightReq.clipId == c->id)
+                || (m_hasLayerInflight && m_layerInflight.clipId == c->id)) {
                 pending = true; // em decode: não dá pra re-mirar, só esperar
             } else {
                 for (const FrameReq& r : m_reqQueue)
@@ -2056,9 +2082,11 @@ void PreviewWidget::requestLowerLayers(int decW) {
     }
 }
 
-// Chamado com m_frameMutex segurado.
+// Chamado com m_frameMutex segurado. Despacha para DOIS workers (H3): o do
+// topo (prioridade absoluta — é o quadro exibido) e o dedicado de camadas
+// inferiores (roda em paralelo; antes tudo serializava num worker só).
 void PreviewWidget::kickFrameWorker() {
-    if (m_workerBusy || m_reqQueue.isEmpty() || !m_frameWorker) return;
+    if (m_reqQueue.isEmpty() || !m_frameWorker) return;
 
     // Podas pedidos órfãos: na virada de um corte, o pedido residual do clipe
     // antigo não é mais "vivo" — decodificá-lo gastava um slot inteiro e
@@ -2080,23 +2108,36 @@ void PreviewWidget::kickFrameWorker() {
         if (m_reqQueue.isEmpty()) return;
     }
 
-    m_workerBusy = true;
-    if (m_perfT.isValid()) m_perfWorkerStartNs = m_perfT.nsecsElapsed();
-    // Se o clipe do topo tem pedido na fila, ele vai primeiro (o vivo); os
-    // demais (camadas inferiores) ficam para a folga.
-    int idx = 0;
     const Clip* top = clipAt(m_playhead);
-    if (top && m_reqQueue.size() > 1) {
-        for (int i = 0; i < m_reqQueue.size(); ++i)
-            if (m_reqQueue[i].clipId == top->id) { idx = i; break; }
+
+    // 1) TOPO → worker principal (prioridade absoluta: é o quadro exibido).
+    if (!m_workerBusy && top) {
+        for (int i = 0; i < m_reqQueue.size(); ++i) {
+            if (m_reqQueue[i].clipId != top->id) continue;
+            const FrameReq r = m_reqQueue.takeAt(i);
+            m_workerBusy = true;
+            m_inflightReq = r;
+            m_hasInflightReq = true;
+            if (m_perfT.isValid()) m_perfWorkerStartNs = m_perfT.nsecsElapsed();
+            QMetaObject::invokeMethod(m_frameWorker, "decodeOne", Qt::QueuedConnection,
+                                      Q_ARG(QString, r.clipId), Q_ARG(QString, r.path),
+                                      Q_ARG(double, r.t), Q_ARG(int, r.maxW),
+                                      Q_ARG(double, r.dt), Q_ARG(FrameFx, r.fx));
+            break;
+        }
     }
-    const FrameReq r = m_reqQueue.takeAt(idx);
-    m_inflightReq = r;
-    m_hasInflightReq = true;
-    QMetaObject::invokeMethod(m_frameWorker, "decodeOne", Qt::QueuedConnection,
-                              Q_ARG(QString, r.clipId), Q_ARG(QString, r.path),
-                              Q_ARG(double, r.t), Q_ARG(int, r.maxW), Q_ARG(double, r.dt),
-                              Q_ARG(FrameFx, r.fx));
+
+    // 2) Camadas inferiores → worker DEDICADO (H3), em paralelo com o topo.
+    if (!m_layerBusy && m_layerWorker && !m_reqQueue.isEmpty()) {
+        const FrameReq r = m_reqQueue.takeFirst();
+        m_layerBusy = true;
+        m_layerInflight = r;
+        m_hasLayerInflight = true;
+        QMetaObject::invokeMethod(m_layerWorker, "decodeOne", Qt::QueuedConnection,
+                                  Q_ARG(QString, r.clipId), Q_ARG(QString, r.path),
+                                  Q_ARG(double, r.t), Q_ARG(int, r.maxW),
+                                  Q_ARG(double, r.dt), Q_ARG(FrameFx, r.fx));
+    }
 }
 
 // Crop (pan/crop) do clipe no instante `rel` da timeline.
@@ -2109,17 +2150,23 @@ static void clipCrop(const Clip& c, double rel, int& cL, int& cR, int& cT, int& 
 
 void PreviewWidget::onFrameReady(const QString& clipId, const QString& path, double t, int maxW,
                                  const QImage& img, bool processed) {
+    handleFrameReady(clipId, path, t, maxW, img, processed, /*fromLayer=*/false);
+}
+
+void PreviewWidget::handleFrameReady(const QString& clipId, const QString& path, double t, int maxW,
+                                     const QImage& img, bool processed, bool fromLayer) {
     const qint64 workerLatNs =
         (PreviewProfiler::active() && m_perfT.isValid() && m_perfWorkerStartNs > 0)
             ? m_perfT.nsecsElapsed() - m_perfWorkerStartNs
             : 0;
-    if (PreviewProfiler::active())
+    if (PreviewProfiler::active()) {
         profFrame().workerNs = workerLatNs; // latência do decode: dispatch -> quadro pronto
         profFrame().cacheHits = FFmpegDecoder::cacheHits();
         profFrame().cacheMisses = FFmpegDecoder::cacheMisses();
         profFrame().decSeekNs = qint64(FFmpegDecoder::lastSeekNs());
         profFrame().decDiscard = FFmpegDecoder::lastDiscard();
         profFrame().decWorkNs = FFmpegDecoder::lastWorkNs();
+    }
     // Latência "apertar play -> 1º quadro na tela" (só diagnostica; com o
     // warmPlayhead no playhead parado deve cair de centenas de ms para dezenas).
     if (m_playStartNs > 0 && !img.isNull()) {
@@ -2131,10 +2178,17 @@ void PreviewWidget::onFrameReady(const QString& clipId, const QString& path, dou
     }
     {
         QMutexLocker l(&m_frameMutex);
-        m_workerBusy = false;
-        m_hasInflightReq = false;
-        m_perfWorkerStartNs = 0;
-        if (workerLatNs > 0) m_perf.workerMs = workerLatNs / 1000000;
+        if (fromLayer) {
+            // Resultado do worker DEDICADO de camadas (H3): só o estado dele
+            // zera; o worker principal segue com o quadro do topo.
+            m_layerBusy = false;
+            m_hasLayerInflight = false;
+        } else {
+            m_workerBusy = false;
+            m_hasInflightReq = false;
+            m_perfWorkerStartNs = 0;
+            if (workerLatNs > 0) m_perf.workerMs = workerLatNs / 1000000;
+        }
         kickFrameWorker(); // continua com o próximo pedido, se houver
     }
 
