@@ -624,6 +624,189 @@ const Preset kElasticos[] = {
     {"Mola (laço)", pMola},
 };
 
+// ── Transições (grupo separado: seta transitionType, não keyframes) ─────
+struct TransDef { const char* name; const char* type; };
+const TransDef kTransicoes[] = {
+    {"Dissolve",     "dissolve"},
+    {"Wipe Esquerda","wipeleft"},
+    {"Wipe Direita", "wiperight"},
+    {"Wipe Cima",    "wipeup"},
+    {"Wipe Baixo",   "wipedown"},
+    {"Canto TL",     "wipetl"},
+    {"Canto TR",     "wipetr"},
+    {"Canto BR",     "wipebr"},
+    {"Canto BL",     "wipebl"},
+};
+
+// ── Card de transição: miniatura animada de dois quadros ────────────────
+// Pinta dois retângulos coloridos (A = fundo, B = topo) e anima a
+// transição entre eles — dissolve (alpha) ou wipe (deslize/recorte).
+class TransitionCard : public QWidget {
+public:
+    TransitionCard(const QString& type, const QString& name,
+                   AnimPresetDock* dock, QWidget* parent = nullptr)
+        : QWidget(parent), m_type(type), m_name(name), m_dock(dock) {
+        setObjectName(QStringLiteral("transBtn_") + name);
+        setFocusPolicy(Qt::NoFocus);
+        setCursor(Qt::PointingHandCursor);
+        setToolTip(name);
+        setMinimumSize(sizeHint());
+        if (QTimer* t = dock->thumbTimer())
+            connect(t, &QTimer::timeout, this, [this]() { tick(); });
+    }
+
+    QString transitionType() const { return m_type; }
+    QString displayName() const { return m_name; }
+
+    QSize sizeHint() const override { return {114, 88}; }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        const QRectF r = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+        p.setPen(QPen(m_hover ? QColor("#5a6478") : QColor("#343b48"), 1));
+        p.setBrush(m_hover ? QColor("#282e39") : QColor("#1e232c"));
+        p.drawRoundedRect(r, 5, 5);
+
+        const QRectF th = r.adjusted(4, 4, -4, -19);
+        p.save();
+        p.setClipRect(th);
+        p.fillRect(th, QColor("#0e1116"));
+
+        const double k = qMin(th.width() / 1920.0, th.height() / 1080.0);
+        const QPointF ctr = th.center();
+        QRectF frame(-960 * k, -540 * k, 1920 * k, 1080 * k);
+        frame.moveCenter(ctr);
+        p.setPen(QPen(QColor(255, 255, 255, 36), 1, Qt::DashLine));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(frame);
+
+        // Quadro A (fundo): azul escuro. Quadro B (topo): laranja.
+        const QColor colA("#1a3a5c");
+        const QColor colB("#c86a20");
+        const double prog = m_t; // 0..1
+
+        // Fundo A sempre visível
+        p.fillRect(frame, colA);
+
+        if (m_type == QLatin1String("dissolve")) {
+            // B aparece com alpha crescente
+            p.setOpacity(prog);
+            p.fillRect(frame, colB);
+            p.setOpacity(1.0);
+        } else {
+            // Wipes: B desliza/recorta sobre A
+            QRectF visB = frame;
+            if (m_type == QLatin1String("wipeleft"))
+                visB.setLeft(frame.left() + frame.width() * prog);
+            else if (m_type == QLatin1String("wiperight"))
+                visB.setRight(frame.right() - frame.width() * prog);
+            else if (m_type == QLatin1String("wipeup"))
+                visB.setTop(frame.top() + frame.height() * prog);
+            else if (m_type == QLatin1String("wipedown"))
+                visB.setBottom(frame.bottom() - frame.height() * prog);
+            else if (m_type == QLatin1String("wipetl")) {
+                visB.setLeft(frame.left() + frame.width() * prog);
+                visB.setTop(frame.top() + frame.height() * prog);
+            } else if (m_type == QLatin1String("wipetr")) {
+                visB.setRight(frame.right() - frame.width() * prog);
+                visB.setTop(frame.top() + frame.height() * prog);
+            } else if (m_type == QLatin1String("wipebr")) {
+                visB.setRight(frame.right() - frame.width() * prog);
+                visB.setBottom(frame.bottom() - frame.height() * prog);
+            } else if (m_type == QLatin1String("wipebl")) {
+                visB.setLeft(frame.left() + frame.width() * prog);
+                visB.setBottom(frame.bottom() - frame.height() * prog);
+            }
+            if (visB.isValid() && !visB.isEmpty())
+                p.fillRect(visB, colB);
+        }
+
+        // Ícone play central (só quando em repouso)
+        if (prog < 0.01) {
+            const double ph = frame.height() * 0.18;
+            QPolygonF tri;
+            tri << QPointF(ctr.x() - ph * 0.4, ctr.y() - ph * 0.6)
+                << QPointF(ctr.x() + ph * 0.7, ctr.y())
+                << QPointF(ctr.x() - ph * 0.4, ctr.y() + ph * 0.6);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(255, 255, 255, 120));
+            p.drawPolygon(tri);
+        }
+        p.restore();
+
+        // rótulo
+        p.setPen(QPen(m_hover ? QColor("#e8ecf4") : QColor("#9aa3b5"), 1));
+        QFont f = font();
+        f.setPointSizeF(7.5);
+        p.setFont(f);
+        const QRectF labelR = r.adjusted(4, th.height() + 5, -4, -3);
+        p.drawText(labelR, Qt::AlignCenter | Qt::TextSingleLine,
+                   p.fontMetrics().elidedText(m_name, Qt::ElideRight,
+                                              int(labelR.width())));
+    }
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    void enterEvent(QEnterEvent*) override {
+        m_hover = true;
+        m_t = 0.0;
+        m_running = true;
+        update();
+    }
+#else
+    void enterEvent(QEvent*) override {
+        m_hover = true;
+        m_t = 0.0;
+        m_running = true;
+        update();
+    }
+#endif
+    void leaveEvent(QEvent*) override {
+        m_hover = false;
+        m_running = false;
+        m_t = 0.0;
+        update();
+    }
+    void mouseReleaseEvent(QMouseEvent* e) override {
+        if (e->button() == Qt::LeftButton && m_dock) {
+            e->accept();
+            m_dock->applyTransition(m_type);
+        }
+    }
+
+private:
+    void tick() {
+        if (!m_running || !isVisible()) return;
+        m_t += 0.035; // ~35 ms por passo a 33 ms de timer → ~1.1 s por loop
+        if (m_t > 1.15) m_t = 0.0; // pausa breve no fim antes de reiniciar
+        update();
+    }
+
+    QString m_type;
+    QString m_name;
+    AnimPresetDock* m_dock = nullptr;
+    double m_t = 0.0;
+    bool m_hover = false;
+    bool m_running = false;
+};
+
+QGroupBox* makeTransitionGroup(AnimPresetDock* dock) {
+    auto* box = new QGroupBox(QObject::tr("Transições"), dock);
+    auto* grid = new QGridLayout(box);
+    grid->setContentsMargins(8, 14, 8, 8);
+    grid->setSpacing(6);
+    const int n = int(sizeof(kTransicoes) / sizeof(kTransicoes[0]));
+    const int cols = 3;
+    for (int i = 0; i < n; ++i) {
+        auto* card = new TransitionCard(
+            QString::fromUtf8(kTransicoes[i].type),
+            QString::fromUtf8(kTransicoes[i].name), dock, box);
+        grid->addWidget(card, i / cols, i % cols);
+    }
+    return box;
+}
+
 // ── Miniatura animada (estilo Vegas) ──────────────────────────────────────
 // Simula o preset num clipe dummy (1920×1080, 2 s). Em repouso mostra um
 // quadro estático representativo; ao passar o mouse por cima, o loop (~30 fps)
@@ -823,6 +1006,7 @@ AnimPresetDock::AnimPresetDock(QWidget* parent) : QWidget(parent) {
     v->addWidget(makeGroup(tr("Elásticos"), kElasticos,
                            int(sizeof(kElasticos) / sizeof(kElasticos[0])),
                            this, QStringLiteral("#E65100")));
+    v->addWidget(makeTransitionGroup(this));
     v->addStretch(1);
     scroll->setWidget(inner);
     lay->addWidget(scroll, 1);
@@ -905,5 +1089,53 @@ void AnimPresetDock::applyPreset(const QString& name) {
 
     m_helpLabel->setText(tr("Preset \"%1\" aplicado em %2 clipe(s).")
                              .arg(name).arg(applied));
+    emit presetsApplied(applied);
+}
+
+void AnimPresetDock::applyTransition(const QString& type) {
+    if (!m_timeline) return;
+    Project* p = m_timeline->project();
+    if (!p) return;
+
+    const QStringList ids = m_timeline->selectedIds();
+    if (ids.isEmpty()) {
+        m_helpLabel->setText(tr("Selecione pelo menos um clipe na timeline "
+                                "antes de aplicar uma transição."));
+        return;
+    }
+
+    emit m_timeline->editStart();
+    int applied = 0;
+    int noOverlap = 0;
+    for (Track& tr : p->videoTracks) {
+        for (Clip& c : tr.clips) {
+            if (!ids.contains(c.id)) continue;
+            c.transitionType = type;
+            ++applied;
+            // Verifica se há sobreposição com o próximo clipe da faixa.
+            bool hasOverlap = false;
+            for (const Clip& other : tr.clips) {
+                if (other.id == c.id) continue;
+                if (other.pos < c.pos + c.dur && other.pos > c.pos) {
+                    hasOverlap = true;
+                    break;
+                }
+            }
+            if (!hasOverlap) ++noOverlap;
+        }
+    }
+    m_timeline->invalidateScene();
+    m_timeline->update();
+    emit m_timeline->modified();
+
+    if (noOverlap > 0) {
+        m_helpLabel->setText(
+            tr("Transição \"%1\" aplicada em %2 clipe(s). %3 sem sobreposição "
+               "— arraste um clipe para sobrepor o anterior.")
+                .arg(type).arg(applied).arg(noOverlap));
+    } else {
+        m_helpLabel->setText(tr("Transição \"%1\" aplicada em %2 clipe(s).")
+                                 .arg(type).arg(applied));
+    }
     emit presetsApplied(applied);
 }

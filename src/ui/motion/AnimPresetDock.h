@@ -24,6 +24,7 @@ public:
     ~AnimPresetDock() override;
     void setTimeline(TimelineWidget* tl);
     void applyPreset(const QString& name);
+    void applyTransition(const QString& type);
 
     // Timer único que anima as miniaturas dos presets (33 ms); os cards se
     // conectam a ele e só redesenham quando o dock está visível.
