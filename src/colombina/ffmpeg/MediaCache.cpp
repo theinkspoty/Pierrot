@@ -17,6 +17,7 @@
 #include <QFile>
 #include <QStandardPaths>
 #include <QCryptographicHash>
+#include <QDataStream>
 #include <cmath>
 #include <algorithm>
 
@@ -31,6 +32,12 @@ constexpr int kMaxPeakPending = 32;
 // Poderiam ficar órfãos quando a fonte é alterada (o hash do nome muda), então
 // a poda mantém no máximo kMaxDiskThumbs arquivos mais recentes.
 constexpr int kMaxDiskThumbs = 4096;
+// Cache DISCO de picos (~/.cache/pierrot/peaks/): binário min+máx por bucket
+// (~2,4 MB por 5 min de áudio a 1000 bps). Sem ele, reabrir um projeto com
+// LRU estourado re-decodificava o stream de áudio INTEIRO para a waveform.
+constexpr int kMaxDiskPeaks = 512;
+constexpr quint32 kPeaksMagic = 0x504B5331; // "PKS1"
+constexpr qint32 kPeaksMaxBuckets = 2'500'000;
 
 QImage loadImageThumb(const QString& path, int maxWidth) {
     QImage img(path);
@@ -91,14 +98,112 @@ bool saveThumbToDisk(const QImage& img, const QString& path) {
     pruneThumbDisk();
     return true;
 }
+
+// ── Cache em disco dos picos de áudio ──────────────────────────────────
+// Mesma ideia do thumb: nome por hash (fonte + mtime + size + stream), então
+// mídia alterada ignora o arquivo antigo naturalmente; poda por contagem.
+QString peaksDiskDir() {
+    return QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
+           + QStringLiteral("/peaks");
+}
+
+QString peaksDiskPath(const QString& filePath, int streamIndex, qint64 srcMtime,
+                      qint64 srcSize) {
+    const QByteArray h = QCryptographicHash::hash(
+        (filePath + QLatin1Char('|') + QString::number(srcMtime) + QLatin1Char('|')
+         + QString::number(srcSize) + QLatin1Char('|')
+         + QString::number(streamIndex)).toUtf8(),
+        QCryptographicHash::Md5).toHex();
+    return peaksDiskDir() + QLatin1Char('/') + QString::fromLatin1(h)
+           + QLatin1String(".peaks");
+}
+
+void prunePeaksDisk() {
+    QDir dir(peaksDiskDir());
+    if (!dir.exists()) return;
+    const QFileInfoList list = dir.entryInfoList(QStringList() << QStringLiteral("*.peaks"),
+                                                 QDir::Files, QDir::NoSort);
+    if (list.size() <= kMaxDiskPeaks) return;
+    QStringList paths;
+    for (const QFileInfo& fi : list) paths.append(fi.absoluteFilePath());
+    std::sort(paths.begin(), paths.end(),
+              [](const QString& a, const QString& b) {
+                  return QFileInfo(a).lastModified() > QFileInfo(b).lastModified();
+              });
+    while (paths.size() > kMaxDiskPeaks) {
+        QFile::remove(paths.takeLast());
+    }
+}
+
+bool savePeaksToDisk(const FFmpegAudioPeaks& p, const QString& path) {
+    if (p.min.isEmpty() || p.min.size() != p.max.size()) return false;
+    QDir().mkpath(peaksDiskDir());
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
+    QDataStream out(&f);
+    out.setVersion(QDataStream::Qt_5_15);
+    out << kPeaksMagic << qint32(p.bucketsPerSecond) << qint32(p.min.size());
+    out.writeRawData(reinterpret_cast<const char*>(p.min.constData()),
+                     p.min.size() * int(sizeof(float)));
+    out.writeRawData(reinterpret_cast<const char*>(p.max.constData()),
+                     p.max.size() * int(sizeof(float)));
+    if (out.status() != QDataStream::Ok) {
+        f.close();
+        QFile::remove(path);
+        return false;
+    }
+    prunePeaksDisk();
+    return true;
+}
+
+bool loadPeaksFromDisk(const QString& path, FFmpegAudioPeaks& out) {
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return false;
+    QDataStream in(&f);
+    in.setVersion(QDataStream::Qt_5_15);
+    quint32 magic = 0;
+    qint32 bps = 0;
+    qint32 n = 0;
+    in >> magic >> bps >> n;
+    if (in.status() != QDataStream::Ok || magic != kPeaksMagic
+        || bps <= 0 || n <= 0 || n > kPeaksMaxBuckets) {
+        QFile::remove(path); // corrompido/legado: descarta e regrava na hora
+        return false;
+    }
+    out.min.resize(n);
+    out.max.resize(n);
+    const int bytes = n * int(sizeof(float));
+    if (in.readRawData(reinterpret_cast<char*>(out.min.data()), bytes) != bytes
+        || in.readRawData(reinterpret_cast<char*>(out.max.data()), bytes) != bytes) {
+        QFile::remove(path);
+        out = FFmpegAudioPeaks();
+        return false;
+    }
+    out.bucketsPerSecond = bps;
+    return true;
+}
 }
 
 CacheWorker::CacheWorker(QObject* parent) : QObject(parent) {}
 
 void CacheWorker::generatePeaks(const QString& filePath, int streamIndex,
                                 int bucketsPerSecond) {
-    const FFmpegAudioPeaks peaks = FFmpegDecoder::audioPeaks(filePath, bucketsPerSecond,
-                                                             streamIndex);
+    // Reusa o cache em disco quando a fonte não mudou: o decode completo do
+    // stream de áudio é o passo mais caro da waveform (um WAV de 200 MB é
+    // lido INTEIRO); sem isto, reabrir um projeto com o LRU de RAM estourado
+    // re-decodificava tudo de novo.
+    QFileInfo src(filePath);
+    const QString path = peaksDiskPath(filePath, streamIndex,
+                                       src.lastModified().toMSecsSinceEpoch(),
+                                       src.size());
+    FFmpegAudioPeaks peaks;
+    if (loadPeaksFromDisk(path, peaks)) {
+        emit peaksReady(filePath, streamIndex, peaks);
+        return;
+    }
+    peaks = FFmpegDecoder::audioPeaks(filePath, bucketsPerSecond, streamIndex);
+    if (!peaks.min.isEmpty())
+        savePeaksToDisk(peaks, path);
     emit peaksReady(filePath, streamIndex, peaks);
 }
 

@@ -161,6 +161,15 @@ QString ProxyManager::resolveVideo(const QString& srcPath) const {
 }
 
 void ProxyManager::probeAndQueue(const QString& srcPath) {
+    if (srcPath.isEmpty()) return;
+    // Probe completo só quando o chamador NÃO tem o resultado à mão (o caminho
+    // da importação usa a variante com largura e evita este probe extra — que
+    // rodava na UI thread e dobrcava o custo de arquivo grande).
+    const FFmpegMediaInfo info = FFmpegDecoder::probe(srcPath);
+    probeAndQueue(srcPath, info.hasVideo, info.width);
+}
+
+void ProxyManager::probeAndQueue(const QString& srcPath, bool hasVideo, int width) {
     QMutexLocker l(&m_mutex);
     if (!m_enabled) { return; }
     if (srcPath.isEmpty()) return;
@@ -172,13 +181,11 @@ void ProxyManager::probeAndQueue(const QString& srcPath) {
     if (m_pending.contains(srcPath)) { return; }
     if (m_activeSrc == srcPath) { return; }
 
-    // Probe leve: só precisa da largura. Não abre stream pesado.
-    const FFmpegMediaInfo info = FFmpegDecoder::probe(srcPath);
-    if (!info.hasVideo) { m_small.insert(srcPath); return; }
+    if (!hasVideo) { m_small.insert(srcPath); return; }
     // Registrar ANTES da decisão de largura: toda fonte com vídeo é candidata
     // potencial, e é esta lista que permite reavaliar quando o limiar muda.
-    m_videoSrcs.insert(srcPath);
-    if (info.width > 0 && info.width < m_thresholdWidth) {
+    m_videoSrcs.insert(srcPath, width);
+    if (width > 0 && width < m_thresholdWidth) {
         m_small.insert(srcPath);
         return;
     }
@@ -190,8 +197,11 @@ void ProxyManager::probeAndQueue(const QString& srcPath) {
 
     m_pending.insert(srcPath);
     const bool busy = !m_pending.isEmpty() || m_running;
+    const int pending = m_pending.size();
+    const bool running = m_running;
     l.unlock();
     emit busyChanged(busy);
+    emit progressChanged(pending, running);
     pump();
 }
 
@@ -204,17 +214,18 @@ void ProxyManager::setProjectUsesProxies(bool on) {
         m_projectUsesProxies = on;
     }
     if (!on) return;
-    QStringList toQueue;
+    QVector<QPair<QString, int>> toQueue;
     {
         QMutexLocker l(&m_mutex);
         for (auto it = m_videoSrcs.cbegin(); it != m_videoSrcs.cend(); ++it) {
-            const QString proxy = proxyPathFor(*it);
-            const bool has = m_map.value(*it) == proxy && QFile::exists(proxy);
-            if (!has) toQueue.append(*it);
+            const QString proxy = proxyPathFor(it.key());
+            const bool has = m_map.value(it.key()) == proxy && QFile::exists(proxy);
+            if (!has) toQueue.append({it.key(), it.value()});
         }
     }
-    for (const QString& s : toQueue)
-        probeAndQueue(s);
+    // Reusa a largura guardada no registro — sem re-probar cada fonte.
+    for (const auto& e : toQueue)
+        probeAndQueue(e.first, true, e.second);
 }
 
 bool ProxyManager::busy() const {
@@ -230,6 +241,7 @@ void ProxyManager::pump() {
     m_activeSrc = src;
     m_running = true;
     emit busyChanged(true);
+    emit progressChanged(m_pending.size(), true);
     emit startJob(src, proxyPathFor(src));
 }
 
@@ -244,6 +256,7 @@ void ProxyManager::onProxyReady(const QString& srcPath, const QString& proxyPath
     m_activeSrc.clear();
     emit proxyReady(srcPath);
     emit busyChanged(!m_pending.isEmpty() || m_running);
+    emit progressChanged(m_pending.size(), m_running);
     pump();
 }
 
@@ -259,6 +272,7 @@ void ProxyManager::onProxyFailed(const QString& srcPath) {
     m_activeSrc.clear();
     emit proxyFailed(srcPath);
     emit busyChanged(!m_pending.isEmpty() || m_running);
+    emit progressChanged(m_pending.size(), m_running);
     pump();
 }
 

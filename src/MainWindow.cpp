@@ -993,8 +993,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     updateTitle();
     statusBar()->showMessage(tr("Pronto — arraste mídia para a timeline."));
 
-    // Barrinha de atividade: mostra quando ondas de áudio/thumbnails estão
-    // sendo geradas em segundo plano (para o usuário saber que não travou).
+    // Barrinha de atividade: ondas/thumbnails (MediaCache) E geração de
+    // proxy (ProxyManager) — o proxy de um 4K leva minutos e era a maior
+    // importação do app sem nenhum feedback.
     m_busyBar = new QProgressBar(this);
     m_busyBar->setRange(0, 0);
     m_busyBar->setFixedWidth(150);
@@ -1003,11 +1004,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     m_busyBar->hide();
     statusBar()->addWidget(m_busyBar);
     connect(&MediaCache::instance(), &MediaCache::busyChanged, this, [this](bool busy) {
-        m_busyBar->setVisible(busy);
-        if (busy)
-            statusBar()->showMessage(tr("Carregando áudio e miniaturas…"));
-        else if (statusBar()->currentMessage().contains(tr("Carregando áudio")))
-            statusBar()->clearMessage();
+        m_bgCacheBusy = busy;
+        refreshBackgroundBusy();
+    });
+    connect(&ProxyManager::instance(), &ProxyManager::progressChanged, this,
+            [this](int pending, bool running) {
+        m_bgProxyBusy = running || pending > 0;
+        m_proxyPending = pending;
+        refreshBackgroundBusy();
     });
 
     // Salvamento automático configurado na janela de boas-vindas
@@ -3362,6 +3366,26 @@ void MainWindow::reloadProject() {
     if (m_currentFile.isEmpty()) { openProject(); return; }
     if (!confirmDiscardChanges()) return;
     openProjectFile(m_currentFile);
+}
+
+// Indicador combinado de trabalho em background: a barra da statusBar fica
+// visível enquanto houver thumbs/picos (MediaCache) OU proxy (ProxyManager)
+// em curso, com a mensagem do passo mais longo (proxy primeiro).
+void MainWindow::refreshBackgroundBusy() {
+    if (!m_busyBar) return;
+    const bool busy = m_bgCacheBusy || m_bgProxyBusy;
+    m_busyBar->setVisible(busy);
+    if (m_bgProxyBusy) {
+        statusBar()->showMessage(m_proxyPending > 0
+            ? tr("Gerando proxy: %1 restante(s)…").arg(m_proxyPending)
+            : tr("Gerando proxy…"));
+    } else if (m_bgCacheBusy) {
+        statusBar()->showMessage(tr("Carregando áudio e miniaturas…"));
+    } else {
+        const QString msg = statusBar()->currentMessage();
+        if (msg.contains(tr("Gerando proxy")) || msg.contains(tr("Carregando áudio")))
+            statusBar()->clearMessage();
+    }
 }
 
 // Reabre a janela inicial sem fechar o editor. Se o usuário escolher abrir um

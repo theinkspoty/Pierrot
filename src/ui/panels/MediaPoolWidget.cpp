@@ -842,9 +842,12 @@ MediaPoolWidget::MediaPoolWidget(QWidget* parent) : QWidget(parent) {
     m_importBar = new QProgressBar(this);
     m_importBar->setRange(0, 100);
     m_importBar->setValue(0);
-    m_importBar->setTextVisible(false);
-    m_importBar->setFixedHeight(10);
-    m_importBar->setFormat(QString());
+    // Mostra "X/N" — em importação de muitos arquivos grandes o usuário vê
+    // o probe avançando (o resto — proxy/thumbs/picos — tem os próprios
+    // indicadores na statusBar).
+    m_importBar->setTextVisible(true);
+    m_importBar->setFixedHeight(16);
+    m_importBar->setFormat(tr("Importando %v/%m"));
     m_importBar->hide();
 
     auto* lay = new QVBoxLayout(this);
@@ -1119,9 +1122,10 @@ void MediaPoolWidget::importPaths(const QStringList& files) {
             m_project->media.append(m);
             imported.append(r.path);
             // Gera proxy em background para mídia alta (2K+) — o preview passa
-            // a decodificar o proxy (rápido) sem travar a UI.
+            // a decodificar o proxy (rápido) sem travar a UI. Reusa o resultado
+            // do probe acima (sem re-probar na UI thread).
             if (m.hasVideo)
-                ProxyManager::instance().probeAndQueue(r.path);
+                ProxyManager::instance().probeAndQueue(r.path, true, info.width);
             ++added;
         }
         SettingsDialog::warnMkvIfNeeded(this, imported);

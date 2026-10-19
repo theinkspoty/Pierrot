@@ -46,7 +46,11 @@ public:
 
     // Programa a geração de proxy para `srcPath` se a mídia for grande e
     // ainda não houver proxy. Não bloqueia; roda em background.
+    // A forma com (hasVideo, width) REUSA o resultado do probe que a importação
+    // já fez — a variante só com path re-proba (caminho legado, use quando não
+    // houver o resultado à mão).
     void probeAndQueue(const QString& srcPath);
+    void probeAndQueue(const QString& srcPath, bool hasVideo, int width);
 
     // Desliga proxies (debug/forçar qualidade cheia no preview).
     void setEnabled(bool on) { m_enabled = on; }
@@ -67,6 +71,10 @@ signals:
     void proxyReady(const QString& srcPath);
     void proxyFailed(const QString& srcPath);
     void busyChanged(bool busy);
+    // Progresso da fila: quantos proxies faltam + se há job ativo. A UI usa
+    // isto para mostrar "Gerando proxy: N restante(s)…" (a geração de um
+    // proxy 4K leva minutos — era a maior importação sem feedback do app).
+    void progressChanged(int pending, bool running);
     void startJob(const QString& srcPath, const QString& proxyPath);
 
 public slots:
@@ -91,9 +99,10 @@ private:
     QString m_activeSrc;    // srcs atualmente em processamento
     bool m_running = false;
     bool m_enabled = true;
-    // Fontes com vídeo já conhecidas (candidatas ou não). Usadas para
-    // re-enfileirar a geração quando a preferência do projeto liga de novo.
-    QSet<QString> m_videoSrcs;
+    // Fontes com vídeo já conhecidas (candidatas ou não) → largura conhecida
+    // (0 = desconhecida). Permitem re-enfileirar sem re-probar quando a
+    // preferência do projeto liga de novo.
+    QHash<QString, int> m_videoSrcs;
     bool m_projectUsesProxies = true;
 
     // Estado persistido: src → proxy.

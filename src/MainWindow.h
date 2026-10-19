@@ -327,6 +327,11 @@ private:
     QTimer* m_layoutSaveTimer = nullptr;
     QTimer* m_monitorTimer = nullptr;
     QProgressBar* m_busyBar = nullptr;
+    // Estado combinado do indicador de background (thumbs/picos + proxy).
+    void refreshBackgroundBusy();
+    bool m_bgCacheBusy = false;
+    bool m_bgProxyBusy = false;
+    int m_proxyPending = 0;
     OfxPluginManager* m_ofxManager = nullptr;
     Frei0rPluginManager* m_frei0rManager = nullptr;
     PreviewMonitor* m_monitor = nullptr; // preview externo (janela própria/2º monitor)

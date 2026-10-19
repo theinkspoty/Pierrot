@@ -15,6 +15,28 @@
   o mesmo grão desenhado no preview.
 - Tradução JP dos novos rótulos incluída.
 
+### Importação de mídia (performance + indicadores)
+
+- **Fim do probe duplicado na importação**: `ProxyManager::probeAndQueue`
+  ganhou a forma `(path, hasVideo, width)` que reusa o resultado do probe
+  que a importação já fez — antes cada arquivo de vídeo era probeado duas
+  vezes, a segunda **na UI thread** (travava a importação de mídia em
+  disco lento/rede). Re-enfileirar proxies (preferência do projeto) também
+  não re-proba: a largura fica guardada em `m_videoSrcs`.
+- **Indicador de proxy na statusBar**: novo sinal
+  `ProxyManager::progressChanged(pending, running)` → mensagem
+  "Gerando proxy: N restante(s)…" com a barrinha de atividade — a
+  transcodificação de um 4K (minutos) era a maior etapa da importação sem
+  nenhum feedback. A barra agora cobre proxy + thumbs/picos de uma vez
+  (`MainWindow::refreshBackgroundBusy`).
+- **Barra de importação com contagem**: a barra do Central de Mídias mostra
+  "Importando X/N" durante o probe (antes era uma barrinha muda).
+- **Cache em disco dos picos de áudio** (`~/.cache/pierrot/peaks/*.peaks`):
+  binário min+máx por bucket com hash por fonte+mtime+size+stream e poda
+  em 512 arquivos — antes, reabrir um projeto com o LRU de RAM estourado
+  re-decodificava o **stream de áudio inteiro** (um WAV de 200 MB era lido
+  por completo) só para redesenhar a waveform.
+
 ### Tema Japan 95
 
 - **Novo tema claro com vermelho** (Ajustes ▸ Interface ▸ Tema ▸ Japan 95):
