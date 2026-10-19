@@ -554,8 +554,9 @@ void TimelineWidget::renderScene(QPainter& p) {
         p.fillRect(0, y, width(), rowH, themeColors().trackBg);
         if (sel) {
             p.fillRect(0, y, 4, rowH, themeColors().accent);
+            // Outline só na área de conteúdo (não cobre o cabeçalho).
             p.setPen(QPen(themeColors().accent, 1));
-            p.drawRect(0, y, width() - 1, rowH - 1);
+            p.drawRect(kHeaderW, y, width() - kHeaderW - 1, rowH - 1);
         }
         p.setPen(themeColors().trackBorder);
         p.drawLine(0, y + rowH, width(), y + rowH);
@@ -587,8 +588,9 @@ void TimelineWidget::renderScene(QPainter& p) {
         p.fillRect(0, y, width(), rowH, themeColors().trackBg);
         if (sel) {
             p.fillRect(0, y, 4, rowH, themeColors().accent);
+            // Outline só na área de conteúdo (não cobre o cabeçalho).
             p.setPen(QPen(themeColors().accent, 1));
-            p.drawRect(0, y, width() - 1, rowH - 1);
+            p.drawRect(kHeaderW, y, width() - kHeaderW - 1, rowH - 1);
         }
         p.setPen(themeColors().trackBorder);
         p.drawLine(0, y + rowH, width(), y + rowH);
