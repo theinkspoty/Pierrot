@@ -6,7 +6,7 @@
 #include "ui/mesa/PivotWidget.h"
 #include "ui/core/Theme.h"
 #include "ui/monitor/UiDecode.h"
-#include "laartman/FFmpegDecoder.h"
+#include "laartman/core/FFmpegDecoder.h"
 #include "colombina/ffmpeg/ProxyManager.h"
 #include "colombina/render/Math3D.h"
 

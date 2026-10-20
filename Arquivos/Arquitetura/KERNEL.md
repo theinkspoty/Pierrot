@@ -27,7 +27,7 @@ política da Colombina/L4). `colombina/ffmpeg/` tem as camadas de cache
 |---|---|---|---|
 | `models/` | `Project.h/.cpp` | ~1.500 | O coração: `Project`, `Track`, `Clip`, `MediaItem`, `Keyframe`, Mesas, recursos de texto, serialização `.Blanc` |
 | `ffmpeg/` | `MediaCache`, `ProxyManager`, `AudioConformCache` | ~1.600 | Picos/waveforms, thumbs, proxies, buffer de áudio tipo Olive |
-| `src/laartman/` (Laartman v0.4) | `Decoder` (fachada L3), `FFmpegDecoder` (Open/Audio/Probe + Priv.h), `Demuxer`, `PacketReader`, `ErrorConceal` | ~2.300 | Motor de codecs: só decodificação (plano v0.4). Vídeo com contexto próprio + thread de I/O (`PacketReader`), áudio no demuxer, VAAPI, VFR, ocultação de erro. Encode saiu (virou `colombina/ffmpeg/FFmpegEncoder`). |
+| `src/laartman/` (Laartman v0.4) | raiz: `Decoder` (fachada L3) · `core/`: `FFmpegDecoder` (Open/Audio/Probe + Priv.h), `ErrorConceal` · `io/`: `Demuxer`, `PacketReader` | ~2.300 | Motor de codecs em camadas por estabilidade (ver `src/laartman/README.md`): fachada pública na raiz (mexer muito), motor e demux congelados em `core/` e `io/`. Só decodificação; vídeo com contexto próprio + thread de I/O, áudio no demuxer, VAAPI, VFR, ocultação de erro. |
 | `render/` | `MesaRenderer` | ~630 | Composição 2D (estilo AE): câmera, motion blur, warmTracks paralelo, cache de composto |
 | `export/` | `ProjectExporter`, pré-renders, `NleInterchange` | ~2.300 | Geração do `filter_complex`/CLI do ffmpeg, LAINKA, OFX, EDL CMX3600 |
 | `ofx/` | Host + Manager + Renderer | ~1.900 | Host OFX com 7 suites (`dlopen` de plugins de terceiros) |

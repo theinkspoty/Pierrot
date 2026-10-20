@@ -7,7 +7,7 @@
 #include "LainkaFx.h"
 #include "PreRenderSession.h"
 #include "colombina/models/Project.h"
-#include "laartman/FFmpegDecoder.h"
+#include "laartman/core/FFmpegDecoder.h"
 
 #include <QProcess>
 #include <QTemporaryDir>

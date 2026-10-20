@@ -74,20 +74,20 @@ string(TIMESTAMP PIERROT_BUILD_TIME "%Y-%m-%d %H:%M:%S")
 # depende dele; ninguém acima o inclui direto além de incluir seu header.
 set(LAARTMAN_SOURCES
     src/laartman/Decoder.cpp
-    src/laartman/FFmpegDecoder.cpp
-    src/laartman/FFmpegDecoderOpen.cpp
-    src/laartman/FFmpegDecoderAudio.cpp
-    src/laartman/FFmpegDecoderProbe.cpp
-    src/laartman/Demuxer.cpp
-    src/laartman/PacketReader.cpp
+    src/laartman/core/FFmpegDecoder.cpp
+    src/laartman/core/FFmpegDecoderOpen.cpp
+    src/laartman/core/FFmpegDecoderAudio.cpp
+    src/laartman/core/FFmpegDecoderProbe.cpp
+    src/laartman/io/Demuxer.cpp
+    src/laartman/io/PacketReader.cpp
 )
 
 set(LAARTMAN_HEADERS
     src/laartman/Decoder.h
-    src/laartman/FFmpegDecoder.h
-    src/laartman/Demuxer.h
-    src/laartman/PacketReader.h
-    src/laartman/ErrorConceal.h
+    src/laartman/core/FFmpegDecoder.h
+    src/laartman/io/Demuxer.h
+    src/laartman/io/PacketReader.h
+    src/laartman/core/ErrorConceal.h
 )
 
 # ── Colombina: o kernel, a camada blindada (quase não muda) ─────────────
@@ -439,12 +439,12 @@ add_test(NAME tst_edl COMMAND tst_edl)
 add_executable(tst_exporter
     tests/tst_exporter.cpp
     src/colombina/models/Project.cpp
-    src/laartman/FFmpegDecoder.cpp
-    src/laartman/FFmpegDecoderOpen.cpp
-    src/laartman/FFmpegDecoderAudio.cpp
-    src/laartman/FFmpegDecoderProbe.cpp
-    src/laartman/Demuxer.cpp
-    src/laartman/PacketReader.cpp
+    src/laartman/core/FFmpegDecoder.cpp
+    src/laartman/core/FFmpegDecoderOpen.cpp
+    src/laartman/core/FFmpegDecoderAudio.cpp
+    src/laartman/core/FFmpegDecoderProbe.cpp
+    src/laartman/io/Demuxer.cpp
+    src/laartman/io/PacketReader.cpp
     src/colombina/ffmpeg/FrameCache.cpp
     src/colombina/ffmpeg/SourcePool.cpp
     src/colombina/render/MesaRenderer.cpp
@@ -501,12 +501,12 @@ add_test(NAME tst_crashreporter COMMAND tst_crashreporter)
 # ASAN/UBSAN — a cobertura do decoder era 2,3% e a do MesaRenderer 0%.
 add_executable(tst_concurrency
     tests/tst_concurrency.cpp
-    src/laartman/FFmpegDecoder.cpp
-    src/laartman/FFmpegDecoderOpen.cpp
-    src/laartman/FFmpegDecoderAudio.cpp
-    src/laartman/FFmpegDecoderProbe.cpp
-    src/laartman/Demuxer.cpp
-    src/laartman/PacketReader.cpp
+    src/laartman/core/FFmpegDecoder.cpp
+    src/laartman/core/FFmpegDecoderOpen.cpp
+    src/laartman/core/FFmpegDecoderAudio.cpp
+    src/laartman/core/FFmpegDecoderProbe.cpp
+    src/laartman/io/Demuxer.cpp
+    src/laartman/io/PacketReader.cpp
     src/colombina/ffmpeg/FrameCache.cpp
 )
 target_include_directories(tst_concurrency PRIVATE src src/colombina/ofx/sdk)
@@ -535,12 +535,12 @@ add_test(NAME tst_concurrency COMMAND tst_concurrency)
 add_executable(tst_decoder_api
     tests/tst_decoder_api.cpp
     src/laartman/Decoder.cpp
-    src/laartman/FFmpegDecoder.cpp
-    src/laartman/FFmpegDecoderOpen.cpp
-    src/laartman/FFmpegDecoderAudio.cpp
-    src/laartman/FFmpegDecoderProbe.cpp
-    src/laartman/Demuxer.cpp
-    src/laartman/PacketReader.cpp
+    src/laartman/core/FFmpegDecoder.cpp
+    src/laartman/core/FFmpegDecoderOpen.cpp
+    src/laartman/core/FFmpegDecoderAudio.cpp
+    src/laartman/core/FFmpegDecoderProbe.cpp
+    src/laartman/io/Demuxer.cpp
+    src/laartman/io/PacketReader.cpp
     src/colombina/ffmpeg/FrameCache.cpp
     src/colombina/ffmpeg/FFmpegEncoder.cpp
 )
@@ -568,12 +568,12 @@ add_test(NAME tst_decoder_api COMMAND tst_decoder_api)
 add_executable(tst_sourcepool
     tests/tst_sourcepool.cpp
     src/colombina/ffmpeg/SourcePool.cpp
-    src/laartman/FFmpegDecoder.cpp
-    src/laartman/FFmpegDecoderOpen.cpp
-    src/laartman/FFmpegDecoderAudio.cpp
-    src/laartman/FFmpegDecoderProbe.cpp
-    src/laartman/Demuxer.cpp
-    src/laartman/PacketReader.cpp
+    src/laartman/core/FFmpegDecoder.cpp
+    src/laartman/core/FFmpegDecoderOpen.cpp
+    src/laartman/core/FFmpegDecoderAudio.cpp
+    src/laartman/core/FFmpegDecoderProbe.cpp
+    src/laartman/io/Demuxer.cpp
+    src/laartman/io/PacketReader.cpp
     src/colombina/ffmpeg/FrameCache.cpp
 )
 target_include_directories(tst_sourcepool PRIVATE src)
@@ -601,12 +601,12 @@ add_executable(tst_framepipeline
     src/colombina/ffmpeg/FramePipeline.cpp
     src/colombina/ffmpeg/SourcePool.cpp
     src/colombina/CrashReporter.cpp
-    src/laartman/FFmpegDecoder.cpp
-    src/laartman/FFmpegDecoderOpen.cpp
-    src/laartman/FFmpegDecoderAudio.cpp
-    src/laartman/FFmpegDecoderProbe.cpp
-    src/laartman/Demuxer.cpp
-    src/laartman/PacketReader.cpp
+    src/laartman/core/FFmpegDecoder.cpp
+    src/laartman/core/FFmpegDecoderOpen.cpp
+    src/laartman/core/FFmpegDecoderAudio.cpp
+    src/laartman/core/FFmpegDecoderProbe.cpp
+    src/laartman/io/Demuxer.cpp
+    src/laartman/io/PacketReader.cpp
     src/colombina/ffmpeg/FrameCache.cpp
 )
 target_include_directories(tst_framepipeline PRIVATE src)
@@ -632,7 +632,7 @@ add_test(NAME tst_framepipeline COMMAND tst_framepipeline)
 # cancel aborta a espera. Sem ffmpeg no PATH só o caminho de falha do open roda.
 add_executable(tst_packetreader
     tests/tst_packetreader.cpp
-    src/laartman/PacketReader.cpp
+    src/laartman/io/PacketReader.cpp
 )
 target_include_directories(tst_packetreader PRIVATE src)
 target_link_libraries(tst_packetreader PRIVATE
@@ -711,12 +711,12 @@ add_test(NAME tst_encoder COMMAND tst_encoder)
 add_executable(tst_audio_conform
     tests/tst_audio_conform.cpp
     src/colombina/ffmpeg/AudioConformCache.cpp
-    src/laartman/FFmpegDecoder.cpp
-    src/laartman/FFmpegDecoderOpen.cpp
-    src/laartman/FFmpegDecoderAudio.cpp
-    src/laartman/FFmpegDecoderProbe.cpp
-    src/laartman/Demuxer.cpp
-    src/laartman/PacketReader.cpp
+    src/laartman/core/FFmpegDecoder.cpp
+    src/laartman/core/FFmpegDecoderOpen.cpp
+    src/laartman/core/FFmpegDecoderAudio.cpp
+    src/laartman/core/FFmpegDecoderProbe.cpp
+    src/laartman/io/Demuxer.cpp
+    src/laartman/io/PacketReader.cpp
     src/colombina/ffmpeg/FrameCache.cpp
 )
 target_include_directories(tst_audio_conform PRIVATE src src/colombina/ofx/sdk)
@@ -754,12 +754,12 @@ add_test(NAME tst_audio_conform_intervals COMMAND tst_audio_conform_intervals)
 add_executable(tst_export_pipeline
     tests/tst_export_pipeline.cpp
     src/colombina/models/Project.cpp
-    src/laartman/FFmpegDecoder.cpp
-    src/laartman/FFmpegDecoderOpen.cpp
-    src/laartman/FFmpegDecoderAudio.cpp
-    src/laartman/FFmpegDecoderProbe.cpp
-    src/laartman/Demuxer.cpp
-    src/laartman/PacketReader.cpp
+    src/laartman/core/FFmpegDecoder.cpp
+    src/laartman/core/FFmpegDecoderOpen.cpp
+    src/laartman/core/FFmpegDecoderAudio.cpp
+    src/laartman/core/FFmpegDecoderProbe.cpp
+    src/laartman/io/Demuxer.cpp
+    src/laartman/io/PacketReader.cpp
     src/colombina/ffmpeg/FrameCache.cpp
     src/colombina/ffmpeg/SourcePool.cpp
     src/colombina/render/MesaRenderer.cpp

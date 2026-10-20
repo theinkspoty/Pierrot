@@ -15,7 +15,7 @@
 #include <QVector>
 #include "colombina/models/Project.h"
 #include "colombina/mesh/ObjLoader.h"
-#include "laartman/FFmpegDecoder.h"
+#include "laartman/core/FFmpegDecoder.h"
 
 class QLabel;
 class QSlider;

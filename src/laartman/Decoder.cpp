@@ -5,7 +5,7 @@
 
 #include "laartman/Decoder.h"
 
-#include "laartman/FFmpegDecoder.h"
+#include "laartman/core/FFmpegDecoder.h"
 
 // A fachada é deliberadamente fina: cada método é uma tradução 1:1 para o motor
 // atual. Nenhuma decisão de política mora aqui. Quando as fases 3–6 fatiarem o

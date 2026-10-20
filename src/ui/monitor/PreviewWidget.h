@@ -17,7 +17,7 @@
 #include <QTransform>
 #include <QMetaType>
 #include "colombina/models/Project.h"
-#include "laartman/FFmpegDecoder.h"
+#include "laartman/core/FFmpegDecoder.h"
 #include "colombina/render/MesaRenderer.h"
 #include "ui/monitor/PlaybackEngine.h"
 

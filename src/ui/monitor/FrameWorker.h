@@ -21,7 +21,7 @@
 #include <QDebug>
 
 #include "colombina/CrashReporter.h"
-#include "laartman/FFmpegDecoder.h"
+#include "laartman/core/FFmpegDecoder.h"
 #include "colombina/ffmpeg/SourcePool.h"
 #include "colombina/ffmpeg/FrameCache.h"
 #include "ui/monitor/PreviewDebug.h"

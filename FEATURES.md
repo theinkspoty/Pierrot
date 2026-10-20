@@ -303,7 +303,10 @@ src/
   version.h                   Versão do projeto
   CrashReporter               Relatório de crash (backtrace + infos do sistema)
   models/Project              Modelo: mídia, faixas, clipes + serialização JSON
-  laartman/                  Motor de codecs (v0.4, só decode): Decoder (fachada L3), FFmpegDecoder, Demuxer, PacketReader (I/O threaded), ErrorConceal
+  laartman/                  Motor de codecs v0.4 em camadas (só decode):
+    Decoder.h/.cpp             L3 fachada pública (único header de fora)
+    core/                      L1+L2 motor congelado: FFmpegDecoder*, ErrorConceal
+    io/                        L0 demux congelado: Demuxer, PacketReader (I/O threaded)
   colombina/ffmpeg/          Política L4: SourcePool, FramePipeline, FrameCache, MediaCache, FFmpegEncoder
   export/ProjectExporter      Geração do comando ffmpeg (filter_complex)
   ui/TimelineWidget           Timeline interativa (drag, corte, trim, zoom, reordenação de faixas/pastas, presets de estilo)

@@ -14,8 +14,8 @@
 
 #include "FFmpegDecoder.h"
 #include "FFmpegDecoderPriv.h"
-#include "Demuxer.h"
-#include "PacketReader.h"
+#include "laartman/io/Demuxer.h"
+#include "laartman/io/PacketReader.h"
 
 extern "C" {
 #include <libavformat/avformat.h>

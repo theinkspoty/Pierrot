@@ -11,7 +11,7 @@
 #include <QtTest>
 
 #include "colombina/ffmpeg/FFmpegEncoder.h"
-#include "laartman/FFmpegDecoder.h"
+#include "laartman/core/FFmpegDecoder.h"
 
 #include <QColor>
 #include <QFileInfo>

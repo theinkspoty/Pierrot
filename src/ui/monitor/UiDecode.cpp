@@ -5,7 +5,7 @@
 
 #include "ui/monitor/UiDecode.h"
 
-#include "laartman/FFmpegDecoder.h"
+#include "laartman/core/FFmpegDecoder.h"
 
 #include <QWidget>
 

@@ -8,7 +8,7 @@
 #include "colombina/generators.h"
 #include "colombina/render/MesaRenderer.h"
 #include "colombina/render/TextRender.h"
-#include "laartman/FFmpegDecoder.h"
+#include "laartman/core/FFmpegDecoder.h"
 #include "colombina/frei0r/Frei0rPluginManager.h"
 #include "colombina/fx/ColorGrade.h"
 

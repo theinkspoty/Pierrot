@@ -5,7 +5,7 @@
 
 #include "MesaRenderer.h"
 #include "colombina/ffmpeg/SourcePool.h"
-#include "laartman/FFmpegDecoder.h"
+#include "laartman/core/FFmpegDecoder.h"
 #include "colombina/ffmpeg/ProxyManager.h"
 #include "colombina/generators.h"
 #include "colombina/mesh/ObjLoader.h"

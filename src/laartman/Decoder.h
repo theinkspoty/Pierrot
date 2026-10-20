@@ -3,6 +3,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
+// Laartman · L3 — a API pública congelada (fachada fina). Ver README.md.
+// Consumidores de fora incluem SÓ este header; as camadas congeladas moram
+// em core/ (motor) e io/ (demux) e não são para tocar.
+
 #pragma once
 
 #include <QImage>
@@ -15,7 +19,8 @@
 // Este é o ÚNICO header que a camada de política (colombina/ffmpeg, ui/) deve
 // incluir para decodificar. Ele descreve o núcleo imutável do plano v0.4: um
 // motor que decodifica um frame num tempo absoluto e não coordena NADA além
-// disso.
+// disso. As camadas congeladas moram em core/ (motor) e io/ (demux) — ver
+// README.md deste diretório.
 //
 // O que NÃO existe aqui (e o CI deve garantir que não volte):
 //   • posse/"lease": acquire, release, busy, pool;

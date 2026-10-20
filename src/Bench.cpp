@@ -17,7 +17,7 @@
 #include <cmath>
 
 #include "colombina/models/Project.h"
-#include "laartman/FFmpegDecoder.h"
+#include "laartman/core/FFmpegDecoder.h"
 
 namespace {
 

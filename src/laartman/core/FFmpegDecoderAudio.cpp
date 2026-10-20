@@ -8,7 +8,7 @@
 
 #include "FFmpegDecoder.h"
 #include "FFmpegDecoderPriv.h"
-#include "Demuxer.h"
+#include "laartman/io/Demuxer.h"
 
 extern "C" {
 #include <libavformat/avformat.h>

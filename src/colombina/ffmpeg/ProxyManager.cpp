@@ -5,7 +5,7 @@
 
 #include "ProxyManager.h"
 
-#include "laartman/FFmpegDecoder.h"
+#include "laartman/core/FFmpegDecoder.h"
 
 #include <QStandardPaths>
 #include <QDir>

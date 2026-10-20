@@ -21,7 +21,7 @@
 
 #include <QtTest>
 
-#include "laartman/FFmpegDecoder.h"
+#include "laartman/core/FFmpegDecoder.h"
 
 #include <QProcess>
 #include <QStandardPaths>

@@ -10,7 +10,7 @@
 #include <QList>
 #include <QSet>
 #include <QImage>
-#include "laartman/FFmpegDecoder.h"
+#include "laartman/core/FFmpegDecoder.h"
 
 class QThread;
 

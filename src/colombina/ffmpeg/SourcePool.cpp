@@ -5,7 +5,7 @@
 
 #include "colombina/ffmpeg/SourcePool.h"
 
-#include "laartman/FFmpegDecoder.h"
+#include "laartman/core/FFmpegDecoder.h"
 
 SourcePool& SourcePool::instance() {
     static SourcePool pool([] {

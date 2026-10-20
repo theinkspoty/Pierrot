@@ -3,6 +3,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
+// Laartman · core/ (L1+L2) — MOTOR DE DECODE CONGELADO. Não incluir de fora
+// de src/laartman/: quem está acima consome laartman/Decoder.h (a fachada).
+
 #pragma once
 
 #include <QImage>

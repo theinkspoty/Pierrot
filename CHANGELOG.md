@@ -29,6 +29,15 @@ de desempenho/robustez. Naipe continua **alpha**.
 - `PacketReader.cpp` entrou nas fontes de todos os testes que compilam o
   motor diretamente (CMakeLists).
 
+### Estrutura — camadas por estabilidade em `src/laartman/`
+
+- **Subpastas por camada** (ver `src/laartman/README.md`): a raiz fica só a
+  fachada pública `Decoder.h/.cpp` (L3 — o que mexeremos muito); o motor de
+  decode congelado foi para `core/` (`FFmpegDecoder*`, `ErrorConceal`); demux
+  e leitura foram para `io/` (`Demuxer`, `PacketReader` — camada mais funda).
+  Consumidores incluem `laartman/core/…` hoje; o alvo é todos usarem só a
+  fachada da raiz (migração de call sites pendente).
+
 ### Probe (§8.6)
 
 - **Memo de `probe()` por `(caminho canônico, mtime, tamanho)`** — o probe

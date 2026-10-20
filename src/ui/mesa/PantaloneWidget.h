@@ -11,7 +11,7 @@
 #include <QHash>
 #include <QShowEvent>
 #include "colombina/models/Project.h"
-#include "laartman/FFmpegDecoder.h"
+#include "laartman/core/FFmpegDecoder.h"
 
 class QSlider;
 class QLabel;

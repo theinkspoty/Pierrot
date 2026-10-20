@@ -12,7 +12,7 @@
 
 #include <QtTest>
 
-#include "laartman/PacketReader.h"
+#include "laartman/io/PacketReader.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>

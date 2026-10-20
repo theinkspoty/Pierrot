@@ -9,7 +9,7 @@
 #include "colombina/ofx/OfxPluginManager.h"
 #include "colombina/ofx/OfxHost.h"
 #include "colombina/models/Project.h"
-#include "laartman/FFmpegDecoder.h"
+#include "laartman/core/FFmpegDecoder.h"
 
 #include <QDir>
 #include <QStandardPaths>

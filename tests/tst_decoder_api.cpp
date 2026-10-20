@@ -28,7 +28,7 @@
 #include <QtTest>
 
 #include "laartman/Decoder.h"
-#include "laartman/FFmpegDecoder.h"
+#include "laartman/core/FFmpegDecoder.h"
 
 #include <QFile>
 #include <QProcess>

@@ -12,7 +12,7 @@
 
 #include <QtTest>
 
-#include "laartman/ErrorConceal.h"
+#include "laartman/core/ErrorConceal.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
