@@ -4,7 +4,13 @@ Data: 2026-10-19
 Escopo: reestruturar o motor de decodificação `Laartman` para um **núcleo
 imutável** de decodificação, movendo toda a coordenação de acesso (pool,
 posse, prefetch, lookahead, qualidade) para a camada do Pierrot.
-Status: **proposta** (nenhum código alterado por este documento).
+Status: **CONCLUÍDA (2026-10-20)** — fases 0–8 implementadas; `PacketReader`
+integrado ao caminho de vídeo (contexto próprio + thread de I/O) e áudio
+separado por mutex em 2026-10-20 fecha as fases 3–4. Itens da seção 8 já no
+changelog: erro tipado parcial (`ErrorConceal`/`FrameStatus`), memo de probe
+(§8.6), budget do `FrameCache` (§8.4), warm em thread própria. Pendentes:
+`DecoderMetrics` (§8.5), índice de busca persistido (§8.1), split estrutural
+em classes L1/L2 (VideoCodec/AudioCodec/HwDevice/DecodeSession/SeekPolicy).
 
 ---
 

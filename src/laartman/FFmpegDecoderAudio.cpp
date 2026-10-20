@@ -347,12 +347,36 @@ bool FFmpegDecoder::audioFinished() const {
     return m_audioFinished;
 }
 
+// Adquire os locks do caminho de áudio na ordem fixa m_mutex → m_audioMutex
+// (a mesma de open()/close(): sem AB-BA). Caso comum — vídeo com contexto
+// PRÓPRIO via PacketReader — só m_audioMutex: vídeo e áudio decodificam em
+// paralelo, sem esperar um ao outro (Fase 3 do plano v0.4: sem cadeia de
+// mutex cruzada). Compartilhado (imagem / reader falhou) pega os dois.
+//
+// O flag m_videoSharesDemuxer só muda em open()/freeAllLocked(), que exigem
+// os DOIS locks — então, com audio preso, ele está estável. A revalidação
+// abaixo cobre o caso de open() terminar ENTRE a leitura do flag e o lock do
+// áudio: sem ela, o decodeAudio poderia correr sem m_mutex enquanto o frameAt
+// de uma imagem lia o demuxer compartilhado.
+void FFmpegDecoder::lockAudio(std::unique_lock<QMutex>& video,
+                              std::unique_lock<QMutex>& audio) const {
+    for (;;) {
+        video = std::unique_lock<QMutex>(m_mutex, std::defer_lock);
+        if (m_videoSharesDemuxer.load(std::memory_order_acquire))
+            video.lock();
+        audio = std::unique_lock<QMutex>(m_audioMutex);
+        if (!video.owns_lock()
+            && m_videoSharesDemuxer.load(std::memory_order_acquire)) {
+            audio.unlock();
+            continue; // estado mudou: reavalia com o flag novo
+        }
+        return;
+    }
+}
+
 void FFmpegDecoder::seekAudio(double seconds) {
-    // m_aCtx == m_ctx (demuxer único compartilhado com o vídeo): pega m_mutex
-    // ANTES de mexer no demuxer, para não correr com frameAt(). Ordem fixa
-    // m_mutex → m_audioMutex, a mesma de open()/close(): sem AB-BA.
-    QMutexLocker vlock(&m_mutex);
-    QMutexLocker locker(&m_audioMutex);
+    std::unique_lock<QMutex> vlock, alock;
+    lockAudio(vlock, alock);
     if (audioDbg()) qDebug() << "[audio] seek" << seconds << "stream=" << m_audioStream;
     if (!m_aCtx || m_audioStream < 0) return;
     AVFormatContext* afmt = static_cast<AVFormatContext*>(m_aCtx);
@@ -377,10 +401,8 @@ void FFmpegDecoder::seekAudio(double seconds) {
 }
 
 int FFmpegDecoder::decodeAudio(void* outBuf, int maxBytes) {
-    // Mesmo demuxer do vídeo (m_aCtx == m_ctx): m_mutex primeiro (ordem fixa
-    // m_mutex → m_audioMutex) para não correr com frameAt().
-    QMutexLocker vlock(&m_mutex);
-    QMutexLocker locker(&m_audioMutex);
+    std::unique_lock<QMutex> vlock, alock;
+    lockAudio(vlock, alock);
     if (!m_aCtx || m_audioStream < 0 || !outBuf || maxBytes <= 0) return 0;
     if (!m_audioPkt || !m_audioFrame) return 0;
 

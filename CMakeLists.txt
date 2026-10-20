@@ -444,6 +444,7 @@ add_executable(tst_exporter
     src/laartman/FFmpegDecoderAudio.cpp
     src/laartman/FFmpegDecoderProbe.cpp
     src/laartman/Demuxer.cpp
+    src/laartman/PacketReader.cpp
     src/colombina/ffmpeg/FrameCache.cpp
     src/colombina/ffmpeg/SourcePool.cpp
     src/colombina/render/MesaRenderer.cpp
@@ -505,6 +506,7 @@ add_executable(tst_concurrency
     src/laartman/FFmpegDecoderAudio.cpp
     src/laartman/FFmpegDecoderProbe.cpp
     src/laartman/Demuxer.cpp
+    src/laartman/PacketReader.cpp
     src/colombina/ffmpeg/FrameCache.cpp
 )
 target_include_directories(tst_concurrency PRIVATE src src/colombina/ofx/sdk)
@@ -538,6 +540,7 @@ add_executable(tst_decoder_api
     src/laartman/FFmpegDecoderAudio.cpp
     src/laartman/FFmpegDecoderProbe.cpp
     src/laartman/Demuxer.cpp
+    src/laartman/PacketReader.cpp
     src/colombina/ffmpeg/FrameCache.cpp
     src/colombina/ffmpeg/FFmpegEncoder.cpp
 )
@@ -570,6 +573,7 @@ add_executable(tst_sourcepool
     src/laartman/FFmpegDecoderAudio.cpp
     src/laartman/FFmpegDecoderProbe.cpp
     src/laartman/Demuxer.cpp
+    src/laartman/PacketReader.cpp
     src/colombina/ffmpeg/FrameCache.cpp
 )
 target_include_directories(tst_sourcepool PRIVATE src)
@@ -602,6 +606,7 @@ add_executable(tst_framepipeline
     src/laartman/FFmpegDecoderAudio.cpp
     src/laartman/FFmpegDecoderProbe.cpp
     src/laartman/Demuxer.cpp
+    src/laartman/PacketReader.cpp
     src/colombina/ffmpeg/FrameCache.cpp
 )
 target_include_directories(tst_framepipeline PRIVATE src)
@@ -711,6 +716,7 @@ add_executable(tst_audio_conform
     src/laartman/FFmpegDecoderAudio.cpp
     src/laartman/FFmpegDecoderProbe.cpp
     src/laartman/Demuxer.cpp
+    src/laartman/PacketReader.cpp
     src/colombina/ffmpeg/FrameCache.cpp
 )
 target_include_directories(tst_audio_conform PRIVATE src src/colombina/ofx/sdk)
@@ -753,6 +759,7 @@ add_executable(tst_export_pipeline
     src/laartman/FFmpegDecoderAudio.cpp
     src/laartman/FFmpegDecoderProbe.cpp
     src/laartman/Demuxer.cpp
+    src/laartman/PacketReader.cpp
     src/colombina/ffmpeg/FrameCache.cpp
     src/colombina/ffmpeg/SourcePool.cpp
     src/colombina/render/MesaRenderer.cpp

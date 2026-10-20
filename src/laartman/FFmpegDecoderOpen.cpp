@@ -10,6 +10,7 @@
 #include "FFmpegDecoder.h"
 #include "FFmpegDecoderPriv.h"
 #include "Demuxer.h"
+#include "PacketReader.h"
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -287,6 +288,25 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
             }
         }
     }
+    // L0 — leitura de pacotes À FRENTE do vídeo (Fases 3+4 do plano v0.4):
+    // o PacketReader abre o arquivo num contexto PRÓPIO e uma thread lê os
+    // pacotes do stream de vídeo à frente (buffer limitado). O vídeo deixa de
+    // ler o demuxer compartilhado com o áudio — sem cadeia de mutex cruzada e
+    // sem que o disco engasgado pare o decode. Imagens (single-frame) ficam no
+    // demuxer síncrono: um único pacote não ganha nada com thread e o demuxer
+    // image2 é frágil. Se a abertura do reader falhar, o caminho de vídeo cai
+    // no demuxer compartilhado (comportamento antigo) — nunca bloqueia o open.
+    if (m_codec && m_stream >= 0 && !m_isImage) {
+        m_reader = std::make_unique<PacketReader>();
+        if (!m_reader->open(filePath, m_stream)) {
+            m_reader.reset();
+            m_videoSharesDemuxer.store(true, std::memory_order_release);
+        }
+    } else {
+        // Sem vídeo (ou imagem): só o áudio (ou ninguém) lê o demuxer.
+        m_videoSharesDemuxer.store(m_isImage, std::memory_order_release);
+    }
+
     commitOpen();
     return true;
 }
@@ -335,6 +355,11 @@ void FFmpegDecoder::freeAllLocked() {
         avcodec_free_context(reinterpret_cast<AVCodecContext**>(&m_codec));
         m_codec = nullptr;
     }
+    if (m_reader) {
+        m_reader->close(); // join da thread de leitura + descarta a fila
+        m_reader.reset();
+    }
+    m_videoSharesDemuxer.store(false, std::memory_order_release);
     if (m_ctx) {
         // L0: o Demuxer é dono do AVFormatContext (m_ctx == m_demuxer.formatContext()).
         m_demuxer->close();

@@ -15,6 +15,7 @@
 #include "FFmpegDecoder.h"
 #include "FFmpegDecoderPriv.h"
 #include "Demuxer.h"
+#include "PacketReader.h"
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -120,6 +121,16 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
     // posição do codec) é mantido: o próximo frameAt aproveita ou re-seeka.
     auto cancelled = [cancel]() {
         return cancel && cancel->load(std::memory_order_relaxed);
+    };
+
+    // Pacotes de vídeo: PacketReader (thread de I/O à frente, contexto
+    // próprio — Fases 3+4) quando presente; fallback síncrono no demuxer
+    // compartilhado (imagens / abertura do reader falhou). O cancel chega ao
+    // read() do reader, que aborta a espera em ~20 ms — antes o disco lento
+    // travava o decode até o pacote chegar.
+    auto readVideoPacket = [&]() -> int {
+        if (m_reader) return m_reader->read(m_pkt, cancel);
+        return m_demuxer->readPacket(m_pkt);
     };
 
     // Núcleo SEM cache: o LRU de quadros é política de L4 (FrameCache, na
@@ -299,7 +310,11 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
 
     if (needSeek) {
         const qint64 seekT0 = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-        const int seekErr = m_demuxer->seek(m_stream, target, AVSEEK_FLAG_BACKWARD);
+        // Seek no contexto do vídeo: PacketReader (descarta a fila e
+        // reposiciona o produtor) ou o demuxer compartilhado (fallback).
+        const int seekErr = m_reader
+            ? m_reader->seek(m_stream, target, AVSEEK_FLAG_BACKWARD)
+            : m_demuxer->seek(m_stream, target, AVSEEK_FLAG_BACKWARD);
         if (seekErr < 0) {
             qWarning() << "av_seek_frame failed for video:" << seekErr;
         }
@@ -442,7 +457,10 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
 
         if (chosen) break;
 
-        const int r = m_demuxer->readPacket(m_pkt);
+        const int r = readVideoPacket();
+        // Cancel durante a espera do reader (disco lento): aborta sem drenar
+        // o codec — o progresso preservado serve para o próximo pedido.
+        if (r == AVERROR_EXIT && cancelled()) { aborted = true; break; }
         if (r < 0) {
             avcodec_send_packet(cc, nullptr);
             while (avcodec_receive_frame(cc, m_frame) == 0) {

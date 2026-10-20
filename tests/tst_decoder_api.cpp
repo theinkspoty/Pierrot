@@ -35,7 +35,11 @@
 #include <QStandardPaths>
 
 #include <algorithm>
+#include <atomic>
+#include <thread>
 #include <vector>
+
+#include <QThread>
 
 #include <unistd.h>
 
@@ -108,6 +112,7 @@ private slots:
     void seekBackwardForwardMatchesFreshDecode();
     void loopGifWrapsDeterministically();
     void vfrDecodeIsDeterministic();
+    void videoAndAudioDecodeConcurrently();
 
     void hotPathLatencyIsFlat();
 
@@ -120,6 +125,7 @@ private:
     QString m_ffmpeg;
     QString m_dir;
     QString m_media;   // vídeo 320x180@30 (3s), GOP fechado, sem áudio
+    QString m_av;      // vídeo 320x180@30 (3s) + trilha de áudio (teste AV paralelo)
     QString m_gif;     // GIF animado 2s em loop
     QString m_vfr;     // MP4 com taxa variável (concat 30fps + 10fps)
     double m_duration = 0.0;
@@ -154,6 +160,24 @@ void tst_DecoderApi::initTestCase() {
     QCOMPARE(info.height, 180);
     m_duration = info.duration;
     QVERIFY(m_duration > 2.0);
+
+    // Vídeo + áudio no mesmo arquivo: fixture do teste de caminhos
+    // concorrentes (vídeo no PacketReader, áudio no demuxer, mesma instância).
+    m_av = m_dir + QStringLiteral("/av.mp4");
+    const QStringList avArgs {
+        QStringLiteral("-y"), QStringLiteral("-hide_banner"), QStringLiteral("-loglevel"), QStringLiteral("error"),
+        QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+        QStringLiteral("testsrc=size=320x180:rate=30:duration=3"),
+        QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+        QStringLiteral("sine=frequency=440:duration=3"),
+        QStringLiteral("-c:v"), QStringLiteral("libx264"), QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"),
+        QStringLiteral("-g"), QStringLiteral("15"), QStringLiteral("-keyint_min"), QStringLiteral("15"),
+        QStringLiteral("-sc_threshold"), QStringLiteral("0"),
+        QStringLiteral("-c:a"), QStringLiteral("aac"), QStringLiteral("-b:a"), QStringLiteral("96k"),
+        m_av
+    };
+    if (runCmd(m_ffmpeg, avArgs) != 0)
+        m_av.clear(); // AV opcional: se o encoder de áudio não existir, o teste pula
 
     // GIF animado: usa o encoder GIF do ffmpeg (paleta). 2s, 10fps.
     const QStringList gifArgs {
@@ -393,6 +417,54 @@ void tst_DecoderApi::vfrDecodeIsDeterministic() {
     dec.frameAt(0.2, 120);
     const QImage afterBack = dec.frameAt(t, 120);
     QVERIFY2(samePixels(fresh, afterBack), "decodificação VFR divergiu após seek para trás");
+}
+
+// Fase 3 (separação de vídeo/áudio): com o vídeo no PacketReader (contexto
+// próprio) e o áudio no demuxer, a MESMA instância decodifica os dois em
+// threads concorrentes sem deadlock e sem corromper — antes a cadeia de mutex
+// m_mutex → m_audioMutex serializava os caminhos. Um deadlock de locks
+// cruzados pendura o teste (o ctest mata o processo pendurado).
+void tst_DecoderApi::videoAndAudioDecodeConcurrently() {
+    if (m_av.isEmpty())
+        QSKIP("geração de AV ausente — teste de caminhos concorrentes pulado");
+
+    FFmpegDecoder dec;
+    QVERIFY(openUsable(dec, m_av));
+    QVERIFY(dec.hasAudio());
+
+    std::atomic<bool> videoDone{false}, audioDone{false};
+    std::atomic<int> videoFrames{0}, audioBytes{0};
+
+    // Vídeo: varredura com seeks para trás/à frente (exercita o PacketReader).
+    std::thread video([&] {
+        for (int i = 0; i < 60; ++i) {
+            const double t = (i % 30) * 0.1;
+            if (!dec.frameAt(t, 160).isNull())
+                videoFrames.fetch_add(1);
+        }
+        videoDone.store(true);
+    });
+    // Áudio: seeks + drenagem de PCM (exercita o demuxer de áudio).
+    std::thread audio([&] {
+        char buf[4096];
+        for (int i = 0; i < 60; ++i) {
+            dec.seekAudio((i % 20) * 0.15);
+            const int got = dec.decodeAudio(buf, sizeof(buf));
+            if (got > 0) audioBytes.fetch_add(got);
+        }
+        audioDone.store(true);
+    });
+
+    QDeadlineTimer limit(30000);
+    while ((!videoDone.load() || !audioDone.load()) && !limit.hasExpired())
+        QThread::msleep(10);
+    video.join();
+    audio.join();
+
+    QVERIFY2(videoDone.load() && audioDone.load(),
+             "vídeo+áudio na mesma instância travaram (deadlock de locks)");
+    QVERIFY2(videoFrames.load() > 0, "nenhum quadro decodificado no caminho paralelo");
+    QVERIFY2(audioBytes.load() > 0, "nenhum byte de PCM decodificado no caminho paralelo");
 }
 
 // ── Invariante 4: caminho quente previsível (linha de base de latência) ─────

@@ -15,12 +15,15 @@
 #include <list>
 #include <memory>
 
+#include <mutex>
+
 // Ponteiros p/ tipos do FFmpeg (definidos em libavcodec/avcodec.h, incluído
 // pelos .cpp). Só há membros por ponteiro, então forward declaration basta e
 // evita vazar os headers C do FFmpeg para quem inclui este arquivo.
 struct AVPacket;
 struct AVFrame;
-class Demuxer; // L0 — demuxing (definido em Demuxer.h, incluído só nos .cpp)
+class Demuxer;    // L0 — demuxing (definido em Demuxer.h, incluído só nos .cpp)
+class PacketReader; // L0 — leitura de pacotes à frente (PacketReader.h)
 
 struct FFmpegMediaInfo {
     double duration = 0.0;
@@ -109,7 +112,26 @@ public:
 private:
     void freeAllLocked(); // chama com m_mutex E m_audioMutex segurados
 
-    std::unique_ptr<Demuxer> m_demuxer; // L0 — dono do AVFormatContext
+    // Adquire os locks do caminho de áudio na ordem fixa (m_mutex →
+    // m_audioMutex, a mesma de open()/close(): sem AB-BA). Caso comum — vídeo
+    // com contexto PRÓPRIO via PacketReader — só pega m_audioMutex: vídeo e
+    // áudio decodificam em paralelo. Compartilhado (imagem / reader falhou)
+    // pega os dois.
+    void lockAudio(std::unique_lock<QMutex>& video,
+                   std::unique_lock<QMutex>& audio) const;
+
+    std::unique_ptr<Demuxer> m_demuxer; // L0 — dono do AVFormatContext (áudio/imagens)
+    // L0 — leitura de pacotes À FRENTE do vídeo (Fases 3+4 do plano v0.4):
+    // thread dedicada com buffer limitado, contexto de demux PRÓPRIO — o vídeo
+    // deixa de compartilhar o AVFormatContext (e a cadeia de mutex) com o
+    // áudio. Nulo para imagens (single-frame) e em fallback se a abertura
+    // falhar (aí o vídeo lê o demuxer compartilhado, como antes).
+    std::unique_ptr<PacketReader> m_reader;
+    // true quando o caminho de vídeo lê o MESMO demuxer do áudio (m_reader
+    // nulo com stream de vídeo presente — imagens ou fallback). Só esse caso
+    // exige m_mutex no decodeAudio/seekAudio. Escrito só em open()/freeAllLocked
+    // (sob os dois locks); lido via atomic no lockAudio().
+    std::atomic<bool> m_videoSharesDemuxer{false};
     void* m_ctx = nullptr;              // == m_demuxer->formatContext()
     void* m_codec = nullptr;
     int m_stream = -1;
@@ -140,12 +162,14 @@ private:
     double m_lastFrameSec = -1.0;
     double m_nextFrameSec = -1.0;
 
-    // Áudio: MESMO AVFormatContext do vídeo (m_ctx), reaproveitado para não
-    // reabrir/re-probar o arquivo. Como o demuxer é único, seekAudio() e
-    // decodeAudio() também pegam m_mutex (antes de m_audioMutex): uma instância
-    // NÃO deve decodificar áudio e vídeo em threads concorrentes — para isso,
-    // use instâncias separadas (é o que o AudioConformCache já faz).
-    void* m_aCtx = nullptr;    // AVFormatContext* (== m_ctx)
+    // Áudio: lê pacotes do MESMO demuxer que serve de probe/contexto
+    // (m_aCtx == m_ctx). Com o vídeo no PacketReader (contexto próprio), o
+    // caso comum decodifica áudio e vídeo em paralelo — só m_audioMutex os
+    // separa. Quando o vídeo COMPARTILHA o demuxer (imagens, fallback do
+    // reader), lockAudio() também pega m_mutex (ordem fixa m_mutex →
+    // m_audioMutex). Para áudio e vídeo em threads concorrentes do MESMO
+    // arquivo, use instâncias separadas (é o que o AudioConformCache faz).
+    void* m_aCtx = nullptr;    // AVFormatContext* (== m_ctx, o do demuxer)
     void* m_aCodec = nullptr;  // AVCodecContext* (áudio)
     void* m_swr = nullptr;     // SwrContext*
     int m_audioStream = -1;

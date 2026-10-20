@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Decode — fechamento da transição v0.4 (Fases 3+4)
+
+- **`PacketReader` integrado ao caminho de vídeo (L0)** — o decoder lê os
+  pacotes de vídeo via `PacketReader` (thread de I/O à frente, buffer de 32,
+  **contexto de demux próprio**) em vez do `av_read_frame` síncrono do demuxer
+  compartilhado. Se o disco engasga, o decode continua até esvaziar o buffer;
+  o `cancel` cooperativo chega ao `read()` do reader e aborta a espera em
+  ~20 ms (antes o decode travava esperando o disco). Imagens (single-frame)
+  ficam no demuxer síncrono (um pacote não ganha nada com thread; image2 é
+  frágil). Se a abertura do reader falhar, o caminho de vídeo cai no demuxer
+  compartilhado (comportamento antigo) — nunca bloqueia o `open()`.
+- **Vídeo e áudio em paralelo na mesma instância (Fase 3)** — com o vídeo no
+  contexto próprio do `PacketReader`, `decodeAudio()`/`seekAudio()` deixam de
+  pegar `m_mutex` no caso comum: só `m_audioMutex` os separa e os dois caminhos
+  decodificam sem esperar um ao outro (a cadeia `m_mutex → m_audioMutex` só
+  permanece quando o vídeo COMPARTILHA o demuxer — imagens/fallback —, via
+  `lockAudio()` com revalidação para não correr com `frameAt`). Novo teste
+  `videoAndAudioDecodeConcurrently` (mesma instância, duas threads, seek+PCM)
+  trava o CI se houver deadlock.
+- `PacketReader.cpp` entrou nas fontes de todos os testes que compilam o
+  motor diretamente (CMakeLists).
+
 ### Probe (§8.6)
 
 - **Memo de `probe()` por `(caminho canônico, mtime, tamanho)`** — o probe
