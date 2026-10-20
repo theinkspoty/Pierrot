@@ -41,6 +41,20 @@ if(PIERROT_CRASH_DEBUG)
     add_compile_options(-fno-omit-frame-pointer -g)
 endif()
 
+# ── Sanitizers (aceitação da reestruturação, Fase 8b) ──────────────────
+# Liga AddressSanitizer + UndefinedBehaviorSanitizer em todos os alvos
+# (compile E link). UBSan aborta no primeiro erro (-fno-sanitize-recover)
+# para que o ctest falhe visível em vez de só imprimir um aviso. Uso:
+#   cmake -S . -B build-asan -DPIERROT_SANITIZE=ON -DCMAKE_BUILD_TYPE=Debug
+#   cmake --build build-asan -j$(nproc)
+#   ctest --test-dir build-asan --output-on-failure
+option(PIERROT_SANITIZE "Compilar com ASan+UBSan (Fase 8b)" OFF)
+if(PIERROT_SANITIZE)
+    add_compile_options(-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=address,undefined)
+    message(STATUS "Pierrot: ASan+UBSan habilitados")
+endif()
+
 find_package(Git QUIET)
 if(Git_FOUND)
     execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
@@ -59,19 +73,21 @@ string(TIMESTAMP PIERROT_BUILD_TIME "%Y-%m-%d %H:%M:%S")
 # Project, render nem UI — é deliberadamente a base de tudo. A colombina
 # depende dele; ninguém acima o inclui direto além de incluir seu header.
 set(LAARTMAN_SOURCES
+    src/laartman/Decoder.cpp
     src/laartman/FFmpegDecoder.cpp
     src/laartman/FFmpegDecoderOpen.cpp
     src/laartman/FFmpegDecoderAudio.cpp
     src/laartman/FFmpegDecoderProbe.cpp
-    src/laartman/FFmpegEncoder.cpp
-    src/laartman/DecoderPool.cpp
+    src/laartman/Demuxer.cpp
+    src/laartman/PacketReader.cpp
 )
 
 set(LAARTMAN_HEADERS
+    src/laartman/Decoder.h
     src/laartman/FFmpegDecoder.h
-    src/laartman/FFmpegDecoderPriv.h
-    src/laartman/FFmpegEncoder.h
-    src/laartman/DecoderPool.h
+    src/laartman/Demuxer.h
+    src/laartman/PacketReader.h
+    src/laartman/ErrorConceal.h
 )
 
 # ── Colombina: o kernel, a camada blindada (quase não muda) ─────────────
@@ -82,6 +98,10 @@ set(COLOMBINA_SOURCES
     src/colombina/ffmpeg/AudioConformCache.cpp
     src/colombina/ffmpeg/MediaCache.cpp
     src/colombina/ffmpeg/ProxyManager.cpp
+    src/colombina/ffmpeg/SourcePool.cpp
+    src/colombina/ffmpeg/FramePipeline.cpp
+    src/colombina/ffmpeg/FrameCache.cpp
+    src/colombina/ffmpeg/FFmpegEncoder.cpp
     src/colombina/export/ProjectExporter.cpp
     src/colombina/export/LainkaRenderer.cpp
     src/colombina/export/OfxExportRenderer.cpp
@@ -102,6 +122,10 @@ set(COLOMBINA_HEADERS
     src/colombina/models/ClipAttrs.h
     src/colombina/ffmpeg/MediaCache.h
     src/colombina/ffmpeg/ProxyManager.h
+    src/colombina/ffmpeg/SourcePool.h
+    src/colombina/ffmpeg/FramePipeline.h
+    src/colombina/ffmpeg/FrameCache.h
+    src/colombina/ffmpeg/FFmpegEncoder.h
     src/colombina/export/ProjectExporter.h
     src/colombina/export/LainkaFx.h
     src/colombina/export/LainkaRenderer.h
@@ -137,7 +161,6 @@ set(PIERROT_APP_SOURCES
     src/ui/monitor/PlaybackEngine.cpp
     src/ui/monitor/PreviewProfiler.cpp
     src/ui/monitor/PreviewWidget.cpp
-    src/ui/monitor/BgPrefetchWorker.cpp
     src/ui/monitor/FrameWorker.cpp
     src/ui/monitor/MonitorScrubBar.cpp
     src/ui/timeline/TlLog.cpp
@@ -200,7 +223,6 @@ set(PIERROT_APP_HEADERS
     src/ui/timeline/TimelineWidget.h
     src/ui/timeline/TimelineCommands.h
     src/ui/monitor/PreviewWidget.h
-    src/ui/monitor/BgPrefetchWorker.h
     src/ui/monitor/PreviewDebug.h
     src/ui/monitor/FrameWorker.h
     src/ui/monitor/MonitorScrubBar.h
@@ -421,7 +443,9 @@ add_executable(tst_exporter
     src/laartman/FFmpegDecoderOpen.cpp
     src/laartman/FFmpegDecoderAudio.cpp
     src/laartman/FFmpegDecoderProbe.cpp
-    src/laartman/DecoderPool.cpp
+    src/laartman/Demuxer.cpp
+    src/colombina/ffmpeg/FrameCache.cpp
+    src/colombina/ffmpeg/SourcePool.cpp
     src/colombina/render/MesaRenderer.cpp
     src/colombina/export/ProjectExporter.cpp
     src/colombina/ffmpeg/ProxyManager.cpp
@@ -480,6 +504,8 @@ add_executable(tst_concurrency
     src/laartman/FFmpegDecoderOpen.cpp
     src/laartman/FFmpegDecoderAudio.cpp
     src/laartman/FFmpegDecoderProbe.cpp
+    src/laartman/Demuxer.cpp
+    src/colombina/ffmpeg/FrameCache.cpp
 )
 target_include_directories(tst_concurrency PRIVATE src src/colombina/ofx/sdk)
 target_link_libraries(tst_concurrency PRIVATE
@@ -496,19 +522,30 @@ target_link_libraries(tst_concurrency PRIVATE
 )
 add_test(NAME tst_concurrency COMMAND tst_concurrency)
 
-# tst_decoderpool: lease/LRU/eviction do pool de decoders quentes (extraído
-# de PreviewWidget.cpp no F4). Sem ffmpeg no PATH só o caminho de falha do
-# open roda; com ele gera clipes sintéticos e exercita busy/eviction/concorrência.
-add_executable(tst_decoderpool
-    tests/tst_decoderpool.cpp
-    src/laartman/DecoderPool.cpp
+# tst_decoder_api: CONTRATO da API pública do núcleo L3 (fachada Decoder do
+# plano v0.4 + o motor FFmpegDecoder). Dá dente aos invariantes da seção 9 do
+# relatório: determinismo/paridade de frame (mesmo path,t,maxW → pixels
+# idênticos, em qualquer ordem, antes/depois de reabrir), idempotência (close
+# 2×, open já aberto, frame após close), a LINHA DE BASE de latência do caminho
+# quente (p99 ≈ p50) e o encapsulamento (o header público não reexpõe
+# posse/política). Gera mídia com o ffmpeg CLI; sem ffmpeg no PATH, só o
+# caminho de falha do open() roda.
+add_executable(tst_decoder_api
+    tests/tst_decoder_api.cpp
+    src/laartman/Decoder.cpp
     src/laartman/FFmpegDecoder.cpp
     src/laartman/FFmpegDecoderOpen.cpp
     src/laartman/FFmpegDecoderAudio.cpp
     src/laartman/FFmpegDecoderProbe.cpp
+    src/laartman/Demuxer.cpp
+    src/colombina/ffmpeg/FrameCache.cpp
+    src/colombina/ffmpeg/FFmpegEncoder.cpp
 )
-target_include_directories(tst_decoderpool PRIVATE src)
-target_link_libraries(tst_decoderpool PRIVATE
+# O teste lê o próprio header público como texto (guarda de encapsulamento).
+target_compile_definitions(tst_decoder_api PRIVATE
+    PIERROT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_include_directories(tst_decoder_api PRIVATE src)
+target_link_libraries(tst_decoder_api PRIVATE
     ${PIERROT_QT_TEST}
     ${PIERROT_QT_CORE}
     ${PIERROT_QT_GUI}
@@ -519,7 +556,123 @@ target_link_libraries(tst_decoderpool PRIVATE
     FFmpeg::swresample
     ${CMAKE_DL_LIBS}
 )
-add_test(NAME tst_decoderpool COMMAND tst_decoderpool)
+add_test(NAME tst_decoder_api COMMAND tst_decoder_api)
+
+# tst_sourcepool: acesso compartilhado/LRU/eviction do pool de decoders quentes
+# (política L4, colombina/ffmpeg/SourcePool). Garantia central: acquire() NUNCA
+# devolve nullptr por "ocupado". Sem ffmpeg no PATH só o caminho de falha do
+# open roda; com ele gera clipes sintéticos e exercita reuse/eviction/concorrência.
+add_executable(tst_sourcepool
+    tests/tst_sourcepool.cpp
+    src/colombina/ffmpeg/SourcePool.cpp
+    src/laartman/FFmpegDecoder.cpp
+    src/laartman/FFmpegDecoderOpen.cpp
+    src/laartman/FFmpegDecoderAudio.cpp
+    src/laartman/FFmpegDecoderProbe.cpp
+    src/laartman/Demuxer.cpp
+    src/colombina/ffmpeg/FrameCache.cpp
+)
+target_include_directories(tst_sourcepool PRIVATE src)
+target_link_libraries(tst_sourcepool PRIVATE
+    ${PIERROT_QT_TEST}
+    ${PIERROT_QT_CORE}
+    ${PIERROT_QT_GUI}
+    FFmpeg::avformat
+    FFmpeg::avcodec
+    FFmpeg::avutil
+    FFmpeg::swscale
+    FFmpeg::swresample
+    ${CMAKE_DL_LIBS}
+)
+add_test(NAME tst_sourcepool COMMAND tst_sourcepool)
+
+# tst_framepipeline: política de lookahead L4 (colombina/ffmpeg/FramePipeline).
+# Dono da thread de prefetch, da fila de warm e do estado busy — o que saiu do
+# PreviewWidget na Fase 2. Verifica que a fila é substituída (não acumula), que
+# o prefetch de frame0 é serial e devolve o par (t, t+step), que warmNow aquece
+# o pool e limpa o in-flight, e que stop() é seguro/idempotente. Sem ffmpeg no
+# PATH só o caminho sem mídia roda.
+add_executable(tst_framepipeline
+    tests/tst_framepipeline.cpp
+    src/colombina/ffmpeg/FramePipeline.cpp
+    src/colombina/ffmpeg/SourcePool.cpp
+    src/colombina/CrashReporter.cpp
+    src/laartman/FFmpegDecoder.cpp
+    src/laartman/FFmpegDecoderOpen.cpp
+    src/laartman/FFmpegDecoderAudio.cpp
+    src/laartman/FFmpegDecoderProbe.cpp
+    src/laartman/Demuxer.cpp
+    src/colombina/ffmpeg/FrameCache.cpp
+)
+target_include_directories(tst_framepipeline PRIVATE src)
+target_compile_definitions(tst_framepipeline PRIVATE
+    PIERROT_GIT_COMMIT="${PIERROT_GIT_COMMIT}"
+    PIERROT_BUILD_TIME="${PIERROT_BUILD_TIME}")
+target_link_libraries(tst_framepipeline PRIVATE
+    ${PIERROT_QT_TEST}
+    ${PIERROT_QT_CORE}
+    ${PIERROT_QT_GUI}
+    FFmpeg::avformat
+    FFmpeg::avcodec
+    FFmpeg::avutil
+    FFmpeg::swscale
+    FFmpeg::swresample
+    ${CMAKE_DL_LIBS}
+)
+add_test(NAME tst_framepipeline COMMAND tst_framepipeline)
+
+# tst_packetreader: leitura de pacotes à frente com buffer limitado (L0).
+# Verifica que o teto é respeitado (memória O(bucket)), que a leitura esgota os
+# pacotes até o EOF, que seek() reposiciona, que close() é idempotente e que
+# cancel aborta a espera. Sem ffmpeg no PATH só o caminho de falha do open roda.
+add_executable(tst_packetreader
+    tests/tst_packetreader.cpp
+    src/laartman/PacketReader.cpp
+)
+target_include_directories(tst_packetreader PRIVATE src)
+target_link_libraries(tst_packetreader PRIVATE
+    ${PIERROT_QT_TEST}
+    ${PIERROT_QT_CORE}
+    ${PIERROT_QT_GUI}
+    FFmpeg::avformat
+    FFmpeg::avcodec
+    FFmpeg::avutil
+    ${CMAKE_DL_LIBS}
+)
+add_test(NAME tst_packetreader COMMAND tst_packetreader)
+
+# tst_errorconceal: tabela de decisão da ocultação de erro (L1). Erro de decode
+# ou fim no meio de um GOP com quadro bom → Concealed; sem quadro bom → Error/
+# Eof (nunca silêncio). Usa AVFrame sintéticos (sem mídia).
+add_executable(tst_errorconceal
+    tests/tst_errorconceal.cpp
+)
+target_include_directories(tst_errorconceal PRIVATE src)
+target_link_libraries(tst_errorconceal PRIVATE
+    ${PIERROT_QT_TEST}
+    ${PIERROT_QT_CORE}
+    ${PIERROT_QT_GUI}
+    FFmpeg::avcodec
+    FFmpeg::avutil
+    ${CMAKE_DL_LIBS}
+)
+add_test(NAME tst_errorconceal COMMAND tst_errorconceal)
+
+# tst_framecache: LRU de quadros L4 (colombina/ffmpeg/FrameCache). O cache saiu
+# do núcleo na Fase 6. Verifica miss/hit, move-to-front, evicção LRU, isolamento
+# entre chaves e que imagem nula não é inserida. Qt puro, sem ffmpeg.
+add_executable(tst_framecache
+    tests/tst_framecache.cpp
+    src/colombina/ffmpeg/FrameCache.cpp
+)
+target_include_directories(tst_framecache PRIVATE src)
+target_link_libraries(tst_framecache PRIVATE
+    ${PIERROT_QT_TEST}
+    ${PIERROT_QT_CORE}
+    ${PIERROT_QT_GUI}
+    ${CMAKE_DL_LIBS}
+)
+add_test(NAME tst_framecache COMMAND tst_framecache)
 
 # tst_audiofx_dsp: invariantes do DSP do preview (AudioFxDsp extraído no F4):
 # identidade de biquad 0 dB, passthrough neutro, ganho ↑ energia, clamp S16.
@@ -535,15 +688,15 @@ target_link_libraries(tst_audiofx_dsp PRIVATE
 )
 add_test(NAME tst_audiofx_dsp COMMAND tst_audiofx_dsp)
 
-# tst_encoder: ciclo encode→mux→decode do motor LaArtman. Gera quadros RGBA,
-# codifica num MP4 (libx264) e decodifica de volta; pula se o FFmpeg não tiver
-# o encoder. Linka a lib `laartman` de verdade (valida o alvo, não duplica .cpp).
+# tst_encoder: ciclo encode→mux→decode do motor de encode (agora em
+# colombina/ffmpeg). Gera quadros RGBA, codifica num MP4 (libx264) e decodifica
+# de volta; pula se o FFmpeg não tiver o encoder. Linka a lib `colombina`.
 add_executable(tst_encoder
     tests/tst_encoder.cpp
 )
 target_include_directories(tst_encoder PRIVATE src src/colombina/ofx/sdk)
 target_link_libraries(tst_encoder PRIVATE
-    laartman
+    colombina
     ${PIERROT_QT_TEST}
     ${PIERROT_QT_CORE}
     ${PIERROT_QT_GUI}
@@ -557,6 +710,8 @@ add_executable(tst_audio_conform
     src/laartman/FFmpegDecoderOpen.cpp
     src/laartman/FFmpegDecoderAudio.cpp
     src/laartman/FFmpegDecoderProbe.cpp
+    src/laartman/Demuxer.cpp
+    src/colombina/ffmpeg/FrameCache.cpp
 )
 target_include_directories(tst_audio_conform PRIVATE src src/colombina/ofx/sdk)
 target_link_libraries(tst_audio_conform PRIVATE
@@ -597,7 +752,9 @@ add_executable(tst_export_pipeline
     src/laartman/FFmpegDecoderOpen.cpp
     src/laartman/FFmpegDecoderAudio.cpp
     src/laartman/FFmpegDecoderProbe.cpp
-    src/laartman/DecoderPool.cpp
+    src/laartman/Demuxer.cpp
+    src/colombina/ffmpeg/FrameCache.cpp
+    src/colombina/ffmpeg/SourcePool.cpp
     src/colombina/render/MesaRenderer.cpp
     src/colombina/export/ProjectExporter.cpp
     src/colombina/ffmpeg/ProxyManager.cpp
@@ -622,3 +779,27 @@ add_test(NAME tst_export_pipeline COMMAND tst_export_pipeline)
 install(TARGETS pierrot RUNTIME DESTINATION bin)
 install(FILES packaging/pierrot.desktop DESTINATION share/applications)
 install(FILES packaging/pierrot.svg DESTINATION share/icons/hicolor/scalable/apps)
+
+# ── Sanitizers nos testes (Fase 8b) ────────────────────────────────────
+# Com PIERROT_SANITIZE=ON, aplica a TODOS os testes os options do ASan/UBSan.
+# O driver NVIDIA (libcuda/nvidia_drv_video) aloca globais uma única vez no
+# cuInit e nunca libera — ruído de terceiro, não vazamento nosso. O
+# suppressions=apaga esse ruído; halt_on_error=1 mantém o UBSan fatal.
+if(PIERROT_SANITIZE)
+    get_property(pierrot_all_tests DIRECTORY PROPERTY TESTS)
+    if(pierrot_all_tests)
+        # ASAN_OPTIONS não aceita supressões do tipo "leak:" (só tipos como
+        # interceptor_name/odr_violation) — as entradas leak: do asan.supp
+        # precisam ir em LSAN_OPTIONS, senão o parse falha e TODOS os testes
+        # morrem antes de rodar.
+        # fast_unwind_on_malloc=0: sem isso o unwind rápido do ASan corta a
+        # pilha das alocações do driver (libEGL/nvidia) em "<unknown module>"
+        # e as supressões leak: não casam — os testes de decoder morrem com
+        # falso-positivo de vazamento de terceiro.
+        set(_pirot_san_env
+            "ASAN_OPTIONS=detect_leaks=1:abort_on_error=0:fast_unwind_on_malloc=0"
+            "LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tests/asan.supp"
+            "UBSAN_OPTIONS=print_stacktrace=1")
+        set_tests_properties(${pierrot_all_tests} PROPERTIES ENVIRONMENT "${_pirot_san_env}")
+    endif()
+endif()

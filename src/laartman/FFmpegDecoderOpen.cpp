@@ -9,6 +9,7 @@
 
 #include "FFmpegDecoder.h"
 #include "FFmpegDecoderPriv.h"
+#include "Demuxer.h"
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -51,16 +52,13 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
     };
     freeAllLocked();
 
-    AVFormatContext* fmt = nullptr;
-    if (avformat_open_input(&fmt, filePath.toUtf8().constData(), nullptr, nullptr) != 0) {
+    // L0: a abertura/probe do arquivo mora no Demuxer; o decoder só consome o
+    // AVFormatContext obtido dele (m_ctx aponta para o contexto do demuxer).
+    if (!m_demuxer->open(filePath)) {
         commitOpen();
         return false;
     }
-    if (avformat_find_stream_info(fmt, nullptr) < 0) {
-        avformat_close_input(&fmt);
-        commitOpen();
-        return false;
-    }
+    AVFormatContext* fmt = m_demuxer->formatContext();
     m_ctx = fmt;
     m_source = filePath;
     m_requestedAudioStream = audioStream;
@@ -86,7 +84,14 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
                     // thread_count > 1 — só arrisca.
                     const bool imageLike = isImagePath(filePath);
                     cc->thread_type = decThreadType();
-                    AVBufferRef* hwDev = (hwDisabled() || !m_hwAllowed) ? nullptr : vaapiDevice();
+                    // Imagem/GIF animado é paletado e single-frame: o VAAPI não
+                    // decodifica esses codecs e o send_packet com hw_device_ctx
+                    // armado estourava SIGSEGV dentro do libavcodec (mesma classe
+                    // da issue #3, que já forçou thread_count=1). Sem hw o
+                    // caminho de software trata GIF/WebP sem risco — e não há
+                    // ganho de GPU num frame.
+                    AVBufferRef* hwDev = (imageLike || hwDisabled() || !m_hwAllowed)
+                                             ? nullptr : vaapiDevice();
                     if (hwDev) {
                         cc->hw_device_ctx = av_buffer_ref(hwDev);
                         cc->get_format = &hwVaapiGetFormat;
@@ -168,6 +173,40 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
                         if (st->avg_frame_rate.num > 0 && st->avg_frame_rate.den > 0) {
                             const double r = av_q2d(st->avg_frame_rate);
                             if (r > 0.0 && r < 240.0) m_fps = r;
+                        }
+                        // GIF/WebP animado: às vezes avg_frame_rate vem 0 ou instável.
+                        // Se não conseguimos fps, calculamos pela duração/nb_frames para
+                        // habilitar o cache LRU e evitar 2 decodes por tick.
+                        if (m_fps <= 0.0 && isImagePath(filePath)) {
+                            if (st->nb_frames > 1 && fmt->duration > 0) {
+                                const double sec = fmt->duration / (double)AV_TIME_BASE;
+                                if (sec > 0.0) m_fps = (double)st->nb_frames / sec;
+                            }
+                            if (m_fps <= 0.0 && st->r_frame_rate.num > 0 && st->r_frame_rate.den > 0) {
+                                const double r = av_q2d(st->r_frame_rate);
+                                if (r > 0.0 && r < 240.0) m_fps = r;
+                            }
+                        }
+                        // VFR (taxa de quadros variável): o avg_frame_rate é só a
+                        // média, então assumir espaçamento constante (1/fps) gera
+                        // drift e erra a chave de cache. Detecta-se quando o
+                        // r_frame_rate (taxa-base) é bem maior que a média — o
+                        // padrão em streams VFR — ou quando a média é
+                        // desconhecida mas há vídeo. Nesses casos a matemática de
+                        // tempo passa a usar o timestamp real de cada quadro.
+                        m_vfr = false;
+                        if (!m_isImage) {
+                            const bool haveAvg = st->avg_frame_rate.num > 0
+                                                 && st->avg_frame_rate.den > 0;
+                            const bool haveMax = st->r_frame_rate.num > 0
+                                                 && st->r_frame_rate.den > 0;
+                            if (!haveAvg) {
+                                m_vfr = true;
+                            } else if (haveMax) {
+                                const double avg = av_q2d(st->avg_frame_rate);
+                                const double max = av_q2d(st->r_frame_rate);
+                                if (avg > 0.5 && max > avg * 1.5) m_vfr = true;
+                            }
                         }
                         // Imagem estática: extensão de imagem com UM único frame,
                         // OU duração <= 0 (AV_NOPTS_VALUE ou 0). O check de frame
@@ -297,12 +336,14 @@ void FFmpegDecoder::freeAllLocked() {
         m_codec = nullptr;
     }
     if (m_ctx) {
-        avformat_close_input(reinterpret_cast<AVFormatContext**>(&m_ctx));
+        // L0: o Demuxer é dono do AVFormatContext (m_ctx == m_demuxer.formatContext()).
+        m_demuxer->close();
         m_ctx = nullptr;
     }
     m_stream = -1;
     m_isImage = false;
     m_isLoopGif = false;
+    m_vfr = false;
     m_gifDurationSec = -1.0;
     m_imageCache = QImage();
     m_audioStream = -1;
@@ -319,7 +360,6 @@ void FFmpegDecoder::freeAllLocked() {
     if (m_frame) av_frame_unref(m_frame);
     if (m_audioPkt) av_packet_unref(m_audioPkt);
     if (m_audioFrame) av_frame_unref(m_audioFrame);
-    frameCacheClearLocked();
 }
 
 

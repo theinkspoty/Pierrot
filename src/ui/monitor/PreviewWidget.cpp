@@ -25,12 +25,12 @@
 // DSP dos efeitos de áudio (AudioFx/GraphicEq/ParametricEqDsp) e os helpers
 // de diagnóstico/config do preview (playDbg/audioDbg/composeDbg/
 // previewAudioFormat/desengasgaIntervalMs) — vidrados em
-// headers próprios, compartilhados com FrameWorker/BgPrefetchWorker/AudioMixer.
+// headers próprios, compartilhados com FrameWorker/FramePipeline/AudioMixer.
 #include "ui/audio/AudioFxDsp.h"
 #include "ui/audio/AudioMixer.h"
 #include "ui/monitor/PreviewDebug.h"
-#include "laartman/DecoderPool.h"
-#include "ui/monitor/BgPrefetchWorker.h"
+#include "colombina/ffmpeg/SourcePool.h"
+#include "colombina/ffmpeg/FramePipeline.h"
 #include "ui/monitor/FrameWorker.h"
 #include "ui/monitor/MonitorScrubBar.h"
 
@@ -74,6 +74,7 @@
 #include <limits>
 #include <memory>
 #include <vector>
+#include <utility>
 #include <QHash>
 #include <QMutex>
 
@@ -386,9 +387,9 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     connect(m_timer, &QTimer::timeout, this, [this]() { PlaybackEngine::tick(); });
     connect(m_playBtn, &QPushButton::clicked, this, &PreviewWidget::togglePlay);
 
-    // Pool de decodificadores quentes: os workers emprestam / devolvem entradas
-    // por caminho de arquivo (o prefetch só aquece; o main leva no corte).
-    m_decPool = &DecoderPool::instance();
+    // Pool de decodificadores quentes: os workers usam acesso compartilhado
+    // por caminho de arquivo (o prefetch só aquece; o main pega no corte).
+    m_decPool = &SourcePool::instance();
 
     // Thread de vídeo: decodificar quadros aqui tira a decodificação (que é
     // cara em arquivos grandes/4K/MKV) do caminho da UI.
@@ -419,20 +420,17 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
             Qt::QueuedConnection);
     m_layerThread->start();
 
-    // Thread de prefetch em background: decodifica o próximo clipe fora do
-    // caminho do worker (que mantém o pipeline m_ready). Sem isto, o open+2
-    // frameAt do prefetch (500-800ms) congelava o worker por corte.
-    m_bgPrefetchThread = new CrashReporter::TrackedThread("preview-prefetch", this);
-    m_bgPrefetchWorker = new BgPrefetchWorker(m_decPool);
-    m_bgPrefetchWorker->moveToThread(m_bgPrefetchThread);
-    connect(m_bgPrefetchThread, &QThread::finished, m_bgPrefetchWorker, &QObject::deleteLater);
-    connect(m_bgPrefetchWorker, &BgPrefetchWorker::done,
+    // Pipeline de prefetch (L4): dono da thread de background, da fila de
+    // aquecimento à frente e do estado busy. A UI só resolve caminhos e
+    // alimenta o pipeline — a decisão de lookahead não mora mais aqui.
+    m_pipeline = new FramePipeline(m_decPool, this);
+    connect(m_pipeline, &FramePipeline::framePrefetched,
             this, &PreviewWidget::onBgPrefetchDone, Qt::QueuedConnection);
-    connect(m_bgPrefetchWorker, &BgPrefetchWorker::failed,
+    connect(m_pipeline, &FramePipeline::prefetchFailed,
             this, &PreviewWidget::onBgPrefetchFailed, Qt::QueuedConnection);
-    connect(m_bgPrefetchWorker, &BgPrefetchWorker::warmed,
+    connect(m_pipeline, &FramePipeline::warmed,
             this, &PreviewWidget::onBgWarmDone, Qt::QueuedConnection);
-    m_bgPrefetchThread->start();
+    m_pipeline->start();
 
     // Debounce do aquecimento do playhead parado (F1): ao parar a agulha fora
     // da reprodução, abre+posiciona o decoder e conforma o áudio do clipe sob
@@ -472,13 +470,10 @@ PreviewWidget::~PreviewWidget() {
         m_layerThread->quit();
         m_layerThread->wait(5000);
     }
-    if (m_bgPrefetchThread) {
-        m_bgPrefetchThread->quit();
-        m_bgPrefetchThread->wait(5000);
-    }
-    // Threads paradas e workers destruídos (deleteLater): nenhum lease ativo.
-    // O pool é o singleton global (laartman/DecoderPool) — não é daqui;
-    // ele fecha os decoders restantes no fim do processo.
+    // Pipeline parado: encerra a thread de prefetch e espera (nenhum warm/decode
+    // ativo). O pool é o singleton global (colombina/ffmpeg/SourcePool) — não é
+    // daqui; ele fecha os decoders restantes no fim do processo.
+    if (m_pipeline) m_pipeline->stop();
     m_decPool = nullptr;
 }
 
@@ -507,8 +502,6 @@ void PreviewWidget::setProject(Project* p) {
         m_reqQueue.clear();
         m_layerCache.clear();
         m_prefetch = PrefetchFrame();
-        m_warmQueue.clear();
-        m_warmInFlight.clear();
         m_shownPath.clear();
         m_shownT = -1.0;
         m_shownW = -1;
@@ -1296,8 +1289,6 @@ void PreviewWidget::onPrefetch() { updatePrefetch(); }
 void PreviewWidget::onStopPlaybackUI() {
     QMutexLocker l(&m_frameMutex);
     m_prefetch = PrefetchFrame();
-    m_warmQueue.clear();
-    m_warmInFlight.clear();
 }
 
 void PreviewWidget::onPlayheadMoved(double t) {
@@ -2155,14 +2146,18 @@ void PreviewWidget::onFrameReady(const QString& clipId, const QString& path, dou
 
 void PreviewWidget::handleFrameReady(const QString& clipId, const QString& path, double t, int maxW,
                                      const QImage& img, bool processed, bool fromLayer) {
+    // Latência do decode SÓ do worker do topo: o m_perfWorkerStartNs é o
+    // dispatch do último quadro do topo — se um resultado de CAMADA chegasse
+    // segundos depois, a subtração gerava latência falsa de 1 s (poluía o
+    // p99 do profiler; o H3 separou os workers, separe a métrica também).
     const qint64 workerLatNs =
-        (PreviewProfiler::active() && m_perfT.isValid() && m_perfWorkerStartNs > 0)
+        (!fromLayer && PreviewProfiler::active() && m_perfT.isValid() && m_perfWorkerStartNs > 0)
             ? m_perfT.nsecsElapsed() - m_perfWorkerStartNs
             : 0;
-    if (PreviewProfiler::active()) {
+    if (PreviewProfiler::active() && !fromLayer) {
         profFrame().workerNs = workerLatNs; // latência do decode: dispatch -> quadro pronto
-        profFrame().cacheHits = FFmpegDecoder::cacheHits();
-        profFrame().cacheMisses = FFmpegDecoder::cacheMisses();
+        profFrame().cacheHits = FrameCache::hits();
+        profFrame().cacheMisses = FrameCache::misses();
         profFrame().decSeekNs = qint64(FFmpegDecoder::lastSeekNs());
         profFrame().decDiscard = FFmpegDecoder::lastDiscard();
         profFrame().decWorkNs = FFmpegDecoder::lastWorkNs();
@@ -2234,20 +2229,27 @@ void PreviewWidget::handleFrameReady(const QString& clipId, const QString& path,
         for (const Clip& c : tr.clips)
             if (c.id == clipId) { clip = &c; break; }
     if (!clip) return;
-    const MediaItem* m = m_project->findMedia(clip->mediaId);
+    // Multicam: a mídia ativa é a do ângulo no playhead (mediaIdAt), não a base
+    // (mediaId). Validar pela base descartava todo frame correto do ângulo ativo
+    // e travava o monitor no conteúdo do clipe anterior ("mostra outro clipe").
+    const MediaItem* m = m_project->findMedia(clip->mediaIdAt(m_playhead - clip->pos));
     if (!m) return;
     if (resolvePreviewVideo(m->filePath) != path) return;
     if (PreviewProfiler::active())
         profFrame().proxy = (path != m->filePath); // o quadro exibido veio de proxy?
 
-    // Ignora quadros decodificados para outra posição (scrub/seek rápido muito distante).
+    // Ignora quadros decodificados para outra posição (scrub/seek rápido muito
+    // distante). Durante a REPRODUÇÃO exige proximidade de poucos quadros: antes
+    // aceitava qualquer frame a até 1,5 s, o que fazia a tela exibir um trecho
+    // errado do clipe (parecia "outro clipe") enquanto o áudio ia no lugar certo.
     const double wantT = clipSrcTime(*clip, m_playhead - clip->pos);
-    if (std::fabs(wantT - t) > 1.5) return;
+    const double tol = m_playing ? (3.0 / std::max(1.0, projFps(m_project))) : 1.5;
+    if (std::fabs(wantT - t) > tol) return;
 
     // Quantum a que o playhead (já cruzou o frame) está à frente do quadro que
     // acabou de decodificar. >1 frame em reprodução = o vídeo está atrasado e
     // vai ENGASGAR (re-exibir) mesmo com o áudio perfeito.
-    if (playDbg() && m_playing && std::fabs(t - wantT) <= 1.5) {
+    if (playDbg() && m_playing && std::fabs(t - wantT) <= tol) {
         const double aheadFrames = (wantT - t) * projFps(m_project);
         if (std::fabs(aheadFrames) > 0.5)
             qDebug().noquote() << QStringLiteral("[play] frame atraso %1f (dec %2s playhead %3s) lat %4ms q %5")
@@ -2374,7 +2376,6 @@ void PreviewWidget::onBgPrefetchDone(const QString& path, double t, int maxW,
         QMutexLocker l(&m_frameMutex);
         if (latNs > 0) m_perf.prefetchLatMs = latNs / 1000000;
         m_perfPrefetchStartNs = 0;
-        m_bgPrefetchBusy = false;
         if (m_prefetch.requested && m_prefetch.path == path && m_prefetch.maxW == maxW) {
             m_prefetch.img = frame0;
             m_prefetch.valid = !frame0.isNull();
@@ -2382,14 +2383,13 @@ void PreviewWidget::onBgPrefetchDone(const QString& path, double t, int maxW,
             if (frame0.isNull()) m_prefetch.requested = false;
         }
     }
-    // O decoder NÃO vem junto: o prefetch só aqueceu o pool e já devolveu a
-    // entrada (release). No corte, o FrameWorker reacquire o mesmo decoder já
-    // quente na posição do próximo clipe — sem troca de posse, sem fila.
+    // O decoder NÃO vem junto: o prefetch só aqueceu o pool (a entrada segue
+    // quente). No corte, o FrameWorker pega o mesmo decoder já quente na
+    // posição do próximo clipe — sem troca de posse, sem fila.
 }
 
 void PreviewWidget::onBgPrefetchFailed(const QString& path) {
     QMutexLocker l(&m_frameMutex);
-    m_bgPrefetchBusy = false;
     if (m_prefetch.requested && m_prefetch.path == path) {
         m_prefetch.valid = false;
         m_prefetch.requested = false;
@@ -2474,22 +2474,14 @@ void PreviewWidget::updatePrefetch() {
             needFrame0 = true;
         }
     }
-    if (needFrame0 && m_bgPrefetchWorker && !m_bgPrefetchBusy) {
-        m_bgPrefetchBusy = true;
-        QMetaObject::invokeMethod(m_bgPrefetchWorker, "decode", Qt::QueuedConnection,
-                                  Q_ARG(QString, vpath),
-                                  Q_ARG(double, srcT),
-                                  Q_ARG(int, decW),
-                                  Q_ARG(double, 1.0 / projFps(m_project)));
+    if (needFrame0 && m_pipeline) {
+        m_pipeline->prefetchFrame(vpath, srcT, decW, 1.0 / projFps(m_project));
     }
 
-    // ── Warm-ahead (Fase 2): 2º/3º clipe à frente, só abre+posiciona ─────
-    // Entra na fila da mesma thread DEPOIS do decode(N1) acima, então nunca
-    // compete com o frame do corte próximo. Se não der tempo, o cut daquele
-    // clipe paga um open() — na prática há janela de 2-5s + a duração do clipe
-    // do meio pra aquecer. Vem SEMPRE aqui (mesmo se N1 já foi pedido/ocupado),
-    // para cortes em sequência não reabrirem o 2º arquivo frio.
-    QVector<WarmReq> wants;
+    // ── Warm-ahead (L4): 2º/3º clipe à frente, só abre+posiciona ─────
+    // A UI resolve QUAIS clipes/paths (é política de modelo, L6); o
+    // FramePipeline cuida da fila, da serialização e do estado in-flight.
+    QVector<FramePipeline::WarmTarget> wants;
     const Clip* ahead = nextClip;
     for (int i = 0; i < 2 && ahead; ++i) {
         ahead = clipAfter(m_project, ahead);
@@ -2498,41 +2490,19 @@ void PreviewWidget::updatePrefetch() {
         if (!am || !am->hasVideo) continue;
         const QString apath = resolvePreviewVideo(am->filePath);
         if (apath.isEmpty() || apath == vpath) continue; // mesmo arquivo já coberto
-        if (m_decPool->contains(apath) || apath == m_warmInFlight) continue;
+        if (m_decPool->contains(apath) || m_pipeline->warmInFlight(apath)) continue;
         bool dup = false;
-        for (const WarmReq& w : wants)
+        for (const auto& w : wants)
             if (w.path == apath) { dup = true; break; }
         if (!dup) wants.push_back({apath, ahead->in, decW});
     }
-    {
-        QMutexLocker l(&m_frameMutex);
-        m_warmQueue = std::move(wants);
-        if (m_warmQueue.isEmpty()) m_warmInFlight.clear();
-    }
-    kickWarmQueue();
+    if (m_pipeline) m_pipeline->setWarmQueue(wants);
 }
 
-// Despacha o próximo aquecimento da fila (seguro: pega m_frameMutex). Todos os
-// callers rodam na thread da UI (updatePrefetch e onBgWarmDone); o lock aqui é
-// só para manter o invariante com outras leituras da UI.
-void PreviewWidget::kickWarmQueue() {
-    if (!m_bgPrefetchWorker) return;
-    QMutexLocker l(&m_frameMutex);
-    if (!m_warmInFlight.isEmpty() || m_warmQueue.isEmpty()) return;
-    const WarmReq w = m_warmQueue.takeFirst();
-    m_warmInFlight = w.path;
-    QMetaObject::invokeMethod(m_bgPrefetchWorker, "warm", Qt::QueuedConnection,
-                              Q_ARG(QString, w.path),
-                              Q_ARG(double, w.t),
-                              Q_ARG(int, w.maxW));
-}
-
+// Um alvo da fila de warm terminou. A fila e o despacho do próximo vivem no
+// FramePipeline; aqui só se reagenda o idle-warm se a agulha estiver parada.
 void PreviewWidget::onBgWarmDone(const QString& path) {
-    {
-        QMutexLocker l(&m_frameMutex);
-        if (m_warmInFlight == path) m_warmInFlight.clear();
-    }
-    kickWarmQueue(); // próximo da fila, se houver
+    Q_UNUSED(path); // a fila e o próximo despacho agora vivem no FramePipeline
 }
 
 // Agenda (debounce) o aquecimento do clipe sob a agulha. Só fora da reprodução:
@@ -2561,30 +2531,16 @@ void PreviewWidget::warmPlayhead() {
     const int widgetW = m_videoRect.width() > 0 ? m_videoRect.width() : 960;
     const int decW = qMax(160, qMax(m_previewQuality, widgetW));
 
-    // Vídeo: aquece na thread de prefetch (ociosa fora do play). O acquire é
-    // exclusivo; se o FrameWorker já estiver decodificando o mesmo arquivo, o
-    // warm apenas não encontra slot e segue — o quadro chega de qualquer forma.
-    if (media->hasVideo && m_bgPrefetchWorker && m_decPool
+    // Vídeo: aquece na thread de prefetch (ociosa fora do play). O pipeline
+    // ignora o pedido se já houver um warm em andamento — o quadro chega de
+    // qualquer forma pelo FrameWorker.
+    if (media->hasVideo && m_pipeline && m_decPool
         && !media->filePath.isEmpty()) {
         const QString vpath = resolvePreviewVideo(media->filePath);
         if (!vpath.isEmpty() && !m_decPool->contains(vpath)) {
-            bool dispatch = false;
-            {
-                QMutexLocker l(&m_frameMutex);
-                if (m_warmInFlight.isEmpty()) {
-                    m_warmInFlight = vpath;
-                    dispatch = true;
-                }
-            }
-            if (dispatch) {
-                // Mesmo tempo-fonte que o quadro da agulha (respeita in/speed).
-                const double srcT = clipSrcTime(*clip, m_playhead - clip->pos);
-                QMetaObject::invokeMethod(m_bgPrefetchWorker, "warm",
-                                          Qt::QueuedConnection,
-                                          Q_ARG(QString, vpath),
-                                          Q_ARG(double, srcT),
-                                          Q_ARG(int, decW));
-            }
+            // Mesmo tempo-fonte que o quadro da agulha (respeita in/speed).
+            const double srcT = clipSrcTime(*clip, m_playhead - clip->pos);
+            m_pipeline->warmNow(vpath, srcT, decW);
         }
     }
 
@@ -2794,6 +2750,70 @@ void PreviewWidget::applyMasks(QImage& img, const Clip& c, double rel) {
     }
 }
 
+// ── Grão de filme: máscaras pré-geradas ──────────────────────────────
+// Em vez de calcular hash + lround + clamp por pixel a cada quadro (caro), o
+// ruído é pré-renderizado em tiles pequenos (Grayscale8, valor = 128 + offset)
+// guardados num cache. Aplicar o grão vira uma soma/subtração de bytes com wrap
+// do tile — O(W·H) mas sem ramificações nem ponto flutuante por pixel. As
+// variantes animam o grão (o índice muda por quadro); o amount só seleciona o
+// nível pré-escalado (offsets multiplicados), então a intensidade não custa nada
+// em runtime.
+namespace {
+constexpr int kGrainTile = 128;      // lado do tile em pixels
+constexpr int kGrainVariants = 24;   // texturas distintas para a animação
+constexpr int kGrainAmountLevels = 16; // quantização do amount (0..16)
+
+struct GrainMaskKey {
+    int variant = 0;
+    int amountLevel = 0;
+    bool operator==(const GrainMaskKey& o) const {
+        return variant == o.variant && amountLevel == o.amountLevel;
+    }
+};
+
+// Gera um tile de ruído monocromático (1 pixel de grão): offset em
+// [-maxOff, +maxOff] escalado por amountLevel/16, codificado como 128+offset
+// (centro neutro). O tamanho do grão é aplicado na leitura (subamostragem), então
+// o mesmo tile serve para qualquer `size`.
+inline QImage makeGrainTile(int variant, int amountLevel)
+{
+    QImage tile(kGrainTile, kGrainTile, QImage::Format_Grayscale8);
+    const double maxOff = 255.0 * 0.5; // desvio máximo (amount = 1)
+    const double scale = (double)amountLevel / (double)kGrainAmountLevels;
+    uint32_t state = (uint32_t)(variant * 2654435761u + 0x9E3779B9u);
+    auto next = [&state]() {
+        state ^= state << 13; state ^= state >> 17; state ^= state << 5;
+        return state;
+    };
+    for (int y = 0; y < kGrainTile; ++y) {
+        uchar* line = tile.scanLine(y);
+        for (int x = 0; x < kGrainTile; ++x) {
+            const double n = ((double)(next() & 0xFFFFu) / 32767.5) - 1.0;
+            line[x] = (uchar)std::clamp(
+                (int)std::lround(128 + n * maxOff * scale), 0, 255);
+        }
+    }
+    return tile;
+}
+
+// Cache thread-safe das máscaras (o grão roda na thread do worker de vídeo e,
+// com LAINKA, na UI thread). Retorna por valor: QImage é COW, então a cópia
+// compartilha os bytes — e evita referência invalidada por realocação.
+QImage grainMask(int variant, int amountLevel)
+{
+    static QMutex mtx;
+    static std::vector<std::pair<GrainMaskKey, QImage>> cache;
+    QMutexLocker lock(&mtx);
+    for (auto& e : cache)
+        if (e.first.variant == variant && e.first.amountLevel == amountLevel)
+            return e.second;
+    if (cache.size() >= 256) cache.erase(cache.begin());
+    cache.emplace_back(GrainMaskKey{variant, amountLevel},
+                       makeGrainTile(variant, amountLevel));
+    return cache.back().second;
+}
+} // namespace
+
 void PreviewWidget::applyBasicEffectsOn(QImage& img, const Clip& c, double rel) {
     if (img.isNull()) return;
 
@@ -2924,8 +2944,9 @@ void PreviewWidget::applyBasicEffectsOn(QImage& img, const Clip& c, double rel) 
             s_rowA.resize(w);
         }
 
-        // Passada horizontal com sliding window: resultado em temp.
-        QImage temp(w, h, img.format());
+        // Passada horizontal com sliding window: resultado em temp (buffer do
+        // pool, evitando alocar uma imagem cheia por quadro).
+        QImage temp = ImgPool::get(img.format(), w, h);
         for (int y = 0; y < h; ++y) {
             const uchar* src = img.constScanLine(y);
             uchar* dst = temp.scanLine(y);
@@ -3031,6 +3052,7 @@ void PreviewWidget::applyBasicEffectsOn(QImage& img, const Clip& c, double rel) 
                 --cntV;
             }
         }
+        ImgPool::release(temp);
     }
 
     // Preto e branco.
@@ -3115,32 +3137,36 @@ void PreviewWidget::applyBasicEffectsOn(QImage& img, const Clip& c, double rel) 
         }
     }
 
-    // Grão de filme: ruído monocromático animado por quadro. A semente é
-    // derivada do tempo relativo do clipe, então o grão "ferve" a cada quadro
-    // (como a película) em vez de ficar estático. O mesmo deslocamento é
-    // aplicado a R/G/B (grão de luminância, não chroma), com um valor por
-    // célula de `size`×`size` pixels.
+    // Grão de filme: ruído monocromático animado por quadro. A textura vem de um
+    // tile pré-gerado (grainMask) cuja variante muda a cada quadro; aplicar é só
+    // somar (offset mantido em 128 → subtrai-se 128) nos três canais, com wrap.
     if (c.filmGrain && c.filmGrainAmount > 0.0) {
         const int w = img.width();
         const int h = img.height();
         const int size = std::clamp(c.filmGrainSize, 1, 4);
         const double amount = std::clamp(c.filmGrainAmount, 0.0, 1.0);
-        const double range = amount * 255.0 * 0.5; // desvio máximo do ruído
-        const uint32_t seed = (uint32_t)std::llround(rel * 1000.0);
-        const uint32_t state = seed * 2654435761u + 0x9E3779B9u;
+        const int amountLevel = std::clamp((int)std::lround(amount * kGrainAmountLevels),
+                                           1, kGrainAmountLevels);
+        // Variante por quadro: muda rápido o bastante para "ferver" (usa o tempo
+        // relativo em ~fps), mas estável em replays (determinístico por tempo).
+        const int variant = (int)(((int64_t)std::llround(rel * 48.0)) % kGrainVariants
+                                  + kGrainVariants) % kGrainVariants;
+        const QImage mask = grainMask(variant, amountLevel);
+        const int mw = mask.width();
+        const int mh = mask.height();
+        // Caminha por blocos de `size` px: o índice na máscara só avança quando
+        // cruza um bloco, então não há divisão/módulo por pixel.
         for (int y = 0; y < h; ++y) {
             uchar* line = img.scanLine(y);
-            const int cy = y / size;
+            const uchar* mline = mask.constScanLine((y / size) % mh);
+            int mx = 0;
+            int col = 0;
             for (int x = 0; x < w; ++x) {
+                if (col == size) { col = 0; if (++mx == mw) mx = 0; }
+                ++col;
+                const int off = (int)mline[mx] - 128;
+                if (off == 0) continue;
                 const int si = x * 4;
-                // Hash determinístico de (seed, célula, linha) → ruído estável
-                // dentro da célula, distinto a cada quadro.
-                uint32_t s = state ^ (uint32_t)((x / size) * 73856093u)
-                                   ^ (uint32_t)(cy * 19349663u);
-                s ^= s << 13; s ^= s >> 17; s ^= s << 5;
-                // Mapeia para [-1, 1].
-                const double n = ((double)(s & 0xFFFFu) / 32767.5) - 1.0;
-                const int off = (int)std::lround(n * range);
                 line[si + 0] = (uchar)std::clamp(line[si + 0] + off, 0, 255);
                 line[si + 1] = (uchar)std::clamp(line[si + 1] + off, 0, 255);
                 line[si + 2] = (uchar)std::clamp(line[si + 2] + off, 0, 255);
@@ -3203,6 +3229,7 @@ void PreviewWidget::applyCrop() {
                         && m_clipLainkaOnionSkin < 1e-6
                         && m_clipLainkaMotionBlur < 1e-6;
     if (memoOk && !m_cropMemo.isNull() && m_cropMemoClipId == m_clipLainkaId
+        && m_cropMemoFile == m_lastFile
         && m_cropMemoTime == m_lainkaQuantizedTime
         && m_cropMemoSrcT == m_lastSrcT
         && m_cropMemoSrcW == m_lastDecodeW
@@ -3274,6 +3301,7 @@ void PreviewWidget::applyCrop() {
     if (memoOk) {
         m_cropMemo = m_frame;
         m_cropMemoClipId = m_clipLainkaId;
+        m_cropMemoFile = m_lastFile;
         m_cropMemoTime = m_lainkaQuantizedTime;
         m_cropMemoSrcT = m_lastSrcT;
         m_cropMemoSrcW = m_lastDecodeW;

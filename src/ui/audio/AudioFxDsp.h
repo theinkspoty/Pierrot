@@ -384,16 +384,19 @@ public:
                    double denoiseAmt, bool invertPhase, bool normalize,
                    bool reverb, double reverbMix, double reverbSize) {
         const double fs = 48000.0;
-        const int key = (int)std::llround(eqLow * 10) * 1000000
-                      + (int)std::llround(eqMid * 10) * 1000
-                      + (int)std::llround(eqHigh * 10)
-                      + (denoise ? 100 : 0)
-                      + (invertPhase ? 200 : 0)
-                      + (normalize ? 400 : 0)
-                      + (int)std::llround(denoiseAmt) * 10000
-                      + (reverb ? 800 : 0)
-                      + (int)std::llround(reverbMix * 100) * 100000
-                      + (int)std::llround(reverbSize * 100) * 10000000;
+        // Hash de detecção de mudança em quint64: os produtos estouram int com
+        // facilidade (reverbSize*100*10000000); em unsigned o wraparound é
+        // definido e o valor só precisa MUDAR quando um parâmetro muda.
+        const quint64 key = (quint64)std::llround(eqLow * 10) * 1000000
+                      + (quint64)std::llround(eqMid * 10) * 1000
+                      + (quint64)std::llround(eqHigh * 10)
+                      + (denoise ? 100u : 0u)
+                      + (invertPhase ? 200u : 0u)
+                      + (normalize ? 400u : 0u)
+                      + (quint64)std::llround(denoiseAmt) * 10000
+                      + (reverb ? 800u : 0u)
+                      + (quint64)std::llround(reverbMix * 100) * 100000
+                      + (quint64)std::llround(reverbSize * 100) * 10000000;
         if (key == m_key) return; // parâmetros inalterados: mantém o estado
         m_key = key;
         for (int ch = 0; ch < 2; ++ch) {
@@ -461,7 +464,7 @@ public:
     }
 
 private:
-    int m_key = -1;
+    quint64 m_key = ~quint64(0); // sentinela: força o 1º configure()
     Biquad low[2], mid[2], high[2];
     bool invert = false;
     bool agcEnabled = false;
@@ -482,12 +485,12 @@ class GraphicEq {
 public:
     // `gainsDb` deve ter kGraphicEqBands entradas; faltantes = 0 dB (neutro).
     void setGains(const QVector<double>& gainsDb) {
-        int key = 0;
+        quint64 key = 0;
         for (int i = 0; i < kGraphicEqBands; ++i) {
             const double v =
                 std::clamp(i < gainsDb.size() ? gainsDb[i] : 0.0, -12.0, 12.0);
             m_gain[i] = v;
-            key = key * 31 + (int)std::lround(v * 10.0);
+            key = key * 31u + (quint64)(int)std::lround(v * 10.0);
         }
         if (key == m_key) return; // parâmetros inalterados: mantém o estado
         m_key = key;
@@ -523,7 +526,7 @@ public:
 
 private:
     double m_gain[kGraphicEqBands] = { 0.0 };
-    int m_key = 0;
+    quint64 m_key = 0; // 0 = todos os ganhos neutros (não gasta DSP)
     AudioFxFallback::Biquad m_bands[2][kGraphicEqBands];
 };
 
@@ -533,14 +536,14 @@ private:
 class ParametricEqDsp {
 public:
     void setBands(const QVector<ParametricBand>& bands) {
-        int key = 0;
+        quint64 key = 0;
         bool active = false;
         for (const ParametricBand& b : bands) {
-            key = key * 31 + (b.enabled ? 1 : 0);
-            key = key * 31 + b.type;
-            key = key * 31 + (int)std::lround(b.freq * 10.0);
-            key = key * 31 + (int)std::lround(b.gain * 10.0);
-            key = key * 31 + (int)std::lround(b.q * 100.0);
+            key = key * 31u + (quint64)(b.enabled ? 1 : 0);
+            key = key * 31u + (quint64)b.type;
+            key = key * 31u + (quint64)(int)std::lround(b.freq * 10.0);
+            key = key * 31u + (quint64)(int)std::lround(b.gain * 10.0);
+            key = key * 31u + (quint64)(int)std::lround(b.q * 100.0);
             if (b.enabled && std::fabs(b.gain) > 0.01) active = true;
         }
         if (key == m_key && bands.size() == m_n) return; // inalterado
@@ -588,7 +591,7 @@ public:
     static constexpr double kSampleRate = 48000.0;
 
 private:
-    int m_key = -1;
+    quint64 m_key = ~quint64(0); // sentinela: força o 1º setBands()
     int m_n = -1;
     bool m_active = false;
     QVector<EqBiquad> m_bands[2];

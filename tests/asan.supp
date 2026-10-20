@@ -1,0 +1,12 @@
+# Supressões do LeakSanitizer (Fase 8b) — só para allocs de terceiros que o
+# processo nunca liberta de propósito (estado global de driver/loader). NÃO
+# use isto para esconder vazamento do Pierrot: adicione a assinatura específica
+# da biblioteca de terceiro, nunca uma função nossa.
+leak:libcuda
+leak:nvidia_drv_video
+leak:libnvidia
+leak:cuInit
+leak:libva
+leak:iHD_drv_video
+leak:libEGL
+leak:libGLX

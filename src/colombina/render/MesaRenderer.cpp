@@ -4,7 +4,7 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "MesaRenderer.h"
-#include "laartman/DecoderPool.h"
+#include "colombina/ffmpeg/SourcePool.h"
 #include "laartman/FFmpegDecoder.h"
 #include "colombina/ffmpeg/ProxyManager.h"
 #include "colombina/generators.h"
@@ -25,7 +25,7 @@ MesaRenderer::~MesaRenderer() { clearCache(); }
 
 void MesaRenderer::clearCache() {
     QMutexLocker l(&m_mutex);
-    // Os decoders são do pool GLOBAL (laartman/DecoderPool) — aqui só se
+    // Os decoders são do pool GLOBAL (colombina/ffmpeg/SourcePool) — aqui só se
     // limpa o cache local de quadros; o pool gerencia a vida dos decoders.
     m_compositeLru.clear();
 }
@@ -72,7 +72,7 @@ QImage MesaRenderer::decodeFrame(const QString& filePath, double time, int maxW)
     {
         // Seção CURTA com o lock global: só o cache de quadro único é
         // compartilhado entre threads. O decoder vem do pool GLOBAL
-        // (acquireShared — visão compartilhada, F1); o decode pesado fica
+        // (acquireShared — acesso compartilhado); o decode pesado fica
         // FORA do lock para arquivos distintos decodificarem em paralelo.
         QMutexLocker l(&m_mutex);
         if (m_frameCache.key.path == vpath && qFuzzyCompare(m_frameCache.key.time, time)
@@ -80,7 +80,7 @@ QImage MesaRenderer::decodeFrame(const QString& filePath, double time, int maxW)
             return m_frameCache.frame;
         }
     }
-    dec = DecoderPool::instance().acquireShared(vpath);
+    dec = SourcePool::instance().acquireShared(vpath);
     if (!dec) return {};
 
     // Decode sem o lock global: cada FFmpegDecoder serializa o PRÓPRIO acesso

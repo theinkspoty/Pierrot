@@ -6,9 +6,9 @@
 #pragma once
 
 // Worker de decode do preview: decodifica quadros de vídeo na própria thread
-// (com lease do DecoderPool: um para o clipe principal, e o prefetch aquecendo
-// o pool para o swap). O PreviewWidget pede o "último" quadro desejado e
-// descarta intermediários. Extraído de PreviewWidget.cpp (F4).
+// (com acesso compartilhado ao SourcePool: um para o clipe principal, e o
+// prefetch aquecendo o pool para o swap). O PreviewWidget pede o "último"
+// quadro desejado e descarta intermediários. Extraído de PreviewWidget.cpp (F4).
 
 #include <QObject>
 #include <QString>
@@ -16,25 +16,39 @@
 #include <QElapsedTimer>
 #include <atomic>
 #include <cmath>
+#include <memory>
 
 #include <QDebug>
 
 #include "colombina/CrashReporter.h"
 #include "laartman/FFmpegDecoder.h"
-#include "laartman/DecoderPool.h"
+#include "colombina/ffmpeg/SourcePool.h"
+#include "colombina/ffmpeg/FrameCache.h"
 #include "ui/monitor/PreviewDebug.h"
 #include "ui/monitor/PreviewWidget.h" // FrameFx + estáticos de efeito
 
 class OfxPluginManager;
 class Frei0rPluginManager;
 
-// Decodifica quadros de vídeo na própria thread (com lease do DecoderPool: um
-// para o clipe principal, e o prefetch aquecendo o pool para o swap).
-// O PreviewWidget pede o "último" quadro desejado e descarta intermediários.
+// Decode com cache L4: consulta o FrameCache antes de decodificar (Fase 6). O
+// núcleo não guarda cache; a chave é (índice de tempo do decoder, largura).
+// Quebra o laço de re-decode em scrub/replay sem tocar no núcleo.
+inline QImage decodeCached(FFmpegDecoder* dec, double t, int maxW,
+                           const std::atomic<bool>* cancel) {
+    if (!dec) return QImage();
+    FrameCache& cache = FrameCache::instance();
+    const FrameCache::Key key{qHash(dec->source()), dec->frameCacheIndex(t), maxW};
+    return cache.getOrCompute(key, [&] { return dec->frameAt(t, maxW, cancel); });
+}
+
+// Decodifica quadros de vídeo na própria thread (acesso compartilhado ao
+// SourcePool: um para o clipe principal, e o prefetch aquecendo o pool para o
+// swap). O PreviewWidget pede o "último" quadro desejado e descarta
+// intermediários.
 class FrameWorker : public QObject {
     Q_OBJECT
 public:
-    explicit FrameWorker(DecoderPool* pool, QObject* parent = nullptr)
+    explicit FrameWorker(SourcePool* pool, QObject* parent = nullptr)
         : QObject(parent), m_pool(pool) {}
 
     // Managers de efeitos (lidados pela UI; o worker só lê durante o decode).
@@ -67,30 +81,18 @@ public slots:
             ~Disarm() { f.store(false, std::memory_order_release); }
         } disarm(m_cancelArmed);
         if (m_curPath != path) {
-            // Leva do pool o decoder quente deste arquivo (o prefetch em
-            // background deixou o próximo clipe já aberto/aquecido na posição do
-            // corte: acquire quente é instantâneo; o antigo volta ocioso, pronto
-            // para ser reusado se a timeline voltar a este caminho).
-            FFmpegDecoder* d = m_pool->acquire(path);
-            if (!d && !m_curPath.isEmpty()) {
-                // Pool cheio/ocupado: libera o lease atual (fica quente no pool)
-                // e tenta de novo — o LRU despeja o ocioso mais antigo p/ entrar.
-                m_pool->release(m_curPath);
-                m_curPath.clear();
-                m_decoder = nullptr;
-                d = m_pool->acquire(path);
-            }
+            // Acesso compartilhado ao SourcePool: pega o decoder quente deste
+            // arquivo (o prefetch em background deixou o próximo clipe já
+            // aberto/aquecido na posição do corte). acquire() nunca devolve
+            // nullptr por "ocupado" — só se o open() falhar.
+            std::shared_ptr<FFmpegDecoder> d = m_pool->acquire(path);
             if (!d) {
-                // Sem slot livre ou o caminho está no meio de um decode do
-                // prefetch: falha "macia" (quadro vazio); o próximo pedido pega
-                // já quente. Bloquear aqui só pioraria o tiquinho do corte.
-                qWarning().noquote() << QStringLiteral("[dec] pool sem slot/ocupado para %1").arg(path);
+                qWarning().noquote() << QStringLiteral("[dec] open falhou para %1").arg(path);
                 emit frameReady(clipId, path, t, maxW, QImage(), false);
                 return;
             }
-            if (!m_curPath.isEmpty()) m_pool->release(m_curPath);
-            m_curPath = path;
             m_decoder = d;
+            m_curPath = path;
             // O acquire pode ter sido FRIO (open 500-800ms; decoder ainda não
             // posicionado): os m_ready do arquivo antigo não valem mais aqui.
             m_readyValid = false;
@@ -119,7 +121,7 @@ public slots:
             m_readyValid = false;
             dbgWasReady = true;
         } else {
-            img = m_decoder->frameAt(t, maxW, &m_cancel);
+            img = decodeCached(m_decoder.get(), t, maxW, &m_cancel);
         }
         if (dbgOn) {
             const double dbgMs = (dbgClock.nsecsElapsed() - dbgT0) / 1000000.0;
@@ -146,7 +148,7 @@ public slots:
         // Decodifica o próximo frame na folga para o próximo pedido (apenas se
         // o decoder ainda estiver no mesmo arquivo).
         if (!img.isNull() && m_decoder && m_decoder->isOpen() && m_decoder->source() == path) {
-            m_readyImg = m_decoder->frameAt(t + step, maxW, &m_cancel);
+            m_readyImg = decodeCached(m_decoder.get(), t + step, maxW, &m_cancel);
             m_readyT = t + step;
             m_readyPath = path;
             m_readyMaxW = maxW;
@@ -161,19 +163,20 @@ public slots:
         const bool dbgOn = playDbg();
         if (dbgOn && !dbgClock.isValid()) dbgClock.start();
         const qint64 dbgT0 = dbgOn ? dbgClock.nsecsElapsed() : 0;
-        // Camada de baixo com o MESMO arquivo do topo: o topo já empresta o
-        // decoder (busy) — decodePrefetch roda na MESMA thread do decodeOne
-        // (seriado), então usar m_decoder é seguro e não precisa do lease.
-        const bool own = (path == m_curPath);
-        FFmpegDecoder* d = own ? m_decoder : m_pool->acquire(path);
+        // Mesmo arquivo do topo: reusa o decoder já aberto (decodePrefetch roda
+        // na MESMA thread do decodeOne, seriado) em vez de chamar acquire() —
+        // assim não há open() frio (500-800ms) no caminho da camada de baixo
+        // quando ela compartilha o arquivo do topo. Para outro arquivo, o
+        // SourcePool devolve o decoder já aquecido pelo FramePipeline (warm em
+        // background); acquire() só abre de fato se o warm ainda não chegou.
+        std::shared_ptr<FFmpegDecoder> d =
+            (path == m_curPath && m_decoder) ? m_decoder : m_pool->acquire(path);
         if (!d) {
-            // Pool ocupado/sem slot: deixa a camada de baixo vazia nesta transição.
             emit prefetchReady(path, t, maxW, QImage());
             return;
         }
-        const QImage img = d->frameAt(t, maxW);
-        if (!img.isNull() && step > 0.0) d->frameAt(t + step, maxW);
-        if (!own) m_pool->release(path);
+        const QImage img = decodeCached(d.get(), t, maxW, nullptr);
+        if (!img.isNull() && step > 0.0) decodeCached(d.get(), t + step, maxW, nullptr);
         if (dbgOn) {
             const double dbgMs = (dbgClock.nsecsElapsed() - dbgT0) / 1000000.0;
             qDebug().noquote() << QStringLiteral("[w] PREFETCH t=%1 %2ms")
@@ -192,8 +195,7 @@ public slots:
         // Invalidá-lo era o que criava um buraco de 1-2 frames: o primeiro
         // pedido pós-flush caía em decode síncrono e chegava atrasado em relação
         // ao relógio. Com o ready vivo, o próximo frame continua instantâneo e o
-        // re-seek frio fica só no pre-decode seguinte. Só vale para o decoder
-        // EMPRESTADO (o do pool ocioso não degrada: não está decodificando).
+        // re-seek frio fica só no pre-decode seguinte.
         if (m_decoder && m_decoder->isOpen()) m_decoder->releaseBuffers();
     }
 
@@ -203,9 +205,9 @@ signals:
     void prefetchReady(const QString& path, double t, int maxW, const QImage& img);
 
 private:
-    DecoderPool* m_pool;            // não dono (vida do PreviewWidget)
-    FFmpegDecoder* m_decoder = nullptr; // lease atual do pool (posse entre decodeOne)
-    QString m_curPath;              // caminho do lease atual
+    SourcePool* m_pool;                          // não dono (vida do PreviewWidget)
+    std::shared_ptr<FFmpegDecoder> m_decoder;    // decoder do arquivo atual (compartilhado)
+    QString m_curPath;                           // caminho do decoder atual
     OfxPluginManager* m_ofxMgr = nullptr;      // não dono
     Frei0rPluginManager* m_frei0rMgr = nullptr; // não dono
 

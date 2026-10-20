@@ -6,7 +6,7 @@
 #pragma once
 
 // Helpers de diagnóstico e configuração compartilhados pelo caminho do preview
-// (PreviewWidget, FrameWorker, BgPrefetchWorker, AudioMixer). Cada flag é lida
+// (PreviewWidget, FrameWorker, FramePipeline, AudioMixer). Cada flag é lida
 // uma vez por processo (comportamento herdado do PreviewWidget.cpp original).
 
 #include <QAudioFormat>

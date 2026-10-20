@@ -35,6 +35,17 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+// Dispara um SIGSEGV DE VERDADE (deref de ponteiro nulo) para exercitar o
+// handler de crash. É UB de propósito: com UBSan ligado o `*bad` abortaria
+// antes do handler rodar, quebrando o teste. `no_sanitize` isola o UB
+// deliberado só aqui — o resto do teste continua instrumentado.
+__attribute__((no_sanitize("undefined")))
+static void crashHere() {
+    volatile int* bad = nullptr;
+    *bad = 1;
+    :: _exit(1); // inalcançável: o handler de SIGSEGV chama _exit(128+sinal)
+}
+
 // Worker que bloqueia para sempre no slot ligado a `started` — o mesmo padrão
 // do ExportBuildWorker, e que expõe o bug (2) acima.
 class BlockingWorker : public QObject {
@@ -104,8 +115,7 @@ void tst_crashreporter::reportListsRegisteredThreads() {
         t1.start();
         t2.start();
         QThread::msleep(300); // deixa as threads registrarem
-        volatile int* bad = nullptr;
-        ::_exit(*bad ? 0 : 1); // inalcançável: o handler de SIGSEGV chama _exit
+        crashHere();
     }
 
     int status = 0;
@@ -152,8 +162,7 @@ void tst_crashreporter::reportMarksCrashingThread() {
 
         CrashReporter::install();
         CrashReporter::registerThread("ui-principal");
-        volatile int* bad = nullptr;
-        ::_exit(*bad ? 0 : 1);
+        crashHere();
     }
     int status = 0;
     QCOMPARE(::waitpid(pid, &status, 0), pid);
@@ -213,8 +222,7 @@ void tst_crashreporter::reportListsUnregisteredThreads() {
             return nullptr;
         }, nullptr);
         QThread::msleep(200);
-        volatile int* bad = nullptr;
-        ::_exit(*bad ? 0 : 1);
+        crashHere();
     }
     int status = 0;
     QCOMPARE(::waitpid(pid, &status, 0), pid);

@@ -29,8 +29,8 @@ class QThread;
 
 class AudioMixer; // QIODevice que mistura o PCM de todos os clipes ativos
 class FrameWorker; // decodifica quadros de vídeo fora da thread da UI
-class BgPrefetchWorker; // prefetch em thread separada (não bloqueia o worker)
-class DecoderPool; // pool de decodificadores quentes por caminho de arquivo
+class FramePipeline; // prefetch/lookahead em L4 (dono da thread de background)
+class SourcePool; // pool de decodificadores quentes por caminho de arquivo
 class MonitorScrubBar; // faixa de scrub do monitor (playhead + loop + marcadores)
 class QAudioSink;
 class QAudioOutput;
@@ -182,7 +182,6 @@ protected:
                           const QImage& frame0, const QImage& frame1);
     void onBgPrefetchFailed(const QString& path);
     void onBgWarmDone(const QString& path);
-    void kickWarmQueue();
     void updatePrefetch();
     // Agenda (debounce) o aquecimento do clipe sob a agulha parada. Chamado a
     // cada seek/scrub fora da reprodução; durante o play o prefetch/warm-ahead
@@ -272,6 +271,7 @@ protected:
     // ficaria segurando uma imagem de 8 MB à toa.
     QImage m_cropMemo;
     QString m_cropMemoClipId;
+    QString m_cropMemoFile;       // caminho do arquivo (troca de ângulo multicam)
     double m_cropMemoTime = -1.0; // tempo quantizado (m_lainkaQuantizedTime)
     double m_cropMemoSrcT = -1.0; // tempo fonte do quadro (m_lastSrcT)
     int m_cropMemoSrcW = 0;       // largura de decodificação (m_lastDecodeW)
@@ -319,27 +319,15 @@ protected:
     // Worker DEDICADO das camadas inferiores (H3): antes uma única thread
     // serializava topo + camadas — em multi-track as camadas "roubavam
     // slot" do topo (vídeo engasgava com áudio perfeito). Agora as camadas
-    // rodam em paralelo com o topo, cada uma com o próprio lease do pool.
+    // rodam em paralelo com o topo, cada uma com acesso compartilhado ao pool.
     QThread* m_layerThread = nullptr;
     FrameWorker* m_layerWorker = nullptr;
     // Pool de decodificadores quentes (vida do PreviewWidget; usado pelos dois
-    // workers via acquire/release por caminho de arquivo).
-    DecoderPool* m_decPool = nullptr;
-    // Thread dedicada ao prefetch: decodifica o próximo clipe sem bloquear o
-    // FrameWorker principal (que mantém o pipeline m_ready em cadência).
-    QThread* m_bgPrefetchThread = nullptr;
-    BgPrefetchWorker* m_bgPrefetchWorker = nullptr;
-    // true enquanto um prefetch em background está em andamento
-    bool m_bgPrefetchBusy = false;
-    // Aquecimento de clipes à frente (Fase 2): fila de caminhos para abrir de
-    // antemão na thread de prefetch (além do frame0 do próximo clipe).
-    struct WarmReq {
-        QString path;
-        double t = 0.0;
-        int maxW = 0;
-    };
-    QVector<WarmReq> m_warmQueue;       // alvos; um por vez despachado
-    QString m_warmInFlight;             // caminho com warm() em andamento na thread bg
+    // workers via acesso compartilhado por caminho de arquivo).
+    SourcePool* m_decPool = nullptr;
+    // Pipeline de prefetch (L4): dono da thread de background, da fila de
+    // aquecimento à frente e do estado busy. A UI só resolve caminhos.
+    FramePipeline* m_pipeline = nullptr;
     // Aquecimento do playhead parado (debounce): ao parar a agulha fora da
     // reprodução, abre+posiciona o decoder e conforma o áudio do clipe sob ela
     // para o próximo play sair quente. Ver warmPlayhead().

@@ -6,10 +6,17 @@ on:
   pull_request:
     branches: [main]
 
+# Um push novo no mesmo branch cancela o run anterior: build parado não
+# precisa terminar, e evita duas execuções concorrentes do AppImage.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build + testes (Qt6)
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -23,7 +30,11 @@ jobs:
             qt6-base-dev qt6-multimedia-dev qt6-svg-dev
 
       - name: Configurar CMake
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        # -Wall -Wextra sem -Werror: o código ainda tem ~80 warnings
+        # (parâmetros não usados etc.); o -Werror entra quando zerar.
+        run: >
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_FLAGS="-Wall -Wextra"
 
       - name: Compilar
         run: cmake --build build -j"$(nproc)"
@@ -37,14 +48,16 @@ jobs:
 
   # É o job que procura de fato os SIGSEGV em decode concorrente: o código
   # segura mutex à mão em volta dos decoders, e o AddressSanitizer é o que pega
-  # um buffer liberado/duplicado que o locking deixou passar. Também serve de
-  # rede de segurança para a thread do CrashReporter.
+  # um buffer liberado/duplicado que o locking deixou passar.
   #
-  # Um teste que morre de propósito (tst_crashreporter forka um filho com
-  # SIGSEGV) faria o ASAN reclamar do sinal, então esse alvo fica de fora.
+  # Usa a opção do projeto (-DPIERROT_SANITIZE=ON) como fonte única: são as
+  # mesmas flags e o mesmo env de teste (LSAN_OPTIONS + tests/asan.supp) que se
+  # roda localmente. Não duplicar flags neste workflow — se o setup mudar, muda
+  # no CMakeLists e CI + local andam juntos.
   sanitizers:
     name: Sanitizers (asan + ubsan)
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -57,22 +70,58 @@ jobs:
             libswscale-dev libswresample-dev \
             qt6-base-dev qt6-multimedia-dev qt6-svg-dev
 
-      - name: Configurar CMake (asan/ubsan)
-        run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g" \
-            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
-            -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address,undefined"
+      - name: Configurar CMake (PIERROT_SANITIZE=ON)
+        run: cmake -B build -DPIERROT_SANITIZE=ON -DCMAKE_BUILD_TYPE=Debug
 
       - name: Compilar
         run: cmake --build build -j"$(nproc)"
 
       - name: Testes (ctest, sem o teste de crash)
-        # ASAN_OPTIONS=exitcode=1 faz o ASAN reprovar o build em vez de só
-        # imprimir. detect_leaks fica desligado de propósito: o Qt e o FFmpeg
-        # deixam caches globais vivos na saída e reportam como leak.
+        # tst_crashreporter forka um filho que morre de SIGSEGV de propósito;
+        # o ASan reclama do sinal e o teste fica vermelho por design.
         env:
           QT_QPA_PLATFORM: "offscreen"
-          ASAN_OPTIONS: exitcode=1:detect_leaks=0
-          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: ctest --test-dir build --output-on-failure -E tst_crashreporter
+
+  appimage:
+    name: AppImage
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache do linuxdeploy
+        uses: actions/cache@v4
+        with:
+          path: packaging/.tools
+          key: linuxdeploy-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Instalar dependências
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake g++ pkg-config ffmpeg curl \
+            libavformat-dev libavcodec-dev libavutil-dev \
+            libswscale-dev libswresample-dev \
+            qt6-base-dev qt6-multimedia-dev qt6-svg-dev
+
+      - name: Extrair versão (src/version.h)
+        # Mesma fonte do PIERROT_VERSION: o nome do AppImage nunca diverge
+        # do número exibido no Sobre.
+        id: versao
+        run: echo "v=$(grep -oP '(?<=PIERROT_VERSION ")[^"]+' src/version.h)" >> "$GITHUB_OUTPUT"
+
+      - name: Gerar AppImage
+        env:
+          VERSION: ${{ steps.versao.outputs.v }}
+        # O script exporta APPIMAGE_EXTRACT_AND_RUN=1 — o runner não tem FUSE
+        # e o linuxdeploy se auto-extrai.
+        run: packaging/build-appimage.sh
+
+      - name: Publicar artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pierrot-${{ steps.versao.outputs.v }}-x86_64
+          path: dist/*.AppImage
+          if-no-files-found: error

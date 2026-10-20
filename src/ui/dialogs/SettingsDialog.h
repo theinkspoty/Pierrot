@@ -71,6 +71,7 @@ private:
     QCheckBox* m_trimmer = nullptr;
     QCheckBox* m_hwDecode = nullptr;
     QCheckBox* m_proxies = nullptr;
+    QSpinBox*  m_proxyMinWidth = nullptr; // limiar de largura p/ gerar proxy
     QCheckBox* m_hwEncode = nullptr;
     QComboBox* m_hwGpu = nullptr; // GPU para o encode por hardware (export)
     QDoubleSpinBox* m_graphSens = nullptr;

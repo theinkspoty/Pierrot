@@ -38,6 +38,12 @@ public:
     // Limiar de resolução (px de largura) que dispara a geração de proxy.
     static constexpr int kThresholdWidth = 2560;
 
+    // Limiar em uso (Configurações ▸ proxies; env PIERROT_PROXY_MIN_WIDTH
+    // sobrescreve na largada). Ao baixar o limiar, os arquivos já marcados
+    // como "pequenos" são reavaliados e os novos candidatos entram na fila.
+    void setThresholdWidth(int px);
+    int thresholdWidth() const;
+
 
     // Path a usar para DECODE DE VÍDEO de preview/thumbs: o proxy se existir
     // (e estiver habilitado), senão o original. Determinístico (mesmo src →

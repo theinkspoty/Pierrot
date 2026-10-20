@@ -149,6 +149,25 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Abertura direta por linha de comando: `pierrot projeto.Blanc` pula a
+    // welcome e já abre o editor carregado (testes e uso avançado).
+    for (int i = 1; i < argc; ++i) {
+        const QString arg = QString::fromLocal8Bit(argv[i]);
+        if (arg.startsWith(QLatin1Char('-'))) continue;
+        if (arg.endsWith(QLatin1String(".Blanc"), Qt::CaseInsensitive)
+            || arg.endsWith(QLatin1String(".ovp"), Qt::CaseInsensitive)) {
+            if (!QFile::exists(arg)) {
+                QMessageBox::warning(nullptr, QObject::tr("Projeto não encontrado"),
+                                     QObject::tr("Arquivo não existe:\n%1").arg(arg));
+                return 1;
+            }
+            MainWindow w;
+            w.openProjectFile(arg);
+            w.show();
+            return app.exec();
+        }
+    }
+
     // O editor é criado somente após a janela de boas-vindas, como no fluxo
     // original. Fechar a boas-vindas (X) encerra o exec() com Rejected e abre
     // o editor vazio; criar/abrir projeto carrega o projeto nele.

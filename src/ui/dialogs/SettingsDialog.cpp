@@ -423,6 +423,24 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
                                   "2K ou maiores para preview, pan/crop e thumbnails. "
                                   "A exportação sempre usa o original."));
         perfLay->addWidget(m_proxies);
+        // Limiar do proxy: a política "só 2K+ ganha proxy" (2560) deixava
+        // fontes 2048×1152 sem proxy e o corte pagava ~1s de GOP do original.
+        auto* proxyRow = new QHBoxLayout;
+        auto* proxyLbl = new QLabel(tr("Gerar proxy a partir de (largura):"), page);
+        m_proxyMinWidth = new QSpinBox(page);
+        m_proxyMinWidth->setRange(320, 8192);
+        m_proxyMinWidth->setSingleStep(128);
+        m_proxyMinWidth->setSuffix(tr(" px"));
+        m_proxyMinWidth->setValue(s.value("proxyMinWidth", 2560).toInt());
+        m_proxyMinWidth->setToolTip(tr("Vídeos com largura >= este valor ganham proxy "
+                                       "leve para o preview. Baixe para 1920/2048 se o "
+                                       "computador aguentar — arquivos 2K também ganham "
+                                       "proxy e os cortes ficam lisos. A exportação "
+                                       "sempre usa o original."));
+        proxyRow->addWidget(proxyLbl);
+        proxyRow->addWidget(m_proxyMinWidth);
+        proxyRow->addStretch(1);
+        perfLay->addLayout(proxyRow);
         auto* perfHint = new QLabel(tr("Transfere a decodificação de vídeo para a "
                                        "placa de vídeo, aliviando a CPU (útil em 4K e "
                                        "projetos com muitos cortes). Se algum arquivo "
@@ -955,6 +973,8 @@ void SettingsDialog::accept() {
     s.setValue("hwDecode", m_hwDecode->isChecked());
     s.setValue("proxiesEnabled", m_proxies->isChecked());
     ProxyManager::instance().setEnabled(m_proxies->isChecked());
+    s.setValue("proxyMinWidth", m_proxyMinWidth->value());
+    ProxyManager::instance().setThresholdWidth(m_proxyMinWidth->value());
     s.setValue("exportHwEncode", m_hwEncode->isChecked());
     s.setValue("exportHwDevice", m_hwGpu ? m_hwGpu->currentData().toString() : QString());
     s.setValue("graphSensitivity", m_graphSens->value());

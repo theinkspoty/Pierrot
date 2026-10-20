@@ -8,6 +8,7 @@
 
 #include "FFmpegDecoder.h"
 #include "FFmpegDecoderPriv.h"
+#include "Demuxer.h"
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -360,7 +361,7 @@ void FFmpegDecoder::seekAudio(double seconds) {
     const int64_t target = av_rescale_q(
         (int64_t)(seconds * 1000000.0),
         AVRational{1, 1000000}, ast->time_base);
-    const int seekErr = av_seek_frame(afmt, m_audioStream, target, AVSEEK_FLAG_BACKWARD);
+    const int seekErr = m_demuxer->seek(m_audioStream, target, AVSEEK_FLAG_BACKWARD);
     if (seekErr < 0) {
         qWarning() << "av_seek_frame failed for audio:" << seekErr;
     }
@@ -406,7 +407,7 @@ int FFmpegDecoder::decodeAudio(void* outBuf, int maxBytes) {
                 avcodec_send_packet(acc, nullptr);
                 continue;
             }
-            const int r = av_read_frame(afmt, m_audioPkt);
+            const int r = m_demuxer->readPacket(m_audioPkt);
             if (r < 0) {
                 readEof = true;
                 avcodec_send_packet(acc, nullptr);

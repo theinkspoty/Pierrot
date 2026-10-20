@@ -14,9 +14,10 @@ Marcamos `[x]` (feito) / `[~]` (parcial) / `[ ]` (não feito).
 - [x] **Suíte de testes** — round-trip `.Blanc`, keyframes, gerador do comando
   ffmpeg, `tst_export_pipeline` (roda o ffmpeg de verdade e compara com o
   preview), EDL, conform de áudio, CrashReporter. `ctest` verde.
-- [~] **CI** — GitHub Actions com build Qt6 + `ctest` funcionando; falta
-  asan/ubsan, AppImage como artefato e `-Wall -Wextra`. Job Qt5 removido (o
-  código não compila com Qt5; estava verde-por-mentira).
+- [x] **CI** — GitHub Actions com build Qt6 + `ctest`, job de sanitizers via
+  `-DPIERROT_SANITIZE=ON` (fonte única com o local), `-Wall -Wextra` no build e
+  AppImage publicado como artefato (com versão tirada de `src/version.h`).
+  Job Qt5 removido (o código não compila com Qt5; estava verde-por-mentira).
 - [~] **Endurecimento de crash** — `FFmpegDecoder` quase todo serializado, LRU
   com sufixo `Locked`, `CrashReporter` com inventário de threads e testes
   (`tst_crashreporter`). Falta: reduzir os SIGSEGV reais (asan/ubsan em CI).
@@ -95,8 +96,8 @@ O Pierrot não compete em feature count: compete em **não perder trabalho**.
   re-apontar em lote.
 - [x] **Teste real de render/export** — `tst_export_pipeline` roda o ffmpeg de
   verdade, extrai quadro e compara com `generatorFrame()`.
-- [~] **CI GitHub Actions** — build Qt6 + `ctest`; falta AppImage e sanitizers
-  (ver Fase 0).
+- [x] **CI GitHub Actions** — build Qt6 + `ctest`, sanitizers e AppImage como
+  artefato (ver Fase 0).
 - [ ] **Save/load assíncrono** — serialização fora da thread da UI.
 
 ### Gaps de feature
@@ -117,9 +118,11 @@ profissional/ecossistema em terceiro.
 
 ## 1. Confiança do código (QA, CI e ferramentas)
 
-- [~] **CI GitHub Actions** — build Qt6 + `ctest`; falta asan/ubsan, AppImage,
-  `-Wall -Wextra` e medir cobertura no CI.
-- [ ] **`-Wall -Wextra`** no default; aspirar `-Werror` só no CI.
+- [x] **CI GitHub Actions** — build Qt6 + `ctest`, sanitizers (asan+ubsan via
+  `-DPIERROT_SANITIZE=ON`), AppImage como artefato e `-Wall -Wextra` no build.
+  Falta: medir cobertura no CI.
+- [ ] **`-Wall -Wextra`** no default; aspirar `-Werror` só no CI (no CI já
+  avisa; o `-Werror` espera zerar os ~80 warnings atuais).
 - [ ] **`.clang-format` + `.clang-tidy`** — rodar format-diff no CI sem
   religar o codebase de uma vez.
 - [ ] **Cobertura do kernel `colombina` >50%** — gcov/lcov no CI; medido 15,0%

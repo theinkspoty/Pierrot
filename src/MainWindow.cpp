@@ -1014,6 +1014,17 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         refreshBackgroundBusy();
     });
 
+    // Depuração manual: PIERROT_PERF_JSON=/caminho grava o relatório de
+    // performance também no fechamento normal (antes só o harness
+    // --autoplay gravava — o teste manual nunca deixava métricas).
+    if (PreviewProfiler::active()) {
+        connect(qApp, &QCoreApplication::aboutToQuit, this, []() {
+            const QString out = qEnvironmentVariable("PIERROT_PERF_JSON");
+            if (!out.isEmpty() && PreviewProfiler::instance().dumpJson(out))
+                qInfo("[perf] relatório gravado em %s", qPrintable(out));
+        });
+    }
+
     // Salvamento automático configurado na janela de boas-vindas
     m_autoSaveTimer = new QTimer(this);
     connect(m_autoSaveTimer, &QTimer::timeout, this, &MainWindow::autoSave);
@@ -1719,6 +1730,15 @@ void MainWindow::closeEvent(QCloseEvent* event) {
     if (m_saveBusy && QThreadPool::globalInstance())
         QThreadPool::globalInstance()->waitForDone();
     saveSettings();
+    // Janelas auxiliares da bancada: fechar TUDO junto com a principal.
+    // Sem isto, o painel técnico (QMainWindow de nível superior) e o preview
+    // externo podiam sobreviver ao fecho da principal — o processo "ficava
+    // rodando em segundo plano" depois de o usuário achar que tinha saído.
+    if (m_monitor) m_monitor->close(); // WA_DeleteOnClose → destroyed
+    if (m_techWindow) {
+        m_techWindow->returnAllDocks();
+        m_techWindow->hide();
+    }
     QMainWindow::closeEvent(event);
     QApplication::quit();
 }

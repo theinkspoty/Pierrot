@@ -159,9 +159,9 @@ private:
         int maxW = 0;
     };
 
-    // Pool GLOBAL de decoders (laartman/DecoderPool): a composição usa a visão
-    // compartilhada (acquireShared — N leitores, mutex interno do decoder
-    // serializa); o preview usa a visão de lease exclusivo. Um budget só.
+    // Pool GLOBAL de decoders (colombina/ffmpeg/SourcePool): acesso
+    // compartilhado (N leitores, mutex interno do decoder serializa). Um budget
+    // só, compartilhado com o preview.
     // Cache de frames decodificados (evita re-decode no mesmo timestamp)
     struct FrameKey { QString path; double time; int maxW; };
     struct FrameCache { FrameKey key; QImage frame; };

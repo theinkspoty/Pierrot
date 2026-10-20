@@ -109,11 +109,17 @@ ProxyManager::ProxyManager() {
     // Limiar sobrescrevível: o padrão ignora fontes < 2560px, o que numa
     // biblioteca só 1080p significa proxy nunca gerado — e o proxy é gerado a
     // 1920px, então para uma fonte 1080p ele ainda é uma reencode bem mais
-    // barata de decodificar. PIERROT_PROXY_MIN_WIDTH=<px> sobrescreve (0 = não
-    // filtrar por largura).
+    // barata de decodificar. PIERROT_PROXY_MIN_WIDTH=<px> sobrescreve na
+    // largada (0 = não filtrar por largura); o valor escolhido em
+    // Configurações fica em "proxyMinWidth".
     bool ok = false;
     const int envW = qEnvironmentVariableIntValue("PIERROT_PROXY_MIN_WIDTH", &ok);
-    m_thresholdWidth = (ok && envW >= 0) ? envW : kThresholdWidth;
+    if (ok && envW >= 0) {
+        m_thresholdWidth = envW;
+    } else {
+        m_thresholdWidth = QSettings().value(QStringLiteral("proxyMinWidth"),
+                                             kThresholdWidth).toInt();
+    }
     QDir().mkpath(proxyDir());
     m_stateFile = proxyDir() + QStringLiteral("/metadata.json");
     loadState();
@@ -184,7 +190,13 @@ void ProxyManager::probeAndQueue(const QString& srcPath, bool hasVideo, int widt
     if (!hasVideo) { m_small.insert(srcPath); return; }
     // Registrar ANTES da decisão de largura: toda fonte com vídeo é candidata
     // potencial, e é esta lista que permite reavaliar quando o limiar muda.
-    m_videoSrcs.insert(srcPath, width);
+    // Largura 0 = desconhecida: não sobrescreve uma largura já sabida.
+    auto known = m_videoSrcs.find(srcPath);
+    if (known != m_videoSrcs.end()) {
+        if (width > 0) known.value() = width;
+    } else {
+        m_videoSrcs.insert(srcPath, width);
+    }
     if (width > 0 && width < m_thresholdWidth) {
         m_small.insert(srcPath);
         return;
@@ -231,6 +243,38 @@ void ProxyManager::setProjectUsesProxies(bool on) {
 bool ProxyManager::busy() const {
     QMutexLocker l(&m_mutex);
     return !m_pending.isEmpty() || m_running;
+}
+
+void ProxyManager::setThresholdWidth(int px) {
+    px = qMax(0, px);
+    QStringList toQueue;
+    {
+        QMutexLocker l(&m_mutex);
+        if (px == m_thresholdWidth) return;
+        m_thresholdWidth = px;
+        QSettings().setValue(QStringLiteral("proxyMinWidth"), px);
+        // Reavalia: o cache de "pequeno" é por decisão de limiar — limpa para
+        // que fontes recém-candidatas (largura >= novo limiar caído) sejam
+        // reconsideradas no re-enfileiramento abaixo.
+        m_small.clear();
+        for (auto it = m_videoSrcs.cbegin(); it != m_videoSrcs.cend(); ++it) {
+            const QString& src = it.key();
+            const int w = it.value();
+            if (w > 0 && w < px) continue; // ainda pequena
+            const QString proxy = proxyPathFor(src);
+            const bool has = m_map.value(src) == proxy && QFile::exists(proxy);
+            if (!has && !m_failed.contains(src) && !m_pending.contains(src)
+                && m_activeSrc != src)
+                toQueue.append(src);
+        }
+    }
+    for (const QString& s : toQueue)
+        probeAndQueue(s, true, 0); // largura desconhecida aqui: m_videoSrcs decide
+}
+
+int ProxyManager::thresholdWidth() const {
+    QMutexLocker l(&m_mutex);
+    return m_thresholdWidth;
 }
 
 

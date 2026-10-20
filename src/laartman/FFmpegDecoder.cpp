@@ -14,6 +14,7 @@
 
 #include "FFmpegDecoder.h"
 #include "FFmpegDecoderPriv.h"
+#include "Demuxer.h"
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -38,6 +39,7 @@ extern "C" {
 
 FFmpegDecoder::FFmpegDecoder() {
     installLogFilter();
+    m_demuxer = std::make_unique<Demuxer>();
     m_pkt = av_packet_alloc();
     m_frame = av_frame_alloc();
     m_audioPkt = av_packet_alloc();
@@ -69,11 +71,17 @@ bool FFmpegDecoder::usesHardware() const {
     return m_hw;
 }
 
+int64_t FFmpegDecoder::frameCacheIndex(double t) const {
+    if (m_vfr || m_fps <= 0.0) {
+        // VFR/sem fps: grade fina de ms (não assume espaçamento 1/fps).
+        return (int64_t)std::llround(t * 1000.0);
+    }
+    return (int64_t)std::floor(t * m_fps);
+}
 
-// ── Frame cache LRU ────────────────────────────────────────────────────────
 
-quint64 FFmpegDecoder::s_cacheHits = 0;
-quint64 FFmpegDecoder::s_cacheMisses = 0;
+// ── Estatísticas globais ───────────────────────────────────────────────────
+
 std::atomic<quint64> FFmpegDecoder::s_lastWorkNs{0};
 std::atomic<quint64> FFmpegDecoder::s_workTotalNs{0};
 quint64 FFmpegDecoder::s_discardCount = 0;
@@ -84,38 +92,6 @@ quint64 FFmpegDecoder::s_lastSeekNs = 0;
 std::atomic<quint64> FFmpegDecoder::s_openCount{0};
 std::atomic<quint64> FFmpegDecoder::s_openTotalNs{0};
 std::atomic<quint64> FFmpegDecoder::s_lastOpenNs{0};
-
-QImage FFmpegDecoder::frameFromCacheLocked(const FrameCacheKey& key) {
-    auto it = m_frameCacheIdx.find(key);
-    if (it == m_frameCacheIdx.end()) { ++s_cacheMisses; return QImage(); }
-    ++s_cacheHits;
-    // Move-to-front O(1): splice move o nó para a frente sem realocar e sem
-    // invalidar o iterador guardado no índice (M2: era O(n) com rebuild).
-    m_frameCacheLru.splice(m_frameCacheLru.begin(), m_frameCacheLru, it.value());
-    return it.value()->img;
-}
-
-void FFmpegDecoder::frameToCacheLocked(const FrameCacheKey& key, const QImage& img) {
-    if (img.isNull()) return;
-    auto it = m_frameCacheIdx.find(key);
-    if (it != m_frameCacheIdx.end()) {
-        it.value()->img = img;
-        m_frameCacheLru.splice(m_frameCacheLru.begin(), m_frameCacheLru, it.value());
-        return;
-    }
-    // Insere na frente; evicção O(1) do mais antigo se cheio.
-    m_frameCacheLru.push_front({key, img});
-    m_frameCacheIdx.insert(key, m_frameCacheLru.begin());
-    while ((int)m_frameCacheLru.size() > kFrameCacheMax) {
-        m_frameCacheIdx.remove(m_frameCacheLru.back().key);
-        m_frameCacheLru.pop_back();
-    }
-}
-
-void FFmpegDecoder::frameCacheClearLocked() {
-    m_frameCacheLru.clear();
-    m_frameCacheIdx.clear();
-}
 
 QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bool>* cancel) {
     QMutexLocker locker(&m_mutex);
@@ -146,29 +122,32 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
         return cancel && cancel->load(std::memory_order_relaxed);
     };
 
-    // ── Frame cache: retorna frame armazenado se disponível ───────────
+    // Núcleo SEM cache: o LRU de quadros é política de L4 (FrameCache, na
+    // colombina). frameAt() sempre decodifica; quem quiser evitar re-decode
+    // consulta o FrameCache antes de chamar.
     double targetSec = m_isImage ? 0.0 : std::max(0.0, seconds);
     // GIF/WebP animado: embrulha o tempo pedido sobre a duração real do
     // arquivo, repetindo a animação para preencher o clipe (paridade com o
     // export, que usa -ignore_loop 0 no demuxer).
     if (m_isLoopGif && m_gifDurationSec > 0.0)
         targetSec = std::fmod(targetSec, m_gifDurationSec);
-    if (!m_isImage && m_fps > 0.0) {
-        const FrameCacheKey cacheKey{(int64_t)std::floor(targetSec * m_fps), maxWidth};
-        result = frameFromCacheLocked(cacheKey);
-        if (!result.isNull()) return result;
-    }
 
     AVFormatContext* fmt = static_cast<AVFormatContext*>(m_ctx);
     AVCodecContext* cc = static_cast<AVCodecContext*>(m_codec);
     AVStream* st = fmt->streams[m_stream];
 
     // fsec de um quadro no tempo do stream (fallback: o próprio alvo).
+    // Prefere pts; sem ele, best_effort_timestamp (que já considera DTS para
+    // reordenar pacotes com B-frames). DTS/PTS negativos (arquivos reais com
+    // timestamps quebrados) são firmados em 0: tempo negativo não faz sentido
+    // para exibição e quebraria a comparação com o alvo.
     auto frameSec = [&](const AVFrame* fr) -> double {
         int64_t pts = fr->pts;
         if (pts == AV_NOPTS_VALUE)
             pts = fr->best_effort_timestamp;
-        return (pts != AV_NOPTS_VALUE) ? (pts * av_q2d(st->time_base)) : targetSec;
+        if (pts == AV_NOPTS_VALUE) return targetSec;
+        const double sec = pts * av_q2d(st->time_base);
+        return sec < 0.0 ? 0.0 : sec;
     };
     // Guarda um quadro como o candidato de exibição atual (m_lastFrame).
     auto keepAsDisplay = [&](const AVFrame* fr, double fsec) {
@@ -234,7 +213,7 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
                     break; // imagens têm um único quadro
                 }
                 if (got) break;
-                const int r = av_read_frame(fmt, m_pkt);
+                const int r = m_demuxer->readPacket(m_pkt);
                 if (r < 0) {
                     avcodec_send_packet(cc, nullptr); // drena o codec no fim
                     if (avcodec_receive_frame(cc, m_frame) == 0) {
@@ -300,19 +279,40 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
     // 1) Nunca foi inicializado (m_lastPtsSec < 0)
     // 2) Houve um salto para trás significativo (> 0.5s)
     // 3) Houve um salto para frente grande (> 2.0s)
-    const bool needSeek = (m_lastPtsSec < 0.0
-                           || targetSec < m_lastPtsSec - 0.5
-                           || targetSec > m_lastPtsSec + 2.0);
+    bool needSeek = (m_lastPtsSec < 0.0
+                     || targetSec < m_lastPtsSec - 0.5
+                     || targetSec > m_lastPtsSec + 2.0);
+    // GIF animado com loop: o fmod() volta para 0 no final da duração. Não
+    // fazer seek+flush neste wrap evita resetar o canvas do decoder (disposal)
+    // e o seek binário sem índice (custo alto). Assim o decoder avança
+    // sequencialmente pelo ciclo, muito mais suave no preview.
+    if (needSeek && m_isLoopGif && m_gifDurationSec > 0.1) {
+        const double diffBack = m_lastPtsSec - targetSec;
+        const double wrap = m_gifDurationSec;
+        // Wrap: último ~ 0,5s voltou para 0
+        if (diffBack >= (wrap - 0.6) && diffBack <= (wrap + 0.6)) {
+            needSeek = false;
+        }
+    }
 
     if (cancelled()) return result; // desiste antes do seek (caro)
 
     if (needSeek) {
         const qint64 seekT0 = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-        const int seekErr = av_seek_frame(fmt, m_stream, target, AVSEEK_FLAG_BACKWARD);
+        const int seekErr = m_demuxer->seek(m_stream, target, AVSEEK_FLAG_BACKWARD);
         if (seekErr < 0) {
             qWarning() << "av_seek_frame failed for video:" << seekErr;
         }
-        avcodec_flush_buffers(cc);
+        // Para GIF em loop, não faz flush completo dos buffers de decodificação
+        // ao dar wrap (evita resetar o canvas com disposal). Caso contrário,
+        // executa flush padrão.
+        if (!(m_isLoopGif && m_gifDurationSec > 0.1)) {
+            avcodec_flush_buffers(cc);
+        } else {
+            // Flush mínimo: evita lixo, mas preserva estado interno do decoder GIF
+            // quando possível. Libavcodec não expõe opção melhor; optamos por não
+            // forçar flush no wrap para reduzir o custo do loop.
+        }
         m_lastPtsSec = -1.0;
         if (m_lastFrame)
             av_frame_unref(reinterpret_cast<AVFrame*>(m_lastFrame));
@@ -442,7 +442,7 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
 
         if (chosen) break;
 
-        const int r = av_read_frame(fmt, m_pkt);
+        const int r = m_demuxer->readPacket(m_pkt);
         if (r < 0) {
             avcodec_send_packet(cc, nullptr);
             while (avcodec_receive_frame(cc, m_frame) == 0) {
@@ -522,19 +522,6 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
     s_lastDiscard = discarded;
     s_discardCount += discarded;
 
-    // Armazena no cache LRU se decode foi bem-sucedido.
-    // PIERROT_FRAME_CACHE=0 desliga: o LRU tem acerto ~0,1% em playback linear
-    // (cada quadro é pedido uma vez) e cada inserção reconstrói o índice O(n),
-    // então é preciso medir se ele custa mais do que economiza.
-    static const bool kCacheOn = [] {
-        const QByteArray v = qgetenv("PIERROT_FRAME_CACHE");
-        return v.isEmpty() || v != "0";
-    }();
-    if (kCacheOn && !result.isNull() && !m_isImage && m_fps > 0.0) {
-        const FrameCacheKey cacheKey{(int64_t)std::floor(targetSec * m_fps), maxWidth};
-        frameToCacheLocked(cacheKey, result);
-    }
-
     // Auto-cura: hardware decodificou quadro(s) mas nada virou imagem (driver
     // com formato quebrado/transferência falha) — ou não decodificou NENHUM
     // quadro (VAAPI da NVIDIA abre o device mas não decodifica H.264). Nos dois
@@ -573,6 +560,5 @@ void FFmpegDecoder::releaseBuffers() {
         m_lastFrameSec = -1.0;
         m_nextFrameSec = -1.0;
         m_lastPtsSec = -1.0;
-        frameCacheClearLocked();
     }
 }

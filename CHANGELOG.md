@@ -2,6 +2,158 @@
 
 ## Unreleased
 
+### Decode (F1 do plano Laartman v3)
+
+- **Fachada pública `Decoder` (L3, Fase 0)** — criado `src/laartman/Decoder.h`
+  como a superfície congelada do núcleo: `probe/open/close/frame/seekAudio/
+  readPcm/audioFinished/fps`, com o resultado de sondagem em `MediaInfo` e as
+  decisões de política injetadas via `DecodeOptions` (`audioStream`,
+  `hardwareAllowed`). **Sem** `acquire/release/busy/pool/setHardwareDecodeAllowed/
+  releaseBuffers` — nenhuma noção de posse no header público. Hoje é uma
+  fachada fina sobre o `FFmpegDecoder` (não muda comportamento); as fases 2–6
+  passam a consumir só esta API. `tst_decoder_api` cobre a paridade
+  fachada↔motor e falha se algum token de posse/política reaparecer no header
+  (invariante 2: "o CI quebra se alguém reintroduzir").
+- **GIF/WebP/imagens não tentam mais VAAPI** — decodificar um GIF animado com o
+  `hw_device_ctx` VAAPI armado estourava SIGSEGV dentro do `libavcodec`
+  (`avcodec_send_packet`). Codecs paletados/single-frame não são decodificáveis
+  por VAAPI e não ganham nada com GPU; agora `isImagePath()` (png/jpg/gif/webp/
+  tif/svg…) força software no `open()` — mesma classe da issue #3.
+- **Pool global de decoders** — agora em `src/colombina/ffmpeg/SourcePool`
+  (política L4), **sem lease exclusivo nem flag `busy`**: todo acesso é
+  compartilhado e o `FFmpegDecoder` serializa internamente. `acquire()` NUNCA
+  devolve `nullptr` por "ocupado" — só se o `open()` falhar. Elimina por
+  construção a classe de falha "sem slot/ocupado" (quadro vazio por bloqueio):
+  na sessão de estresse de ~150 s eram **754 falhas de pool** espalhadas por
+  15 arquivos. Budget único (`PIERROT_DECODER_POOL`, padrão 10) + eviction LRU
+  de entradas ociosas (`use_count==1`); sai o mapa **ilimitado** de decoders do
+  `MesaRenderer` (risco de RAM em projeto com muitas fontes 4K). O antigo
+  `laartman/DecoderPool` (lease + `busy`) foi removido; `MesaRenderer`,
+  `FrameWorker`, `FramePipeline` e `PreviewWidget` migrados para o novo pool.
+- **Pipeline de prefetch extraído para L4 (`FramePipeline`, Fase 2)** — a
+  política de lookahead saiu do `PreviewWidget` para
+  `src/colombina/ffmpeg/FramePipeline`: é ele o dono da thread de background
+  (`preview-prefetch`), da fila de aquecimento à frente e do estado busy/in-flight.
+  A UI (L6) só resolve **quais** caminhos/tempos pedir (`prefetchFrame`,
+  `setWarmQueue`, `warmNow`) e consome os sinais `framePrefetched`/`prefetchFailed`/
+  `warmed`; nenhuma noção de thread, fila ou ocupado sobra no widget. O antigo
+  `ui/monitor/BgPrefetchWorker` foi dobrado no pipeline (worker privado no `.cpp`).
+  `tst_framepipeline` cobre a fila (substituída, não acumulada), o prefetch de
+  frame0 (serial, devolve o par `t`/`t+step`) e o warm (aquece o pool, limpa o
+  in-flight).
+- **Demuxer extraído para L0 (`Demuxer`, Fase 3)** — criada
+  `src/laartman/Demuxer.{h,cpp}` com responsabilidade única de abrir arquivos,
+  descobrir streams, ler pacotes e fazer seek. Separa vídeo e áudio e centraliza
+  a lógica de seleção de streams (`findBestVideoStream`/`findBestAudioStream`/
+  `resolveAudioStreamIndex`). O `FFmpegDecoder` agora faz **todo** o demuxing
+  (open/`read_packet`/seek, vídeo e áudio) através do `Demuxer`, que é o dono do
+  `AVFormatContext` (`m_ctx` aponta para `m_demuxer->formatContext()`); o header
+  público segue sem vazar os tipos do FFmpeg (`Demuxer` é `unique_ptr` com
+  forward-declaration). `audioPeaks()`/`probe()` mantêm o open próprio de tiro
+  único. Integrado ao build do núcleo (LAARTMAN_SOURCES).
+- **`PacketReader` (L0) — leitura de pacotes à frente** — criado
+  `src/laartman/PacketReader.{h,cpp}`: thread dedicada que lê pacotes do arquivo
+  e os enfileira num buffer limitado (teto padrão 32, configurável), separando
+  I/O de disco do decode. `read()` bloqueante com cancelamento cooperativo;
+  `seek()` para a produção, descarta o buffer e reposiciona; `close()`
+  idempotente. Componente standalone (dono do próprio `AVFormatContext`), pronto
+  para substituir a leitura síncrona do decoder. `tst_packetreader` cobre o teto
+  de memória, EOF, seek e cancel.
+- **VFR + correção de timestamp (Fase 4)** — o decoder detecta **taxa de quadros
+  variável** (`avg_frame_rate` ausente ou bem abaixo do `r_frame_rate`) e passa a
+  usar o timestamp real de cada quadro na matemática de tempo: a chave do cache
+  de quadros vira uma grade de milissegundos (`frameCacheIndex`) em vez do
+  número do quadro por fps médio, eliminando o drift/colisão em arquivos VFR.
+  `frameSec()` prefere `pts`, cai em `best_effort_timestamp` (que já considera
+  DTS/B-frames) e firma timestamps negativos em 0. `tst_decoder_api` ganhou
+  `vfrDecodeIsDeterministic` (VFR gerado por concat 30 fps + 10 fps).
+- **`ErrorConceal` (L1) — ocultação de erro pelo último quadro bom** — criado
+  `src/laartman/ErrorConceal.h`: classifica o resultado de decode e decide quando
+  entregar o último quadro válido (`FrameStatus::Concealed`) em vez de "imagem
+  vazia" ambígua, distinguindo `Ok/Pending/Eof/Error/Cancelled` (invariante 3,
+  "falha é tipo, não silêncio"). Puro/testável. `tst_errorconceal` fixa a tabela
+  de decisão com `AVFrame` sintéticos.
+- **FrameCache extraído do núcleo para L4 (`FrameCache`, Fase 6)** — o LRU de
+  quadros (120 entradas) **saiu do `FFmpegDecoder`** e virou
+  `src/colombina/ffmpeg/FrameCache.{h,cpp}`: o motor não promete mais cache, isso
+  é política de L4 (o núcleo só expõe a cadência via `FFmpegDecoder::frameCacheIndex`).
+  Chave `(bucket de tempo, maxWidth)`, move-to-front O(1) por `splice`, evicção
+  LRU, `getOrCompute()` (acerta ou computa+guarda) e `instance()` compartilhada
+  (como `SourcePool`). O overlay passou a ler os contadores do `FrameCache`. Os
+  caminhos quentes de L4 (`FrameWorker`, `FramePipeline`) consultam o cache antes
+  de decodificar; `frameAt()` sempre decodifica. Sem dependência de FFmpeg (só
+  Qt). `tst_framecache` cobre miss/hit, move-to-front, evicção, isolamento entre
+  chaves, descarte de imagem nula e `getOrCompute`.
+- **`FFmpegEncoder` saiu do núcleo (Fase 7)** — o motor de encode in-process
+  deixou `src/laartman/` (que fica só com decodificação) e foi para
+  `src/colombina/ffmpeg/FFmpegEncoder.{h,cpp}`. Nada no app o usava (o export
+  continua no CLI via `ProjectExporter`); só o `tst_encoder`, que agora linka a
+  `colombina`. O núcleo Laartman encolhe e fica simétrico: só decode.
+- **Aceitação da reestruturação (Fase 8a) medida, 0 drops** — sessão de
+  referência de 150 s (`teste de potencia.Blanc`) com `PIERROT_PERF_JSON`:
+  **`droppedTotal: 0`, `skippedTotal: 0`**, 8.791 quadros, `tickRateHz: 58.82`,
+  0 falhas de pool (classe eliminada por construção na Fase 1). Corrigido no
+  caminho um regressão da Fase 6: `FrameWorker::decodePrefetch` chamava
+  `SourcePool::acquire()` sempre, o que abria o arquivo de forma síncrona na
+  thread da camada de baixo quando ela compartilhava o arquivo do topo — cold
+  open de até 2 s (`stallMaxMs` 2045 ms → **18 ms**). Agora reusa `m_decoder`
+  quando `path == m_curPath`. O stall residual (~1,3 s, 2 eventos em 149 s) é o
+  cold open no corte, alvo do `PacketReader`/L3 — não é regressão.
+- **Build sob sanitizers (Fase 8b)** — nova opção CMake `PIERROT_SANITIZE`
+  (padrão OFF) liga ASan+UBSan em compile e link (`-fno-sanitize-recover=all`
+  faz o UBSan abortar, para o `ctest` falhar visível). Uso:
+  `cmake -S . -B build-asan -DPIERROT_SANITIZE=ON -DCMAKE_BUILD_TYPE=Debug`, build
+  e `ctest --test-dir build-asan --output-on-failure`. `build-asan/` no
+  `.gitignore`. `tests/asan.supp` suprime o ruído do driver NVIDIA
+  (`libcuda`/`nvidia_drv_video` alocam globais no `cuInit` e nunca liberam) —
+  aplicado só a esses módulos, nunca a funções do Pierrot.
+- **UBSan achou overflow assinado nos hashes de EQ (Fase 8b)** — os três
+  detectores de mudança de `AudioFxDsp.h` (master, `GraphicEq`,
+  `ParametricEqDsp`) acumulavam `key = key*31 + …` em `int`; com muitos
+  parâmetros estourava (`1775007360 * 31 cannot be represented in 'int'`). O
+  hash só precisa mudar quando um parâmetro muda, então viraram `quint64`
+  (wraparound definido). Sem mudança de comportamento audível.
+- **`tst_crashreporter` compatível com UBSan** — o teste provoca um SIGSEGV
+  de verdade (deref de nulo) para exercitar o handler; o UBSan abortava o
+  processo antes do handler rodar. O UB deliberado foi isolado num helper
+  `crashHere()` com `__attribute__((no_sanitize("undefined")))`; o resto do
+  teste segue instrumentado.
+- **Worker dedicado para camadas inferiores (H3)** — segundo `FrameWorker`
+  (`preview-layers`) em paralelo com o do topo: em projeto multi-track as
+  camadas deixam de "roubar slot" do clipe exibido. Medido no projeto de
+  estresse (6 cortes, 6 faixas, 30 s): **1 quadro perdido em 1.761**,
+  stalls máx. 61 ms.
+- **M2 resolvido** — o LRU de frames do `FFmpegDecoder` virou intrusivo O(1)
+  (`std::list` + splice) em vez de QList com rebuild do índice a cada acesso.
+- **Métrica de latência do worker corrigida** — quadros do worker de camadas
+  não devem mais ser medidos com o timestamp do dispatch do topo (poluía o
+  p99 do profiler com latências falsas de ~1 s).
+
+### Configurações
+
+- **Limiar de proxy editável** (Configurações ▸ Desempenho): "Gerar proxy a
+  partir de (largura)", padrão 2560 px. Fontes 2K (ex.: 2048×1152) ficavam
+  sem proxy e o corte pagava ~1 s de decode do GOP original; com o limiar em
+  1920/2048 elas ganham proxy e os cortes ficam lisos. Persistido em
+  `proxyMinWidth`; `PIERROT_PROXY_MIN_WIDTH` continua sobrescrevendo na
+  largada. Baixar o limiar re-enfileira as fontes conhecidas na hora.
+- **`PIERROT_PERF_JSON=/caminho` grava o relatório também no fechamento**
+  (antes só o harness `--autoplay` gravava — teste manual não deixava
+  métricas). Nota: no Qt 6.8+, logs só saem para arquivo com
+  `QT_FORCE_STDERR_LOGGING=1`.
+
+### CLI
+
+- **`pierrot projeto.Blanc`** abre direto no editor, pulando a janela de
+  boas-vindas (testes e uso avançado).
+
+### Janelas auxiliares
+
+- **Fechar a janela principal fecha tudo**: preview externo e painel técnico
+  (janelas de nível superior da Bancada) são encerrados junto no
+  `closeEvent` — antes podiam sobreviver ao fecho e deixar o processo "em
+  segundo plano".
+
 ### Grão de filme
 
 - **Efeito "Grão de filme" por clipe** (estética de película 16/35mm):

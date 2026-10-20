@@ -3,14 +3,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
-// Teste do FFmpegEncoder (LaArtman): fecha o ciclo encode→mux→decode.
+// Teste do FFmpegEncoder (colombina/ffmpeg): fecha o ciclo encode→mux→decode.
 // Gera N quadros RGBA, codifica num MP4 e decodifica de volta com o
 // FFmpegDecoder para provar que container/codec ficaram válidos. Pula se o
 // build do FFmpeg não tiver o libx264.
 
 #include <QtTest>
 
-#include "laartman/FFmpegEncoder.h"
+#include "colombina/ffmpeg/FFmpegEncoder.h"
 #include "laartman/FFmpegDecoder.h"
 
 #include <QColor>
