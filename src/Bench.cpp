@@ -265,7 +265,10 @@ int runBench(QApplication& app, const QString& projectPath) {
     }
 
     Project project;
-    project.fromJson(doc.object());
+    if (!project.fromJson(doc.object())) {
+        out << "ERRO: .Blanc recusado (salvo por versão mais nova do Pierrot).\n";
+        return 1;
+    }
     benchReport(out, project);
 
     Q_UNUSED(app);

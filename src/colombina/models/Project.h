@@ -1110,22 +1110,39 @@ public:
     }
 
     // ── Schema do .Blanc versionado ──────────────────────────────────────
-    // toJson() carimba `schemaVersion` = kSchemaVersion. Arquivos SEM o
-    // campo são v0 (legado: tudo anterior ao carimbo). Cada mudança
-    // INCOMPATÍVEL no formato segue o passo:
+    // toJson() carimba `schemaVersion` = kSchemaVersion e `formatGroup` =
+    // PIERROT_VERSION_GROUP (grupo legível:0.8, 0.8.1… compartilham o mesmo
+    // formato). Arquivos SEM schemaVersion são v0 (legado puro). Cada
+    // mudança INCOMPATÍVEL no formato segue o passo:
     //   1. cria a constante kSchema<Nome> = <nova versão>;
     //   2. no fromJson, adiciona `if (ver < kSchema<Nome>) { ...migra... }`
     //      no fim da leitura, em ordem cronológica (NUNCA renumerar nem
     //      remover passos já publicados);
-    //   3. sobe kSchemaVersion.
-    // Arquivos gravados por um app MAIS NOVO (ver > kSchemaVersion) abrem
-    // mesmo assim (parse defensivo), com aviso no log do fromJson.
-    static constexpr int kSchemaVersion = 1;
+    //   3. sobe kSchemaVersion (e o PIERROT_VERSION_GROUP, se o grupo mudar).
+    // Arquivos gravados por um app MAIS NOVO (ver > kSchemaVersion) são
+    // RECUSADOS (fromJson devolve false, sem carregar nada): abrir formato
+    // desconhecido em binário velho é a receita de corrupção silenciosa.
+    // Grupo 0.8+ recusa; o 0.7.1 já distribuído carregava "defensivo".
+    static constexpr int kSchemaVersion = 2;
     // v0 → v1: mesaX/mesaY/camX/camY deixaram de ser offsets do centro e
     // passaram a ser px absolutos (marcador legado `mesaPosAbs`, anterior ao
     // schemaVersion — para arquivos v0 ele continua sendo a autoridade).
     static constexpr int kSchemaMesaPosAbs = 1;
+    // v1 → v2: carimbo do GRUPO de versão (grupo 0.8, era Laartman v0.4).
+    // Nenhum campo muda em relação ao schema 1 — o bump marca a fronteira:
+    // arquivos v2+ são recusados em apps de schema < 2 (0.7 e anteriores),
+    // e o 0.8+ recusa arquivos de schema mais novo.
+    static constexpr int kSchemaFormatGroup = 2;
+
+    // Leitura do carimbo de um objeto .Blanc ANTES de carregar (para a UI
+    // decidir aviso de conversão/recusa sem tocar no modelo).
+    static int schemaOf(const QJsonObject& o) { return o["schemaVersion"].toInt(0); }
+    static QString formatGroupOf(const QJsonObject& o) {
+        return o["formatGroup"].toString();
+    }
 
     QJsonObject toJson() const;
-    void fromJson(const QJsonObject& obj);
+    // false = RECUSADO (schema mais novo que o suportado); o projeto NÃO é
+    // modificado. Arquivos antigos (schema menor) carregam com migração.
+    bool fromJson(const QJsonObject& obj);
 };

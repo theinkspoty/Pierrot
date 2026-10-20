@@ -5,6 +5,7 @@
 
 #include "Project.h"
 #include "ClipAttrs.h"
+#include "version.h"
 
 #include <QJsonArray>
 #include <QJsonValue>
@@ -724,19 +725,27 @@ QJsonObject Project::toJson() const {
     // legado por marcadores ad-hoc (mesaPosAbs) e não havia como medir a
     // idade de um .Blanc nem planejar migração futura — ver Project.h.
     o["schemaVersion"] = kSchemaVersion;
+    // Grupo legível (0.8, 0.8.1…): schemaVersion é a autoridade máquina,
+    // o grupo é o que as mensagens mostram ao usuário.
+    o["formatGroup"] = QLatin1String(PIERROT_VERSION_GROUP);
 
     return o;
 }
 
-void Project::fromJson(const QJsonObject& o) {
+bool Project::fromJson(const QJsonObject& o) {
     // Formato do arquivo: ausente = v0 (legado puro, anterior ao carimbo).
     const int ver = o["schemaVersion"].toInt(0);
-    if (ver > kSchemaVersion)
+    if (ver > kSchemaVersion) {
+        // Arquivo de um grupo mais novo: RECUSA sem carregar nada. Interpretar
+        // campos desconhecidos em binário velho é corrupção silenciosa (o
+        // 0.7.1 fazia "parse defensivo" — daí o bump para o grupo 0.8 recusar).
         qWarning().noquote()
-            << QStringLiteral(".Blanc com schemaVersion %1 (app suporta %2):"
-                              " arquivo de versão mais nova, carregando mesmo"
-                              " assim — campos desconhecidos serão ignorados")
+            << QStringLiteral(".Blanc com schemaVersion %1 (app suporta %2,"
+                              " grupo " PIERROT_VERSION_GROUP "): recusado —"
+                              " arquivo de versão mais nova; atualize o app")
                       .arg(ver).arg(kSchemaVersion);
+        return false;
+    }
 
     name = o["name"].toString();
     width = o["width"].toInt(1920);
@@ -839,4 +848,5 @@ void Project::fromJson(const QJsonObject& o) {
             for (Keyframe& k : m.kfCamY) k.value += dY;
         }
     }
+    return true;
 }

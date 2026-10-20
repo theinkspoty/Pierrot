@@ -3244,6 +3244,9 @@ QByteArray MainWindow::snapshotState() const {
 
 void MainWindow::restoreSnapshot(const QByteArray& snap) {
     const QJsonDocument doc = QJsonDocument::fromJson(qUncompress(snap));
+    // Snapshot é sempre do app atual; a recusa (false) só aconteceria num
+    // cenário impossível — nesse caso o modelo fica vazio (default) em vez
+    // de carregar meio-estado.
     m_project.fromJson(doc.isObject() ? doc.object() : QJsonObject());
 }
 
@@ -3436,7 +3439,50 @@ void MainWindow::openProjectFile(const QString& path) {
                              tr("Arquivo de projeto inválido:\n%1").arg(path));
         return;
     }
-    m_project.fromJson(doc.object());
+    // ── Portão de versão do .Blanc (grupos de formato) ────────────────────
+    // Arquivo de um grupo MAIS NOVO: recusa ANTES de tocar no modelo atual
+    // (interpretar formato desconhecido é corrupção silenciosa). Arquivo de
+    // um grupo mais ANTIGO (0.7 ou anterior ao versionamento): avisa que a
+    // conversão é one-way e, em caso positivo, migra e já regrava o arquivo
+    // no formato novo (o backup rotativo protege o original).
+    const QJsonObject obj = doc.object();
+    const int fileVer = Project::schemaOf(obj);
+    const QString fileGroup = Project::formatGroupOf(obj);
+    if (fileVer > Project::kSchemaVersion) {
+        QMessageBox::critical(
+            this, tr("Projeto de versão mais nova"),
+            tr("Este projeto foi salvo por uma versão mais nova do Pierrot\n"
+               "(schema %1%2 — este app é o schema %3, grupo " PIERROT_VERSION_GROUP ").\n\n"
+               "Atualize o Pierrot para abrir este arquivo.")
+                .arg(fileVer)
+                .arg(fileGroup.isEmpty() ? QString()
+                                         : tr(", grupo %1").arg(fileGroup))
+                .arg(Project::kSchemaVersion));
+        return;
+    }
+    bool convertOld = false;
+    if (fileVer < Project::kSchemaVersion) {
+        const auto btn = QMessageBox::warning(
+            this, tr("Projeto de versão antiga"),
+            tr("Seu projeto usa uma versão antiga do Laartman — foi salvo por "
+               "uma versão anterior do Pierrot%1.\n\n"
+               "Ao CONVERTER para o formato atual (grupo " PIERROT_VERSION_GROUP ", "
+               "Laartman v0.4), o projeto não poderá mais ser aberto no "
+               "Pierrot 0.7 ou anteriores.\n\n"
+               "Deseja converter e salvar agora?")
+                .arg(fileGroup.isEmpty()
+                         ? tr(" (formato anterior ao versionamento por grupo)")
+                         : tr(" (grupo %1)").arg(fileGroup)),
+            QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Yes);
+        if (btn != QMessageBox::Yes) return; // mantém o projeto atual intacto
+        convertOld = true;
+    }
+    if (!m_project.fromJson(obj)) {
+        // Defensivo: o portão acima já recusou, mas fromJson é a autoridade.
+        QMessageBox::warning(this, tr("Abrir projeto"),
+                             tr("Arquivo de projeto recusado (versão não suportada):\n%1").arg(path));
+        return;
+    }
     ++m_projGen; // troca de projeto: invalida callbacks de save em voo
     if (m_project.videoTracks.isEmpty()) m_project.addTrack(false);
     if (m_project.audioTracks.isEmpty()) m_project.addTrack(true);
@@ -3467,7 +3513,17 @@ void MainWindow::openProjectFile(const QString& path) {
     m_timeline->setPlayhead(0.0); // setPlayhead não emite playheadChanged
     updateTitle();
     addRecentProject(path);
-    statusBar()->showMessage(tr("Projeto aberto: %1").arg(path));
+    if (convertOld) {
+        // Conversão one-way já confirmada: regrava o arquivo no formato do
+        // grupo atual. O save é assíncrono e o backup rotativo
+        // (~/Pierrot/backups/) preserva o original antes da sobrescrita.
+        writeProjectFile(path);
+        statusBar()->showMessage(
+            tr("Projeto CONVERTIDO para o grupo " PIERROT_VERSION_GROUP
+               " (Laartman v0.4) e salvo — não abre mais no Pierrot 0.7."));
+    } else {
+        statusBar()->showMessage(tr("Projeto aberto: %1").arg(path));
+    }
 }
 
 // Espera a fila de proxies esvaziar (teto de 10 min) e então abre a janela

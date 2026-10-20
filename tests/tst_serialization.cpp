@@ -12,6 +12,7 @@
 
 #include "colombina/models/ClipAttrs.h"
 #include "colombina/models/Project.h"
+#include "version.h"
 
 static Project makeProject() {
     Project p;
@@ -236,6 +237,8 @@ private slots:
     void legacyProjectWithoutMesaPosAbsShiftsCamera();
     void schemaVersionIsStamped();
     void legacyProjectWithoutSchemaVersionLoads();
+    void newerSchemaIsRefused();
+    void oldSchemaIsAcceptedAndMigrated();
     void recordingTracksRoundTrip();
     void legacyProjectWithoutRecordingTracksLoads();
     void promoteRecordingTrackMovesItToAudio();
@@ -363,6 +366,41 @@ void TestSerialization::schemaVersionIsStamped() {
     QVERIFY(o.contains(QStringLiteral("schemaVersion")));
     QCOMPARE(o["schemaVersion"].toInt(), Project::kSchemaVersion);
     QVERIFY(Project::kSchemaVersion >= 1);
+    // O grupo legível (0.8, 0.8.1…) acompanha o schema — é o que as
+    // mensagens de conversão/recusa mostram ao usuário.
+    QCOMPARE(o["formatGroup"].toString(), QLatin1String(PIERROT_VERSION_GROUP));
+    QCOMPARE(Project::formatGroupOf(o), QLatin1String(PIERROT_VERSION_GROUP));
+}
+
+// Grupo mais novo: fromJson RECUSA sem modificar o modelo. Abrir formato
+// desconhecido em binário velho é corrupção silenciosa — a partir do grupo
+// 0.8 isso vira erro visível em vez de "parse defensivo".
+void TestSerialization::newerSchemaIsRefused() {
+    QJsonObject o = makeProject().toJson();
+    o["schemaVersion"] = Project::kSchemaVersion + 1;
+
+    Project p;
+    p.name = QStringLiteral("atual");
+    QVERIFY(!p.fromJson(o));
+    QCOMPARE(p.name, QStringLiteral("atual")); // nada foi carregado
+    QVERIFY(p.media.isEmpty());
+}
+
+// Arquivo do grupo 0.7 (schema 1, sem formatGroup): carrega com migração e,
+// ao salvar de novo, sai no formato do grupo atual (schema 2 + formatGroup).
+// É o caminho do diálogo de conversão one-way do MainWindow.
+void TestSerialization::oldSchemaIsAcceptedAndMigrated() {
+    QJsonObject o = makeProject().toJson();
+    o["schemaVersion"] = 1; // era 0.7 (Laartman anterior)
+    o.remove(QStringLiteral("formatGroup"));
+
+    Project p;
+    QVERIFY(p.fromJson(o));
+    QCOMPARE(p.name, makeProject().name);
+
+    const QJsonObject saved = p.toJson();
+    QCOMPARE(saved["schemaVersion"].toInt(), Project::kSchemaVersion);
+    QCOMPARE(saved["formatGroup"].toString(), QLatin1String(PIERROT_VERSION_GROUP));
 }
 
 void TestSerialization::legacyProjectWithoutSchemaVersionLoads() {

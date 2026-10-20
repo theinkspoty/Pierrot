@@ -29,6 +29,27 @@ de desempenho/robustez. Naipe continua **alpha**.
 - `PacketReader.cpp` entrou nas fontes de todos os testes que compilam o
   motor diretamente (CMakeLists).
 
+### Projeto — grupos de versão do .Blanc (one-way com Laartman v0.4)
+
+- **`formatGroup` no .Blanc + `schemaVersion` 2** — o arquivo carimba o grupo
+  legível (`0.8`; patch versions 0.8.1, 0.8.4… compartilham o mesmo formato)
+  além do `schemaVersion` (autoridade máquina). `schemaVersion` 2 marca a
+  fronteira do grupo 0.8 / era Laartman v0.4.
+- **Projetos antigos (0.7 ou anteriores ao versionamento) são CONVERTIDOS** —
+  ao abrir, diálogo: "Seu projeto usa uma versão antiga do Laartman… Deseja
+  converter e salvar agora?" (Continuar/Cancelar; cancelar mantém o projeto
+  atual intacto). Confirmado, migra e já regrava o arquivo no formato novo —
+  o backup rotativo (`~/Pierrot/backups/`) preserva o original. A conversão é
+  **one-way**: convertido, não abre mais no Pierrot 0.7.
+- **Projetos de grupo MAIS NOVO são RECUSADOS** — `fromJson` devolve `false`
+  sem carregar nada (antes era "parse defensivo" com campos ignorados — a
+  receita de corrupção silenciosa). Janela explicando o schema/grupo e
+  pedindo atualização do app. `tst_serialization` ganhou
+  `newerSchemaIsRefused` e `oldSchemaIsAcceptedAndMigrated`.
+- Nota: o 0.7.1 já distribuído segue com o comportamento antigo (carrega com
+  aviso no log) — binário shipado não se corrige; a recusa vale de 0.8 em
+  diante.
+
 ### Estrutura — camadas por estabilidade em `src/laartman/`
 
 - **Subpastas por camada** (ver `src/laartman/README.md`): a raiz fica só a
