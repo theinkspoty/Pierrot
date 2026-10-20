@@ -136,6 +136,12 @@ private:
     void* m_codec = nullptr;
     int m_stream = -1;
     double m_fps = 0.0;
+    // time_base do stream de vídeo, cacheado no open(). O caminho de vídeo NÃO
+    // pode mais ler fmt->streams[] do demuxer compartilhado: com o áudio
+    // decodificando sem m_mutex (Fase 3), av_read_frame roda concorrente — e em
+    // MPEG-TS ele pode realocar fmt->streams ao descobrir streams novos.
+    int m_vtbNum = 1;
+    int m_vtbDen = 1000000;
     // Taxa de quadros VARIÁVEL (VFR): avg_frame_rate é só uma média, então a
     // matemática de tempo (chave de cache, tolerância) usa o timestamp real de
     // cada quadro em vez de assumir espaçamento constante (1/fps).

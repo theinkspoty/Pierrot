@@ -171,6 +171,12 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
                             && (cc->pix_fmt == AV_PIX_FMT_VAAPI || cc->hw_frames_ctx);
                         m_hwPixFmt = m_hw ? (int)AV_PIX_FMT_VAAPI : -1;
                         const AVStream* st = fmt->streams[idx];
+                        // time_base cacheado: o caminho de vídeo não lê mais o
+                        // demuxer (o áudio decodifica nele sem m_mutex).
+                        if (st->time_base.num > 0 && st->time_base.den > 0) {
+                            m_vtbNum = st->time_base.num;
+                            m_vtbDen = st->time_base.den;
+                        }
                         if (st->avg_frame_rate.num > 0 && st->avg_frame_rate.den > 0) {
                             const double r = av_q2d(st->avg_frame_rate);
                             if (r > 0.0 && r < 240.0) m_fps = r;
@@ -366,6 +372,8 @@ void FFmpegDecoder::freeAllLocked() {
         m_ctx = nullptr;
     }
     m_stream = -1;
+    m_vtbNum = 1;
+    m_vtbDen = 1000000;
     m_isImage = false;
     m_isLoopGif = false;
     m_vfr = false;

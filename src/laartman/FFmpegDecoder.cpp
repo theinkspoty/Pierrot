@@ -143,9 +143,10 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
     if (m_isLoopGif && m_gifDurationSec > 0.0)
         targetSec = std::fmod(targetSec, m_gifDurationSec);
 
-    AVFormatContext* fmt = static_cast<AVFormatContext*>(m_ctx);
     AVCodecContext* cc = static_cast<AVCodecContext*>(m_codec);
-    AVStream* st = fmt->streams[m_stream];
+    // time_base do vídeo cacheado no open(): o caminho de vídeo não toca no
+    // demuxer compartilhado (o áudio decodifica nele sem m_mutex — Fase 3).
+    const AVRational vtb { m_vtbNum, m_vtbDen };
 
     // fsec de um quadro no tempo do stream (fallback: o próprio alvo).
     // Prefere pts; sem ele, best_effort_timestamp (que já considera DTS para
@@ -157,7 +158,7 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
         if (pts == AV_NOPTS_VALUE)
             pts = fr->best_effort_timestamp;
         if (pts == AV_NOPTS_VALUE) return targetSec;
-        const double sec = pts * av_q2d(st->time_base);
+        const double sec = pts * av_q2d(vtb);
         return sec < 0.0 ? 0.0 : sec;
     };
     // Guarda um quadro como o candidato de exibição atual (m_lastFrame).
@@ -283,7 +284,7 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
 
     const int64_t target = av_rescale_q(
         (int64_t)(targetSec * 1000000.0),
-        AVRational{1, 1000000}, st->time_base);
+        AVRational{1, 1000000}, vtb);
 
     // Determina se precisa de seek real:
     // Apenas faz seek se:
