@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.8 (2026-10-20)
+
+Release de **fechamento da transição Laartman v0.4** — o motor de codecs agora
+só decodifica (núcleo congelado L0–L3; pool/prefetch/posse são política L4 do
+Pierrot) —, suporte a japonês, tema Japan 95, 48 presets de animação e correções
+de desempenho/robustez. Naipe continua **alpha**.
 
 ### Decode — fechamento da transição v0.4 (Fases 3+4)
 

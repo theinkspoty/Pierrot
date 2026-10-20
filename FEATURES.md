@@ -1,4 +1,4 @@
-# Funcionalidades do Pierrot v0.7.1
+# Funcionalidades do Pierrot v0.8
 
 ## Media Pool
 
@@ -303,8 +303,8 @@ src/
   version.h                   Versão do projeto
   CrashReporter               Relatório de crash (backtrace + infos do sistema)
   models/Project              Modelo: mídia, faixas, clipes + serialização JSON
-  laartman/FFmpegDecoder      Motor de codecs: decodificação de frames/áudio (libav*)
-  ffmpeg/MediaCache           Cache de waveforms/thumbnails em thread de fundo
+  laartman/                  Motor de codecs (v0.4, só decode): Decoder (fachada L3), FFmpegDecoder, Demuxer, PacketReader (I/O threaded), ErrorConceal
+  colombina/ffmpeg/          Política L4: SourcePool, FramePipeline, FrameCache, MediaCache, FFmpegEncoder
   export/ProjectExporter      Geração do comando ffmpeg (filter_complex)
   ui/TimelineWidget           Timeline interativa (drag, corte, trim, zoom, reordenação de faixas/pastas, presets de estilo)
   ui/GraphEditorWidget        Editor de curvas (keyframes, splines bezier, interpolações)

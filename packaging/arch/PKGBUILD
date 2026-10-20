@@ -8,13 +8,13 @@
 #
 # Build:
 #   cd packaging/arch
-#   makepkg -f            # gera pierrot-0.7.1-1-x86_64.pkg.tar.zst
+#   makepkg -f            # gera pierrot-0.8-1-x86_64.pkg.tar.zst
 #   makepkg -fi           # ...e instala no sistema
 #
 # Rode como usuário normal — o makepkg não pode ser executado como root.
 
 pkgname=pierrot
-pkgver=0.7.1
+pkgver=0.8
 pkgrel=1
 pkgdesc="Editor de vídeo não-linear estilo Vegas Pro para Linux"
 arch=('x86_64' 'aarch64')
@@ -36,7 +36,7 @@ makedepends=(
     'ffmpeg'
 )
 source=("$pkgname-$pkgver.tar.gz")
-sha256sums=('3ac265be86efa99da6c743cdf7ef80890ab7e070060572790f546ccf24afe7e1')
+sha256sums=('SKIP')
 
 build() {
     cmake -S "$pkgname-$pkgver" -B build \

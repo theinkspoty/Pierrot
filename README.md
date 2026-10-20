@@ -1,4 +1,4 @@
-# Pierrot v0.7.1 alpha
+# Pierrot v0.8 alpha
 
 > **Este app é para uso pessoal.** Não é ambicioso nem quer substituir nenhum
 > software — o foco é o meu próprio uso: um workflow estável que eu conheço do
@@ -91,17 +91,20 @@ Estudos que moldaram decisões técnicas:
 - **Filmcraft** e **Oliver** — reprodução de vídeo: arquitetura do pipeline de
   playback e do monitor (decodificação em processo, threads de render).
 
-O **motor de codecs** do Pierrot, o **Laartman** (`src/laartman/` —
-FFmpegDecoder/FFmpegEncoder), vem da preocupação de **não travar**
-(decodificação estável, como no estudo do Kdenlive) e de **não perder trabalho**
-(save/backup a prova de queda), com playback fluido no monitor inspirado no
-Filmcraft e no Oliver. Cuidado real:
+O **motor de codecs** do Pierrot, o **Laartman** (`src/laartman/` — `Decoder`,
+`FFmpegDecoder`, `Demuxer`, `PacketReader`, v0.4), vem da preocupação de **não
+travar** (decodificação estável, como no estudo do Kdenlive) e de **não perder
+trabalho** (save/backup a prova de queda), com playback fluido no monitor
+inspirado no Filmcraft e no Oliver. Desde a reestruturação v0.4 o Laartman
+**só decodifica** — pool, prefetch e escolha de qualidade são política do
+Pierrot (Colombina/L4). Cuidado real:
 
-- seek de áudio por **PTS** em vez de contagem cega de frames;
-- `releaseBuffers()` devolve a RAM de thumbnails e pan/crop;
-- `setHardwareDecodeAllowed()` evita conflito de device **VAAPI** no thread da UI;
-- padrão `m_lastFrame`/`m_nextFrame` de hold/exibição;
-- threading disciplinado: stats cross-thread via `std::atomic`, cache só sob `m_mutex`.
+- fachada pública `Decoder` congelada (L3): sem posse/lease/política no header;
+- vídeo com **contexto de demux próprio** + thread de leitura à frente
+  (`PacketReader`, buffer limitado) — disco lento não para o decode;
+- áudio independente do vídeo (PTS, sem cadeia de mutex cruzada);
+- VAAPI com auto-cura, detecção VFR, ocultação de erro (último quadro bom);
+- cancel cooperativo em todo `frame()` (aborta em ~20 ms, progresso preservado).
 
 Ainda estudando para melhorar a reprodução.
 

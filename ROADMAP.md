@@ -571,4 +571,4 @@ bug de latência, não de correção.
   que usa `-ignore_loop 0` no demuxer). Inserção na timeline usa a duração
   real do arquivo em vez de 3s fixos.
 - [ ] **Build stamp no binário** — commit + data em `version.h` via CMake, no
-  título/About/crash report (todo build mostra "0.7" hoje).
+  título/About/crash report (todo build mostra "0.8" hoje).

@@ -7,9 +7,9 @@
 
 // Versão exibida no app. Mantenha em sincronia com a variável VERSION do
 // packaging/build-appimage.sh (usada no nome do AppImage).
-#define PIERROT_VERSION "0.7.1"
+#define PIERROT_VERSION "0.8"
 
 // Versões dos motores internos, exibidas no Sobre — mantenham atualizadas
 // quando mexer em src/colombina/ (kernel) ou src/laartman/ (codecs).
 #define PIERROT_COLOMBINA_VERSION "0.1" // kernel: modelo, cache, render, export
-#define PIERROT_LAARTMAN_VERSION "0.3"  // motor de codecs: decode/encode libav*
+#define PIERROT_LAARTMAN_VERSION "0.4"  // motor de codecs: só decode (transição v0.4 concluída)
