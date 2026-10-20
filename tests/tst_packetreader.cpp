@@ -117,6 +117,37 @@ private slots:
         av_packet_free(&pkt);
     }
 
+    // seek() pós-EOF: a thread produtora já encerrou (m_running=false) — o
+    // seek tem que repousar a thread morta, reposicionar e voltar a produzir
+    // (caminho de restart; o caso comum usa pedido pendente sem restart).
+    // É o que o wrap de GIF e o replay do preview pagam no fim do arquivo.
+    void seekAfterEofRestartsProduction() {
+        if (!haveFfmpegCli())
+            QSKIP("ffmpeg CLI ausente");
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString a = dir.filePath(QStringLiteral("a.mp4"));
+        QVERIFY(makeClip(a, 1, QColor(Qt::cyan)));
+
+        PacketReader r(8);
+        QVERIFY(r.open(a));
+        AVPacket* pkt = av_packet_alloc();
+        int n = 0;
+        while (r.read(pkt) >= 0) { av_packet_unref(pkt); ++n; }
+        QVERIFY(n > 0); // EOF alcançado, produtor morto
+        // Volta ao início e lê de novo — tem que entregar pacotes.
+        const int err = r.seek(r.streamIndex(), 0, AVSEEK_FLAG_BACKWARD);
+        QVERIFY(err >= 0);
+        const int rc = r.read(pkt);
+        QVERIFY2(rc >= 0, "read pós-seek-pós-EOF falhou");
+        av_packet_unref(pkt);
+        // E o normal segue funcionando (segundo seek, agora com produtor vivo).
+        QVERIFY(r.seek(r.streamIndex(), 0, AVSEEK_FLAG_BACKWARD) >= 0);
+        QVERIFY(r.read(pkt) >= 0);
+        av_packet_unref(pkt);
+        av_packet_free(&pkt);
+    }
+
     // cancel aborta a espera (não trava para sempre num arquivo vazio/erro).
     void cancelAbortsWait() {
         if (!haveFfmpegCli())

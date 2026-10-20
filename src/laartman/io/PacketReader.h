@@ -59,6 +59,13 @@ public:
     AVStream* stream() const;              // nullptr se fechado/sem stream
     AVRational timeBase() const;           // {0,1} se indisponível
 
+    // Melhor stream de ÁUDIO do arquivo (-1 se não houver) e duração do
+    // container em segundos (-1 se desconhecida). Leem o CONTEXTO PRÓPRIO do
+    // reader (mesmo arquivo) — o motor usa para decidir se abre o demuxer
+    // dedicado de áudio sem pagar um find_stream_info extra.
+    int findBestAudioStream() const;
+    double containerDuration() const;
+
     // Retira o próximo pacote (bloqueante). Devolve >=0 em sucesso (o pacote
     // está preenchido e deve ser liberado com av_packet_unref pelo chamador),
     // AVERROR_EOF no fim, ou outro erro. `cancel` (atômico) aborta a espera.
@@ -66,6 +73,12 @@ public:
 
     // Reposiciona: para a produção, descarta o buffer, faz seek no demuxer e
     // reinicia a leitura. Thread-safe com read().
+    //
+    // SEM reiniciar a thread (hot path de scrub/corte): o pedido vira um
+    // estado pendente que a PRÓPRIA thread produtora aplica (única que pode
+    // tocar o contexto) — matar/join/spawn a cada seek custava um join no
+    // disco em toda mexida na agulha. Só pós-EOF (produtor encerrado) o
+    // seek ainda paga o restart da thread.
     int seek(int streamIndex, int64_t timestamp, int flags);
 
     // Reconstrói o contexto após um flush do codec (apenas limpa o buffer; o
@@ -89,9 +102,19 @@ private:
     mutable std::mutex m_mutex;
     std::condition_variable m_cvSpace;  // produtor espera por espaço
     std::condition_variable m_cvData;   // consumidor espera por dado
+    std::condition_variable m_cvSeek;   // seek() espera o produtor aplicar
     std::deque<AVPacket*> m_queue;
     bool m_running = false;
     bool m_eof = false;
     int m_readErr = 0;
+    // Seek pedido pelo consumidor e ainda não aplicado (sob m_mutex). O
+    // produtor drena a fila, chama av_seek_frame e publica m_seekApplied.
+    bool m_seekRequested = false;
+    int m_seekStream = -1;
+    int64_t m_seekTs = 0;
+    int m_seekFlags = 0;
+    uint64_t m_seekIssued = 0;  // última geração emitida por seek()
+    uint64_t m_seekApplied = 0; // geração já aplicada pelo produtor
+    int m_lastSeekErr = 0;
     int64_t m_readPos = -1; // descartável
 };

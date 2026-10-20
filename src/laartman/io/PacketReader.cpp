@@ -27,6 +27,16 @@ AVRational PacketReader::timeBase() const {
     return m_stream ? m_stream->time_base : AVRational { 1, AV_TIME_BASE };
 }
 
+int PacketReader::findBestAudioStream() const {
+    if (!m_fmt) return -1;
+    return av_find_best_stream(m_fmt, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
+}
+
+double PacketReader::containerDuration() const {
+    if (!m_fmt || m_fmt->duration <= 0) return -1.0;
+    return m_fmt->duration / (double)AV_TIME_BASE;
+}
+
 bool PacketReader::isOpen() const {
     return m_fmt != nullptr;
 }
@@ -78,6 +88,7 @@ void PacketReader::close() {
     }
     m_cvSpace.notify_all();
     m_cvData.notify_all();
+    m_cvSeek.notify_all(); // acorda um seek() pendente (vai ver !m_running)
     if (m_thread.joinable()) m_thread.join();
 
     // Descarta o que sobrou na fila.
@@ -114,43 +125,47 @@ void PacketReader::flush() {
 }
 
 int PacketReader::seek(int streamIndex, int64_t timestamp, int flags) {
+    std::unique_lock<std::mutex> l(m_mutex);
     if (!m_fmt) return -1;
 
-    // Para a produção e limpa a fila antes de reposicionar (o contexto de
-    // demuxing não é thread-safe; só a thread do reader o toca).
-    {
-        std::lock_guard<std::mutex> l(m_mutex);
-        m_running = false;
-    }
-    m_cvSpace.notify_all();
-    m_cvData.notify_all();
-    if (m_thread.joinable()) m_thread.join();
-
-    std::deque<AVPacket*> leftovers;
-    {
-        std::lock_guard<std::mutex> l(m_mutex);
+    // ── Caso raro: produtor encerrado (EOF/erro) ──────────────────────────
+    // A thread já saiu do loop. É o único caminho que ainda paga join +
+    // respawn — o contexto é tocado aqui mesmo (produtor morto, sem risco).
+    if (!m_running) {
+        l.unlock();
+        if (m_thread.joinable()) m_thread.join();
+        l.lock();
+        if (!m_fmt) return -1;
+        std::deque<AVPacket*> leftovers;
         leftovers.swap(m_queue);
         m_eof = false;
         m_readErr = 0;
-    }
-    for (AVPacket* p : leftovers) {
-        if (p) av_packet_free(&p);
-    }
-
-    if (streamIndex >= 0 && streamIndex < (int)m_fmt->nb_streams
-        && streamIndex != m_streamIndex) {
-        m_stream = m_fmt->streams[streamIndex];
-    }
-
-    const int err = av_seek_frame(m_fmt, streamIndex, timestamp, flags);
-
-    // Reinicia a produção a partir da nova posição.
-    {
-        std::lock_guard<std::mutex> l(m_mutex);
+        l.unlock();
+        for (AVPacket* p : leftovers) {
+            if (p) av_packet_free(&p);
+        }
+        const int err = av_seek_frame(m_fmt, streamIndex, timestamp, flags);
+        l.lock();
+        m_lastSeekErr = err;
         m_running = true;
+        m_thread = std::thread(&PacketReader::produce, this);
+        return err;
     }
-    m_thread = std::thread(&PacketReader::produce, this);
-    return err;
+
+    // ── Caso comum: produtor vivo — pedido pendente ───────────────────────
+    // A própria thread produtora drena a fila e aplica av_seek_frame (única
+    // que pode tocar o contexto). seek() só espera a publicação da geração.
+    // Sem join, sem respawn: scrub/corte paga o custo real do seek, não o de
+    // recriar a thread (era o "arrastar a agulha pesado" da 0.8 inicial).
+    m_seekStream = streamIndex;
+    m_seekTs = timestamp;
+    m_seekFlags = flags;
+    m_seekRequested = true;
+    const uint64_t gen = ++m_seekIssued;
+    m_cvSpace.notify_all(); // produtor pode estar esperando espaço/dado
+    m_cvSeek.wait(l, [this, gen] { return m_seekApplied >= gen || !m_running; });
+    if (m_seekApplied < gen) return AVERROR_EOF; // close() durante o seek
+    return m_lastSeekErr;
 }
 
 int PacketReader::read(AVPacket* out, const std::atomic<bool>* cancel) {
@@ -175,13 +190,56 @@ int PacketReader::read(AVPacket* out, const std::atomic<bool>* cancel) {
 
 void PacketReader::produce() {
     while (true) {
+        int seekStream = -1;
+        int64_t seekTs = 0;
+        int seekFlags = 0;
+        bool doSeek = false;
         {
             std::unique_lock<std::mutex> l(m_mutex);
-            // Espera espaço (ou ordem de parar).
+            // Espera espaço, pedido de seek, ou ordem de parar.
             m_cvSpace.wait(l, [this] {
-                return !m_running || (int)m_queue.size() < m_bucketSize;
+                return !m_running || m_seekRequested
+                       || (int)m_queue.size() < m_bucketSize;
             });
             if (!m_running) return;
+            if (m_seekRequested) {
+                doSeek = true;
+                seekStream = m_seekStream;
+                seekTs = m_seekTs;
+                seekFlags = m_seekFlags;
+                m_seekRequested = false;
+                // Drena a fila do período anterior ao seek (libera espaço).
+                std::deque<AVPacket*> junk;
+                junk.swap(m_queue);
+                l.unlock();
+                for (AVPacket* p : junk) {
+                    if (p) av_packet_free(&p);
+                }
+                l.lock();
+                m_cvSpace.notify_all();
+            }
+        }
+
+        if (doSeek) {
+            // Aplica o seek NO thread do produtor (única dona do contexto).
+            if (seekStream >= 0 && seekStream < (int)m_fmt->nb_streams
+                && seekStream != m_streamIndex) {
+                m_streamIndex = seekStream;
+                m_stream = m_fmt->streams[seekStream];
+            }
+            const int err = av_seek_frame(m_fmt, seekStream, seekTs, seekFlags);
+            {
+                std::lock_guard<std::mutex> l(m_mutex);
+                m_eof = false;
+                m_readErr = 0;
+                m_lastSeekErr = err;
+                // Publica para o seek() esperador (aceita a última geração
+                // emitida — pedidos encadeados são absorvidos por esta).
+                m_seekApplied = m_seekIssued;
+            }
+            m_cvSeek.notify_all();
+            m_cvData.notify_all();
+            continue;
         }
 
         AVPacket* pkt = av_packet_alloc();

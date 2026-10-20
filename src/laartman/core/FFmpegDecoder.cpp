@@ -56,7 +56,7 @@ FFmpegDecoder::~FFmpegDecoder() {
 
 bool FFmpegDecoder::isOpen() const {
     QMutexLocker vlock(&m_mutex);
-    return m_ctx != nullptr;
+    return m_reader || m_demuxer->isOpen();
 }
 QString FFmpegDecoder::source() const {
     QMutexLocker vlock(&m_mutex);
@@ -112,7 +112,7 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
         std::chrono::steady_clock::time_point t0;
     } workTimer;
     QImage result;
-    if (!m_ctx || m_stream < 0) return result;
+    if (m_stream < 0 || (!m_reader && !m_demuxer->isOpen())) return result;
 
     // Cancelamento cooperativo (Fase 3): a UI marca o token quando um alvo novo
     // supera este decode (scrub, seek, ou corte para outro clipe). Abortamos só
@@ -130,7 +130,8 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
     // travava o decode até o pacote chegar.
     auto readVideoPacket = [&]() -> int {
         if (m_reader) return m_reader->read(m_pkt, cancel);
-        return m_demuxer->readPacket(m_pkt);
+        if (m_demuxer->isOpen()) return m_demuxer->readPacket(m_pkt);
+        return AVERROR_EOF;
     };
 
     // Núcleo SEM cache: o LRU de quadros é política de L4 (FrameCache, na

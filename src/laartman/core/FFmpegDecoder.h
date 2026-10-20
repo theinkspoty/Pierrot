@@ -25,6 +25,7 @@
 // evita vazar os headers C do FFmpeg para quem inclui este arquivo.
 struct AVPacket;
 struct AVFrame;
+struct AVStream;
 class Demuxer;    // L0 — demuxing (definido em Demuxer.h, incluído só nos .cpp)
 class PacketReader; // L0 — leitura de pacotes à frente (PacketReader.h)
 
@@ -123,7 +124,16 @@ private:
     void lockAudio(std::unique_lock<QMutex>& video,
                    std::unique_lock<QMutex>& audio) const;
 
-    std::unique_ptr<Demuxer> m_demuxer; // L0 — dono do AVFormatContext (áudio/imagens)
+    // Monta o codec de vídeo (caminho VAAPI + fallback software) a partir do
+    // stream. `st` vem do PacketReader (vídeo com contexto próprio), do
+    // Demuxer (imagens/GIFs/fallback) e `containerDurationSec` é a duração do
+    // container em segundos (-1 = desconhecida).
+    void setupVideoCodec(AVStream* st, double containerDurationSec,
+                         const QString& filePath);
+    // Monta o codec de áudio + swr a partir do demuxer (contexto dedicado).
+    void setupAudioFromDemuxer(int audioStream);
+
+    std::unique_ptr<Demuxer> m_demuxer; // L0 — demuxing (áudio/imagens/fallback)
     // L0 — leitura de pacotes À FRENTE do vídeo (Fases 3+4 do plano v0.4):
     // thread dedicada com buffer limitado, contexto de demux PRÓPRIO — o vídeo
     // deixa de compartilhar o AVFormatContext (e a cadeia de mutex) com o
@@ -135,7 +145,9 @@ private:
     // exige m_mutex no decodeAudio/seekAudio. Escrito só em open()/freeAllLocked
     // (sob os dois locks); lido via atomic no lockAudio().
     std::atomic<bool> m_videoSharesDemuxer{false};
-    void* m_ctx = nullptr;              // == m_demuxer->formatContext()
+    // Espelho do contexto do DEMUXER (imagens/GIFs, áudio, fallback). Nulo
+    // quando o vídeo vive só no PacketReader (contexto próprio).
+    void* m_ctx = nullptr;
     void* m_codec = nullptr;
     int m_stream = -1;
     double m_fps = 0.0;
