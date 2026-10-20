@@ -290,18 +290,12 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
     bool needSeek = (m_lastPtsSec < 0.0
                      || targetSec < m_lastPtsSec - 0.5
                      || targetSec > m_lastPtsSec + 2.0);
-    // GIF animado com loop: o fmod() volta para 0 no final da duração. Não
-    // fazer seek+flush neste wrap evita resetar o canvas do decoder (disposal)
-    // e o seek binário sem índice (custo alto). Assim o decoder avança
-    // sequencialmente pelo ciclo, muito mais suave no preview.
-    if (needSeek && m_isLoopGif && m_gifDurationSec > 0.1) {
-        const double diffBack = m_lastPtsSec - targetSec;
-        const double wrap = m_gifDurationSec;
-        // Wrap: último ~ 0,5s voltou para 0
-        if (diffBack >= (wrap - 0.6) && diffBack <= (wrap + 0.6)) {
-            needSeek = false;
-        }
-    }
+    // GIF em loop: o wrap (fmod voltando para 0) PAGA o seek+flush — o flush
+    // reinicia o decoder do início do ciclo (canvas/disposal corretos). A
+    // supressão antiga do seek no wrap tentava avançar "sequencialmente",
+    // mas com o codec drenado (EOFreal no fim do arquivo) ela travava o
+    // preview no último quadro até a janela expirar — e, sem o flush, os
+    // pacotes pós-seek viravam INVALIDDATA (loop morto em GIFs longos).
 
     if (cancelled()) return result; // desiste antes do seek (caro)
 
@@ -315,16 +309,16 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
         if (seekErr < 0) {
             qWarning() << "av_seek_frame failed for video:" << seekErr;
         }
-        // Para GIF em loop, não faz flush completo dos buffers de decodificação
-        // ao dar wrap (evita resetar o canvas com disposal). Caso contrário,
-        // executa flush padrão.
-        if (!(m_isLoopGif && m_gifDurationSec > 0.1)) {
-            avcodec_flush_buffers(cc);
-        } else {
-            // Flush mínimo: evita lixo, mas preserva estado interno do decoder GIF
-            // quando possível. Libavcodec não expõe opção melhor; optamos por não
-            // forçar flush no wrap para reduzir o custo do loop.
-        }
+        // SEMpre flush após seek — inclusive em GIF em loop. A otimização
+        // antiga pulava o flush "para preservar o canvas (disposal)", mas sem
+        // ele um codec DRENADO (EOF real antes do wrap — GIF longo, scrub
+        // além da duração) rejeitava TODOS os pacotes pós-seek com
+        // AVERROR_INVALIDDATA e o loop morria (frameAt nulo após a duração).
+        // Seek em GIF embrulha o tempo com fmod e o flush reinicia o decoder
+        // do zero — canvas/disposal corretos por construção. O wrap gradual
+        // (a virada exata do fmod) continua SUPRIMIDO acima e não paga nem
+        // seek nem flush.
+        avcodec_flush_buffers(cc);
         m_lastPtsSec = -1.0;
         if (m_lastFrame)
             av_frame_unref(reinterpret_cast<AVFrame*>(m_lastFrame));

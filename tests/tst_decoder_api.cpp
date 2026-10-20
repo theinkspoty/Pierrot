@@ -406,8 +406,16 @@ void tst_DecoderApi::loopGifWrapsDeterministically() {
     const QImage a = dec.frameAt(inside, 120);
     QVERIFY2(!a.isNull(), "GIF não devolveu quadro na posição interna");
 
+    // Força o EOF REAL antes do wrap: decodifica o último fim do arquivo
+    // (o lookahead drena o codec) — era exatamente esse estado que quebrava
+    // o loop (seek pós-dreno sem flush → AVERROR_INVALIDDATA → frameAt nulo
+    // após a duração; GIFs longos não loopavam).
+    QVERIFY2(!dec.frameAt(dur - 0.05, 120).isNull(), "GIF não devolveu o fim do arquivo");
+
     const QImage b = dec.frameAt(inside + dur, 120);
     const QImage c = dec.frameAt(inside + 3.0 * dur, 120);
+    QVERIFY2(!b.isNull(), "GIF nulo no wrap pós-EOF (loop quebrado)");
+    QVERIFY2(!c.isNull(), "GIF nulo no wrap de 3 loops (loop quebrado)");
     QVERIFY2(samePixels(a, b), "wrap de 1 loop do GIF divergiu");
     QVERIFY2(samePixels(a, c), "wrap de 3 loops do GIF divergiu");
 }
