@@ -29,6 +29,23 @@ de desempenho/robustez. Naipe continua **alpha**.
 - `PacketReader.cpp` entrou nas fontes de todos os testes que compilam o
   motor diretamente (CMakeLists).
 
+### Decode — correção de corrupção de heap (issue #11)
+
+- **Defesa contra o estouro do kernel AVX2 do swscale (yuv→rgb)** — em
+  larguras não múltiplas de 16 (360, 1080 vertical…), o kernel asm do
+  libswscale escrevia **32 bytes de pixels além do fim do QImage**: o glibc
+  abortava com `malloc(): corrupted top size` no 2º frame e o app quebrava
+  (os "travamentos"/crash do Gumduckk no vídeo AV1 360×360 do issue #11 —
+  reproduzido com qualquer codec, o AV1 só tinha a largura certa). Bug
+  conhecido do FFmpeg (trac #9331/#10514; medido no FFmpeg 7.1). A defesa
+  (`swsScaleToRgba`) dá às linhas do destino sobra alinhada quando a largura
+  é ímpar — o estouro cai dentro do buffer — e copia as linhas visíveis;
+  larguras múltiplas de 16 (a maioria) seguem sem cópia. `tst_decoder_api`
+  ganhou `oddWidthDecodeStaysClean` (fonte 360×240,40 frames + determinismo).
+- Nota: os travamentos de *edição* em muitos clipes pequenos do mesmo issue
+  são da classe de falha do pool antigo (754 → 0 na 0.8, Fase 1) e já estavam
+  corrigidos; esta correção mata a parte de crash/corrupção.
+
 ### Projeto — grupos de versão do .Blanc (one-way com Laartman v0.4)
 
 - **`formatGroup` no .Blanc + `schemaVersion` 2** — o arquivo carimba o grupo

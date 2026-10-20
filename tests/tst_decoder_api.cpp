@@ -113,6 +113,7 @@ private slots:
     void loopGifWrapsDeterministically();
     void vfrDecodeIsDeterministic();
     void videoAndAudioDecodeConcurrently();
+    void oddWidthDecodeStaysClean();
 
     void hotPathLatencyIsFlat();
 
@@ -126,6 +127,7 @@ private:
     QString m_dir;
     QString m_media;   // vídeo 320x180@30 (3s), GOP fechado, sem áudio
     QString m_av;      // vídeo 320x180@30 (3s) + trilha de áudio (teste AV paralelo)
+    QString m_odd;     // vídeo 360x240 (largura %16 != 0 — estouro do swscale)
     QString m_gif;     // GIF animado 2s em loop
     QString m_vfr;     // MP4 com taxa variável (concat 30fps + 10fps)
     double m_duration = 0.0;
@@ -178,6 +180,23 @@ void tst_DecoderApi::initTestCase() {
     };
     if (runCmd(m_ffmpeg, avArgs) != 0)
         m_av.clear(); // AV opcional: se o encoder de áudio não existir, o teste pula
+
+    // Largura 360 (não múltipla de 16): o kernel AVX2 do swscale escrevia
+    // 32 B além do QImage no yuv→rgb (issue #11 — vídeo 360×360 do Gumduckk;
+    // "malloc(): corrupted top size" no glibc no 2º frameAt). Fixture do
+    // teste de regressão da defesa (swsScaleToRgba com linhas alinhadas).
+    m_odd = m_dir + QStringLiteral("/odd360.mp4");
+    const QStringList oddArgs {
+        QStringLiteral("-y"), QStringLiteral("-hide_banner"), QStringLiteral("-loglevel"), QStringLiteral("error"),
+        QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+        QStringLiteral("testsrc=size=360x240:rate=30:duration=2"),
+        QStringLiteral("-c:v"), QStringLiteral("libx264"), QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"),
+        QStringLiteral("-g"), QStringLiteral("15"),
+        QStringLiteral("-an"),
+        m_odd
+    };
+    if (runCmd(m_ffmpeg, oddArgs) != 0)
+        m_odd.clear();
 
     // GIF animado: usa o encoder GIF do ffmpeg (paleta). 2s, 10fps.
     const QStringList gifArgs {
@@ -465,6 +484,36 @@ void tst_DecoderApi::videoAndAudioDecodeConcurrently() {
              "vídeo+áudio na mesma instância travaram (deadlock de locks)");
     QVERIFY2(videoFrames.load() > 0, "nenhum quadro decodificado no caminho paralelo");
     QVERIFY2(audioBytes.load() > 0, "nenhum byte de PCM decodificado no caminho paralelo");
+}
+
+// Regressão da defesa do swscale (issue #11): larguras não múltiplas de 16
+// (360 aqui) faziam o kernel AVX2 do yuv→rgb escrever 32 B além do QImage —
+// o glibc abortava no 2º frameAt com "malloc(): corrupted top size" e o app
+// inteiro quebrava (o "travamento" do Gumduckk com o vídeo AV1 360×360).
+// A defesa (swsScaleToRgba com linhas alinhadas) tem que segurar40 frames
+// seguidos + manter o determinismo do frame.
+void tst_DecoderApi::oddWidthDecodeStaysClean() {
+    if (m_odd.isEmpty())
+        QSKIP("geração de mídia 360 larga ausente — teste pulado");
+
+    FFmpegDecoder dec;
+    QVERIFY(openUsable(dec, m_odd));
+
+    QImage first;
+    for (int i = 0; i < 40; ++i) {
+        const double t = (i % 20) * 0.05; // varredura com seeks
+        const QImage img = dec.frameAt(t, 0);
+        QVERIFY2(!img.isNull(), qPrintable(QStringLiteral("quadro nulo em t=%1").arg(t)));
+        QCOMPARE(img.width(), 360); // largura visível exata (não vaza o padding)
+        if (i == 0) first = img;
+    }
+    // Determinismo: mesmo t após reabrir → mesmos pixels (a defesa não muda
+    // o conteúdo, só o alojamento).
+    dec.close();
+    FFmpegDecoder dec2;
+    QVERIFY(openUsable(dec2, m_odd));
+    QVERIFY2(samePixels(first, dec2.frameAt(0.0, 0)),
+             "defesa do swscale alterou os pixels do frame");
 }
 
 // ── Invariante 4: caminho quente previsível (linha de base de latência) ─────

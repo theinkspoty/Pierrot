@@ -14,16 +14,59 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
 #include <libavutil/hwcontext.h>
+#include <libswscale/swscale.h>
 }
 
 #include <atomic>
 
+#include <cstring>
+#include <memory>
+
 #include <QDebug>
 #include <QFileInfo>
+#include <QImage>
 #include <QMutex>
 #include <QSet>
 #include <QSettings>
 #include <QString>
+
+// O kernel AVX2/SSSE3 do swscale (yuv→rgb, family yuv2rgb) escreve um bloco
+// de 8 pixels (32 B) além do fim do BUFFER DE DESTINO quando a largura não é
+// múltipla de 16 (ex.: 360, 1080). Em buffers exatos (QImage), o estouro
+// corrompe o heap vizinho — "malloc(): corrupted top size" no glibc, app
+// inteiro quebra. Bug conhecido do FFmpeg (trac #9331 / #10514; medido com
+// libswscale do FFmpeg 7.1 em 2026-10; issue #11 do Pierrot — o vídeo AV1
+// 360×360 do Gumduckk). Abaixo de AVX2 os kernels são limpos.
+//
+// Defesa: em larguras ímpares, as linhas do destino ganham sobra (alinhamento
+// 64 B + 64 B extras) — o estouro do kernel cai dentro do próprio buffer — e
+// as linhas visíveis são copiadas para o QImage da largura exata. O caminho
+// de larguras múltiplas de 16 (a maioria: 320/720/1080/1920/4K) segue sem
+// cópia nenhuma.
+inline bool swsDstNeedsPadding(int dstW) { return (dstW & 15) != 0; }
+
+// sws_scale → QImage RGBA8888 da largura exata dw (o contexto `sws` já deve
+// ter sido criado com dst dw×dh). srcSliceH = altura da fatia de origem.
+inline QImage swsScaleToRgba(SwsContext* sws, const uint8_t* const src[],
+                             const int srcStride[], int srcSliceH,
+                             int dw, int dh) {
+    QImage img(dw, dh, QImage::Format_RGBA8888);
+    if (img.isNull()) return img;
+    uint8_t* dst[4] = { img.bits(), nullptr, nullptr, nullptr };
+    int dstStride[4] = { int(img.bytesPerLine()), 0, 0, 0 };
+    if (!swsDstNeedsPadding(dw)) {
+        sws_scale(sws, src, srcStride, 0, srcSliceH, dst, dstStride);
+        return img;
+    }
+    const int bpl = (dw * 4 + 63) & ~63;
+    std::unique_ptr<uint8_t[]> pad(new uint8_t[size_t(bpl) * dh + 64]());
+    dst[0] = pad.get();
+    dstStride[0] = bpl;
+    sws_scale(sws, src, srcStride, 0, srcSliceH, dst, dstStride);
+    for (int y = 0; y < dh; ++y)
+        memcpy(img.scanLine(y), pad.get() + size_t(y) * bpl, size_t(dw) * 4);
+    return img;
+}
 
 // Diagnóstico do caminho de áudio do preview: ligue com PIERROT_AUDIO_DEBUG=1.
 inline bool audioDbg() {

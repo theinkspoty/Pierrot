@@ -271,13 +271,8 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
                 m_swsDstW = dw;
                 m_swsDstH = dh;
             }
-            if (sws) {
-                QImage img(dw, dh, QImage::Format_RGBA8888);
-                uint8_t* dst[4] = {img.bits(), nullptr, nullptr, nullptr};
-                int dstLinesize[4] = {(int)img.bytesPerLine(), 0, 0, 0};
-                sws_scale(sws, fr->data, fr->linesize, 0, sh, dst, dstLinesize);
-                return img;
-            }
+            if (sws)
+                return swsScaleToRgba(sws, fr->data, fr->linesize, sh, dw, dh);
         }
         return result;
     }
@@ -526,11 +521,10 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
                 m_swsDstH = dh;
             }
             if (sws) {
-                QImage img(dw, dh, QImage::Format_RGBA8888);
-                uint8_t* dst[4] = {img.bits(), nullptr, nullptr, nullptr};
-                int dstLinesize[4] = {(int)img.bytesPerLine(), 0, 0, 0};
-                sws_scale(sws, chosen->data, chosen->linesize, 0, sh, dst, dstLinesize);
-                result = img; // compartilhamento implícito, sem cópia
+                // swsScaleToRgba cobre o estouro de 32 B do kernel AVX2 do
+                // swscale em larguras não múltiplas de 16 (issue #11).
+                result = swsScaleToRgba(sws, chosen->data, chosen->linesize,
+                                        sh, dw, dh);
             }
         }
     }
