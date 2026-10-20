@@ -114,6 +114,8 @@ private slots:
     void facadeMatchesEngine();
     void facadeHeaderExposesNoOwnership();
 
+    void probeCacheMatchesAndInvalidatesOnChange();
+
 private:
     QString m_ffmpeg;
     QString m_dir;
@@ -469,6 +471,52 @@ void tst_DecoderApi::facadeMatchesEngine() {
     a.close();
     QVERIFY(!a.isOpen());
     QVERIFY(a.frame(1.0, 160).isNull());
+}
+
+// O memo de probe (§8.6) não pode mudar o RESULTADO: sondar o mesmo arquivo
+// duas vezes devolve o mesmo; e reescrever o arquivo invalida (a chave inclui
+// mtime+tamanho), então o segundo probe reflete o conteúdo novo — nunca o
+// cache velho.
+void tst_DecoderApi::probeCacheMatchesAndInvalidatesOnChange() {
+    const FFmpegMediaInfo first = FFmpegDecoder::probe(m_media);
+    const FFmpegMediaInfo again = FFmpegDecoder::probe(m_media);
+    QCOMPARE(again.width, first.width);
+    QCOMPARE(again.height, first.height);
+    QCOMPARE(again.hasVideo, first.hasVideo);
+    QVERIFY(qFuzzyCompare(again.duration, first.duration));
+
+    // Arquivo ausente não é memoizado: sondar antes e depois de existir dá o
+    // resultado real, não um vazio fixado.
+    const QString ghost = m_dir + QStringLiteral("/ghost.mp4");
+    QVERIFY(!QFile::exists(ghost));
+    const FFmpegMediaInfo missing = FFmpegDecoder::probe(ghost);
+    QVERIFY(!missing.hasVideo);
+
+    // Reescreve um arquivo DEDICADO com DIMENSÕES diferentes → o probe tem que
+    // enxergar o novo conteúdo (mtime/tamanho mudam). Sem invalidação, o teste
+    // pegaria o cache de 320x180. Não toca em m_media (fixture compartilhada).
+    const QString other = m_dir + QStringLiteral("/reprobe.mp4");
+    const QStringList big {
+        QStringLiteral("-y"), QStringLiteral("-hide_banner"), QStringLiteral("-loglevel"), QStringLiteral("error"),
+        QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+        QStringLiteral("testsrc=size=320x180:rate=30:duration=1"),
+        QStringLiteral("-c:v"), QStringLiteral("libx264"), QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"),
+        QStringLiteral("-an"), other
+    };
+    QCOMPARE(runCmd(m_ffmpeg, big), 0);
+    QCOMPARE(FFmpegDecoder::probe(other).width, 320);
+    // Substitui pelo mesmo caminho com 160x90 → probe deve invalidar.
+    const QStringList small {
+        QStringLiteral("-y"), QStringLiteral("-hide_banner"), QStringLiteral("-loglevel"), QStringLiteral("error"),
+        QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+        QStringLiteral("testsrc=size=160x90:rate=15:duration=1"),
+        QStringLiteral("-c:v"), QStringLiteral("libx264"), QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"),
+        QStringLiteral("-an"), other
+    };
+    QCOMPARE(runCmd(m_ffmpeg, small), 0);
+    const FFmpegMediaInfo changed = FFmpegDecoder::probe(other);
+    QCOMPARE(changed.width, 160);
+    QCOMPARE(changed.height, 90);
 }
 
 // Invariante 2 (encapsulamento): o header público NÃO pode reexpor posse nem

@@ -2426,8 +2426,13 @@ void PreviewWidget::updatePrefetch() {
         return;
     }
     const double remain = (clip->pos + clip->dur) - m_playhead;
-    // Janela dinâmica: 5s para clipes longos, no mínimo 2s para curtos.
-    const double window = qMin(5.0, qMax(2.0, clip->dur * 0.8));
+    // Janela dinâmica: precisa cobrir o open() FRIO do próximo arquivo
+    // (~1.3-1.5s medido, até ~2s em disco lento/rede) com folga, senão o warm
+    // chega depois do corte e o worker paga o open na thread do decode (foi o
+    // stall de 1,3s da sessão de referência). Antes era ≤5s; agora até 12s para
+    // clipes longos, mínimo 3s para clipes curtos (o corte está próximo de
+    // qualquer forma).
+    const double window = qMin(12.0, qMax(3.0, clip->dur * 0.9));
     if (remain > window || remain <= 0.0) return;
 
     // Procura o próximo clipe que será exibido no fim do clipe atual

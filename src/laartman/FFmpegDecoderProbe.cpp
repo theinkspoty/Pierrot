@@ -21,8 +21,67 @@ extern "C" {
 }
 
 #include <QDebug>
+#include <QFileInfo>
+#include <QHash>
+#include <QMutex>
+#include <QMutexLocker>
+
+namespace {
+
+// Memo de probe por (caminho canônico, mtime, tamanho). O probe abre o
+// container e chama find_stream_info — caro — e a MESMA mídia é sondada várias
+// vezes (media pool, proxy, arrasto na timeline, export). O resultado é
+// determinístico enquanto o arquivo não muda, então cacheamos. A chave inclui
+// mtime+tamanho para invalidar automaticamente quando o arquivo é reescrito.
+struct ProbeKey {
+    QString path;
+    qint64 mtimeMs = 0;
+    qint64 size = 0;
+    bool operator==(const ProbeKey& o) const {
+        return mtimeMs == o.mtimeMs && size == o.size && path == o.path;
+    }
+};
+inline uint qHash(const ProbeKey& k, uint seed = 0) {
+    return qHash(k.path, seed) ^ uint(k.mtimeMs) ^ uint(k.size >> 4);
+}
+
+// Limite simples: acima disto a tabela é limpa (working set de um projeto é
+// pequeno; não vale uma LRU aqui).
+constexpr int kProbeCacheCap = 512;
+
+QMutex g_probeMutex;
+QHash<ProbeKey, FFmpegMediaInfo> g_probeCache;
+
+} // namespace
+
+// Sonda a mídia, reusando o resultado em cache se o arquivo não mudou. A
+// sondagem real é a função logo abaixo (probeUncached).
+static FFmpegMediaInfo probeUncached(const QString& filePath);
 
 FFmpegMediaInfo FFmpegDecoder::probe(const QString& filePath) {
+    const QFileInfo fi(filePath);
+    ProbeKey key{ fi.canonicalFilePath().isEmpty() ? filePath : fi.canonicalFilePath(),
+                  fi.lastModified().toMSecsSinceEpoch(), fi.size() };
+    // canonicalFilePath vazio (arquivo ainda não existe / permissão) → não
+    // memoiza, para não fixar um resultado vazio.
+    const bool cacheable = !key.path.isEmpty() && fi.exists();
+    if (cacheable) {
+        QMutexLocker l(&g_probeMutex);
+        const auto it = g_probeCache.constFind(key);
+        if (it != g_probeCache.constEnd())
+            return it.value();
+    }
+    const FFmpegMediaInfo info = probeUncached(filePath);
+    if (cacheable) {
+        QMutexLocker l(&g_probeMutex);
+        if (g_probeCache.size() >= kProbeCacheCap)
+            g_probeCache.clear();
+        g_probeCache.insert(key, info);
+    }
+    return info;
+}
+
+static FFmpegMediaInfo probeUncached(const QString& filePath) {
     installLogFilter();
     FFmpegMediaInfo info;
     AVFormatContext* fmt = nullptr;

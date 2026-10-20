@@ -120,7 +120,13 @@ FramePipeline::FramePipeline(SourcePool* pool, QObject* parent)
         }
         emit prefetchFailed(path);
     });
-    connect(worker, &PrefetchWorker::warmed, this, [this](const QString& path) {
+
+    // Thread SEPARADA para o warm-ahead: um open() frio de ~1,3s no warm NÃO
+    // pode atrasar o prefetch crítico do próximo corte (frame0), que é o que
+    // chega primeiro. Antes os dois dividiam a mesma thread e se serializavam.
+    auto* warmWorker = new PrefetchWorker(m_pool);
+    m_warmWorker = warmWorker;
+    connect(warmWorker, &PrefetchWorker::warmed, this, [this](const QString& path) {
         {
             QMutexLocker l(&m_mutex);
             if (m_warmInFlight == path) m_warmInFlight.clear();
@@ -133,6 +139,7 @@ FramePipeline::FramePipeline(SourcePool* pool, QObject* parent)
 FramePipeline::~FramePipeline() {
     stop();
     delete m_worker;
+    delete m_warmWorker;
 }
 
 void FramePipeline::start() {
@@ -141,6 +148,10 @@ void FramePipeline::start() {
     m_worker->moveToThread(m_thread);
     connect(m_thread, &QThread::finished, m_worker, &QObject::deleteLater);
     m_thread->start();
+    m_warmThread = new CrashReporter::TrackedThread("preview-warm", this);
+    m_warmWorker->moveToThread(m_warmThread);
+    connect(m_warmThread, &QThread::finished, m_warmWorker, &QObject::deleteLater);
+    m_warmThread->start();
     m_started = true;
 }
 
@@ -150,6 +161,10 @@ void FramePipeline::stop() {
     m_thread->wait(5000);
     m_thread = nullptr;
     m_worker = nullptr; // deleteLater na thread encerrada
+    m_warmThread->quit();
+    m_warmThread->wait(5000);
+    m_warmThread = nullptr;
+    m_warmWorker = nullptr;
     m_started = false;
 }
 
@@ -182,7 +197,7 @@ void FramePipeline::warmNow(const QString& path, double t, int maxW) {
         if (!m_warmInFlight.isEmpty()) return; // um warm por vez
         m_warmInFlight = path;
     }
-    QMetaObject::invokeMethod(m_worker, "warm", Qt::QueuedConnection,
+    QMetaObject::invokeMethod(m_warmWorker, "warm", Qt::QueuedConnection,
                               Q_ARG(QString, path), Q_ARG(double, t),
                               Q_ARG(int, maxW));
 }
@@ -211,7 +226,7 @@ void FramePipeline::dispatchNextWarm() {
         t = w.t;
         maxW = w.maxW;
     }
-    QMetaObject::invokeMethod(m_worker, "warm", Qt::QueuedConnection,
+    QMetaObject::invokeMethod(m_warmWorker, "warm", Qt::QueuedConnection,
                               Q_ARG(QString, path), Q_ARG(double, t),
                               Q_ARG(int, maxW));
 }

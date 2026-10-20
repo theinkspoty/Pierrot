@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Probe (§8.6)
+
+- **Memo de `probe()` por `(caminho canônico, mtime, tamanho)`** — o probe
+  abre o container e chama `find_stream_info` (caro) e a MESMA mídia era
+  sondada repetidamente (media pool, proxy, arrasto na timeline, export).
+  Agora o resultado fica em cache no processo; a chave inclui mtime+tamanho,
+  então editar/substituir o arquivo invalida sozinho. Limite de 512 entradas
+  (o working set de um projeto é pequeno). Arquivo inexistente/sem permissão
+  não é memoizado (não fixa resultado vazio).
+
+### Preview / lookahead (pós-Fase 8)
+- **Warm-ahead em thread própria (L4)** — o `FramePipeline` agora tem DUAS
+  threads: `preview-prefetch` (o frame0 do próximo corte, crítico) e
+  `preview-warm` (os clipes N+2/N+3, especulativos). Antes os dois slots
+  dividiam a mesma thread: um `open()` frio de ~1,3 s no warm atrasava o
+  prefetch crítico do corte e o worker acabava pagando o open na thread do
+  decode (o stall de 1,3 s da sessão de referência). Agora o warm não bloqueia
+  o caminho crítico.
+- **Janela de lookahead maior** — `updatePrefetch` dispara o prefetch/warm de
+  até 12 s antes do corte (era ≤5 s): o `open()` frio (~1,3-1,5 s medido, mais
+  em disco lento) tem folga para terminar ANTES de o corte chegar.
+
 ### Decode (F1 do plano Laartman v3)
 
 - **Fachada pública `Decoder` (L3, Fase 0)** — criado `src/laartman/Decoder.h`

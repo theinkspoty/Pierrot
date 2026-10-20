@@ -89,7 +89,11 @@ private:
 
     SourcePool* m_pool;      // não dono
     QThread* m_thread = nullptr;
-    QObject* m_worker = nullptr; // vive na m_thread (BgPrefetch, interno)
+    QObject* m_worker = nullptr; // prefetch (frame0 do corte), na m_thread
+    // Thread própria do warm-ahead: um open() frio no warm não pode atrasar o
+    // prefetch crítico do próximo corte. Ver FramePipeline.cpp.
+    QThread* m_warmThread = nullptr;
+    QObject* m_warmWorker = nullptr;
 
     // Estado da fila de warm (protegido por m_mutex; lido pela UI).
     mutable QMutex m_mutex;

@@ -40,7 +40,12 @@ public:
         }
     };
 
-    explicit FrameCache(int maxEntries = 120) : m_max(maxEntries < 1 ? 1 : maxEntries) {}
+    // maxEntries limita a CONTAGEM; maxBytes (0 = sem limite) limita a
+    // MEMÓRIA. Ambos são necessários: 120 quadros são ~60MB em SD mas ~4GB em
+    // 4K. O budget em MB é o teto que importa em produção (§8.4).
+    explicit FrameCache(int maxEntries = 120, qint64 maxBytes = 0)
+        : m_max(maxEntries < 1 ? 1 : maxEntries),
+          m_maxBytes(maxBytes < 0 ? 0 : maxBytes) {}
 
     // Instância compartilhada do processo (padrão L4, como SourcePool::instance).
     // O preview a usa como cache único; testes podem instanciar a sua própria.
@@ -61,6 +66,10 @@ public:
 
     int size() const;
 
+    // Bytes atualmente em cache (soma de QImage::sizeInBytes). Diagnóstico do
+    // budget de memória.
+    qint64 bytes() const;
+
     // Diagnóstico global — quantas vezes o LRU evitou um decode. Mantido
     // estático (como no motor antigo) para o overlay/testes lerem sem depender
     // da instância; permitiria também somar vários caches.
@@ -70,6 +79,9 @@ public:
     static quint64 misses() { return s_misses.load(); }
 
 private:
+    // Evicção LRU (deve ser chamada com m_mutex preso).
+    void evictLocked();
+
     struct Entry {
         Key key;
         QImage img;
@@ -80,5 +92,7 @@ private:
     List m_lru;                                  // frente = mais recente
     QHash<Key, List::iterator> m_idx;
     int m_max;
+    qint64 m_maxBytes;                           // 0 = sem limite
+    qint64 m_bytes = 0;                          // soma de sizeInBytes
     mutable QMutex m_mutex;
 };
