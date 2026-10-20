@@ -374,6 +374,11 @@ protected:
     FrameReq m_layerInflight;
     bool m_hasLayerInflight = false;
     QString m_shownPath;
+    // ClipId que produziu o m_frame atual — o fast-path só desenha m_frame
+    // quando o clipe do topo é o DONO do quadro (evita exibir o frame stale
+    // de outro clipe na virada de corte: "a imagem congela/puxa animação
+    // de clipes").
+    QString m_shownClipId;
     // true quando o quadro exibido do TOPO veio pronto da thread do worker
     // (já cortado/efeituado): o caminho de "re-crop sem re-decode" não pode
     // re-aplicar applyCrop() por cima — precisa pedir um novo decode.
@@ -416,6 +421,12 @@ protected:
     // Cache do frame composto (evita recomposição a cada paintEvent).
     QImage m_compositedCache;
     quint64 m_compositedEpoch = 0;      // frame index quando o cache foi gerado
+    // Playhead exato quando o cache foi gerado: o índice de frame agrupa um
+    // quantum (1/fps), mas a ANIMAÇÃO (kfValue) é função do playhead exato de
+    // cada paint — sem esta chave, dois paints no mesmo quantum desenhavam a
+    // fase velha da animação e depois pulavam um quantum inteiro (tremida) ou
+    // ficavam presos até o índice virar (congelamento).
+    double m_compositedPlayhead = -1.0;
     int m_compositedLayerCount = 0;     // número de camadas quando o cache foi gerado
 
     // Transição ativa: quadro do clipe de trás (A) para compor com o da frente

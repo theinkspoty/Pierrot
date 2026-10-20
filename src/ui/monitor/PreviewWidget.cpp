@@ -920,8 +920,15 @@ void PreviewWidget::renderFrame(QPainter& p) {
     // screen…) produzem o mesmo resultado da exportação, e não dependem do
     // fundo do monitor.
     if (layers.size() >= 2 || (m_frame.isNull() && !layers.isEmpty())) {
-        // Cache: reutiliza se playhead e camadas não mudaram.
+        // Cache: reutiliza se playhead EXATO, índice, camadas e canvas não
+        // mudaram. O playhead exato é chave obrigatória: kfValue (opacidade,
+        // transform, texto) é avaliado no playhead de cada paint — sem isso,
+        // dois paints no mesmo quantum de frame desenhavam a fase velha da
+        // animação e depois pulavam um quantum inteiro (tremida), ou ficavam
+        // presos na fase velha até o índice virar (congelamento visível com
+        // vídeo/imagem/texto animados).
         if (!m_compositedCache.isNull() && m_compositedEpoch == m_currentFrameIndex
+            && m_compositedPlayhead == m_playhead
             && m_compositedCache.size() == canvas.size()
             && m_compositedLayerCount == layers.size()) {
             if (PreviewProfiler::active()) {
@@ -978,6 +985,7 @@ void PreviewWidget::renderFrame(QPainter& p) {
             drawClipText(ap, acc.rect(), clip, k);
         ap.end();
         m_compositedEpoch = m_currentFrameIndex;
+        m_compositedPlayhead = m_playhead;
         m_compositedLayerCount = layers.size();
         p.drawImage(canvas.topLeft(), acc);
         drawMaskOverlay(p, canvas, k);
@@ -1000,11 +1008,16 @@ void PreviewWidget::renderFrame(QPainter& p) {
                 if (c.id == clip->id) { clipTrackOpacity = std::clamp(tr.opacity, 0.0, 1.0); break; }
     }
     clipAlpha *= clipTrackOpacity;
-    // Para clipes Mesa, usa o quadro renderizado em vez de m_frame
+    // Posse do quadro: m_frame só é desenhado quando o clipe do topo é o DONO
+    // (mesmo clipId que o worker entregou). Na virada de corte, até o decode
+    // do clipe novo chegar, m_frame ainda é o frame do clipe ANTIGO —
+    // desenhá-lo por cima mostrava conteúdo de outro clipe no lugar da
+    // imagem/texto da posição (" congela e puxa animação de clipes").
     const QImage& singleFrame = m_frame;
+    const bool frameOwned = clip && !clip->isText && m_shownClipId == clip->id;
     const bool transActive = m_transAlpha >= 0.0
                              && !singleFrame.isNull() && !m_underFrame.isNull();
-    if (!singleFrame.isNull()) {
+    if (!singleFrame.isNull() && frameOwned) {
         if (transActive) {
             drawLayer(p, m_underFrame, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, k,
                       canvas.center().x(), canvas.center().y(), canvas);
@@ -2271,6 +2284,7 @@ void PreviewWidget::handleFrameReady(const QString& clipId, const QString& path,
         {
             QMutexLocker l(&m_frameMutex);
             m_shownPath = path;
+            m_shownClipId = clipId; // posse: o fast-path só desenha o frame do dono
             m_shownT = t;
             m_shownW = maxW;
             m_shownFx = processed;   // m_frameFull já chegou cortado/efeituado

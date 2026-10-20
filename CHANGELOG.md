@@ -29,6 +29,22 @@ de desempenho/robustez. Naipe continua **alpha**.
 - `PacketReader.cpp` entrou nas fontes de todos os testes que compilam o
   motor diretamente (CMakeLists).
 
+### Preview — animação: tremida, congelamento e frame stale de outro clipe
+
+- **Cache do composto agora é chaveado pelo playhead EXATO** — a chave era o
+  índice de frame (quantum 1/fps), mas a animação (kfValue: opacidade,
+  transform, texto) é função do playhead exato de cada paint. Dois paints no
+  mesmo quantum desenhavam a fase VELHA da animação e depois pulavam um
+  quantum inteiro (tremida); com quadros lentos/repaints, a fase velha
+  ficava presa na tela (congelamento de vídeo/imagem/texto animado — o pivo
+  relatado no teste). Agora cada playhead re-avalia a animação; o cache só
+  serve repaints no mesmo playhead exato.
+- **Posse do quadro no fast-path** — `m_frame` só é desenhado quando o clipe
+  do topo é o DONO (mesmo `clipId` que o worker entregou, guardado em
+  `m_shownClipId`). Na virada de corte, até o decode do clipe novo chegar,
+  `m_frame` ainda era o frame do clipe ANTIGO e era exibido com o contexto
+  do novo — "a imagem congela e puxa animações/conteúdo de outros clipes".
+
 ### Decode — correção de corrupção de heap (issue #11)
 
 - **Defesa contra o estouro do kernel AVX2 do swscale (yuv→rgb)** — em
