@@ -23,7 +23,7 @@ pra vídeos sem complexidade, pra uso meu.
 ## Recursos em destaque
 
 - **Timeline** rápida com In/Out, multicâmera e time remapping.
-- **Correção de cor Lumetri** por clipe + **12 modos de blend** por faixa.
+- **Correção de cor profissional** por clipe + **12 modos de blend** por faixa.
 - **Mesa** de composição 2D/3D leve (transform, câmera, malha `.obj`).
 - **Efeitos** nativos + hosts **OFX** e **frei0r**.
 - **48 presets de animação** e Graph Editor de keyframes.
@@ -39,7 +39,7 @@ pra vídeos sem complexidade, pra uso meu.
 | Resolução           | configurável (padrão 1920×1080)                             |
 | Quadros/s           | configurável (padrão 30)                                    |
 | Taxa de áudio       | 48 kHz (exportação)                                         |
-| Correção de cor     | Lumetri por clipe: exposição, realces/sombras/brancos/pretos, sat/vibrance, temperatura/tint, Lift/Gamma/Gain, curvas RGB, vinheta, LUT `.cube`, nitidez |
+| Correção de cor     | por clipe: exposição, realces/sombras/brancos/pretos, sat/vibrance, temperatura/tint, Lift/Gamma/Gain, curvas RGB, vinheta, LUT `.cube`, nitidez |
 | Efeitos por clipe   | vídeo: brilho, contraste, saturação, desfoque, P&B, chroma key, máscaras, motion blur, texto, LAINKA + hosts **OFX** e **frei0r**; áudio: EQ Express e Reverb EX |
 | Fluxo de edição     | Source Monitor (In/Out, Insert/Overwrite), **multicâmera** (teclas 1..N), **Editor de Velocidade** (time remapping bezier) |
 | Mesa (composição)   | camadas com transform/blend + câmera e malha `.obj` (3D leve) |
@@ -93,10 +93,6 @@ features.
 
 Inspirações adicionais e o que cada uma ajudou a moldar:
 
-- **Adobe Premiere Pro** — painel de Efeitos, Effect Controls (Propriedades),
-  Media Pool, Source Monitor e o mixer de áudio.
-- **Adobe After Effects** — o canvas de composição (Mesa), a faixa de efeitos
-  expandível e o Graph Editor de keyframes.
 - **DaVinci Resolve** — organização por categorias nas configurações e o visual
   de cor/timecode.
 - **Blender** — o HUD de transformação do canvas Mesa.
