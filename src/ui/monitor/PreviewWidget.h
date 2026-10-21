@@ -134,7 +134,7 @@ protected:
     void mouseMoveEvent(QMouseEvent*) override;
     void mouseReleaseEvent(QMouseEvent*) override;
     double audioClockSec() const override;
- private:
+private:
     // "HH:MM:SS:FF / HH:MM:SS:FF" (posição / duração da sequência).
     void updateTimecodeLabel();
     // Chip "720p"/"4K" no canto do vídeo (qualidade de decodificação atual).
@@ -435,6 +435,7 @@ protected:
 
     // Cache do frame composto (evita recomposição a cada paintEvent).
     QImage m_compositedCache;
+    QString m_compositedClipId;          // top clip que gerou este cache (evita reuse de comp stale)
     quint64 m_compositedEpoch = 0;      // frame index quando o cache foi gerado
     // Playhead exato quando o cache foi gerado: o índice de frame agrupa um
     // quantum (1/fps), mas a ANIMAÇÃO (kfValue) é função do playhead exato de
