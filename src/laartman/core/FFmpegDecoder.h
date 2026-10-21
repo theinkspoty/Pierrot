@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include "laartman/Decoder.h"
+
 #include <QImage>
 #include <QString>
 #include <QMutex>
@@ -42,11 +44,8 @@ struct FFmpegMediaInfo {
     double fps = 0.0; // fps do stream de vídeo (0 se não houver)
 };
 
-struct FFmpegAudioPeaks {
-    QVector<float> min;
-    QVector<float> max;
-    int bucketsPerSecond = 0;
-};
+// FFmpegAudioPeaks vive na fachada (laartman/Decoder.h) — tipo de valor
+// compartilhado entre motor e consumidores, sem puxar o header do motor.
 
 class FFmpegDecoder {
 public:

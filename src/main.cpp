@@ -153,6 +153,28 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Harness de SCRUB (o caminho INTERATIVO que o autoplay não cobre):
+    //   pierrot --scrub <projeto.Blanc> [--seconds=30] [--json=/tmp/x.json]
+    // Salta o playhead pelo projeto num padrão determinístico, mede e sai.
+    for (int i = 1; i < argc; ++i) {
+        if (qstrcmp(argv[i], "--scrub") == 0 && i + 1 < argc) {
+            const QString project = QString::fromLocal8Bit(argv[i + 1]);
+            double seconds = 30.0;
+            QString json = QStringLiteral("/tmp/pierrot-scrub.json");
+            for (int j = i + 2; j < argc; ++j) {
+                const QByteArray a = argv[j];
+                if (a.startsWith("--json=")) json = QString::fromLocal8Bit(a.mid(7));
+                else if (a.startsWith("--seconds=")) seconds = a.mid(10).toDouble();
+            }
+            qputenv("PIERROT_PERF_JSON", json.toUtf8());
+            MainWindow w;
+            w.openProjectFile(project);
+            w.show();
+            w.scrubTest(seconds, json);
+            return app.exec();
+        }
+    }
+
     // Abertura direta por linha de comando: `pierrot projeto.Blanc` pula a
     // welcome e já abre o editor carregado (testes e uso avançado).
     for (int i = 1; i < argc; ++i) {

@@ -7,7 +7,7 @@
 #include "LainkaFx.h"
 #include "PreRenderSession.h"
 #include "colombina/models/Project.h"
-#include "laartman/core/FFmpegDecoder.h"
+#include "laartman/Decoder.h"
 
 #include <QProcess>
 #include <QTemporaryDir>
@@ -19,8 +19,8 @@
 #include <QStandardPaths>
 
 // Decodifica um frame do vídeo no tempo dado (segundos), retornando QImage RGB.
-static QImage decodeFrame(FFmpegDecoder& dec, double seconds) {
-    return dec.frameAt(seconds);
+static QImage decodeFrame(Decoder& dec, double seconds) {
+    return dec.frame(seconds);
 }
 
 QString LainkaRenderer::renderClip(const Project& project,
@@ -53,7 +53,7 @@ QString LainkaRenderer::renderClip(const Project& project,
         return {};
     }
 
-    FFmpegDecoder dec;
+    Decoder dec;
     if (!dec.open(mi->filePath)) {
         if (error) *error = QString("Não foi possível abrir %1").arg(mi->filePath);
         return {};

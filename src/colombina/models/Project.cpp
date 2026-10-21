@@ -358,7 +358,11 @@ static Clip clipFromJson(const QJsonObject& o) {
     c.defaultAngle = o["defaultAngle"].toInt(0);
     c.kfAngle = kfFromJson(o["kfAngle"]);
     c.pos = o["pos"].toDouble();
-    c.in = o["in"].toDouble();
+    // in negativo = "mídia antes do início do arquivo" (trim arrastou além da
+    // head do arquivo em alguma versão/operador): cura arquivos já gravados
+    // (o preview já derrubava para o frame 0 via clamp no frameAt, mas o
+    // export mandava `-ss -1.7` pro ffmpeg e o pedido viajava como t<0).
+    c.in = std::max(0.0, o["in"].toDouble());
     c.dur = o["dur"].toDouble();
     c.name = o["name"].toString();
     c.audioStreamIndex = o["audioStreamIndex"].toInt(0);

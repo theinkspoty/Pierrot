@@ -8,7 +8,7 @@
 #include "colombina/generators.h"
 #include "colombina/render/MesaRenderer.h"
 #include "colombina/render/TextRender.h"
-#include "laartman/core/FFmpegDecoder.h"
+#include "laartman/Decoder.h"
 #include "colombina/frei0r/Frei0rPluginManager.h"
 #include "colombina/fx/ColorGrade.h"
 
@@ -201,7 +201,7 @@ static QString renderVelocitySequence(const Clip& c, const QString& filePath,
     const QString pattern =
         QStringLiteral("%1/pierrot-vel-%2-%05d.png").arg(dir).arg(k);
 
-    FFmpegDecoder dec;
+    Decoder dec;
     if (!dec.open(filePath)) return QString();
 
     int written = 0;
@@ -209,7 +209,7 @@ static QString renderVelocitySequence(const Clip& c, const QString& filePath,
         const double rel = double(i) / fps;
         if (rel >= dur - 1e-9) break;
         const double srcT = clipSrcTime(c, rel);
-        QImage frame = dec.frameAt(srcT, maxW);
+        QImage frame = dec.frame(srcT, maxW);
         if (frame.isNull()) continue;
         const QString name =
             QStringLiteral("%1/pierrot-vel-%2-%3.png").arg(dir).arg(k)
@@ -1196,7 +1196,7 @@ QStringList ProjectExporter::buildCommand(const Project& project,
                 }
             }
         } else if (isImageFile(v.m->filePath)
-                   && !FFmpegDecoder::isAnimatedImage(v.m->filePath)) {
+                   && !Decoder::isAnimatedImage(v.m->filePath)) {
             // Imagem estática (PNG/JPEG/BMP/WebP estático, GIF de um quadro):
             // loop contínuo na taxa do projeto, limitado à duração do clipe.
             args << "-loop" << "1" << "-framerate" << num(FPS)
@@ -1207,10 +1207,10 @@ QStringList ProjectExporter::buildCommand(const Project& project,
             // clipe durar (paridade com o preview, que embrulha o tempo com
             // fmod). Sem -ignore_loop o ffmpeg toca uma vez só e congela.
             args << "-ignore_loop" << "0"
-                 << "-ss" << num(v.c->in) << "-t" << num(v.c->dur * v.c->speed)
+                 << "-ss" << num(std::max(0.0, v.c->in)) << "-t" << num(v.c->dur * v.c->speed)
                  << "-i" << v.m->filePath;
         } else {
-            args << "-ss" << num(v.c->in) << "-t" << num(v.c->dur * v.c->speed)
+            args << "-ss" << num(std::max(0.0, v.c->in)) << "-t" << num(v.c->dur * v.c->speed)
                  << "-i" << v.m->filePath;
         }
     }
@@ -1218,7 +1218,7 @@ QStringList ProjectExporter::buildCommand(const Project& project,
     for (const AudioClipRef& ar : aclips) {
         const Clip* c = ar.c;
         const MediaItem* m = project.findMedia(c->mediaId);
-        args << "-ss" << num(c->in) << "-t" << num(c->dur * c->speed) << "-i" << m->filePath;
+        args << "-ss" << num(std::max(0.0, c->in)) << "-t" << num(c->dur * c->speed) << "-i" << m->filePath;
     }
 
     QStringList fc;

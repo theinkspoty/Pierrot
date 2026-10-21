@@ -9,7 +9,7 @@
 #include "colombina/models/ClipAttrs.h"
 
 #include "colombina/ffmpeg/MediaCache.h"
-#include "laartman/core/FFmpegDecoder.h"
+#include "laartman/Decoder.h"
 #include "colombina/mesh/BlenderBridge.h"
 #include "colombina/render/MesaRenderer.h"
 #include "ui/dialogs/TransformDialog.h"
@@ -98,7 +98,7 @@ constexpr double kDefaultImageDur = 3.0;
 // esses têm duração real e devem ser inseridos com ela (o decoder loopa o
 // arquivo para preencher um clipe mais longo).
 bool isAnimatedMedia(const QString& path) {
-    return FFmpegDecoder::isAnimatedImage(path);
+    return Decoder::isAnimatedImage(path);
 }
 
 
@@ -361,6 +361,7 @@ void TimelineWidget::insertSourceAtPlayhead(const QString& mediaId, double srcIn
     if (!m_project) return;
     const MediaItem* m = m_project->findMedia(mediaId);
     if (!m) return;
+    srcIn = std::max(0.0, srcIn); // fonte nunca antes do início do arquivo
     const double t = snapTime(std::max(0.0, m_playhead));
     double dur = srcOut - srcIn;
     if (dur <= kMinDur) {
@@ -511,6 +512,7 @@ void TimelineWidget::overwriteSourceAtPlayhead(const QString& mediaId, double sr
     if (!m_project) return;
     const MediaItem* m = m_project->findMedia(mediaId);
     if (!m) return;
+    srcIn = std::max(0.0, srcIn); // fonte nunca antes do início do arquivo
     const double t = snapTime(std::max(0.0, m_playhead));
     double dur = srcOut - srcIn;
     if (dur <= kMinDur) {

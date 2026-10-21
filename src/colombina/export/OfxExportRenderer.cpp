@@ -9,7 +9,7 @@
 #include "colombina/ofx/OfxPluginManager.h"
 #include "colombina/ofx/OfxHost.h"
 #include "colombina/models/Project.h"
-#include "laartman/core/FFmpegDecoder.h"
+#include "laartman/Decoder.h"
 
 #include <QDir>
 #include <QStandardPaths>
@@ -19,8 +19,8 @@
 #include <QDebug>
 
 // Decodifica um frame do vídeo no tempo dado (segundos), retornando QImage.
-static QImage decodeFrame(FFmpegDecoder& dec, double seconds) {
-    return dec.frameAt(seconds);
+static QImage decodeFrame(Decoder& dec, double seconds) {
+    return dec.frame(seconds);
 }
 
 QString OfxExportRenderer::renderClip(const Project& project,
@@ -55,7 +55,7 @@ QString OfxExportRenderer::renderClip(const Project& project,
     if (!hasOfx) return {};
 
     // Abre o decodificador.
-    FFmpegDecoder dec;
+    Decoder dec;
     if (!dec.open(media->filePath)) {
         if (error) *error = QString("Não foi possível abrir mídia: %1").arg(media->filePath);
         return {};

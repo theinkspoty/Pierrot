@@ -5,7 +5,7 @@
 
 #include "AudioConformCache.h"
 
-#include "laartman/core/FFmpegDecoder.h"
+#include "laartman/Decoder.h"
 #include "colombina/ffmpeg/AudioConformIntervals.h"
 
 #include <QDebug>
@@ -221,7 +221,7 @@ bool AudioConformCache::waitReady(const Ref& cache, qint64 startFrame, int frame
 // quando a janela alvo é preenchida ou ao fim do arquivo. Empobrece a cota
 // por sessão para múltiplos caches serem atendidos em rodízio.
 void AudioConformCache::doFill(Chunk* c, double startSec, double horizonSec,
-                               FFmpegDecoder& dec, qint64& decPos) {
+                               Decoder& dec, qint64& decPos) {
     if (!dec.isOpen()) return;
 
     // Sessão limitada para fontes disputarem o worker em rodízio. O decoder é
@@ -253,7 +253,7 @@ void AudioConformCache::doFill(Chunk* c, double startSec, double horizonSec,
         int zeros = 0;
         bool eof = false;
         while (decPos < wantEnd && sessionWritten < goal) {
-            const int got = dec.decodeAudio(buf.data(),
+            const int got = dec.readPcm(buf.data(),
                                             (int)(buf.size() * sizeof(int16_t)));
             if (got <= 0) {
                 // EOF explícito: para já — o restante vira silêncio abaixo.
@@ -290,7 +290,7 @@ void AudioConformCache::workerLoop() {
     // Decoder PERSISTENTE do worker: continua vivo entre sessões do MESMO
     // chunk (decode contínuo sem re-open/re-seek). Só troca de arquivo quando
     // outro chunk passa a ser mais urgente. Evita o "flick" de lacunas.
-    FFmpegDecoder dec;
+    Decoder dec;
     Ref decRef; // segura o chunk dono do decoder contra evicção LRU
     qint64 decPos = -1;
 
@@ -332,7 +332,9 @@ void AudioConformCache::workerLoop() {
         if (decRef.get() != chosen) {
             dec.close();
             decRef = Ref(chosen);
-            if (!dec.open(chosen->filePath, chosen->stream)) {
+            DecodeOptions audioOpt;
+            audioOpt.audioStream = chosen->stream;
+            if (!dec.open(chosen->filePath, audioOpt)) {
                 chosen->release();
                 decRef = Ref(); // não mantém pinado um chunk inaberto
                 continue;

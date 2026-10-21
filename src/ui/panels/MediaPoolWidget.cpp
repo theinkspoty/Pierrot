@@ -4,7 +4,7 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 
 #include "ui/panels/MediaPoolWidget.h"
-#include "laartman/core/FFmpegDecoder.h"
+#include "laartman/Decoder.h"
 #include "colombina/ffmpeg/MediaCache.h"
 #include "colombina/ffmpeg/ProxyManager.h"
 #include "ui/timeline/TimelineWidget.h"
@@ -213,13 +213,13 @@ QPixmap makeAudioIconPixmap() {
 
 struct ProbeResult {
     QString path;
-    FFmpegMediaInfo info;
+    MediaInfo info;
 };
 
 ProbeResult probeFile(const QString& path) {
     ProbeResult r;
     r.path = path;
-    r.info = FFmpegDecoder::probe(path);
+    r.info = Decoder::probe(path);
     return r;
 }
 }
@@ -1094,7 +1094,7 @@ void MediaPoolWidget::importPaths(const QStringList& files) {
         QStringList imported;
         bool has4k = false;
         for (const ProbeResult& r : results) {
-            const FFmpegMediaInfo& info = r.info;
+            const MediaInfo& info = r.info;
             if (!info.hasVideo && !info.hasAudio) {
                 ++invalid;
                 // .obj já é tratado à parte; aqui só mídia de verdade.

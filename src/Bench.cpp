@@ -17,7 +17,7 @@
 #include <cmath>
 
 #include "colombina/models/Project.h"
-#include "laartman/core/FFmpegDecoder.h"
+#include "laartman/Decoder.h"
 
 namespace {
 
@@ -90,7 +90,7 @@ void benchReport(QTextStream& out, Project& project) {
             const MediaItem* m = project.findMedia(c.mediaId);
             if (!m || !m->hasVideo || m->isSolid || m->filePath.isEmpty()) continue;
             const double t0 = c.in;
-            FFmpegDecoder dec;
+            Decoder dec;
             QElapsedTimer sw;
             sw.start();
             if (!dec.open(m->filePath)) {
@@ -98,7 +98,7 @@ void benchReport(QTextStream& out, Project& project) {
                 continue;
             }
             ++cuts;
-            QImage img = dec.frameAt(t0, project.width);
+            QImage img = dec.frame(t0, project.width);
             cutNs.append(sw.nsecsElapsed() / 1e9);
 
             // Streaming contínuo dentro do próprio clipe (mesmo context,
@@ -108,7 +108,7 @@ void benchReport(QTextStream& out, Project& project) {
             int samples = 0;
             for (double t = t0 + step; t < end && samples < 12; t += step) {
                 sw.restart();
-                img = dec.frameAt(t, project.width);
+                img = dec.frame(t, project.width);
                 frameNs.append(sw.nsecsElapsed() / 1e9);
                 ++samples;
             }
@@ -129,7 +129,7 @@ void benchReport(QTextStream& out, Project& project) {
     out << "[2] Quadros em streaming contínuo (mesmo decoder, sem re-seek)\n";
     out << "  quadros: " << frame.n << "\n";
     {
-        FFmpegDecoder check;
+        Decoder check;
         const QString state = [&] {
             for (const Track& tr : project.videoTracks)
                 for (const Clip& c : tr.clips) {
@@ -167,7 +167,7 @@ void benchReport(QTextStream& out, Project& project) {
     if (big) {
         const MediaItem* mm = project.findMedia(big->mediaId);
         if (mm && !mm->isSolid && !mm->filePath.isEmpty()) {
-            FFmpegDecoder dec;
+            Decoder dec;
             if (dec.open(mm->filePath)) {
                 const double span = std::min(big->dur * big->speed, 60.0);
                 const int k = 10;
@@ -176,7 +176,7 @@ void benchReport(QTextStream& out, Project& project) {
                     tgt = std::min(tgt, std::max(0.0, mm->duration - 1e-6));
                     QElapsedTimer sw;
                     sw.start();
-                    dec.frameAt(tgt, project.width);
+                    dec.frame(tgt, project.width);
                     seekNs.append(sw.nsecsElapsed() / 1e9);
                 }
                 dec.close();
@@ -197,13 +197,13 @@ void benchReport(QTextStream& out, Project& project) {
             if (c.isText) continue;
             const MediaItem* m = project.findMedia(c.mediaId);
             if (!m || !m->hasAudio || m->filePath.isEmpty()) continue;
-            FFmpegDecoder dec;
+            Decoder dec;
             QElapsedTimer sw;
             sw.start();
             if (dec.open(m->filePath) && dec.hasAudio()) {
                 dec.seekAudio(c.in);
                 QByteArray buf(65536, 0);
-                dec.decodeAudio(buf.data(), buf.size());
+                dec.readPcm(buf.data(), buf.size());
                 audNs.append(sw.nsecsElapsed() / 1e9);
             }
             dec.close();
@@ -287,14 +287,14 @@ int runStress(QApplication& app, const QString& outputPath, const QStringList& m
     constexpr int kCut = 200;
     struct Src {
         QString path;
-        FFmpegMediaInfo info;
+        MediaInfo info;
         double piece = 2.0;
     };
     QVector<Src> srcs;
     for (const QString& p : mediaFiles) {
         Src s;
         s.path = p;
-        s.info = FFmpegDecoder::probe(p);
+        s.info = Decoder::probe(p);
         if (!s.info.hasVideo || s.info.duration <= 0.0) {
             out << "  (ignorando sem vídeo: " << QFileInfo(p).fileName()
                 << " — dur " << QString::number(s.info.duration, 'f', 1) << "s)\n";

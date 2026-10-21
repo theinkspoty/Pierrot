@@ -2404,13 +2404,26 @@ void PreviewWidget::handleFrameReady(const QString& clipId, const QString& path,
     if (playDbg() && m_playing && std::fabs(t - wantT) <= tol) {
         const double aheadFrames = (wantT - t) * projFps(m_project);
         if (std::fabs(aheadFrames) > 0.5)
-            qDebug().noquote() << QStringLiteral("[play] frame atraso %1f (dec %2s playhead %3s) lat %4ms q %5")
+            qDebug().noquote() << QStringLiteral("[play] frame atraso %1f (dec %2s playhead %3s) lat %4ms q %5 %6")
                       .arg(aheadFrames, 4, 'f', 1)
                       .arg(t, 0, 'f', 3)
                       .arg(wantT, 0, 'f', 3)
                       .arg(static_cast<double>(m_perf.workerMs), 0, 'f', 0)
-                      .arg(maxW);
+                      .arg(maxW)
+                      .arg(path);
     }
+
+    // Outlier de decode (P4): acima de 500 ms um frame é EVENTO, não ruído —
+    // avisa sempre (não só com debug) e com o CAMINHO da mídia, para caçar a
+    // fonte culpada (o outlier de 1,4 s da sessão de estresse era invisível:
+    // a métrica dizia "max" mas não quem).
+    if (workerLatNs > 500000000LL)
+        qWarning().noquote() << QStringLiteral("[worker] decode LENTO %1 ms → %2 (t=%3, %4px, lat=%5ms)")
+                                 .arg(double(workerLatNs) / 1e6, 0, 'f', 0)
+                                 .arg(path)
+                                 .arg(t, 0, 'f', 3)
+                                 .arg(maxW)
+                                 .arg(static_cast<double>(m_perf.workerMs), 0, 'f', 0);
 
     // Quadro do clipe do TOPO: caminho atual do preview (com prefetch/pan-crop).
     const Clip* top = clipAt(m_playhead);

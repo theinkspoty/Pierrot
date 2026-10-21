@@ -11,8 +11,10 @@
 
 #include <QImage>
 #include <QString>
+#include <QVector>
 
 #include <atomic>
+#include <cstdint>
 
 // ── Laartman · L3 — a API pública congelada (fachada fina) ────────────────
 //
@@ -45,6 +47,18 @@ struct MediaInfo {
     bool hasVideo = false;
     bool hasAudio = false;
     int audioStreams = 0;
+    // Canais de cada stream de áudio (índice do array = índice do stream);
+    // vazio sem áudio. (Paridade com o FFmpegMediaInfo do motor, para os
+    // call sites migrarem sem perder campo.)
+    QVector<int> audioChannels;
+};
+
+// Picos de áudio (waveforms): min/máx por bucket. Tipo de VALOR da fachada —
+// quem só desenha waveform não precisa do header do motor.
+struct FFmpegAudioPeaks {
+    QVector<float> min;
+    QVector<float> max;
+    int bucketsPerSecond = 0;
 };
 
 // L5 → L3 — as decisões de política que o núcleo aceita ao abrir. O núcleo não
@@ -109,6 +123,13 @@ public:
     virtual int  readPcm(void* out, int maxBytes) = 0;
     virtual bool audioFinished() const = 0;
     virtual bool hasAudio() const = 0;
+
+    // Cadência de um tempo no arquivo: a CHAVE do cache de quadros de L4
+    // (frame em CFR = número do quadro; em VFR = grade de ms). É mapeamento
+    // puro (função do tempo e da cadência), não estado de cache.
+    virtual int64_t frameCacheIndex(double tAbsoluteSec) const = 0;
+    // Diagnóstico: este decoder está decodificando por hardware (VAAPI)?
+    virtual bool usesHardware() const = 0;
 };
 
 class Decoder : public MediaReader {
@@ -151,6 +172,13 @@ public:
     int    readPcm(void* out, int maxBytes) override;
     bool   audioFinished() const override;
     bool   hasAudio() const override;
+    int64_t frameCacheIndex(double tAbsoluteSec) const override;
+    bool   usesHardware() const override;
+
+    // Picos de áudio (waveforms) de um arquivo — sondagem estática, como probe.
+    static FFmpegAudioPeaks audioPeaks(const QString& path,
+                                       int bucketsPerSecond = 100,
+                                       int streamIndex = -1);
 
 private:
     // O motor atual. Na v0.4 o conteúdo é fatiado em L0–L2; a superfície

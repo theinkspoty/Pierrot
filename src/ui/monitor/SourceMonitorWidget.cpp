@@ -5,7 +5,7 @@
 
 #include "ui/monitor/SourceMonitorWidget.h"
 
-#include "laartman/core/FFmpegDecoder.h"
+#include "laartman/Decoder.h"
 #include "colombina/ffmpeg/ProxyManager.h"
 #include "colombina/generators.h"
 
@@ -271,8 +271,8 @@ SourceMonitorWidget::SourceMonitorWidget(QWidget* parent) : QWidget(parent) {
     tools->addWidget(m_overwriteBtn);
     lay->addLayout(tools);
 
-    m_decoder = new FFmpegDecoder();
-    m_decoder->setHardwareDecodeAllowed(false);
+    m_decoder = new Decoder();
+    m_openOpts.hardwareAllowed = false; // decisão injetada (L5→L3)
 
     m_throttle = new QTimer(this);
     m_throttle->setSingleShot(true);
@@ -345,7 +345,7 @@ void SourceMonitorWidget::openDecoderFor(const MediaItem& media) {
     if (m_decoder) {
         // Reabre no arquivo (ou limpa se não houver caminho — geradores).
         if (!media.filePath.isEmpty())
-            m_decoder->open(ProxyManager::instance().resolveVideo(media.filePath), -1);
+            m_decoder->open(ProxyManager::instance().resolveVideo(media.filePath), m_openOpts);
         else
             m_decoder->close();
     }
@@ -507,7 +507,7 @@ void SourceMonitorWidget::updatePreview() {
         const int h = qMax(1, m_media.height > 0 ? m_media.height : 1080);
         img = generatorFrame(m_media, w, h);
     } else if (m_decoder && !m_mediaId.isEmpty() && !m_media.filePath.isEmpty()) {
-        img = m_decoder->frameAt(currentPos(), 640);
+        img = m_decoder->frame(currentPos(), 640);
     }
     if (!img.isNull()) {
         m_preview->setImage(img);

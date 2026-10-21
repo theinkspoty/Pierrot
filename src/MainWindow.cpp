@@ -3069,7 +3069,23 @@ void MainWindow::startMeasuredRun(double start, double warmupSec, double seconds
                   static_cast<long long>(prof.droppedTotal()));
             m_preview->setLoopEnabled(false);
             m_preview->togglePlay(); // pausa
-            QTimer::singleShot(200, qApp, &QCoreApplication::quit);
+            // SAI DA APLICAÇÃO. quit() chamado UMA vez pode encerrar só um
+            // loop aninhado (Qt interno do pause de áudio/PipeWire) e o loop
+            // principal continua vivo — sessões longas nunca saíam (EXIT=124).
+            // Solução: uma thread destacada repete quit() até o processo
+            // morrer — cada chamada encerra o loop de topo atual; depois do
+            // teardown, QCoreApplication::exit é no-op (self nulo/sem loops).
+            std::thread([] {
+                for (int i = 0; i < 100; ++i) {
+                    QThread::msleep(200);
+                    QCoreApplication::quit();
+                }
+                qInfo("[autoplay] 100 rodadas de quit e o processo seguiu vivo!");
+            }).detach();
+            // Diagnóstico: se existir 8 s depois, algo além dos loops prende.
+            QTimer::singleShot(8000, qApp, []() {
+                qInfo("[autoplay] WATCHDOG: vivo 8s após a martelada de quit!");
+            });
         });
     });
 }
@@ -3103,6 +3119,60 @@ void MainWindow::autoplay(double seconds, int useProxies, double fromSec,
         awaitProxiesThenMeasure(start, warmupSec, seconds);
     else
         startMeasuredRun(start, warmupSec, seconds);
+}
+
+// ── Harness de SCRUB (pierrot --scrub <projeto>) ───────────────────────────
+// O playback linear cobre metade dos sintomas; o SCRUB (saltos do playhead
+// por todo o projeto) é o caminho mais friccionado da edição e nunca tinha
+// métrica automática. Padrão DETERMINÍSTICO (reprodutível entre máquinas):
+// a cada 250 ms o playhead salta ~7% do projeto, com volta à cabeça a cada
+// 8 passos e um salto longo — cobre cortes, bordas, região densa e a
+// cabeça da timeline. Espelha a fiação real do mouse: setPlayhead (UI) +
+// PreviewWidget::seek (pipeline) — exatamente o que playheadChanged faz.
+void MainWindow::scrubTest(double seconds, const QString& jsonOut) {
+    m_autoplayJsonOut = jsonOut;
+    if (!m_preview || m_project.duration() <= 0.0) {
+        qWarning("[scrub] projeto vazio ou sem duração — nada a medir.");
+        QTimer::singleShot(0, qApp, &QCoreApplication::quit);
+        return;
+    }
+    const double dur = m_project.duration();
+    PreviewProfiler::instance().beginSession(QStringLiteral("scrub"),
+                                             m_project.useProxies, m_project.fps);
+    auto step = std::make_shared<int>(0);
+    auto* timer = new QTimer(this);
+    timer->setInterval(250);
+    connect(timer, &QTimer::timeout, this, [this, dur, step]() {
+        const int i = (*step)++;
+        double frac;
+        if (i % 8 == 7) frac = 0.0;              // volta à cabeça
+        else if (i % 16 == 12) frac = 0.97;      // salto longo pro fim
+        else frac = std::fmod(i * 0.07, 1.0);    // degraus + bordas
+        const double t = std::clamp(frac * dur, 0.0, std::max(0.0, dur - 0.001));
+        m_timeline->setPlayhead(t);
+        m_preview->seek(t);
+        // Amostra por passo (scrub não tem ticks do engine — sem isto o
+        // relatório sairia zerado).
+        m_preview->profileStep();
+    });
+    timer->start();
+    QTimer::singleShot(int(seconds * 1000.0), this, [this, timer]() {
+        timer->stop();
+        PreviewProfiler::instance().endSession();
+        const auto& prof = PreviewProfiler::instance();
+        const bool ok = prof.dumpJson(m_autoplayJsonOut);
+        qInfo("[scrub] relatório %s: %d quadros, cortes=%d, dropped=%lld",
+              ok ? "gravado" : "FALHOU", prof.frameCount(), prof.cuts(),
+              static_cast<long long>(prof.droppedTotal()));
+        // Saida (mesma martelada de quit do autoplay): mata qualquer loop
+        // interno do Qt até o processo morrer.
+        std::thread([] {
+            for (int i = 0; i < 100; ++i) {
+                QThread::msleep(200);
+                QCoreApplication::quit();
+            }
+        }).detach();
+    });
 }
 
 void MainWindow::createProject(int width, int height, int fps, const QString& name) {

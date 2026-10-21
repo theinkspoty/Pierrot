@@ -2,6 +2,50 @@
 
 ## 0.8 (2026-10-20)
 
+### Estabilização (2026-10-21) — campanha "corrija tudo"
+
+- **Sessão longa agora encerra sozinha** — o `quit()` do autoplay morria
+  contra um loop aninhado do Qt (pause de áudio/PipeWire) e o loop principal
+  seguia vivo (EXIT=124 em toda sessão >~60 s). Fix: thread destacada
+  martelando `quit()` a cada 200 ms até o processo morrer.
+- **Métrica de cache religada** — o JSON lia `m_frames.back()` (registro do
+  último tick, sem carimbo de worker); contadores são cumulativos → agregação
+  por MÁXIMO (cacheHits/cacheMisses e droppedTotal). Estresse passou de
+  0/0 para 1734 hits / 4877 misses.
+- **`t` negativo no frameReady** — projeto com `in: -1,73` (trim além da
+  head) viajava negativo e o export mandava `-ss -1.7` pro ffmpeg. Clamp em
+  5 camadas: carga (`clipFromJson`), consumidor (`clipSrcTime`), trimmer,
+  insert/overwrite e export (`-ss ≥ 0`).
+- **Aviso de decode lento com CAMINHO** — `qWarning "[worker] decode LENTO
+  >500ms → arquivo"` sempre (antes era métrica anônima); capturou na hora o
+  culpado de 1,4 s (arquivo 2048×1152 sem proxy — limiar 2560).
+- **Dedupe do aviso de plugin OFX quebrado** (uma vez por sessão).
+- **Flake do tst_sourcepool** — testes de LÓGICA (sourcepool, framepipeline,
+  encoder) agora rodam com `PIERROT_GPU=0` (o abort só aparecia sob carga de
+  GPU mista; 13 rodadas limpas; os testes que cobrem hw seguem com VAAPI).
+- **TSan pela primeira vez: código do projeto LIMPO** — 62 relatórios, zero
+  com código nosso nos blocos de acesso (todos Qt/libav não instrumentados).
+  `tests/tsan.supp` + receita documentada (GPU=0 no concurrency evita um
+  CHECK interno do TSan).
+- **Harness de scrub** — `pierrot --scrub <projeto> [--seconds] [--json]`:
+  saltos determinísticos do playhead (250 ms) espelhando a fiação do mouse,
+  com `PlaybackEngine::profileStep()` para o profiler gravar sem playback.
+  No estresse: 177 saltos / 161 viradas / 0 pretos.
+- **`tst_realmedia`** — fixture de mídia real (VFR, TS, vertical, AV1) em
+  `tests/media/` (gitignored; vazio = testes pulam). Lacuna do relatório §6.
+- **Migração dos call sites para a fachada**: 22 → 9 arquivos incluem o
+  header do motor. Fachada estendida (`frameCacheIndex`, `usesHardware`,
+  `audioPeaks`, `MediaInfo.audioChannels`, tipo `FFmpegAudioPeaks` movido
+  para `Decoder.h`) sem tocar nos tokens proibidos pelo invariant test.
+  Stayers por design: SourcePool/FramePipeline/MesaRenderer (infra do pool),
+  MediaCache/FrameWorker/UiDecode/Pantalone/Pivot (gestão de memória).
+  SourceMonitor/Trimmer agora injetam `DecodeOptions.hardwareAllowed` em vez
+  do setter proibido.
+
+Ver: `Relatorio-Correcoes-2026-10-21.md`, `Relatorio-Stress-Teste-de-Potencia-2026-10-21.md`
+e `Relatorio-Testes-Video-Detalhado-2026-10-21.md`.
+
+
 Release de **fechamento da transição Laartman v0.4** — o motor de codecs agora
 só decodifica (núcleo congelado L0–L3; pool/prefetch/posse são política L4 do
 Pierrot) —, suporte a japonês, tema Japan 95, 48 presets de animação e correções

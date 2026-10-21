@@ -28,6 +28,7 @@ MediaInfo Decoder::probe(const QString& path) {
     out.hasVideo = m.hasVideo;
     out.hasAudio = m.hasAudio;
     out.audioStreams = m.audioStreams;
+    out.audioChannels = m.audioChannels;
     return out;
 }
 
@@ -83,3 +84,14 @@ int Decoder::readPcm(void* out, int maxBytes) {
 bool Decoder::audioFinished() const { return d->engine.audioFinished(); }
 
 bool Decoder::hasAudio() const { return d->engine.hasAudio(); }
+
+int64_t Decoder::frameCacheIndex(double tAbsoluteSec) const {
+    return d->engine.frameCacheIndex(tAbsoluteSec);
+}
+
+bool Decoder::usesHardware() const { return d->engine.usesHardware(); }
+
+FFmpegAudioPeaks Decoder::audioPeaks(const QString& path, int bucketsPerSecond,
+                                     int streamIndex) {
+    return FFmpegDecoder::audioPeaks(path, bucketsPerSecond, streamIndex);
+}

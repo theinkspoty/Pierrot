@@ -61,6 +61,10 @@ public:
 
     // Chamado pelo timeout do QTimer do widget.
     void tick();
+    // Amostra o frame de perfil atual SEM tick (harness de scrub): mesma
+    // semântica do tick() — add + reset. Scrub não gera ticks do engine e o
+    // relatório sairia zerado.
+    void profileStep();
 
 protected:
     // Hooks que o PreviewWidget implementa (decodificação/áudio/rendering).

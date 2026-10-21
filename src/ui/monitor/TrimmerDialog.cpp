@@ -5,7 +5,7 @@
 
 #include "ui/monitor/TrimmerDialog.h"
 
-#include "laartman/core/FFmpegDecoder.h"
+#include "laartman/Decoder.h"
 #include "colombina/ffmpeg/ProxyManager.h"
 
 #include <QDialogButtonBox>
@@ -37,13 +37,13 @@ TrimmerDialog::TrimmerDialog(const MediaItem& media, QWidget* parent)
     setWindowTitle(tr("Trimmer — %1").arg(media.name));
     setMinimumSize(560, 340);
 
-    m_decoder = new FFmpegDecoder();
+    m_decoder = new Decoder();
     // Mesmo padrão do pantalone: decodifica um quadro por chamada, na UI, durante
     // o arasto do trim. Zero ganho com VAAPI e risco de derrubar o app — fica
     // em software.
-    m_decoder->setHardwareDecodeAllowed(false);
+    m_openOpts.hardwareAllowed = false; // decisão injetada (L5→L3)
     if (!media.filePath.isEmpty())
-        m_decoder->open(ProxyManager::instance().resolveVideo(media.filePath), -1);
+        m_decoder->open(ProxyManager::instance().resolveVideo(media.filePath), m_openOpts);
 
     const double dur = qMax(media.duration, 0.0);
     m_out = dur;
@@ -190,7 +190,7 @@ void TrimmerDialog::updatePreview() {
     if (!m_preview) return;
     QImage img;
     if (m_decoder && !m_media.filePath.isEmpty()) {
-        img = m_decoder->frameAt(currentPos(), 640);
+        img = m_decoder->frame(currentPos(), 640);
         // frameAt não retorna imagem quando o decode falha (arquivo
         // corrompido/stream sem vídeo decodável): mantém o fundo preto.
     }

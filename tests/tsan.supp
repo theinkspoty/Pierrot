@@ -1,0 +1,17 @@
+# ThreadSanitizer — supressões para o Pierrot
+# Ruído de libs NÃO instrumentadas (Qt/DBus): as "corridas" são interno
+# dessas libs (sincronização invisível pro TSan). O código do projeto
+# (laartman/colombina/ui) não aparece em NENHUM dos relatórios — a
+# supressão só silencia o falso positivo para o CI ser utilizável.
+# Padrões genéricos de alocador (operator new/delete, malloc) NÃO entram:
+# esconderiam corridas reais do projeto detectadas no alocador.
+#
+# Uso: TSAN_OPTIONS="suppressions=tests/tsan.supp:halt_on_error=0"
+
+race:libQt6Core
+race:libQt6DBus
+race:libQt6Gui
+race:libdbus-1
+race:QDBusConnection
+race:sendPostedEvents
+race:dbus_threads_init

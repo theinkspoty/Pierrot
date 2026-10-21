@@ -225,9 +225,18 @@ QString PreviewProfiler::toJson() const {
                                   : (m_frames.isEmpty() ? QStringLiteral("n/d")
                                                         : QStringLiteral("original")));
     root.insert(QStringLiteral("cuts"), qint64(m_cuts));
-    root.insert(QStringLiteral("droppedTotal"), m_frames.isEmpty() ? 0 : m_frames.back().droppedTotal);
-    const qint64 fcHits = m_frames.isEmpty() ? 0 : qint64(m_frames.back().cacheHits);
-    const qint64 fcMiss = m_frames.isEmpty() ? 0 : qint64(m_frames.back().cacheMisses);
+    // Contadores ACUMULADOS carimbados por frame (FrameCache e drops): o valor
+    // da sessão é o MÁXIMO das amostras — são monotônicos. O back() anterior
+    // lia só o registro do último tick; se nenhum worker chegou naquele tick,
+    // o registro saía zerado e a métrica lia 0/0 em sessões longas (P2 do
+    // relatório de estresse).
+    qint64 fcHits = 0, fcMiss = 0, droppedTotal = 0;
+    for (const Frame& f : m_frames) {
+        if (qint64(f.cacheHits) > fcHits) fcHits = qint64(f.cacheHits);
+        if (qint64(f.cacheMisses) > fcMiss) fcMiss = qint64(f.cacheMisses);
+        if (f.droppedTotal > droppedTotal) droppedTotal = f.droppedTotal;
+    }
+    root.insert(QStringLiteral("droppedTotal"), droppedTotal);
     root.insert(QStringLiteral("cacheHits"), fcHits);
     root.insert(QStringLiteral("cacheMisses"), fcMiss);
     root.insert(QStringLiteral("skippedTotal"), skippedSum);

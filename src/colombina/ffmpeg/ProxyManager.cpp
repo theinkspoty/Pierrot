@@ -5,7 +5,7 @@
 
 #include "ProxyManager.h"
 
-#include "laartman/core/FFmpegDecoder.h"
+#include "laartman/Decoder.h"
 
 #include <QStandardPaths>
 #include <QDir>
@@ -171,7 +171,7 @@ void ProxyManager::probeAndQueue(const QString& srcPath) {
     // Probe completo só quando o chamador NÃO tem o resultado à mão (o caminho
     // da importação usa a variante com largura e evita este probe extra — que
     // rodava na UI thread e dobrcava o custo de arquivo grande).
-    const FFmpegMediaInfo info = FFmpegDecoder::probe(srcPath);
+    const MediaInfo info = Decoder::probe(srcPath);
     probeAndQueue(srcPath, info.hasVideo, info.width);
 }
 

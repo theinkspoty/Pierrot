@@ -71,6 +71,9 @@ public:
     // frios) antes de começar a medir.
     void autoplay(double seconds, int useProxies, double fromSec,
                   double warmupSec, bool waitProxies, const QString& jsonOut);
+    // Harness de SCRUB (pierrot --scrub): saltos determinísticos do playhead
+    // por todo o projeto (o caminho interativo que o autoplay não cobre).
+    void scrubTest(double seconds, const QString& jsonOut);
 protected:
     void closeEvent(QCloseEvent* event) override;
     void showEvent(QShowEvent* event) override;

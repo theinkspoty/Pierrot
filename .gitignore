@@ -1,6 +1,7 @@
 build/
 build-appimage/
-build-asan/
+build-asan
+build-tsan/
 dist/
 packaging/.tools/
 *.AppImage
@@ -11,3 +12,5 @@ packaging/arch/pkg/
 packaging/arch/src/
 packaging/arch/*.tar.gz
 *.pkg.tar.zst
+tests/media/*
+!.gitkeep

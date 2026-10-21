@@ -15,7 +15,7 @@ class QSlider;
 class QDoubleSpinBox;
 class QTimer;
 class QKeyEvent;
-class FFmpegDecoder;
+#include "laartman/Decoder.h"
 class QPushButton;
 
 // Trimmer simples (estilo Vegas): define os pontos de entrada/saída (in/out)
@@ -43,7 +43,8 @@ private:
     void clampInOut();
 
     const MediaItem& m_media;
-    FFmpegDecoder* m_decoder = nullptr;
+    Decoder* m_decoder = nullptr;
+    DecodeOptions m_openOpts; // hardwareAllowed=false: decode de UI em software
     double m_in = 0.0;
     double m_out = 0.0;
     bool m_playing = false;

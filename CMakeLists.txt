@@ -441,6 +441,7 @@ add_test(NAME tst_edl COMMAND tst_edl)
 add_executable(tst_exporter
     tests/tst_exporter.cpp
     src/colombina/models/Project.cpp
+    src/laartman/Decoder.cpp
     src/laartman/core/FFmpegDecoder.cpp
     src/laartman/core/FFmpegDecoderOpen.cpp
     src/laartman/core/FFmpegDecoderAudio.cpp
@@ -562,6 +563,38 @@ target_link_libraries(tst_decoder_api PRIVATE
     ${CMAKE_DL_LIBS}
 )
 add_test(NAME tst_decoder_api COMMAND tst_decoder_api)
+
+# tst_realmedia: fixture de MÍDIA REAL (lacuna do relatório de estresse §6):
+# varre <raiz>/tests/media e valida probe/frames/determinismo em cada arquivo
+# (VFR de câmera, MPEG-TS, vertical 1080, GIF longo, AV1 real…). Diretório
+# vazio/inexistente → todos os casos pulam (CI não quebra); popule o
+# diretório para ativá-lo. Isolado de GPU (lógica do motor, não hw).
+add_executable(tst_realmedia
+    tests/tst_realmedia.cpp
+    src/laartman/Decoder.cpp
+    src/laartman/core/FFmpegDecoder.cpp
+    src/laartman/core/FFmpegDecoderOpen.cpp
+    src/laartman/core/FFmpegDecoderAudio.cpp
+    src/laartman/core/FFmpegDecoderProbe.cpp
+    src/laartman/io/Demuxer.cpp
+    src/laartman/io/PacketReader.cpp
+)
+target_compile_definitions(tst_realmedia PRIVATE
+    TEST_MEDIA_DIR="${CMAKE_SOURCE_DIR}/tests/media")
+target_include_directories(tst_realmedia PRIVATE src)
+target_link_libraries(tst_realmedia PRIVATE
+    ${PIERROT_QT_TEST}
+    ${PIERROT_QT_CORE}
+    ${PIERROT_QT_GUI}
+    FFmpeg::avformat
+    FFmpeg::avcodec
+    FFmpeg::avutil
+    FFmpeg::swscale
+    FFmpeg::swresample
+    ${CMAKE_DL_LIBS}
+)
+add_test(NAME tst_realmedia COMMAND tst_realmedia)
+set_tests_properties(tst_realmedia PROPERTIES ENVIRONMENT "PIERROT_GPU=0")
 
 # tst_sourcepool: acesso compartilhado/LRU/eviction do pool de decoders quentes
 # (política L4, colombina/ffmpeg/SourcePool). Garantia central: acquire() NUNCA
@@ -709,10 +742,20 @@ target_link_libraries(tst_encoder PRIVATE
     ${PIERROT_QT_GUI}
 )
 add_test(NAME tst_encoder COMMAND tst_encoder)
+# Isolamento de hw: estes testes cobrem LÓGICA (pool/LRU do SourcePool, fila
+# de prefetch do FramePipeline, round-trip de encode) — não o caminho de GPU.
+# Rodar com VAAPI desligado remove a contenção do driver NVIDIA das rodadas
+# paralelas: o abort intermitente do tst_sourcepool na suíte só apareceu sob
+# carga de GPU mista e nunca se reproduziu isolado (13 rodadas limpas em
+# 2026-10-21). Os testes que COBREM hw (decoder_api, concurrency) seguem com
+# VAAPI ligado.
+set_tests_properties(tst_sourcepool tst_framepipeline tst_encoder
+    PROPERTIES ENVIRONMENT "PIERROT_GPU=0")
 
 add_executable(tst_audio_conform
     tests/tst_audio_conform.cpp
     src/colombina/ffmpeg/AudioConformCache.cpp
+    src/laartman/Decoder.cpp
     src/laartman/core/FFmpegDecoder.cpp
     src/laartman/core/FFmpegDecoderOpen.cpp
     src/laartman/core/FFmpegDecoderAudio.cpp
@@ -756,6 +799,7 @@ add_test(NAME tst_audio_conform_intervals COMMAND tst_audio_conform_intervals)
 add_executable(tst_export_pipeline
     tests/tst_export_pipeline.cpp
     src/colombina/models/Project.cpp
+    src/laartman/Decoder.cpp
     src/laartman/core/FFmpegDecoder.cpp
     src/laartman/core/FFmpegDecoderOpen.cpp
     src/laartman/core/FFmpegDecoderAudio.cpp

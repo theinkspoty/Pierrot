@@ -5,7 +5,7 @@
 
 #include "ui/timeline/TimelineWidget.h"
 #include "colombina/models/Project.h"
-#include "laartman/core/FFmpegDecoder.h"
+#include "laartman/Decoder.h"
 #include "ui/dialogs/SettingsDialog.h"
 #include "ui/monitor/TrimmerDialog.h"
 #include "colombina/util.h"
@@ -35,7 +35,7 @@ namespace {
 
 
 double mediaInsertDur(const MediaItem& m) {
-    if (isImageFile(m.filePath) && !FFmpegDecoder::isAnimatedImage(m.filePath))
+    if (isImageFile(m.filePath) && !Decoder::isAnimatedImage(m.filePath))
         return 3.0;
     return m.duration > 0 ? m.duration : 1.0;
 }
@@ -1669,12 +1669,12 @@ void TimelineWidget::dragMoveEvent(QDragMoveEvent* e) {
                 if (!u.isLocalFile()) continue;
                 const QString path = u.toLocalFile();
                 // Cache probe results to avoid expensive re-probe on every mouse move.
-                FFmpegMediaInfo info;
+                MediaInfo info;
                 auto it = m_dragProbeCache.find(path);
                 if (it != m_dragProbeCache.end()) {
                     info = it.value();
                 } else {
-                    info = FFmpegDecoder::probe(path);
+                    info = Decoder::probe(path);
                     m_dragProbeCache.insert(path, info);
                 }
                 if (info.hasVideo || info.hasAudio) {
@@ -1749,12 +1749,12 @@ void TimelineWidget::dropEvent(QDropEvent* e) {
             if (!u.isLocalFile()) continue;
             const QString path = u.toLocalFile();
             // Use cached probe result if available (from dragMoveEvent).
-            FFmpegMediaInfo info;
+            MediaInfo info;
             auto it = m_dragProbeCache.find(path);
             if (it != m_dragProbeCache.end()) {
                 info = it.value();
             } else {
-                info = FFmpegDecoder::probe(path);
+                info = Decoder::probe(path);
             }
             if (!info.hasVideo && !info.hasAudio) continue;
             MediaItem m;
@@ -1824,7 +1824,7 @@ void TimelineWidget::finishDrop(const QStringList& mediaIds, const QPoint& dropP
         if (m && m->hasVideo && !m->filePath.isEmpty() && m->duration > 0.5) {
             TrimmerDialog dlg(*m, this);
             if (dlg.exec() != QDialog::Accepted) return;
-            trimIn = dlg.trimIn();
+            trimIn = std::max(0.0, dlg.trimIn()); // in nunca negativo (head do arquivo)
             const double out = dlg.trimOut();
             trimDur = out - trimIn;
             if (trimDur <= 0.0) return;

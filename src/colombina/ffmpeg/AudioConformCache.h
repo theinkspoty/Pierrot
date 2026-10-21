@@ -17,7 +17,7 @@
 #include <mutex>
 #include <thread>
 
-class FFmpegDecoder;
+class Decoder; // fachada (laartman/Decoder.h)
 
 // Camada de "conform" estilo Olive para o MixerWidget de áudio do preview.
 //
@@ -119,7 +119,7 @@ private:
     AudioConformCache& operator=(const AudioConformCache&) = delete;
 
     void doFill(Chunk* c, double startSec, double horizonSec,
-                FFmpegDecoder& dec, qint64& decPos);
+                Decoder& dec, qint64& decPos);
     void workerLoop();
     qint64 nextFillWork(Chunk* c, double startSec, double& outStartSec,
                         double& outHorizonSec);

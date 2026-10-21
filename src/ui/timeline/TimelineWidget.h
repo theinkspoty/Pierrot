@@ -16,7 +16,7 @@
 #include "colombina/models/Project.h"
 #include "colombina/frei0r/Frei0rPluginManager.h" // Frei0rPluginInfo (catálogo)
 
-struct FFmpegMediaInfo;
+#include "laartman/Decoder.h"
 
 class QScrollBar;
 class QPainter;
@@ -606,7 +606,7 @@ private:
     quint64 m_clipEpoch = 0;
 
     // Cache de probe durante drag-and-drop (evita re-probe a cada mouse move).
-    QHash<QString, FFmpegMediaInfo> m_dragProbeCache;
+    QHash<QString, MediaInfo> m_dragProbeCache;
 
     // Índice para buscas O(1) por ID de clipe.
     QHash<QString, Clip*> m_clipIndex;

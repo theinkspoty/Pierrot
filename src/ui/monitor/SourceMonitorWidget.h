@@ -20,7 +20,7 @@ class QDoubleSpinBox;
 class QTimer;
 class QKeyEvent;
 class QToolButton;
-class FFmpegDecoder;
+#include "laartman/Decoder.h"
 class SourceScrub;
 class AspectLabel;
 
@@ -73,7 +73,8 @@ private:
     Project* m_project = nullptr;
     QString m_mediaId;
     MediaItem m_media; // cópia: o Project pode trocar durante a sessão
-    FFmpegDecoder* m_decoder = nullptr;
+    Decoder* m_decoder = nullptr;
+    DecodeOptions m_openOpts; // hardwareAllowed=false: decode de UI em software
 
     double m_in = 0.0;
     double m_out = 0.0;

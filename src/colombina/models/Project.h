@@ -700,7 +700,11 @@ inline bool hasVelocityEnvelope(const Clip& c) {
 // com a pré-renderização de velocidade da exportação. Em clipes multicam, o
 // ponto de entrada é o do ângulo ativo em `rel` (`multicamInAt`).
 inline double clipSrcTime(const Clip& c, double rel) {
-    const double baseIn = c.multicamInAt(rel);
+    // baseIn ≥ 0: um `in` negativo (mídia antes do início) nunca corresponde a
+    // um timestamp real da fonte — o engine derrubava para 0, mas o pedido
+    // viajava negativo (t=-1.7 no frameReady). Clamp aqui cobre preview,
+    // export e qualquer outro consumidor do mesmo jeito (paridade).
+    const double baseIn = std::max(0.0, c.multicamInAt(rel));
     if (rel <= 0.0) return baseIn;
     if (c.kfSpeed.isEmpty())
         return baseIn + rel * std::max(0.01, c.speed);

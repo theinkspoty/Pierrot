@@ -240,6 +240,13 @@ void PlaybackEngine::tick() {
     m_prof = PreviewProfiler::Frame();
 }
 
+void PlaybackEngine::profileStep() {
+    if (!PreviewProfiler::active()) return;
+    m_prof.seq = ++m_profSeq;
+    PreviewProfiler::instance().add(m_prof);
+    m_prof = PreviewProfiler::Frame();
+}
+
 void PlaybackEngine::tickImpl() {
     if (!m_project) { stopPlaybackInternal(); return; }
     const double fps = projFps(m_project);

@@ -199,7 +199,15 @@ bool OfxPluginManager::loadOfxLibrary(const QString& libPath, const QString& fal
     void* lib = ofxLoadLibrary(libPath);
     if (!lib) {
         const QString err = ofxLoadError();
-        qWarning() << "[OFX] Falha ao carregar" << libPath << ":" << err;
+        // Dedupe: o scan roda várias vezes por sessão (startup + reloads) —
+        // repetir o MESMO plugin quebrado a cada scan só polui o log (P6 do
+        // relatório de estresse). Avisa uma vez por (caminho, erro).
+        static QSet<QString> warned;
+        const QString key = libPath + QLatin1Char('\x1f') + err;
+        if (!warned.contains(key)) {
+            warned.insert(key);
+            qWarning() << "[OFX] Falha ao carregar" << libPath << ":" << err;
+        }
         emit pluginError(fallbackId, err);
         return false;
     }
