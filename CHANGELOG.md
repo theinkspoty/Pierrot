@@ -29,6 +29,21 @@ de desempenho/robustez. Naipe continua **alpha**.
 - `PacketReader.cpp` entrou nas fontes de todos os testes que compilam o
   motor diretamente (CMakeLists).
 
+### Pipeline — prefetch de frame0 latest-wins (sem descarte)
+
+- **Pedido de frame0 durante prefetch em voo NÃO é mais descartado** — vira
+  o alvo "latest-wins" e é despachado assim que o voo atual terminar
+  (`FramePipeline::m_prefetchPending`). O descarte anterior fazia o corte
+  pagar open frio: o chamador marcava "requested" e podia não re-pedir no
+  próximo tick (o aviso do commit caa9816 diagnosticava exatamente isso).
+  O worker continua serial (um frame0 por vez); o alvo converge sempre para
+  o corte MAIS PRÓXIMO. `tst_framepipeline` cobre o encadeamento.
+
+- Worker de camadas não rouba mais pedidos do topo (`kickFrameWorker`):
+  com o topo lento (animação/efeitos), os clipes de baixo ficavam sem
+  quadro porque um pedido do topo parado na fila era mandado ao worker
+  dedicado de camadas.
+
 ### Preview — mídia gerada + cortes: preto e frames perdidos
 
 - **Mídia do gerador não desaparece mais** — o caminho do sólido no

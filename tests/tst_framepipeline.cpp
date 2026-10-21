@@ -98,7 +98,8 @@ private slots:
     }
 
     // End-to-end na thread interna: framePrefetched chega com o par (t, t+step)
-    // e a flag busy libera. Depois, um segundo pedido volta a ser aceito.
+    // e a flag busy libera. Pedido durante o voo vira alvo latest-wins
+    // (encadeado, não descartado); depois, novos pedidos voltam a ser aceitos.
     void threadedPrefetchEmitsPairAndClearsBusy() {
         if (!haveFfmpegCli())
             QSKIP("ffmpeg CLI ausente");
@@ -117,21 +118,35 @@ private slots:
         pipe.prefetchFrame(a, 0.0, 96, 1.0 / 30.0);
         QVERIFY(pipe.prefetchBusy()); // despachado → ocupado até o sinal
 
-        // Enquanto ocupado, um segundo pedido é ignorado (serial, best-effort).
+        // Enquanto ocupado, o segundo pedido NÃO é descartado: vira o alvo
+        // latest-wins e é despachado quando o voo atual terminar (o descarte
+        // anterior fazia o corte pagar open frio — o chamador marcava
+        // "requested" e podia não re-pedir).
         pipe.prefetchFrame(a, 1.0, 96, 1.0 / 30.0);
-        QVERIFY(done.wait(8000)); // primeiro (e único) resultado
+        QVERIFY(done.wait(8000)); // primeiro resultado
         QCOMPARE(done.count(), 1);
+        {
+            const QList<QVariant> args = done.takeFirst();
+            QCOMPARE(args.at(0).toString(), a);
+            const QImage f0 = args.at(3).value<QImage>();
+            const QImage f1 = args.at(4).value<QImage>();
+            QVERIFY(!f0.isNull());
+            QVERIFY(!f1.isNull());
+        }
+
+        // O alvo latest-wins (t=1.0) foi encadeado e chega em seguida; o busy
+        // só libera DEPOIS dele.
+        QVERIFY(done.wait(8000));
+        QCOMPARE(done.count(), 1);
+        {
+            const QList<QVariant> second = done.takeFirst();
+            QCOMPARE(second.at(0).toString(), a);
+            QVERIFY(qAbs(second.at(1).toDouble() - 1.0) < 1e-6); // t=1.0
+        }
         QVERIFY(!pipe.prefetchBusy());
 
-        const QList<QVariant> args = done.takeFirst();
-        QCOMPARE(args.at(0).toString(), a);
-        const QImage f0 = args.at(3).value<QImage>();
-        const QImage f1 = args.at(4).value<QImage>();
-        QVERIFY(!f0.isNull());
-        QVERIFY(!f1.isNull());
-
         // Já liberado: um novo pedido é aceito e chega.
-        pipe.prefetchFrame(a, 1.0, 96, 1.0 / 30.0);
+        pipe.prefetchFrame(a, 1.5, 96, 1.0 / 30.0);
         QVERIFY(done.wait(8000));
         QCOMPARE(done.count(), 1);
 

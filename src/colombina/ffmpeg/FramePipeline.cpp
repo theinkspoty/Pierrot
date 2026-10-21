@@ -107,18 +107,38 @@ FramePipeline::FramePipeline(SourcePool* pool, QObject* parent)
     connect(worker, &PrefetchWorker::done, this,
             [this](const QString& path, double t, int maxW,
                    const QImage& f0, const QImage& f1) {
+                PrefetchPending pend;
                 {
                     QMutexLocker l(&m_mutex);
                     m_prefetchBusy = false;
+                    // Latest-wins: um pedido novo chegou enquanto este estava
+                    // em voo — despacha-o agora (serial: um frame0 por vez).
+                    pend = m_prefetchPending;
+                    m_prefetchPending.valid = false;
                 }
                 emit framePrefetched(path, t, maxW, f0, f1);
+                if (pend.valid) {
+                    QMutexLocker l(&m_mutex);
+                    m_prefetchBusy = true;
+                    l.unlock();
+                    dispatchPrefetchJob(pend.path, pend.t, pend.maxW, pend.step);
+                }
             });
     connect(worker, &PrefetchWorker::failed, this, [this](const QString& path) {
+        PrefetchPending pend;
         {
             QMutexLocker l(&m_mutex);
             m_prefetchBusy = false;
+            pend = m_prefetchPending;
+            m_prefetchPending.valid = false;
         }
         emit prefetchFailed(path);
+        if (pend.valid) {
+            QMutexLocker l(&m_mutex);
+            m_prefetchBusy = true;
+            l.unlock();
+            dispatchPrefetchJob(pend.path, pend.t, pend.maxW, pend.step);
+        }
     });
 
     // Thread SEPARADA para o warm-ahead: um open() frio de ~1,3s no warm NÃO
@@ -165,7 +185,23 @@ void FramePipeline::stop() {
     m_warmThread->wait(5000);
     m_warmThread = nullptr;
     m_warmWorker = nullptr;
+    {
+        QMutexLocker l(&m_mutex);
+        m_prefetchPending.valid = false; // gesto encerrado: nada a re-despachar
+        m_prefetchBusy = false;
+    }
     m_started = false;
+}
+
+void FramePipeline::dispatchPrefetchJob(const QString& path, double t, int maxW, double step) {
+    if (!m_started) {
+        QMutexLocker l(&m_mutex);
+        m_prefetchBusy = false;
+        return;
+    }
+    QMetaObject::invokeMethod(m_worker, "decode", Qt::QueuedConnection,
+                              Q_ARG(QString, path), Q_ARG(double, t),
+                              Q_ARG(int, maxW), Q_ARG(double, step));
 }
 
 void FramePipeline::prefetchFrame(const QString& path, double t, int maxW, double step) {
@@ -173,21 +209,23 @@ void FramePipeline::prefetchFrame(const QString& path, double t, int maxW, doubl
     {
         QMutexLocker l(&m_mutex);
         if (m_prefetchBusy) {
-            // Diagnóstico do engasgo no corte: um frame0 crítico foi DESCARTADO
-            // porque o prefetch anterior ainda está em voo. O chamador marca o
-            // pedido como "requested" de qualquer forma e pode não re-despachar
-            // no próximo tick — o corte então paga open/decode frio.
-            qWarning().noquote()
-                << QStringLiteral("[pipe] prefetch DESCARTADO (busy): %1 t=%2")
+            // Latest-wins: o frame0 em voo pode já estar obsoleto (o corte
+            // mudou); guarda o pedido MAIS NOVO e o despacha assim que o voo
+            // terminar. Descartar (comportamento anterior) fazia o corte pagar
+            // open frio: o chamador marcava "requested" e podia não re-pedir.
+            m_prefetchPending.path = path;
+            m_prefetchPending.t = t;
+            m_prefetchPending.maxW = maxW;
+            m_prefetchPending.step = step;
+            m_prefetchPending.valid = true;
+            qDebug().noquote()
+                << QStringLiteral("[pipe] prefetch em voo — alvo mais novo enfileirado: %1 t=%2")
                        .arg(path, QString::number(t, 'f', 3));
-            return; // serial: um frame0 por vez
+            return;
         }
         m_prefetchBusy = true;
     }
-    if (!m_started) { QMutexLocker l(&m_mutex); m_prefetchBusy = false; return; }
-    QMetaObject::invokeMethod(m_worker, "decode", Qt::QueuedConnection,
-                              Q_ARG(QString, path), Q_ARG(double, t),
-                              Q_ARG(int, maxW), Q_ARG(double, step));
+    dispatchPrefetchJob(path, t, maxW, step);
 }
 
 void FramePipeline::setWarmQueue(const QVector<WarmTarget>& targets) {

@@ -100,5 +100,22 @@ private:
     QVector<WarmTarget> m_warmQueue;
     QString m_warmInFlight;
     bool m_prefetchBusy = false;
+    // Pedido de frame0 "latest-wins" guardado enquanto outro prefetch está em
+    // voo: quando o voo terminar, ESTE é despachado. Descartar o pedido novo
+    // (comportamento anterior) fazia o corte pagar open frio — o chamador
+    // marcava "requested" e podia não re-pedir no próximo tick.
+    struct PrefetchPending {
+        QString path;
+        double t = 0.0;
+        int maxW = 0;
+        double step = 0.0;
+        bool valid = false;
+    };
+    PrefetchPending m_prefetchPending;
+
+    // Despacha o job de prefetch no worker (fora do mutex). `m_prefetchBusy`
+    // deve estar true (o chamador garante).
+    void dispatchPrefetchJob(const QString& path, double t, int maxW, double step);
+
     bool m_started = false;
 };
