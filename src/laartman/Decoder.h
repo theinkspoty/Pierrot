@@ -73,10 +73,48 @@ struct DecodedFrame {
     DecodeStatus status = DecodeStatus::Error;
 };
 
-class Decoder {
+// ── L3 — o CONTRATO de leitura (§8.8) ─────────────────────────────────────
+//
+// A superfície substituível do núcleo: tudo o que um leitor de mídia precisa
+// oferecer para o Pierrot exibir e exportar — abrir/fechar, identidade, cadência
+// e os pedidos de quadro/áudio. `Decoder` é a implementação concreta atual; um
+// dia pode ser um leitor sobre outra pilha, sem que nenhum call site mude.
+//
+// O contrato é deliberadamente MÍNIMO: nada de posse, pool, qualidade, prefetch
+// ou cache — essas decisões são do Pierrot (L4–L6), não do leitor. Sondagem
+// (probe/isAnimatedImage) fica como estática em `Decoder`: não precisa de
+// instância nem de substituição.
+//
+// Uso com substituição: guarde `MediaReader*`/`std::unique_ptr<MediaReader>` e
+// chame pelo contrato. Uso direto (hoje): instancie `Decoder` como sempre.
+class MediaReader {
+public:
+    virtual ~MediaReader() = default;
+
+    // Abre `path` segundo `opt`. Idempotente (mesmo arquivo+opções = atalho).
+    virtual bool open(const QString& path, const DecodeOptions& opt) = 0;
+    virtual void close() = 0;
+    virtual bool isOpen() const = 0;
+    virtual QString source() const = 0;
+    virtual double fps() const = 0;
+
+    // Frame em `tAbsoluteSec`; `maxWidth=0` = largura nativa.
+    virtual QImage frame(double tAbsoluteSec, int maxWidth,
+                         const std::atomic<bool>* cancel) = 0;
+    virtual DecodedFrame frameDecoded(double tAbsoluteSec, int maxWidth,
+                                      const std::atomic<bool>* cancel) = 0;
+
+    // Áudio: PCM interleaved S16, 48 kHz estéreo.
+    virtual bool seekAudio(double tAbsoluteSec) = 0;
+    virtual int  readPcm(void* out, int maxBytes) = 0;
+    virtual bool audioFinished() const = 0;
+    virtual bool hasAudio() const = 0;
+};
+
+class Decoder : public MediaReader {
 public:
     Decoder();
-    ~Decoder();
+    ~Decoder() override;
 
     // Não copiável (segura um contexto de decoder mutável); movível.
     Decoder(const Decoder&) = delete;
@@ -89,30 +127,30 @@ public:
 
     // Abre `path` segundo `opt`. Idempotente: abrir o mesmo arquivo já aberto
     // com as mesmas opções é atalho que devolve true sem reabrir.
-    bool open(const QString& path, const DecodeOptions& opt = DecodeOptions());
-    void close();
-    bool isOpen() const;
-    QString source() const;
-    double fps() const;
+    bool open(const QString& path, const DecodeOptions& opt = DecodeOptions()) override;
+    void close() override;
+    bool isOpen() const override;
+    QString source() const override;
+    double fps() const override;
 
     // Decodifica o frame em `tAbsoluteSec` (absoluto no arquivo). `maxWidth=0`
     // devolve a largura nativa. `cancel`, se dado, aborta cooperativamente e
     // devolve imagem nula; o progresso é preservado para o próximo pedido.
     QImage frame(double tAbsoluteSec, int maxWidth = 0,
-                 const std::atomic<bool>* cancel = nullptr);
+                 const std::atomic<bool>* cancel = nullptr) override;
 
     // Variante tipada (§8.3): mesmo decode, mas devolve também o DESFECHO
     // (Ok/Eof/Cancelled/Error) — quem precisa reagir a "acabou" ou "cancelado"
     // não fica adivinhando a partir da imagem nula. `frame()` é o atalho
     // quando só a imagem importa.
     DecodedFrame frameDecoded(double tAbsoluteSec, int maxWidth = 0,
-                              const std::atomic<bool>* cancel = nullptr);
+                              const std::atomic<bool>* cancel = nullptr) override;
 
     // Áudio: PCM interleaved S16, 48 kHz estéreo.
-    bool   seekAudio(double tAbsoluteSec);
-    int    readPcm(void* out, int maxBytes);
-    bool   audioFinished() const;
-    bool   hasAudio() const;
+    bool   seekAudio(double tAbsoluteSec) override;
+    int    readPcm(void* out, int maxBytes) override;
+    bool   audioFinished() const override;
+    bool   hasAudio() const override;
 
 private:
     // O motor atual. Na v0.4 o conteúdo é fatiado em L0–L2; a superfície

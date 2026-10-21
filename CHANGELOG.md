@@ -103,6 +103,18 @@ de desempenho/robustez. Naipe continua **alpha**.
   Consumidores incluem `laartman/core/…` hoje; o alvo é todos usarem só a
   fachada da raiz (migração de call sites pendente).
 
+### Interface de leitura (§8.8)
+
+- **A leitura ganhou um contrato substituível.** Novo `MediaReader` no header
+  público: a superfície mínima que um leitor de mídia oferece (abrir/fechar,
+  identidade, cadência, `frame`/`frameDecoded`, áudio). `Decoder` passa a
+  implementá-lo (`class Decoder : public MediaReader`), sem mudar nenhuma
+  assinatura usada hoje — os call sites seguem iguais. Guarde um `MediaReader*`
+  e a implementação pode trocar sem tocar no Pierrot. A sondagem
+  (`probe`/`isAnimatedImage`) fica estática em `Decoder`. Teste
+  `decoderSatisfiesReaderContract` prova que ler só pela interface devolve o
+  mesmo quadro que o acesso direto.
+
 ### Paridade preview↔export (§8.7)
 
 - **O que se vê é o que se exporta, agora com prova automática sobre mídia

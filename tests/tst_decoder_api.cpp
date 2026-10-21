@@ -123,6 +123,8 @@ private slots:
 
     void typedFrameReportsStatus();
 
+    void decoderSatisfiesReaderContract();
+
     void probeCacheMatchesAndInvalidatesOnChange();
 
 private:
@@ -628,6 +630,40 @@ void tst_DecoderApi::typedFrameReportsStatus() {
     const DecodedFrame closed = dec.frameDecoded(1.0, 160);
     QCOMPARE(closed.status, DecodeStatus::Error);
     QVERIFY(closed.image.isNull());
+}
+
+// §8.8 — `Decoder` satisfaz o contrato `MediaReader`. Uma função que só conhece
+// a interface (não o tipo concreto) deve conseguir abrir/ler/encerrar e obter o
+// MESMO quadro que o uso direto. É a garantia de que a implementação é trocável
+// sem tocar nos call sites.
+void tst_DecoderApi::decoderSatisfiesReaderContract() {
+    Decoder concrete;
+    DecodeOptions opt;
+
+    // Usa SOMENTE o contrato abstrato daqui em diante.
+    MediaReader* reader = &concrete;
+    QVERIFY2(reader->open(m_media, opt), "MediaReader::open falhou");
+    QVERIFY(reader->isOpen());
+    QVERIFY(!reader->source().isEmpty());
+    QVERIFY(reader->fps() > 0.0);
+    QVERIFY(!reader->hasAudio());
+
+    const QImage viaContract = reader->frame(1.0, 160);
+    QVERIFY(!viaContract.isNull());
+
+    // Mesmo quadro que o uso direto devolve (determinismo através do contrato).
+    Decoder direct;
+    QVERIFY(openUsableFacade(direct, m_media, opt));
+    const QImage viaConcrete = direct.frame(1.0, 160);
+    QVERIFY2(viaContract == viaConcrete,
+             "o quadro lido via MediaReader divergiu do acesso direto a Decoder");
+
+    // A variante tipada também está no contrato.
+    const DecodedFrame typed = reader->frameDecoded(1.0, 160);
+    QCOMPARE(typed.status, DecodeStatus::Ok);
+
+    reader->close();
+    QVERIFY(!reader->isOpen());
 }
 
 // O memo de probe (§8.6) não pode mudar o RESULTADO: sondar o mesmo arquivo
