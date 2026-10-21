@@ -29,6 +29,7 @@
 
 #include "laartman/Decoder.h"
 #include "laartman/core/FFmpegDecoder.h"
+#include "laartman/core/DecoderMetrics.h"
 
 #include <QFile>
 #include <QProcess>
@@ -270,9 +271,10 @@ void tst_DecoderApi::closeIsIdempotent() {
 }
 
 // open() num arquivo JÁ aberto (mesmo caminho) não reabre: devolve true sem
-// mexer no contexto. A prova é o contador s_openCount: um reopen real o
-// incrementa; o atalho "já aberto" não. (Antes se provava pelo cache interno,
-// que saiu do núcleo na Fase 6.)
+// mexer no contexto. A prova é o contador de open do DecoderMetrics: um reopen
+// real o incrementa; o atalho "já aberto" não. (Antes se provava pelo cache
+// interno, que saiu do núcleo na Fase 6; o contador saiu da superfície pública
+// do núcleo no §8.5.)
 void tst_DecoderApi::openTwiceDoesNotReopen() {
     FFmpegDecoder dec;
     QVERIFY(openUsable(dec, m_media));
@@ -280,9 +282,9 @@ void tst_DecoderApi::openTwiceDoesNotReopen() {
     const QImage first = dec.frameAt(1.0, 160);
     QVERIFY(!first.isNull());
 
-    const quint64 before = FFmpegDecoder::openCount();
+    const quint64 before = DecoderMetrics::instance().openCount();
     QVERIFY(dec.open(m_media)); // deve ser atalho "já aberto"
-    QCOMPARE(FFmpegDecoder::openCount(), before); // NÃO reabriu
+    QCOMPARE(DecoderMetrics::instance().openCount(), before); // NÃO reabriu
     // O frame continua idêntico (mesma posição/qualidade, mesmo arquivo).
     const QImage again = dec.frameAt(1.0, 160);
     QVERIFY(samePixels(first, again));

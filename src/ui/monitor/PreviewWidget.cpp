@@ -31,6 +31,7 @@
 #include "ui/monitor/PreviewDebug.h"
 #include "colombina/ffmpeg/SourcePool.h"
 #include "colombina/ffmpeg/FramePipeline.h"
+#include "laartman/core/DecoderMetrics.h"
 #include "ui/monitor/FrameWorker.h"
 #include "ui/monitor/MonitorScrubBar.h"
 
@@ -1143,9 +1144,9 @@ void PreviewWidget::drawPerfOverlay(QPainter& p) {
         .arg(m_adaptiveActive
              ? QStringLiteral("ON (%1p)").arg(m_previewQuality)
              : QStringLiteral("OFF"))
-        .arg(FFmpegDecoder::openCount())
-        .arg(ms(FFmpegDecoder::openTotalNs()), 0, 'f', 1)
-        .arg(ms(FFmpegDecoder::lastOpenNs()), 0, 'f', 1)
+        .arg(DecoderMetrics::instance().openCount())
+        .arg(ms(DecoderMetrics::instance().openTotalNs()), 0, 'f', 1)
+        .arg(ms(DecoderMetrics::instance().lastOpenNs()), 0, 'f', 1)
         .arg(m_decPool ? m_decPool->count() : 0);
     p.drawText(box.adjusted(10, 8, -6, -6), Qt::AlignLeft | Qt::AlignTop, txt);
     p.restore();
@@ -2201,9 +2202,9 @@ void PreviewWidget::handleFrameReady(const QString& clipId, const QString& path,
         profFrame().workerNs = workerLatNs; // latência do decode: dispatch -> quadro pronto
         profFrame().cacheHits = FrameCache::hits();
         profFrame().cacheMisses = FrameCache::misses();
-        profFrame().decSeekNs = qint64(FFmpegDecoder::lastSeekNs());
-        profFrame().decDiscard = FFmpegDecoder::lastDiscard();
-        profFrame().decWorkNs = FFmpegDecoder::lastWorkNs();
+        profFrame().decSeekNs = qint64(DecoderMetrics::instance().lastSeekNs());
+        profFrame().decDiscard = DecoderMetrics::instance().lastDiscard();
+        profFrame().decWorkNs = DecoderMetrics::instance().lastWorkNs();
     }
     // Latência "apertar play -> 1º quadro na tela" (só diagnostica; com o
     // warmPlayhead no playhead parado deve cair de centenas de ms para dezenas).

@@ -250,37 +250,9 @@ private:
     // O LRU de quadros saiu do núcleo para L4 (colombina/ffmpeg/FrameCache).
     // frameAt() sempre decodifica; o cache é política do consumidor.
 
-public:
-    // Tempo gasto em seek+flush dentro de frameAt. Até agora isso era
-    // invisível: o `seek` medido no engine só enxerga o tick, não o seek que
-    // acontece na thread do decoder — por isso um seek de 300ms aparecia como
-    // "seek=0ms" e o custo sobrava sem dono.
-    static quint64 s_seekCount, s_seekTotalNs, s_lastSeekNs;
-    static void resetSeekStats() { s_seekCount = s_seekTotalNs = s_lastSeekNs = 0; }
-    static quint64 seekCount()    { return s_seekCount; }
-    static quint64 seekTotalNs()  { return s_seekTotalNs; }
-    static quint64 lastSeekNs()   { return s_lastSeekNs; }
-    // Custo de ABRIR o arquivo (avformat_open_input + find_stream_info). O que
-    // dói num corte não é decodificar (p99 < 1ms) e sim reabrir/parsear o
-    // container (~500-800ms). Aberturas atômicas porque open() roda tanto na
-    // thread do FrameWorker quanto na do prefetch em background.
-    static std::atomic<quint64> s_openCount, s_openTotalNs, s_lastOpenNs;
-    static void resetOpenStats() { s_openCount = 0; s_openTotalNs = 0; s_lastOpenNs = 0; }
-    static quint64 openCount()    { return s_openCount.load(); }
-    static quint64 openTotalNs()  { return s_openTotalNs.load(); }
-    static quint64 lastOpenNs()   { return s_lastOpenNs.load(); }
-    // Quantos quadros o laço de frameAt decodificou e_DESCARTOU antes de achar
-    // o alvo. É o custo escondido de um seek: com GOP aberto, decodificar do
-    // keyframe até o alvo paga dezenas de quadros que ninguém vê.
-    static quint64 s_discardCount, s_lastDiscard;
-    static quint64 lastDiscard()  { return s_lastDiscard; }
-    // Tempo total dentro de frameAt. Comparado com a latência dispatch->pronto
-    // (wrk), separa "o worker demorou" de "o pedido ficou na fila esperando".
-    // Lidos pelo overlay na thread da UI e escritos pela thread do decode, então
-    // são atômicos (como as stats de open).
-    static std::atomic<quint64> s_lastWorkNs, s_workTotalNs;
-    static void resetWorkStats() { s_lastWorkNs.store(0); s_workTotalNs.store(0); }
-    static quint64 lastWorkNs()   { return s_lastWorkNs.load(); }
-    static quint64 workTotalNs()  { return s_workTotalNs.load(); }
-    static quint64 discardTotal() { return s_discardCount; }
+    // ── Instrumentação: NÃO vive mais aqui (§8.5) ─────────────────────
+    // Os contadores (open/seek/discard/work) eram estáticos públicos deste
+    // header — estado global mutável dentro do núcleo. Saíram para um header
+    // INTERNO (core/DecoderMetrics.h): o núcleo só chama record*() nos pontos
+    // quentes; quem lê (overlay/profiler) lê de DecoderMetrics.
 };

@@ -15,6 +15,7 @@
 
 #include "FFmpegDecoder.h"
 #include "FFmpegDecoderPriv.h"
+#include "DecoderMetrics.h"
 #include "laartman/io/Demuxer.h"
 #include "laartman/io/PacketReader.h"
 
@@ -51,9 +52,7 @@ bool FFmpegDecoder::open(const QString& filePath, int audioStream) {
     auto commitOpen = [&]() {
         const quint64 ns = quint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now() - openT0).count());
-        s_lastOpenNs.store(ns);
-        s_openTotalNs.fetch_add(ns);
-        s_openCount.fetch_add(1);
+        DecoderMetrics::instance().recordOpen(ns);
         if (openDbg())
             qDebug().noquote() << QStringLiteral("[dec] open %1 ms  %2")
                       .arg(ns / 1e6, 0, 'f', 1).arg(filePath);

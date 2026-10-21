@@ -103,6 +103,17 @@ de desempenho/robustez. Naipe continua **alpha**.
   Consumidores incluem `laartman/core/…` hoje; o alvo é todos usarem só a
   fachada da raiz (migração de call sites pendente).
 
+### DecoderMetrics (§8.5)
+
+- **Instrumentação fora da superfície pública do núcleo** — os contadores de
+  open/seek/discard/work eram `static` públicos do `FFmpegDecoder` (estado
+  GLOBAL mutável exposto pelo núcleo, contra o invariante 2 do plano v0.4).
+  Saíram para `laartman/core/DecoderMetrics.h` (header INTERNO, não a fachada):
+  o núcleo só chama `record*()` nos pontos quentes; overlay e profiler leem de
+  `DecoderMetrics::instance()`. Fica no núcleo (e não em colombina/L4) porque
+  `colombina` depende de `laartman`, nunca o contrário — pôr em L4 inverteria
+  as camadas. Custo no caminho quente idêntico (store/fetch_add relaxado).
+
 ### FrameCache (§8.4)
 
 - **Budget de memória em bytes** — o `FrameCache` tinha só um teto de

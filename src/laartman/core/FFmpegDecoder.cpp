@@ -14,6 +14,7 @@
 
 #include "FFmpegDecoder.h"
 #include "FFmpegDecoderPriv.h"
+#include "DecoderMetrics.h"
 #include "laartman/io/Demuxer.h"
 #include "laartman/io/PacketReader.h"
 
@@ -82,22 +83,13 @@ int64_t FFmpegDecoder::frameCacheIndex(double t) const {
 
 
 // ── Estatísticas globais ───────────────────────────────────────────────────
-
-std::atomic<quint64> FFmpegDecoder::s_lastWorkNs{0};
-std::atomic<quint64> FFmpegDecoder::s_workTotalNs{0};
-quint64 FFmpegDecoder::s_discardCount = 0;
-quint64 FFmpegDecoder::s_lastDiscard = 0;
-quint64 FFmpegDecoder::s_seekCount = 0;
-quint64 FFmpegDecoder::s_seekTotalNs = 0;
-quint64 FFmpegDecoder::s_lastSeekNs = 0;
-std::atomic<quint64> FFmpegDecoder::s_openCount{0};
-std::atomic<quint64> FFmpegDecoder::s_openTotalNs{0};
-std::atomic<quint64> FFmpegDecoder::s_lastOpenNs{0};
+// Os contadores vivem em DecoderMetrics (core/DecoderMetrics.h), não mais como
+// estáticos públicos do núcleo (§8.5).
 
 QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bool>* cancel) {
     QMutexLocker locker(&m_mutex);
     // Mede o tempo REAL gasto dentro de frameAt (excluindo a espera pelo
-    // lock, que pertence à "fila"). s_lastWorkNs era lida pelo profiler
+    // lock, que pertence à "fila"). decWorkNs era lida pelo profiler
     // (PreviewWidget → decWorkNs/dwork) mas nunca era escrita: o dwork do
     // overlay ficava sempre 0. RAII cobre todos os retornos do frameAt.
     struct WorkTimer {
@@ -106,8 +98,7 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
             const qint64 ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::steady_clock::now() - t0).count();
             const quint64 u = ns > 0 ? quint64(ns) : 0;
-            s_lastWorkNs.store(u, std::memory_order_relaxed);
-            s_workTotalNs.fetch_add(u, std::memory_order_relaxed);
+            DecoderMetrics::instance().recordWork(u);
         }
         std::chrono::steady_clock::time_point t0;
     } workTimer;
@@ -326,9 +317,9 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
             av_frame_unref(reinterpret_cast<AVFrame*>(m_nextFrame));
         m_lastFrameSec = -1.0;
         m_nextFrameSec = -1.0;
-        s_lastSeekNs = quint64(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() - seekT0);
-        s_seekTotalNs += s_lastSeekNs;
-        ++s_seekCount;
+        DecoderMetrics::instance().recordSeek(
+            quint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count() - seekT0));
     }
 
     if (!m_pkt || !m_frame) {
@@ -399,7 +390,7 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
     }
 
     quint64 discarded = 0;
-    s_lastDiscard = 0;
+    DecoderMetrics::instance().beginFrameDiscard();
     bool aborted = false;
     while (!chosen && !atEof) {
         if (cancelled()) { aborted = true; break; }
@@ -527,8 +518,7 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
     av_frame_unref(m_frame);
     av_packet_unref(m_pkt);
 
-    s_lastDiscard = discarded;
-    s_discardCount += discarded;
+    DecoderMetrics::instance().recordDiscard(discarded);
 
     // Auto-cura: hardware decodificou quadro(s) mas nada virou imagem (driver
     // com formato quebrado/transferência falha) — ou não decodificou NENHUM

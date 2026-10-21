@@ -88,6 +88,7 @@ set(LAARTMAN_HEADERS
     src/laartman/io/Demuxer.h
     src/laartman/io/PacketReader.h
     src/laartman/core/ErrorConceal.h
+    src/laartman/core/DecoderMetrics.h
 )
 
 # ── Colombina: o kernel, a camada blindada (quase não muda) ─────────────
