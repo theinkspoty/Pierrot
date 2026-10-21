@@ -29,6 +29,25 @@ de desempenho/robustez. Naipe continua **alpha**.
 - `PacketReader.cpp` entrou nas fontes de todos os testes que compilam o
   motor diretamente (CMakeLists).
 
+### Preview — mídia gerada + cortes: preto e frames perdidos
+
+- **Mídia do gerador não desaparece mais** — o caminho do sólido no
+  `updateFrame` nunca carimbava `m_shownClipId`, então a guarda de posse
+  derrubava o quadro: carência de 250 ms e depois **PRETO fixo** em clípes
+  gerados (cor/gradiente/checker/noise). Carimbo adicionado + memo
+  `generatedFrameCached`: o `generatorFrame` (quadro cheio, UI thread)
+  rodava a CADA tick no topo e a CADA rebuild do composto nas camadas —
+  agora é memoizado por (id, tipo, cores, células, tamanho) — editar
+  qualquer parâmetro invalida sozinho.
+- **Carência do corte 250 → 700 ms** — cobre o open frio típico (~1,3 s
+  só com prefetch falho); antes disso, o preto aparecia em todo corte com
+  decode não instantâneo.
+- **Primeiro frame de clipe NOVO nunca é rejeitado em reprodução** — a
+  tolerância de 3 frames (`handleFrameReady`) jogava fora o frame0 atrasado
+  da virada (ele CHEGA atrasado por definição) e pedia decode de novo =
+  preto prolongado + frames perdidos. Agora só clipes já exibidos usam a
+  tolerância estrita; clipes novos aceitam até 1,5 s (mesma do scrub).
+
 ### Preview — preto na virada do corte (carência de 250 ms)
 
 - **Último quadro segurado na carência do corte** — a correção de posse

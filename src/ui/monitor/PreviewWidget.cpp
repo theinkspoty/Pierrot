@@ -502,8 +502,10 @@ void PreviewWidget::setProject(Project* p) {
         QMutexLocker l(&m_frameMutex);
         m_reqQueue.clear();
         m_layerCache.clear();
+        m_genMemo.clear();
         m_prefetch = PrefetchFrame();
         m_shownPath.clear();
+        m_shownClipId.clear(); // troca de projeto: sem posse herdada
         m_shownT = -1.0;
         m_shownW = -1;
     }
@@ -751,10 +753,11 @@ void PreviewWidget::renderFrame(QPainter& p) {
     }
     // true enquanto o frame exibido ainda é o do clipe ANTERIOR e a carência
     // do corte não expirou (mostra o último quadro com transform neutro em
-    // vez de preto — padrão de todo NLE).
+    // vez de preto — padrão de todo NLE). 700 ms cobrem o open frio típico
+    // (~1,3 s pior caso só com prefetch falho); além disso, fundo honesto.
     const bool cutGrace = clip && !clip->isText && !m_shownClipId.isEmpty()
                           && m_shownClipId != clip->id
-                          && m_cutGrace.isValid() && m_cutGrace.elapsed() < 250;
+                          && m_cutGrace.isValid() && m_cutGrace.elapsed() < 700;
 
     const double S = clip ? kfValue(clip->kfScale, clip->scale, m_playhead - clip->pos) : 1.0;
     const double SX = clip ? kfValue(clip->kfScaleX, clip->scaleX, m_playhead - clip->pos) : 1.0;
@@ -853,7 +856,7 @@ void PreviewWidget::renderFrame(QPainter& p) {
                                                      (double)canvas.height() / mh));
                     const int w = qMax(1, (int)std::lround(mw * sc));
                     const int h = qMax(1, (int)std::lround(mh * sc));
-                    clipFrame = generatorFrame(*mm, w, h);
+                    clipFrame = generatedFrameCached(*mm, w, h);
                     if (c->lainkaEnabled) {
                         const double srcT = clipSrcTime(*c, m_playhead - c->pos);
                         clipFrame = lainkaApplyFx(clipFrame, c->id, srcT,
@@ -1612,6 +1615,27 @@ void PreviewWidget::setFrei0rManager(Frei0rPluginManager* m) {
     if (m_frameWorker) m_frameWorker->setEffectManagers(m_ofxManager, m_frei0rManager);
 }
 
+// Quadro de mídia GERADA com memo — ver declaração. A chave carrega os
+// parâmetros relevantes (id, tipo, cores, células, tamanho): editar qualquer
+// um invalida sozinho, sem precisar de hook de edição.
+QImage PreviewWidget::generatedFrameCached(const MediaItem& m, int w, int h) {
+    w = qMax(1, w);
+    h = qMax(1, h);
+    quint64 key = qHash(m.id);
+    key = key * 1099511628211ull + quint64(uint(m.generator.size()));
+    for (const QChar c : m.generator)
+        key = key * 1099511628211ull + c.unicode();
+    key = key * 1099511628211ull + quint64(m.solidColor.rgba());
+    key = key * 1099511628211ull + quint64(m.solidColor2.rgba());
+    key = key * 1099511628211ull + quint64(m.genCells);
+    key = key * 1099511628211ull + ((quint64(uint(w)) << 32) | quint64(uint(h)));
+    const auto it = m_genMemo.constFind(key);
+    if (it != m_genMemo.constEnd()) return it.value();
+    QImage img = generatorFrame(m, w, h);
+    m_genMemo.insert(key, img);
+    return img;
+}
+
 void PreviewWidget::updateFrame() {
     updateTimecodeLabel();
     if (!m_project) { m_frame = QImage(); m_transAlpha = -1.0; m_underFrame = QImage(); m_underRequested = false; m_underPending = false; m_clipMasks.clear(); update(); return; }
@@ -1739,11 +1763,15 @@ void PreviewWidget::updateFrame() {
                           : (m_project ? m_project->width : 1920));
         const int h = qMax(1, m->height > 0 ? m->height
                           : (m_project ? m_project->height : 1080));
-        QImage img = generatorFrame(*m, w, h);
+        QImage img = generatedFrameCached(*m, w, h);
         {
             QMutexLocker l(&m_frameMutex);
             m_frameFull = img;
             m_shownPath = QStringLiteral("solid:") + m->id;
+            // Posse: mídia gerada não passa pelo worker (handleFrameReady) —
+            // sem este carimbo, a guarda de posse do fast-path derrubava o
+            // quadro do gerador (carência de 250 ms e depois PRETO fixo).
+            m_shownClipId = clip->id;
             m_shownT = srcT;
             m_shownW = decW;
             m_lastSrcT = srcT;
@@ -2286,8 +2314,13 @@ void PreviewWidget::handleFrameReady(const QString& clipId, const QString& path,
     // distante). Durante a REPRODUÇÃO exige proximidade de poucos quadros: antes
     // aceitava qualquer frame a até 1,5 s, o que fazia a tela exibir um trecho
     // errado do clipe (parecia "outro clipe") enquanto o áudio ia no lugar certo.
+    // EXCEÇÃO: o PRIMEIRO frame de um clipe NOVO (virada de corte) é aceito
+    // com a tolerância larga mesmo em reprodução — ele chega atrasado por
+    // definição (decode/open no momento da virada) e rejeitá-lo desperdiçava
+    // o decode + pedia de novo = preto prolongado e frames perdidos no corte.
+    const bool isNewClip = (m_shownClipId != clipId);
     const double wantT = clipSrcTime(*clip, m_playhead - clip->pos);
-    const double tol = m_playing ? (3.0 / std::max(1.0, projFps(m_project))) : 1.5;
+    const double tol = (m_playing && !isNewClip) ? (3.0 / std::max(1.0, projFps(m_project))) : 1.5;
     if (std::fabs(wantT - t) > tol) return;
 
     // Quantum a que o playhead (já cruzou o frame) está à frente do quadro que

@@ -159,6 +159,11 @@ protected:
     void updateFrame();
     void applyCrop();
     void applyBasicEffects(QImage& img);
+    // Quadro de mídia GERADA (solid/gradiente/checker/noise) com memo: o
+    // generatorFrame é determinístico por (mídia, w, h) e custa a geração de
+    // um quadro cheio — sem memo rodava a cada tick (topo) e a cada rebuild
+    // do composto (camadas) na UI thread.
+    QImage generatedFrameCached(const MediaItem& m, int w, int h);
     // Pedidos asíncronos de quadro: primário (clipe do topo) e camadas
     // inferiores (empilhamento multi-faixa). clipId identifica o destino.
     void requestFrame(const QString& clipId, const QString& path, double t, int maxW,
@@ -363,6 +368,7 @@ protected:
     mutable QMutex m_frameMutex;
     QVector<FrameReq> m_reqQueue;                       // fila de decodificações
     QHash<QString, LayerFrame> m_layerCache;            // clipId -> quadro inferior
+    QHash<quint64, QImage> m_genMemo;                   // mídia gerada -> quadro (auto-invalida pela chave)
     PrefetchFrame m_prefetch;
     bool m_workerBusy = false;
     // Requisição atualmente em decodificação na thread do worker (para a UI
@@ -379,11 +385,11 @@ protected:
     // de outro clipe na virada de corte: "a imagem congela/puxa animação
     // de clipes").
     QString m_shownClipId;
-    // Carência na virada do corte: por ~250 ms após o clipe do topo mudar,
+    // Carência na virada do corte: por ~700 ms após o clipe do topo mudar,
     // o último quadro (do clipe ANTERIOR, transform neutro) continua na tela
-    // enquanto o frame0 do clipe novo decodifica — sem isto, o monitor ficava
-    // PRETO em todo corte cujo decode não chega no mesmo tick (open frio,
-    // disco lento). Após a carência, fundo honesto até o frame chegar.
+    // enquanto o frame0 do clipe novo decodifica (sem isto, o monitor ficava
+    // PRETO em todo corte com decode não instantâneo — open frio ~1,3 s).
+    // Após a carência, fundo honesto até o frame chegar.
     QElapsedTimer m_cutGrace;
     QString m_graceTopId;
     // true quando o quadro exibido do TOPO veio pronto da thread do worker
