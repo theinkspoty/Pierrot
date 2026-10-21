@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="imagens/pierrot.png" alt="Pierrot" width="110">
+  <img src="imagens/pierrot.png" alt="Pierrot" width="180">
 
   # Pierrot
   **0.8 alpha**
