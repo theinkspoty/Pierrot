@@ -38,15 +38,19 @@ de desempenho/robustez. Naipe continua **alpha**.
   `generatedFrameCached`: o `generatorFrame` (quadro cheio, UI thread)
   rodava a CADA tick no topo e a CADA rebuild do composto nas camadas —
   agora é memoizado por (id, tipo, cores, células, tamanho) — editar
-  qualquer parâmetro invalida sozinho.
-- **Carência do corte 250 → 700 ms** — cobre o open frio típico (~1,3 s
-  só com prefetch falho); antes disso, o preto aparecia em todo corte com
-  decode não instantâneo.
+  qualquer parâmetro invalida sozinho — com teto de 64 entradas (poda total
+  ao estourar; evita acúmulo de quadros cheios na sessão).
+- **Carência do corte: condição de estado, não prazo** — a janela de 250 ms
+  virou "segura o último quadro ENQUANTO o primeiro do clipe novo não chega,
+  com teto de segurança de 700 ms" (rede contra decode que falhou de vez).
+  O corte fecha quando o frame chega, não no relógio: some o preto em todo
+  corte com decode não instantâneo, sem prometer cobertura de pior caso.
 - **Primeiro frame de clipe NOVO nunca é rejeitado em reprodução** — a
   tolerância de 3 frames (`handleFrameReady`) jogava fora o frame0 atrasado
   da virada (ele CHEGA atrasado por definição) e pedia decode de novo =
-  preto prolongado + frames perdidos. Agora só clipes já exibidos usam a
-  tolerância estrita; clipes novos aceitam até 1,5 s (mesma do scrub).
+  preto prolongado + frames perdidos. Clipes novos aceitam uma tolerância
+  própria de 0,5 s (limitada: o começo atrasado do clipe certo é melhor que
+  preto, mas nunca se exibe um trecho muito distante, como no antigo 1,5 s).
 
 ### Preview — preto na virada do corte (carência de 250 ms)
 

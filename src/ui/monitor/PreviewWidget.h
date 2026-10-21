@@ -385,11 +385,12 @@ protected:
     // de outro clipe na virada de corte: "a imagem congela/puxa animação
     // de clipes").
     QString m_shownClipId;
-    // Carência na virada do corte: por ~700 ms após o clipe do topo mudar,
-    // o último quadro (do clipe ANTERIOR, transform neutro) continua na tela
-    // enquanto o frame0 do clipe novo decodifica (sem isto, o monitor ficava
-    // PRETO em todo corte com decode não instantâneo — open frio ~1,3 s).
-    // Após a carência, fundo honesto até o frame chegar.
+    // Carência na virada do corte: enquanto o clipe do topo é NOVO e o worker
+    // ainda não entregou o primeiro quadro dele (m_shownClipId != clip->id), o
+    // último quadro (do clipe ANTERIOR, transform neutro) continua na tela — o
+    // corte fecha quando o frame chega, não no relógio. O teto (~700 ms) é só
+    // rede de segurança contra decode que falhou de vez; sem ele o monitor
+    // ficava PRETO em todo corte com decode não instantâneo (open frio ~1,3 s).
     QElapsedTimer m_cutGrace;
     QString m_graceTopId;
     // true quando o quadro exibido do TOPO veio pronto da thread do worker
@@ -404,6 +405,7 @@ protected:
     // latência "apertar play -> 1º quadro na tela" (log com PIERROT_PLAY_DEBUG).
     qint64 m_playStartNs = 0;
     QString m_profTopClipId;   // clipe do topo no tick anterior (detecta corte)
+    QString m_dbgLastTopId;    // idem, para o log de corte sem prefetch (playDbg)
     struct PerfDbg {
         qint64 seekMs = 0;      // applySeek() dentro do tick
         qint64 prefetchMs = 0;  // updatePrefetch() dentro do tick

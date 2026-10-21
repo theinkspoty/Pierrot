@@ -751,13 +751,17 @@ void PreviewWidget::renderFrame(QPainter& p) {
     } else {
         m_graceTopId.clear();
     }
-    // true enquanto o frame exibido ainda é o do clipe ANTERIOR e a carência
-    // do corte não expirou (mostra o último quadro com transform neutro em
-    // vez de preto — padrão de todo NLE). 700 ms cobrem o open frio típico
-    // (~1,3 s pior caso só com prefetch falho); além disso, fundo honesto.
+    // Carência do corte: é uma CONDIÇÃO DE ESTADO, não um prazo. Enquanto o
+    // topo é um clipe novo e o worker ainda não entregou o primeiro quadro dele
+    // (m_shownClipId != clip->id), seguramos o último quadro do clipe anterior
+    // com transform neutro — o corte "fecha" quando o frame chega, não quando o
+    // relógio anda. O teto kCutGraceCeilingMs é só rede de segurança: se o
+    // decode falhar de vez (arquivo corrompido, disco morto), não deixamos o
+    // quadro velho preso para sempre — depois do teto, fundo honesto.
+    constexpr int kCutGraceCeilingMs = 700;
     const bool cutGrace = clip && !clip->isText && !m_shownClipId.isEmpty()
                           && m_shownClipId != clip->id
-                          && m_cutGrace.isValid() && m_cutGrace.elapsed() < 700;
+                          && m_cutGrace.isValid() && m_cutGrace.elapsed() < kCutGraceCeilingMs;
 
     const double S = clip ? kfValue(clip->kfScale, clip->scale, m_playhead - clip->pos) : 1.0;
     const double SX = clip ? kfValue(clip->kfScaleX, clip->scaleX, m_playhead - clip->pos) : 1.0;
@@ -917,7 +921,7 @@ void PreviewWidget::renderFrame(QPainter& p) {
             L.mode = mode;
             layers.append(L);
             if (composeDbg())
-                qDebug() << "[compose] tr=" << tr
+                qDebug() << "[compose] t=" << m_playhead << "tr=" << tr
                          << "clip=" << (c->name.isEmpty() ? c->id : c->name)
                          << "top=" << (topClip && c->id == topClip->id);
         }
@@ -928,10 +932,11 @@ void PreviewWidget::renderFrame(QPainter& p) {
             int cornerA = -1;
             if (!L.frame.isNull() && L.frame.width() > 2 && L.frame.height() > 2)
                 cornerA = L.frame.pixelColor(1, 1).alpha();
-            qDebug() << "  [compose] layer " << L.frame.width() << "x" << L.frame.height()
+            qDebug() << "  [compose] t=" << m_playhead << "layer " << L.frame.width() << "x" << L.frame.height()
                      << "alpha=" << L.alpha << "cornerA=" << cornerA << "mode=" << (int)L.mode;
         }
-        qDebug() << "  [compose] total=" << layers.size() << "m_frameNull=" << m_frame.isNull();
+        qDebug() << "  [compose] t=" << m_playhead << "total=" << layers.size()
+                 << "m_frameNull=" << m_frame.isNull();
     }
 
     if (m_frame.isNull() && layers.isEmpty() && !anyText) {
@@ -1632,6 +1637,13 @@ QImage PreviewWidget::generatedFrameCached(const MediaItem& m, int w, int h) {
     const auto it = m_genMemo.constFind(key);
     if (it != m_genMemo.constEnd()) return it.value();
     QImage img = generatorFrame(m, w, h);
+    // Teto: cada entrada é um quadro CHEIO; editar um gradiente ou redimensionar
+    // a janela gera chaves novas em série. Sem poda, a sessão acumularia
+    // quadros indefinidamente. É memo de conveniência (reconstruir custa um
+    // generatorFrame), então limpar o cache inteiro ao passar do teto é
+    // aceitável — mantém o pico de memória limitado.
+    constexpr int kGenMemoMax = 64;
+    if (m_genMemo.size() >= kGenMemoMax) m_genMemo.clear();
     m_genMemo.insert(key, img);
     return img;
 }
@@ -1934,6 +1946,23 @@ void PreviewWidget::updateFrame() {
             update();
         }
     }
+    // Diagnóstico do engasgo no corte: o clipe do topo mudou e o frame0 pront o
+    // do prefetch NÃO foi usado — o corte vai pagar decode (idealmente quente no
+    // pool, mas frio se o prefetch foi descartado atrás). Só em PIERROT_PLAY_DEBUG.
+    if (playDbg() && !usedPrefetch && clip && clip->id != m_dbgLastTopId) {
+        m_dbgLastTopId = clip->id;
+        bool req = false, valid = false, invoked = false;
+        {
+            QMutexLocker l(&m_frameMutex);
+            req = m_prefetch.requested;
+            valid = m_prefetch.valid;
+            invoked = m_prefetch.invoked;
+        }
+        qDebug().noquote()
+            << QStringLiteral("[play] CORTE sem prefetch pronto (requested=%1 valid=%2 invoked=%3) t=%4")
+                   .arg(req).arg(valid).arg(invoked)
+                   .arg(m_playhead, 0, 'f', 3);
+    }
 
     // O quadro do tamanho/posição atuais já está pronto? Apenas reaplica o
     // pan/crop (por exemplo quando só o corte mudou) sem decodificar de novo.
@@ -2192,14 +2221,26 @@ void PreviewWidget::kickFrameWorker() {
 
     // 2) Camadas inferiores → worker DEDICADO (H3), em paralelo com o topo.
     if (!m_layerBusy && m_layerWorker && !m_reqQueue.isEmpty()) {
-        const FrameReq r = m_reqQueue.takeFirst();
-        m_layerBusy = true;
-        m_layerInflight = r;
-        m_hasLayerInflight = true;
-        QMetaObject::invokeMethod(m_layerWorker, "decodeOne", Qt::QueuedConnection,
-                                  Q_ARG(QString, r.clipId), Q_ARG(QString, r.path),
-                                  Q_ARG(double, r.t), Q_ARG(int, r.maxW),
-                                  Q_ARG(double, r.dt), Q_ARG(FrameFx, r.fx));
+        // Só pedidos de CAMADA: o primeiro da fila pode ser um pedido do TOPO
+        // (o worker principal estava ocupado e o pedido ficou na fila) —
+        // mandá-lo para o worker de camadas gasta o slot do dedicado num frame
+        // que já tem dono e ATRASA a entrega da camada de verdade: com o topo
+        // lento (animação/efeitos/cena pesada) os clipes de baixo ficavam sem
+        // quadro — "não reproduzidos" enquanto o topo estava animado.
+        int idx = -1;
+        for (int i = 0; i < m_reqQueue.size(); ++i) {
+            if (!top || m_reqQueue[i].clipId != top->id) { idx = i; break; }
+        }
+        if (idx >= 0) {
+            const FrameReq r = m_reqQueue.takeAt(idx);
+            m_layerBusy = true;
+            m_layerInflight = r;
+            m_hasLayerInflight = true;
+            QMetaObject::invokeMethod(m_layerWorker, "decodeOne", Qt::QueuedConnection,
+                                      Q_ARG(QString, r.clipId), Q_ARG(QString, r.path),
+                                      Q_ARG(double, r.t), Q_ARG(int, r.maxW),
+                                      Q_ARG(double, r.dt), Q_ARG(FrameFx, r.fx));
+        }
     }
 }
 
@@ -2314,13 +2355,19 @@ void PreviewWidget::handleFrameReady(const QString& clipId, const QString& path,
     // distante). Durante a REPRODUÇÃO exige proximidade de poucos quadros: antes
     // aceitava qualquer frame a até 1,5 s, o que fazia a tela exibir um trecho
     // errado do clipe (parecia "outro clipe") enquanto o áudio ia no lugar certo.
-    // EXCEÇÃO: o PRIMEIRO frame de um clipe NOVO (virada de corte) é aceito
-    // com a tolerância larga mesmo em reprodução — ele chega atrasado por
-    // definição (decode/open no momento da virada) e rejeitá-lo desperdiçava
-    // o decode + pedia de novo = preto prolongado e frames perdidos no corte.
+    // EXCEÇÃO (virada de corte): o PRIMEIRO frame de um clipe NOVO chega
+    // atrasado por definição (decode/open no momento da virada) e rejeitá-lo
+    // desperdiçava o decode + pedia de novo = preto prolongado e frames
+    // perdidos no corte. Aceitamos com uma tolerância própria, maior, porém
+    // LIMITADA (kFirstFrameTolS): exibir o começo do clipe certo um pouco
+    // atrasado é melhor que preto, mas nunca seguramos um trecho muito distante
+    // (o antigo 1,5 s mostrava conteúdo visivelmente fora de sincronia).
     const bool isNewClip = (m_shownClipId != clipId);
+    constexpr double kFirstFrameTolS = 0.5;
     const double wantT = clipSrcTime(*clip, m_playhead - clip->pos);
-    const double tol = (m_playing && !isNewClip) ? (3.0 / std::max(1.0, projFps(m_project))) : 1.5;
+    const double tol = isNewClip
+        ? std::max(kFirstFrameTolS, 3.0 / std::max(1.0, projFps(m_project)))
+        : (m_playing ? (3.0 / std::max(1.0, projFps(m_project))) : 1.5);
     if (std::fabs(wantT - t) > tol) return;
 
     // Quantum a que o playhead (já cruzou o frame) está à frente do quadro que
