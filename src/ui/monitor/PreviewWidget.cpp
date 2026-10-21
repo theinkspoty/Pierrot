@@ -796,18 +796,24 @@ void PreviewWidget::renderFrame(QPainter& p) {
         qp.restore();
     };
 
-    // Uma camada de vídeo pronta para desenhar (na ordem de baixo para cima).
+    // Uma camada pronta para desenhar (na ordem de baixo para cima). `text`
+    // marca camadas de TEXTO: ficam na posição da faixa na pilha (um texto
+    // numa faixa baixa fica POR BAIXO do vídeo das faixas de cima) e são
+    // desenhadas sempre em SourceOver.
     struct Layer {
         QImage frame;
         double s = 1.0, sX = 1.0, sY = 1.0, rot = 0.0, x = 0.0, y = 0.0;
         double alpha = 1.0, ox = 0.0, oy = 0.0;
         QPainter::CompositionMode mode = QPainter::CompositionMode_SourceOver;
+        const Clip* text = nullptr;
     };
     QVector<Layer> layers;
 
     // Monta o empilhamento: todas as faixas de vídeo (a faixa 0 é o TOPO), de
-    // baixo para cima. Cada faixa contribui com o clipe ativo no playhead.
-    // Clipes de texto independentes entram depois (desenhados por cima).
+    // baixo para cima. Cada faixa contribui com o clipe de mídia ativo e com o
+    // clipe de TEXTO ativo, NESTA ordem dentro da faixa — o texto respeita a
+    // hierarquia das faixas (antes todos os textos eram desenhados por cima de
+    // TUDO, no fim, ignorando a ordem das faixas).
     {
         const Clip* topClip = clip;
         for (int tr = (int)m_project->videoTracks.size() - 1; tr >= 0; --tr) {
@@ -822,9 +828,11 @@ void PreviewWidget::renderFrame(QPainter& p) {
                         c = &cl;
                 }
             }
-            if (!c) continue;
             const QPainter::CompositionMode mode = blendModeToQt(t.blendMode);
 
+            // ── Camada de mídia da faixa (lambda: os `continue` viram
+            // `return` — o texto da faixa é empilhado mesmo sem mídia) ──
+            const auto addMediaLayer = [&]() {
             // Quadro deste clipe: vídeo normal
             QImage clipFrame;
             if (topClip && c->id == topClip->id) {
@@ -846,10 +854,10 @@ void PreviewWidget::renderFrame(QPainter& p) {
                     QMutexLocker l(&m_frameMutex);
                     clipFrame = m_layerCache.value(c->id).img;
                 }
-                if (clipFrame.isNull()) continue;
+                if (clipFrame.isNull()) return;
             } else {
                 const MediaItem* mm = m_project->findMedia(c->mediaId);
-                if (!mm || !mm->hasVideo) continue;
+                if (!mm || !mm->hasVideo) return;
                 if (mm->isSolid) {
                     // Mídia gerada: gera no tamanho natural, sem passar de uma
                     // vez pela resolução exibida (não borra e não estoura 4K
@@ -880,11 +888,11 @@ void PreviewWidget::renderFrame(QPainter& p) {
                         QMutexLocker l(&m_frameMutex);
                         clipFrame = m_layerCache.value(c->id).img;
                     }
-                    if (clipFrame.isNull()) continue;
+                    if (clipFrame.isNull()) return;
                 }
             }
 
-            if (clipFrame.isNull()) continue;
+            if (clipFrame.isNull()) return;
 
             // Transição (mesma faixa): o clipe de trás por baixo
             if (topClip && c->id == topClip->id && m_transAlpha >= 0.0 && !m_underFrame.isNull()) {
@@ -924,11 +932,43 @@ void PreviewWidget::renderFrame(QPainter& p) {
                 qDebug() << "[compose] t=" << m_playhead << "tr=" << tr
                          << "clip=" << (c->name.isEmpty() ? c->id : c->name)
                          << "top=" << (topClip && c->id == topClip->id);
+
+            // Texto ANEXADO a este clipe de vídeo: acima do próprio clipe,
+            // abaixo das faixas de cima (antes era desenhado no fim, por
+            // cima de tudo, ignorando a hierarquia).
+            const TextStyle* ats = m_project->textStyleFor(*c);
+            if (ats && !ats->isEmpty()) {
+                Layer T;
+                T.text = c;
+                layers.append(T);
+            }
+            };
+            if (c) addMediaLayer();
+
+            // ── Texto INDEPENDENTE da faixa (clipe isText ativo) ──
+            // O de pos mais tarde da faixa (mesmo critério do passo antigo).
+            const Clip* tclip = nullptr;
+            for (const Clip& cl : t.clips)
+                if (cl.isText && m_playhead >= cl.pos && m_playhead < cl.pos + cl.dur)
+                    if (!tclip || cl.pos > tclip->pos) tclip = &cl;
+            if (tclip) {
+                Layer T;
+                T.text = tclip;
+                layers.append(T);
+                if (composeDbg())
+                    qDebug() << "[compose] t=" << m_playhead << "tr=" << tr
+                             << "text=" << (tclip->name.isEmpty() ? tclip->id : tclip->name);
+            }
         }
     }
 
     if (composeDbg()) {
         for (const Layer& L : layers) {
+            if (L.text) {
+                qDebug() << "  [compose] t=" << m_playhead << "layer TEXT"
+                         << (L.text->name.isEmpty() ? L.text->id : L.text->name);
+                continue;
+            }
             int cornerA = -1;
             if (!L.frame.isNull() && L.frame.width() > 2 && L.frame.height() > 2)
                 cornerA = L.frame.pixelColor(1, 1).alpha();
@@ -951,7 +991,11 @@ void PreviewWidget::renderFrame(QPainter& p) {
     // O fundo é PRETO opaco (como o ffmpeg): os modos de blend (multiply,
     // screen…) produzem o mesmo resultado da exportação, e não dependem do
     // fundo do monitor.
-    if (layers.size() >= 2 || (m_frame.isNull() && !layers.isEmpty())) {
+    // Composite com texto: qualquer texto ativo força o caminho do composto
+    // (os textos agora são camadas da pilha, na ordem das faixas — o caminho
+    // rápido não tem hierarquia de faixas).
+    if (layers.size() >= 2 || anyText
+        || (m_frame.isNull() && !layers.isEmpty())) {
         // Cache: reutiliza se playhead EXATO, índice, camadas e canvas não
         // mudaram. O playhead exato é chave obrigatória: kfValue (opacidade,
         // transform, texto) é avaliado no playhead de cada paint — sem isso,
@@ -990,32 +1034,20 @@ void PreviewWidget::renderFrame(QPainter& p) {
         const double cx = acc.width() / 2.0;
         const double cy = acc.height() / 2.0;
         for (const Layer& L : layers) {
-            if (L.frame.isNull()) continue;
             QPainter ap(&acc);
             ap.setClipRect(QRect(0, 0, acc.width(), acc.height()));
+            if (L.text) {
+                // Texto na posição da hierarquia da faixa — sempre SourceOver
+                // (o modo de composição não se aplica a texto).
+                ap.setCompositionMode(QPainter::CompositionMode_SourceOver);
+                drawClipText(ap, acc.rect(), L.text, k);
+                continue;
+            }
+            if (L.frame.isNull()) continue;
             ap.setCompositionMode(L.mode);
             drawLayer(ap, L.frame, L.s, L.rot, L.x, L.y, L.alpha, L.sX, L.sY, k, cx, cy,
                       QRect(0, 0, acc.width(), acc.height()), L.ox, L.oy);
         }
-        // Texto sempre em SourceOver (o modo de composição da última camada
-        // não pode vazar para o texto).
-        QPainter ap(&acc);
-        ap.setClipRect(QRect(0, 0, acc.width(), acc.height()));
-        ap.setCompositionMode(QPainter::CompositionMode_SourceOver);
-        // Texto (independente e anexado) por cima das camadas.
-        if (m_project) {
-            for (int tr = (int)m_project->videoTracks.size() - 1; tr >= 0; --tr) {
-                if (!m_project->videoTracks[tr].visible) continue;   // faixa oculta (olho)
-                const Clip* tclip = nullptr;
-                for (const Clip& c : m_project->videoTracks[tr].clips)
-                    if (c.isText && m_playhead >= c.pos && m_playhead < c.pos + c.dur)
-                        if (!tclip || c.pos > tclip->pos) tclip = &c;
-                if (tclip) drawClipText(ap, acc.rect(), tclip, k);
-            }
-        }
-        if (clip && !clip->isText)
-            drawClipText(ap, acc.rect(), clip, k);
-        ap.end();
         m_compositedEpoch = m_currentFrameIndex;
         m_compositedPlayhead = m_playhead;
         m_compositedLayerCount = layers.size();
@@ -1078,23 +1110,9 @@ void PreviewWidget::renderFrame(QPainter& p) {
                       canvas.center().x(), canvas.center().y(), canvas);
         }
     }
-
-    // Clipes de texto independentes: desenha todos os ativos no playhead, da
-    // faixa de baixo para a de cima (a faixa 0 é o topo e fica por cima).
-    if (m_project) {
-        for (int tr = (int)m_project->videoTracks.size() - 1; tr >= 0; --tr) {
-            const Track& tv = m_project->videoTracks[tr];
-            if (!tv.visible) continue;   // faixa oculta (olho)
-            const Clip* tclip = nullptr;
-            for (const Clip& c : tv.clips)
-                if (c.isText && m_playhead >= c.pos && m_playhead < c.pos + c.dur)
-                    if (!tclip || c.pos > tclip->pos) tclip = &c;
-            if (tclip) drawClipText(p, canvas, tclip, k);
-        }
-    }
-    // Texto anexado a um clipe de vídeo (comportamento antigo) ainda vale.
-    if (clip && !clip->isText)
-        drawClipText(p, canvas, clip, k);
+    // Texto: qualquer texto ativo força o caminho do composto (acima) — lá os
+    // textos são camadas na ordem das faixas. O caminho rápido só roda sem
+    // texto, então não há bloco de texto aqui.
 
     // Overlay de edição de máscara (formas + alças do clipe sob edição).
     // (A margem de segurança saiu daqui: os caminhos do composto retornam

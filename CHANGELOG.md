@@ -29,6 +29,17 @@ de desempenho/robustez. Naipe continua **alpha**.
 - `PacketReader.cpp` entrou nas fontes de todos os testes que compilam o
   motor diretamente (CMakeLists).
 
+### Preview — textos respeitam a hierarquia das faixas
+
+- **Textos entraram na pilha de camadas** — antes eram desenhados num passo
+  separado, POR CIMA de todas as faixas, ignorando a ordem: um texto numa
+  faixa baixa cobria o vídeo das faixas de cima. Agora cada faixa
+  contribui, de baixo para cima, com: clipe de mídia → texto ANEXADO ao
+  clipe → texto INDEPENDENTE da faixa; e todo texto ativo força o caminho
+  do composto (o rápido não tem hierarquia). Texto continua sempre em
+  SourceOver. Validação: projeto com texto embaixo + vídeo em cima loga a
+  ordem [TEXT, vídeo] no PIERROT_COMPOSE_DEBUG.
+
 ### Pipeline — prefetch de frame0 latest-wins (sem descarte)
 
 - **Pedido de frame0 durante prefetch em voo NÃO é mais descartado** — vira
