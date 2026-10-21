@@ -1,10 +1,17 @@
-# Pierrot v0.8 alpha
+<div align="center">
+  <img src="imagens/pierrot.png" alt="Pierrot" width="110">
+
+  # Pierrot
+  **0.8 alpha**
+
+  Editor de vídeo simples para Linux — workflow rápido, sem complexidade.
+</div>
 
 > **Este app é para uso pessoal.** Não é ambicioso nem quer substituir nenhum
 > software — o foco é o meu próprio uso: um workflow estável que eu conheço do
 > **Windows**, agora no **Linux**.
 
-Editor de vídeo simples — O estilo vem do **Sony Vegas Pro** e **Final Cut Express (2003)**,
+O estilo vem do **Sony Vegas Pro** e **Final Cut Express (2003)**,
 desenvolvido **exclusivamente para Linux**, escrito em
 **C++** com **Qt Widgets** e **FFmpeg** (decodificação em processo + exportação via CLI).
 
