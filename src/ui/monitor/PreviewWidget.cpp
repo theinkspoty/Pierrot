@@ -739,6 +739,22 @@ void PreviewWidget::renderFrame(QPainter& p) {
     // adicionar um keyframe de transform nunca muda o tamanho do vídeo.
     const Clip* clip = clipAt(m_playhead);
 
+    // Carência do corte: a janela reinicia quando o clipe do topo muda.
+    if (clip) {
+        if (clip->id != m_graceTopId) {
+            m_graceTopId = clip->id;
+            m_cutGrace.start();
+        }
+    } else {
+        m_graceTopId.clear();
+    }
+    // true enquanto o frame exibido ainda é o do clipe ANTERIOR e a carência
+    // do corte não expirou (mostra o último quadro com transform neutro em
+    // vez de preto — padrão de todo NLE).
+    const bool cutGrace = clip && !clip->isText && !m_shownClipId.isEmpty()
+                          && m_shownClipId != clip->id
+                          && m_cutGrace.isValid() && m_cutGrace.elapsed() < 250;
+
     const double S = clip ? kfValue(clip->kfScale, clip->scale, m_playhead - clip->pos) : 1.0;
     const double SX = clip ? kfValue(clip->kfScaleX, clip->scaleX, m_playhead - clip->pos) : 1.0;
     const double SY = clip ? kfValue(clip->kfScaleY, clip->scaleY, m_playhead - clip->pos) : 1.0;
@@ -804,9 +820,16 @@ void PreviewWidget::renderFrame(QPainter& p) {
             // Quadro deste clipe: vídeo normal
             QImage clipFrame;
             if (topClip && c->id == topClip->id) {
-                QMutexLocker l(&m_frameMutex);
-                if (!m_frame.isNull()) {
-                    clipFrame = m_frame;
+                // Posse + carência: só usa m_frame se o topo é o dono ou a
+                // carência do corte ainda segura o último quadro do clipe
+                // anterior (sem isto, a camada do topo sumia no corte e o
+                // composite mostrava preto até o decode chegar).
+                const bool owned = (m_shownClipId == c->id);
+                if (owned || cutGrace) {
+                    QMutexLocker l(&m_frameMutex);
+                    if (!m_frame.isNull()) {
+                        clipFrame = m_frame;
+                    }
                 }
             } else if (isMesaTrack) {
                 // Track Mesa em layers inferiores: frame já renderizado pelo
@@ -1010,11 +1033,18 @@ void PreviewWidget::renderFrame(QPainter& p) {
     clipAlpha *= clipTrackOpacity;
     // Posse do quadro: m_frame só é desenhado quando o clipe do topo é o DONO
     // (mesmo clipId que o worker entregou). Na virada de corte, até o decode
-    // do clipe novo chegar, m_frame ainda é o frame do clipe ANTIGO —
-    // desenhá-lo por cima mostrava conteúdo de outro clipe no lugar da
-    // imagem/texto da posição (" congela e puxa animação de clipes").
+    // do clipe novo chegar, m_frame ainda é o frame do clipe ANTIGO — sem a
+    // carência abaixo, o monitor ficava preto; com ela, o último quadro é
+    // segurado por ~250 ms com transform neutro.
     const QImage& singleFrame = m_frame;
     const bool frameOwned = clip && !clip->isText && m_shownClipId == clip->id;
+    // Carência do corte: segura o último quadro do clipe anterior (transform
+    // neutro) enquanto o frame0 do novo decodifica — evita o PRETO em toda
+    // virada de corte com decode não instantâneo.
+    if (!singleFrame.isNull() && !frameOwned && cutGrace) {
+        drawLayer(p, singleFrame, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, k,
+                  canvas.center().x(), canvas.center().y(), canvas);
+    }
     const bool transActive = m_transAlpha >= 0.0
                              && !singleFrame.isNull() && !m_underFrame.isNull();
     if (!singleFrame.isNull() && frameOwned) {

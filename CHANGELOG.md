@@ -29,6 +29,17 @@ de desempenho/robustez. Naipe continua **alpha**.
 - `PacketReader.cpp` entrou nas fontes de todos os testes que compilam o
   motor diretamente (CMakeLists).
 
+### Preview — preto na virada do corte (carência de 250 ms)
+
+- **Último quadro segurado na carência do corte** — a correção de posse
+  (só desenhar m_frame quando o clipe do topo é o dono) trocou o "frame de
+  outro clipe" por PRETO em toda virada de corte cujo decode do clipe novo
+  não chegava no mesmo tick (open frio, disco lento = "tudo preto ao passar
+  por um corte"). Agora, por ~250 ms após o topo mudar de clipe, o último
+  quadro do clipe ANTERIOR (transform neutro) continua na tela — padrão de
+  todo NLE — tanto no caminho rápido quanto na camada do topo do composto;
+  após a carência, fundo honesto até o frame chegar.
+
 ### Preview — animação: tremida, congelamento e frame stale de outro clipe
 
 - **Cache do composto agora é chaveado pelo playhead EXATO** — a chave era o

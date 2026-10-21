@@ -379,6 +379,13 @@ protected:
     // de outro clipe na virada de corte: "a imagem congela/puxa animação
     // de clipes").
     QString m_shownClipId;
+    // Carência na virada do corte: por ~250 ms após o clipe do topo mudar,
+    // o último quadro (do clipe ANTERIOR, transform neutro) continua na tela
+    // enquanto o frame0 do clipe novo decodifica — sem isto, o monitor ficava
+    // PRETO em todo corte cujo decode não chega no mesmo tick (open frio,
+    // disco lento). Após a carência, fundo honesto até o frame chegar.
+    QElapsedTimer m_cutGrace;
+    QString m_graceTopId;
     // true quando o quadro exibido do TOPO veio pronto da thread do worker
     // (já cortado/efeituado): o caminho de "re-crop sem re-decode" não pode
     // re-aplicar applyCrop() por cima — precisa pedir um novo decode.
