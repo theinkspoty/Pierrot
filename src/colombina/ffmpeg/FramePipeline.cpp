@@ -172,10 +172,19 @@ void FramePipeline::prefetchFrame(const QString& path, double t, int maxW, doubl
     if (path.isEmpty()) return;
     {
         QMutexLocker l(&m_mutex);
-        if (m_prefetchBusy) return; // serial: um frame0 por vez
+        if (m_prefetchBusy) {
+            // Diagnóstico do engasgo no corte: um frame0 crítico foi DESCARTADO
+            // porque o prefetch anterior ainda está em voo. O chamador marca o
+            // pedido como "requested" de qualquer forma e pode não re-despachar
+            // no próximo tick — o corte então paga open/decode frio.
+            qWarning().noquote()
+                << QStringLiteral("[pipe] prefetch DESCARTADO (busy): %1 t=%2")
+                       .arg(path, QString::number(t, 'f', 3));
+            return; // serial: um frame0 por vez
+        }
         m_prefetchBusy = true;
     }
-    if (!m_started) return;
+    if (!m_started) { QMutexLocker l(&m_mutex); m_prefetchBusy = false; return; }
     QMetaObject::invokeMethod(m_worker, "decode", Qt::QueuedConnection,
                               Q_ARG(QString, path), Q_ARG(double, t),
                               Q_ARG(int, maxW), Q_ARG(double, step));
