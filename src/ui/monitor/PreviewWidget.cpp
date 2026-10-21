@@ -2369,6 +2369,16 @@ void PreviewWidget::handleFrameReady(const QString& clipId, const QString& path,
     if (PreviewProfiler::active())
         profFrame().proxy = (path != m->filePath); // o quadro exibido veio de proxy?
 
+    // Resultado de um clipe que JÁ NÃO está ativo no playhead (o corte/scrub
+    // mudou enquanto o worker decodificava): o quadro é válido para o alvo
+    // ANTIGO, não para o estado atual do monitor. O decode não se perde — o
+    // FrameCache (L4) guarda o quadro por (path, t, maxWidth) — então
+    // descartar aqui só evita lixo no cache de camadas e pinturas com
+    // conteúdo de posição vencida. (ideia da branch fix/preview-stale-frame,
+    // implementada sem destruir o arquivo 🙂)
+    if (m_playhead < clip->pos - 1e-6 || m_playhead >= clip->pos + clip->dur + 1e-6)
+        return;
+
     // Ignora quadros decodificados para outra posição (scrub/seek rápido muito
     // distante). Durante a REPRODUÇÃO exige proximidade de poucos quadros: antes
     // aceitava qualquer frame a até 1,5 s, o que fazia a tela exibir um trecho

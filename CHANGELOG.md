@@ -29,6 +29,16 @@ de desempenho/robustez. Naipe continua **alpha**.
 - `PacketReader.cpp` entrou nas fontes de todos os testes que compilam o
   motor diretamente (CMakeLists).
 
+### Preview — descarta resultado de worker para clipe já inativo
+
+- **Resultados obsoletos do worker são rejeitados no handleFrameReady** —
+  um frame entregue depois que o playhead saiu do clipe (corte/scrub no
+  meio do decode) era válido para o alvo ANTIGO; agora é descartado (o
+  FrameCache L4 guarda o decode por path/t/maxWidth — nada se perde).
+  Evita lixo no cache de camadas e pinturas com conteúdo de posição
+  vencida. (Ideia da branch `fix/preview-stale-frame` — cujo commit
+  apagava o PreviewWidget.cpp inteiro; reimplementada limpa no main.)
+
 ### Preview — textos respeitam a hierarquia das faixas
 
 - **Textos entraram na pilha de camadas** — antes eram desenhados num passo
