@@ -55,6 +55,24 @@ struct DecodeOptions {
     bool hardwareAllowed = true;
 };
 
+// L3 — desfecho de um pedido de quadro. "Falha é tipo, não silêncio"
+// (invariante 3): a imagem nula sozinha confundia cancelamento, fim de arquivo
+// e erro. Este enum dá nome ao que aconteceu, sem vazar o FFmpeg.
+enum class DecodeStatus {
+    Ok,        // imagem decodificada neste pedido
+    Eof,       // fim da mídia, sem novo quadro
+    Cancelled, // pedido abortado pelo token de cancelamento
+    Error      // falha de decode/leitura, sem imagem a entregar
+};
+
+// L3 — resultado de um pedido tipado: a imagem (nula quando não há o que
+// exibir) e o porquê. `frame()` (compat) devolve só a imagem; `frameDecoded()`
+// devolve este par para quem precisa distinguir os desfechos.
+struct DecodedFrame {
+    QImage image;
+    DecodeStatus status = DecodeStatus::Error;
+};
+
 class Decoder {
 public:
     Decoder();
@@ -82,6 +100,13 @@ public:
     // devolve imagem nula; o progresso é preservado para o próximo pedido.
     QImage frame(double tAbsoluteSec, int maxWidth = 0,
                  const std::atomic<bool>* cancel = nullptr);
+
+    // Variante tipada (§8.3): mesmo decode, mas devolve também o DESFECHO
+    // (Ok/Eof/Cancelled/Error) — quem precisa reagir a "acabou" ou "cancelado"
+    // não fica adivinhando a partir da imagem nula. `frame()` é o atalho
+    // quando só a imagem importa.
+    DecodedFrame frameDecoded(double tAbsoluteSec, int maxWidth = 0,
+                              const std::atomic<bool>* cancel = nullptr);
 
     // Áudio: PCM interleaved S16, 48 kHz estéreo.
     bool   seekAudio(double tAbsoluteSec);

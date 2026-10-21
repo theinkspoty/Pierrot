@@ -55,6 +55,22 @@ QImage Decoder::frame(double tAbsoluteSec, int maxWidth,
     return d->engine.frameAt(tAbsoluteSec, maxWidth, cancel);
 }
 
+DecodedFrame Decoder::frameDecoded(double tAbsoluteSec, int maxWidth,
+                                   const std::atomic<bool>* cancel) {
+    // Traduz o desfecho do motor (FFmpegDecoder::FrameResult) para o público
+    // (DecodeStatus) — 1:1, sem vazar o FFmpeg para a superfície congelada.
+    FFmpegDecoder::FrameResult r = FFmpegDecoder::FrameResult::Error;
+    DecodedFrame out;
+    out.image = d->engine.frameAt(tAbsoluteSec, maxWidth, cancel, &r);
+    switch (r) {
+    case FFmpegDecoder::FrameResult::Ok:        out.status = DecodeStatus::Ok; break;
+    case FFmpegDecoder::FrameResult::Eof:       out.status = DecodeStatus::Eof; break;
+    case FFmpegDecoder::FrameResult::Cancelled: out.status = DecodeStatus::Cancelled; break;
+    case FFmpegDecoder::FrameResult::Error:     out.status = DecodeStatus::Error; break;
+    }
+    return out;
+}
+
 bool Decoder::seekAudio(double tAbsoluteSec) {
     d->engine.seekAudio(tAbsoluteSec);
     return true;

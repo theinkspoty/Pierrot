@@ -93,8 +93,20 @@ public:
     // devolve QImage nula — o progresso já decodificado é preservado, então o
     // próximo frameAt continua de onde paramos (ou faz seek, se o alvo exigir).
     // Lido de outra thread: só std::atomic<bool>, nunca tocado sob m_mutex.
+    //
+    // `status`, se dado, recebe o DESFECHO tipado (§8.3, invariante 3): distingue
+    // "decodificou" de "acabou" (Eof), "cancelado" (Cancelled) e "erro sem
+    // recuperação" (Error). Sem isto o chamador só via QImage nula e não sabia
+    // qual dos três aconteceu. Opcional para não mexer nos call sites existentes.
+    enum class FrameResult {
+        Ok,        // quadro decodificado neste pedido
+        Eof,       // fim do arquivo, sem novo quadro
+        Cancelled, // pedido abortado pelo token de cancelamento
+        Error      // falha de decode/leitura sem quadro para entregar
+    };
     QImage frameAt(double seconds, int maxWidth = 0,
-                   const std::atomic<bool>* cancel = nullptr);
+                   const std::atomic<bool>* cancel = nullptr,
+                   FrameResult* status = nullptr);
 
     // Libera os buffers de quadros decodificados (DPB do codec e o último
     // quadro em memória) sem fechar o arquivo. Depois de uma decodificação

@@ -103,8 +103,17 @@ de desempenho/robustez. Naipe continua **alpha**.
   Consumidores incluem `laartman/core/…` hoje; o alvo é todos usarem só a
   fachada da raiz (migração de call sites pendente).
 
-### DecoderMetrics (§8.5)
+### Erro tipado (§8.3)
 
+- **`frame()` deixa de ser ambíguo** — a imagem nula confundia três coisas:
+  cancelamento, fim de arquivo e erro. Nova variante `Decoder::frameDecoded()`
+  devolve o par `{QImage, DecodeStatus}` (Ok/Eof/Cancelled/Error), sem vazar o
+  FFmpeg para a superfície congelada. O motor (`FFmpegDecoder::frameAt`) ganhou
+  um out-param opcional `FrameResult*` que a fachada traduz 1:1; os call sites
+  existentes não mudam (o parâmetro tem default). `frame()` continua como
+  atalho. Teste `typedFrameReportsStatus` cobre Ok/Cancelled/Error.
+
+### DecoderMetrics (§8.5)
 - **Instrumentação fora da superfície pública do núcleo** — os contadores de
   open/seek/discard/work eram `static` públicos do `FFmpegDecoder` (estado
   GLOBAL mutável exposto pelo núcleo, contra o invariante 2 do plano v0.4).

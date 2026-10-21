@@ -86,8 +86,11 @@ int64_t FFmpegDecoder::frameCacheIndex(double t) const {
 // Os contadores vivem em DecoderMetrics (core/DecoderMetrics.h), não mais como
 // estáticos públicos do núcleo (§8.5).
 
-QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bool>* cancel) {
+QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bool>* cancel,
+                              FrameResult* status) {
     QMutexLocker locker(&m_mutex);
+    FrameResult st = FrameResult::Error; // pessimista; cada retorno ajusta
+    auto setStatus = [status, &st]() { if (status) *status = st; };
     // Mede o tempo REAL gasto dentro de frameAt (excluindo a espera pelo
     // lock, que pertence à "fila"). decWorkNs era lida pelo profiler
     // (PreviewWidget → decWorkNs/dwork) mas nunca era escrita: o dwork do
@@ -103,7 +106,12 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
         std::chrono::steady_clock::time_point t0;
     } workTimer;
     QImage result;
-    if (m_stream < 0 || (!m_reader && !m_demuxer->isOpen())) return result;
+    if (m_stream < 0 || (!m_reader && !m_demuxer->isOpen())) {
+        // Sem stream / não aberto: não é "acabou", é estado inválido.
+        st = FrameResult::Error;
+        setStatus();
+        return result;
+    }
 
     // Cancelamento cooperativo (Fase 3): a UI marca o token quando um alvo novo
     // supera este decode (scrub, seek, ou corte para outro clipe). Abortamos só
@@ -194,13 +202,19 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
                 dh = qMax(2, sh * dw / sw);
                 if (dh & 1) dh += 1;
             }
-            if (dw != sw || dh != sh)
-                return m_imageCache.scaled(dw, dh, Qt::IgnoreAspectRatio,
-                                           Qt::FastTransformation);
+            if (dw != sw || dh != sh) {
+                QImage img = m_imageCache.scaled(dw, dh, Qt::IgnoreAspectRatio,
+                                                 Qt::FastTransformation);
+                st = img.isNull() ? FrameResult::Error : FrameResult::Ok;
+                setStatus();
+                return img;
+            }
+            st = FrameResult::Ok;
+            setStatus();
             return m_imageCache;
         }
         // Fallback FFmpeg (ex.: SVG sem plugin Qt correspondente).
-        if (!cc || !m_pkt || !m_frame) return result;
+        if (!cc || !m_pkt || !m_frame) { st = FrameResult::Error; setStatus(); return result; }
         if (!m_lastFrame || m_lastFrameSec < 0.0) {
             av_packet_unref(m_pkt);
             av_frame_unref(m_frame);
@@ -238,8 +252,11 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
             }
         }
         AVFrame* fr = reinterpret_cast<AVFrame*>(m_lastFrame);
-        if (!fr || m_lastFrameSec < 0.0)
-            return result; // não conseguiu decodificar o frame único
+        if (!fr || m_lastFrameSec < 0.0) {
+            st = FrameResult::Error; // não conseguiu decodificar o frame único
+            setStatus();
+            return result;
+        }
         const int sw = fr->width > 0 ? fr->width : cc->width;
         const int sh = fr->height > 0 ? fr->height : cc->height;
         if (sw > 0 && sh > 0) {
@@ -263,9 +280,15 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
                 m_swsDstW = dw;
                 m_swsDstH = dh;
             }
-            if (sws)
-                return swsScaleToRgba(sws, fr->data, fr->linesize, sh, dw, dh);
+            if (sws) {
+                QImage img = swsScaleToRgba(sws, fr->data, fr->linesize, sh, dw, dh);
+                st = img.isNull() ? FrameResult::Error : FrameResult::Ok;
+                setStatus();
+                return img;
+            }
         }
+        st = FrameResult::Error; // sem sws / dimensões inválidas
+        setStatus();
         return result;
     }
 
@@ -288,7 +311,7 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
     // preview no último quadro até a janela expirar — e, sem o flush, os
     // pacotes pós-seek viravam INVALIDDATA (loop morto em GIFs longos).
 
-    if (cancelled()) return result; // desiste antes do seek (caro)
+    if (cancelled()) { st = FrameResult::Cancelled; setStatus(); return result; } // desiste antes do seek (caro)
 
     if (needSeek) {
         const qint64 seekT0 = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -323,6 +346,8 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
     }
 
     if (!m_pkt || !m_frame) {
+        st = FrameResult::Error;
+        setStatus();
         return result;
     }
 
@@ -476,7 +501,9 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
     if (aborted) {
         av_frame_unref(m_frame);
         av_packet_unref(m_pkt);
-        return result; // QImage nula: pedido cancelado por alvo mais novo
+        st = FrameResult::Cancelled; // pedido cancelado por alvo mais novo
+        setStatus();
+        return result;
     }
 
     if (!chosen && m_lastFrameSec >= 0.0 && m_lastFrame)
@@ -535,6 +562,11 @@ QImage FFmpegDecoder::frameAt(double seconds, int maxWidth, const std::atomic<bo
         s_hwFailSeq = 0;
     }
 
+    // Desfecho tipado (§8.3): distingue "acabou" de "erro". Um quadro nulo no
+    // fim do arquivo é Eof (limpo); nulo sem ter chegado ao fim é Error.
+    st = !result.isNull() ? FrameResult::Ok
+                          : (atEof ? FrameResult::Eof : FrameResult::Error);
+    setStatus();
     return result;
 }
 

@@ -121,6 +121,8 @@ private slots:
     void facadeMatchesEngine();
     void facadeHeaderExposesNoOwnership();
 
+    void typedFrameReportsStatus();
+
     void probeCacheMatchesAndInvalidatesOnChange();
 
 private:
@@ -602,6 +604,30 @@ void tst_DecoderApi::facadeMatchesEngine() {
     a.close();
     QVERIFY(!a.isOpen());
     QVERIFY(a.frame(1.0, 160).isNull());
+}
+
+// §8.3 — o pedido tipado distingue os desfechos que a imagem nula confundia.
+void tst_DecoderApi::typedFrameReportsStatus() {
+    Decoder dec;
+    DecodeOptions opt;
+    QVERIFY(openUsableFacade(dec, m_media, opt));
+
+    // Um tempo válido: Ok e imagem presente.
+    const DecodedFrame good = dec.frameDecoded(1.0, 160);
+    QCOMPARE(good.status, DecodeStatus::Ok);
+    QVERIFY(!good.image.isNull());
+
+    // Token de cancelamento já marcado: Cancelled, sem imagem — e não Error.
+    std::atomic<bool> cancel{true};
+    const DecodedFrame cancelled = dec.frameDecoded(1.0, 160, &cancel);
+    QCOMPARE(cancelled.status, DecodeStatus::Cancelled);
+    QVERIFY(cancelled.image.isNull());
+
+    // Após close(): não é "acabou" nem "cancelado" — é Error (estado inválido).
+    dec.close();
+    const DecodedFrame closed = dec.frameDecoded(1.0, 160);
+    QCOMPARE(closed.status, DecodeStatus::Error);
+    QVERIFY(closed.image.isNull());
 }
 
 // O memo de probe (§8.6) não pode mudar o RESULTADO: sondar o mesmo arquivo
