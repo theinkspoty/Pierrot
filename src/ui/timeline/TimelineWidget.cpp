@@ -157,6 +157,15 @@ TimelineWidget::TimelineWidget(QWidget* parent) : QWidget(parent) {
         else
             invalidateScene();
     });
+    // Gêmeo leve do modified acima: durante o arraste a timeline emite
+    // clipGeometryChanged (só repinta a cena reaproveitando o cache de conteúdo
+    // — a posição muda, onda/thumb não) e GUARDA o modified completo para o fim
+    // do gesto. Sem ESTA conexão, nada invalida a cena durante o arraste e o
+    // clipe parece parado (só "teletransporta" ao soltar, quando o modified
+    // final chega). O MainWindow escuta o mesmo sinal só para o preview.
+    connect(this, &TimelineWidget::clipGeometryChanged, this, [this]() {
+        refreshView();
+    });
 
     // Zoom com transição linear: o pixel-âncora fica parado sob o cursor
     // enquanto o pps interpola de forma constante (sem easing de curva).
