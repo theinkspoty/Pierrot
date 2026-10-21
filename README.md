@@ -20,11 +20,21 @@ pra vídeos sem complexidade, pra uso meu.
 
 ![Pierrot](imagens/Captura_de_tela.png)
 
+## Recursos em destaque
+
+- **Timeline** rápida com In/Out, multicâmera e time remapping.
+- **Correção de cor Lumetri** por clipe + **12 modos de blend** por faixa.
+- **Mesa** de composição 2D/3D leve (transform, câmera, malha `.obj`).
+- **Efeitos** nativos + hosts **OFX** e **frei0r**.
+- **48 presets de animação** e Graph Editor de keyframes.
+- **Três idiomas** — Português, English e 日本語.
+- **Temas** prontos (incl. Japan 95) e temas por paleta `.pierrot-theme`.
+
 ## Especificações
 
 | Item                | Detalhe                                                     |
 |---------------------|-------------------------------------------------------------|
-| Formato de projeto  | `.Blanc` (JSON; salvamento assíncrono + backup rotativo)    |
+| Formato de projeto  | `.Blanc` (JSON; salvamento assíncrono + backup rotativo). Carimba o **grupo de versão** — projetos de grupo mais novo são recusados, mais antigos são convertidos |
 | Exportação          | MP4 (H.264/AAC), MKV (H.264/AAC), WebM (VP9/Opus)          |
 | Resolução           | configurável (padrão 1920×1080)                             |
 | Quadros/s           | configurável (padrão 30)                                    |
@@ -34,6 +44,9 @@ pra vídeos sem complexidade, pra uso meu.
 | Fluxo de edição     | Source Monitor (In/Out, Insert/Overwrite), **multicâmera** (teclas 1..N), **Editor de Velocidade** (time remapping bezier) |
 | Mesa (composição)   | camadas com transform/blend + câmera e malha `.obj` (3D leve) |
 | Blend por faixa     | 12 modos + opacidade de faixa (0–100%)                      |
+| Animação            | 48 presets + Graph Editor de keyframes (bezier)             |
+| Idiomas             | Português, English, 日本語                                   |
+| Temas               | prontos (incl. **Japan 95**) + temas por paleta `.pierrot-theme` |
 | Zoom da timeline    | 2 px/s – 4000 px/s                                          |
 | Fonte               | C++ (Qt Widgets) + FFmpeg (libav*)                          |
 
@@ -43,13 +56,12 @@ para as novidades de cada versão, veja **[CHANGELOG.md](CHANGELOG.md)**.
 ## Dependências (Ubuntu/Debian)
 
 ```bash
-sudo apt install cmake g++ pkg-config \
+sudo apt install cmake g++ pkg-config ffmpeg \
     qt6-base-dev qt6-multimedia-dev \
     libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev
 ```
 
-Se usar Qt 5 em vez de Qt 6: substitua `qt6-base-dev` por `qtbase5-dev`,
-`qt6-multimedia-dev` por `qtmultimedia5-dev`.
+`cmake` ≥ 3.16, `g++` com C++17 e `ffmpeg` no `PATH` (usado na exportação).
 
 > **Qt6 é requisito.** O código usa APIs que só existem no Qt6 e não compila com Qt5.
 
@@ -61,8 +73,6 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
 ./build/pierrot
 ```
-
-O binário também precisa do `ffmpeg` no `PATH` para exportar (qualquer distro).
 
 ## Como usar
 
@@ -107,11 +117,16 @@ inspirado no Filmcraft e no Oliver. Desde a reestruturação v0.4 o Laartman
 Pierrot (Colombina/L4). Cuidado real:
 
 - fachada pública `Decoder` congelada (L3): sem posse/lease/política no header;
+- **contrato de leitura substituível** (`MediaReader`, §8.8) e **desfecho
+  tipado** por quadro — Ok/Eof/Cancelled/Error, sem adivinhar a partir de imagem
+  nula (§8.3);
 - vídeo com **contexto de demux próprio** + thread de leitura à frente
   (`PacketReader`, buffer limitado) — disco lento não para o decode;
 - áudio independente do vídeo (PTS, sem cadeia de mutex cruzada);
 - VAAPI com auto-cura, detecção VFR, ocultação de erro (último quadro bom);
-- cancel cooperativo em todo `frame()` (aborta em ~20 ms, progresso preservado).
+- cancel cooperativo em todo `frame()` (aborta em ~20 ms, progresso preservado);
+- **paridade preview↔export** verificada por teste automático sobre mídia
+  decodificada (§8.7).
 
 Ainda estudando para melhorar a reprodução.
 
