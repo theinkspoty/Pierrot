@@ -640,6 +640,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         if (m_equalizer) m_equalizer->refresh();
         if (m_mesa) m_mesa->refresh();
     });
+    // Durante o arraste, a timeline só avisa que a GEOMETRIA mudou: repinta e
+    // recomputa o preview, sem o rebuild de painéis (mixer/eq/mesa/props) que
+    // o modified() faz. Esse rebuild sai uma única vez no fim do gesto (o
+    // modified() emitido no mouseRelease). Era o rebuild por mousemove que
+    // deixava os gestos com latência perceptível.
+    connect(m_timeline, &TimelineWidget::clipGeometryChanged, this, [this]() {
+        m_preview->refreshView();
+    });
     connect(m_timeline, &TimelineWidget::modified, this, &MainWindow::setModified);
     connect(m_mixer, &MixerWidget::modified, this, &MainWindow::pushUndo);
     connect(m_mixer, &MixerWidget::modified, this, &MainWindow::setModified);

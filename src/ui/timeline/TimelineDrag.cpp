@@ -226,6 +226,7 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
     m_dragTrackRec = false;
     m_ctrlClipId.clear();
     m_ctrlCanMove = false;
+    m_geometryChangedDuringDrag = false; // gesto novo: zera o rastro de geometria
 
     if (y < kRulerH) {
         // Marca o ponteiro branco no ponto clicado da régua.
@@ -1016,7 +1017,8 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                     updateScrollRanges();
                     invalidateScene();
                     update();
-                    emit modified();
+                    m_geometryChangedDuringDrag = true;
+                    emit clipGeometryChanged();
                 }
             } else {
                 Track& t = m_resizeAudio ? m_project->audioTracks[m_resizeRow]
@@ -1027,7 +1029,8 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                     updateScrollRanges();
                     invalidateScene();
                     update();
-                    emit modified();
+                    m_geometryChangedDuringDrag = true;
+                    emit clipGeometryChanged();
                 }
             }
             return;
@@ -1045,7 +1048,8 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                     clip->volume = v;
                     refreshView();
                     update();
-                    emit modified();
+                    m_geometryChangedDuringDrag = true;
+                    emit clipGeometryChanged();
                 }
             }
             return;
@@ -1063,7 +1067,8 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                 t.volume = v;
                 refreshView();
                 update();
-                emit modified();
+                m_geometryChangedDuringDrag = true;
+                emit clipGeometryChanged();
             }
             return;
         }
@@ -1081,7 +1086,8 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                 t.kfVolume[m_envKf].value = v;
                 refreshView();
                 update();
-                emit modified();
+                m_geometryChangedDuringDrag = true;
+                emit clipGeometryChanged();
             }
             return;
         }
@@ -1155,7 +1161,8 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                             refreshView();
                         }
                         update();
-                        emit modified();
+                        m_geometryChangedDuringDrag = true;
+                        emit clipGeometryChanged();
                         return;
                     }
                 }
@@ -1389,7 +1396,8 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                 // alarga — não recalcula o range vertical a cada mousemove.
                 ensureScrollRangeReaches(m_project->duration());
                 update();
-                emit modified();
+                m_geometryChangedDuringDrag = true;
+                emit clipGeometryChanged();
             }
         }
         startAutoScroll(e);
@@ -1513,6 +1521,12 @@ void TimelineWidget::mouseReleaseEvent(QMouseEvent* e) {
     m_dragMode = None;
     m_dragClip.clear();
     m_dragUndoPushed = false;
+    // Se algum mouseMove emitiu clipGeometryChanged, agora — no fim do gesto —
+    // dispara o modified() completo UMA vez (painéis/undo dão refresh sério).
+    if (m_geometryChangedDuringDrag) {
+        m_geometryChangedDuringDrag = false;
+        emit modified();
+    }
     m_dragOrig.clear();
     m_rippleOrig.clear();
     m_rippleMove = false;

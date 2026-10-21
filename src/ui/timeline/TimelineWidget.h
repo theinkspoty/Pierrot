@@ -212,6 +212,12 @@ public slots:
 signals:
     void playheadChanged(double t);
     void modified();
+    // Mudança LEVE de geometria durante um arraste (mover/trimar clipe, faixa,
+    // volume, fade): o clipe se moveu, mas nada ESTRUTURAL mudou. Emitido a
+    // cada mouseMove; quem escuta deve só repintar/atualizar o preview — NUNCA
+    // reconstruir painéis. O `modified()` de verdade sai no fim do gesto
+    // (mouseRelease), evitando o rebuild da UI inteira a cada pixel.
+    void clipGeometryChanged();
     void playPauseRequested();
     // Enter (estilo Vegas): tocar a partir da posição da agulha/ponteiro.
     void playFromCursor();
@@ -500,6 +506,9 @@ private:
     DragMode m_dragMode = None;
     QString m_dragClip;
     bool m_dragUndoPushed = false;
+    // Algum mouseMove emitiu clipGeometryChanged neste gesto: no release,
+    // dispara o modified() completo (uma vez) para os painéis se atualizarem.
+    bool m_geometryChangedDuringDrag = false;
     QPoint m_dragStart;
     double m_dragOrigPos = 0.0;
     double m_dragOrigIn = 0.0;
