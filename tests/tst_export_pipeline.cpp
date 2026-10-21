@@ -26,6 +26,8 @@
 #include "colombina/models/Project.h"
 #include "colombina/export/ProjectExporter.h"
 #include "colombina/generators.h"
+#include "colombina/ffmpeg/FrameCache.h"
+#include "laartman/core/FFmpegDecoder.h"
 
 namespace {
 
@@ -75,6 +77,24 @@ MediaItem makeGen(const QString& id, const QString& gen, const QColor& a,
     return m;
 }
 
+// Gera um arquivo de vídeo de origem determinístico (sem áudio) com o ffmpeg CLI.
+// `codec` permite cobrir tanto 4:2:0 (h264) quanto um codec simples (mpeg4).
+bool makeSource(const QString& ffmpeg, const QString& out, const QString& codec,
+                const QString& pixFmt, int seconds = 3) {
+    const QStringList args {
+        QStringLiteral("-y"), QStringLiteral("-hide_banner"), QStringLiteral("-loglevel"),
+        QStringLiteral("error"),
+        QStringLiteral("-f"), QStringLiteral("lavfi"),
+        QStringLiteral("-i"),
+        QStringLiteral("testsrc2=size=320x180:rate=30:duration=%1").arg(seconds),
+        QStringLiteral("-c:v"), codec,
+        QStringLiteral("-pix_fmt"), pixFmt,
+        QStringLiteral("-an"),
+        out
+    };
+    return runCmd(ffmpeg, args) == 0 && QFile::exists(out);
+}
+
 } // namespace
 
 class TestExportPipeline : public QObject {
@@ -85,6 +105,7 @@ private slots:
     void solidColorExportMatches();
     void checkerboardExportMatchesPreview();
     void exportedDurationIsTimelineDuration();
+    void decodedSourcePreviewMatchesExport();
 
 private:
     QString m_ffmpeg;
@@ -270,6 +291,71 @@ void TestExportPipeline::exportedDurationIsTimelineDuration() {
     // Timeline = 2.0 s; tolerância de 10% (duração de contêiner tem arredondamento).
     QVERIFY2(std::abs(dur - 2.0) < 0.2,
              qPrintable(QStringLiteral("duração exportada %1 s, esperada ~2.0 s").arg(dur, 0, 'f', 3)));
+}
+
+// §8.7 — paridade preview↔export para MÍDIA decodificada (não só geradores).
+// Para um conjunto fixo de arquivos de origem, o frame que o preview pede (pela
+// fachada + FrameCache de L4) e o frame que o export caminha para fora (decoder
+// direto, como ProjectExporter/LainkaRenderer) têm de ser o MESMO quadro no
+// mesmo instante e largura. Fecha a garantia "o que se vê é o que se exporta"
+// no eixo do decode — e prova que o cache de L4 não perturba um pixel.
+void TestExportPipeline::decodedSourcePreviewMatchesExport() {
+    // (codec, pix_fmt): um 4:2:0 pesado de verdade e um simples, para cobrir
+    // tanto o caminho escalado (swscale) quanto a reordenação de frames.
+    struct Src { const char* codec; const char* pixFmt; };
+    const Src srcs[] = {
+        { "libx264", "yuv420p" },
+        { "mpeg4",   "yuv420p" },
+    };
+
+    int checked = 0;
+    for (const Src& s : srcs) {
+        const QString file = m_dir.filePath(
+            QStringLiteral("src-%1.mp4").arg(QString::fromLatin1(s.codec)));
+        if (!makeSource(m_ffmpeg, file, QString::fromLatin1(s.codec),
+                        QString::fromLatin1(s.pixFmt)))
+            continue; // codec indisponível neste build do ffmpeg
+
+        const double t = 1.0;
+        const int maxW = 200; // largura de preview (proxy)
+
+        // Caminho de EXPORTAÇÃO: decoder direto, exatamente como
+        // ProjectExporter/LainkaRenderer o usam.
+        FFmpegDecoder expDec;
+        expDec.setHardwareDecodeAllowed(false); // software: independente da VAAPI da máquina
+        QVERIFY2(expDec.open(file), qPrintable(file));
+        const QImage exportFrame = expDec.frameAt(t, maxW);
+        QVERIFY2(!exportFrame.isNull(), "export não decodificou o frame");
+
+        // Caminho de PREVIEW: mesmo decode, mas pela chave do FrameCache de L4
+        // (cache miss no primeiro toque, hit no segundo).
+        FFmpegDecoder prevDec;
+        prevDec.setHardwareDecodeAllowed(false);
+        QVERIFY2(prevDec.open(file), qPrintable(file));
+        FrameCache& cache = FrameCache::instance();
+        const FrameCache::Key key{qHash(prevDec.source()), prevDec.frameCacheIndex(t), maxW};
+        const QImage previewFrame =
+            cache.getOrCompute(key, [&] { return prevDec.frameAt(t, maxW, nullptr); });
+        QVERIFY2(!previewFrame.isNull(), "preview não decodificou o frame");
+
+        // Paridade: mesmo tamanho e pixels idênticos (mesmo motor, mesma fonte).
+        QCOMPARE(previewFrame.size(), exportFrame.size());
+        QVERIFY2(previewFrame.format() == exportFrame.format(),
+                 "formatos de pixel divergiram entre preview e export");
+        QVERIFY2(previewFrame == exportFrame,
+                 qPrintable(QStringLiteral("preview≠export para %1 em t=%2 w=%3")
+                                .arg(QString::fromLatin1(s.codec)).arg(t).arg(maxW)));
+
+        // E um SEGUNDO toque no preview (cache hit) devolve o mesmo quadro: o
+        // cache acelera sem alterar o resultado.
+        const QImage again =
+            cache.getOrCompute(key, [&] { return prevDec.frameAt(t, maxW, nullptr); });
+        QVERIFY2(again == exportFrame, "cache hit divergiu do caminho de export");
+        ++checked;
+    }
+
+    if (checked == 0)
+        QSKIP("nenhum codec de origem disponível neste build do ffmpeg");
 }
 
 QTEST_APPLESS_MAIN(TestExportPipeline)

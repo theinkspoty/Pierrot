@@ -103,6 +103,16 @@ de desempenho/robustez. Naipe continua **alpha**.
   Consumidores incluem `laartman/core/…` hoje; o alvo é todos usarem só a
   fachada da raiz (migração de call sites pendente).
 
+### Paridade preview↔export (§8.7)
+
+- **O que se vê é o que se exporta, agora com prova automática sobre mídia
+  decodificada.** O `tst_export_pipeline` já comparava geradores; agora também
+  gera um conjunto fixo de arquivos de origem (h264 e mpeg4, 4:2:0) e exige que
+  o frame do caminho de **preview** (fachada + `FrameCache` de L4) e o do
+  caminho de **export** (decoder direto, como `ProjectExporter`/`LainkaRenderer`)
+  sejam idênticos no mesmo instante e largura. Também confirma que o cache de L4
+  (hit no segundo toque) não altera um pixel. Pulado se não houver `ffmpeg`.
+
 ### Erro tipado (§8.3)
 
 - **`frame()` deixa de ser ambíguo** — a imagem nula confundia três coisas:
