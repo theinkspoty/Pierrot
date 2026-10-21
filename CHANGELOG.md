@@ -103,6 +103,16 @@ de desempenho/robustez. Naipe continua **alpha**.
   Consumidores incluem `laartman/core/…` hoje; o alvo é todos usarem só a
   fachada da raiz (migração de call sites pendente).
 
+### FrameCache (§8.4)
+
+- **Budget de memória em bytes** — o `FrameCache` tinha só um teto de
+  CONTAGEM (`maxEntries=120`). Em SD isso são ~60 MB, mas em 4K chega a ~4 GB.
+  Agora há também `maxBytes` (0 = sem limite): a evicção LRU roda enquanto
+  QUALQUER teto for excedido, então o cache não estoura nem em contagem (muitos
+  quadros pequenos) nem em memória (poucos quadros gigantes). O teto global é
+  dimensionado via `PIERROT_FRAMECACHE_MB` (padrão 512 MB); `bytes()` expõe o
+  uso atual para diagnóstico.
+
 ### Probe (§8.6)
 
 - **Memo de `probe()` por `(caminho canônico, mtime, tamanho)`** — o probe
@@ -114,6 +124,7 @@ de desempenho/robustez. Naipe continua **alpha**.
   não é memoizado (não fixa resultado vazio).
 
 ### Preview / lookahead (pós-Fase 8)
+
 - **Warm-ahead em thread própria (L4)** — o `FramePipeline` agora tem DUAS
   threads: `preview-prefetch` (o frame0 do próximo corte, crítico) e
   `preview-warm` (os clipes N+2/N+3, especulativos). Antes os dois slots

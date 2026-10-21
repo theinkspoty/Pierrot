@@ -142,6 +142,44 @@ private slots:
         QCOMPARE(calls, 2);
         QCOMPARE(c.size(), 0);
     }
+
+    // §8.4 — budget de MEMÓRIA: com teto em bytes, a evicção LRU acontece por
+    // espaço mesmo com a contagem bem abaixo de maxEntries. É o teto que
+    // importa em produção (120 quadros 4K = ~4GB).
+    void evictsByByteBudget() {
+        const QImage one = solid(64, 64, Qt::red);
+        const qint64 per = one.sizeInBytes();
+        QVERIFY(per > 0);
+        // Cabem exatamente 2 imagens (o teto apertado força a 3ª a evictar).
+        FrameCache c(100, per * 2);
+        c.put(k(1, 64), one);
+        c.put(k(2, 64), one.clone());
+        QCOMPARE(c.size(), 2);
+        QCOMPARE(c.bytes(), per * 2);
+        // 3ª entra → o fundo da LRU (bucket 1) sai.
+        c.put(k(3, 64), one.clone());
+        QCOMPARE(c.size(), 2);
+        QVERIFY(c.bytes() <= per * 2);
+        FrameCache::resetStats();
+        QVERIFY(c.get(k(1, 64)).isNull()); // evictado por byte budget
+        QVERIFY(!c.get(k(3, 64)).isNull());
+    }
+
+    // bytes() acompanha put/atualização/clear e o move-to-front não vaza.
+    void byteAccountingTracksMutations() {
+        FrameCache c;
+        QCOMPARE(c.bytes(), qint64(0));
+        const QImage a = solid(32, 32, Qt::red);
+        c.put(k(1, 32), a);
+        QCOMPARE(c.bytes(), a.sizeInBytes());
+        // Atualizar a mesma chave com imagem maior soma só a diferença.
+        const QImage big = solid(64, 64, Qt::blue);
+        c.put(k(1, 32), big);
+        QCOMPARE(c.size(), 1);
+        QCOMPARE(c.bytes(), big.sizeInBytes());
+        c.clear();
+        QCOMPARE(c.bytes(), qint64(0));
+    }
 };
 
 QTEST_MAIN(tst_FrameCache)
