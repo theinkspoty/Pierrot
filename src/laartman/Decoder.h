@@ -100,9 +100,9 @@ public:
 
     // Frame em `tAbsoluteSec`; `maxWidth=0` = largura nativa.
     virtual QImage frame(double tAbsoluteSec, int maxWidth,
-                         const std::atomic<bool>* cancel) = 0;
+                         const std::atomic<bool>* cancel = nullptr) = 0;
     virtual DecodedFrame frameDecoded(double tAbsoluteSec, int maxWidth,
-                                      const std::atomic<bool>* cancel) = 0;
+                                      const std::atomic<bool>* cancel = nullptr) = 0;
 
     // Áudio: PCM interleaved S16, 48 kHz estéreo.
     virtual bool seekAudio(double tAbsoluteSec) = 0;

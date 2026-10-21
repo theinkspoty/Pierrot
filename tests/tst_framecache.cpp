@@ -153,11 +153,11 @@ private slots:
         // Cabem exatamente 2 imagens (o teto apertado força a 3ª a evictar).
         FrameCache c(100, per * 2);
         c.put(k(1, 64), one);
-        c.put(k(2, 64), one.clone());
+        c.put(k(2, 64), one.copy()); // cópia profunda (buffer distinto p/ contar bytes)
         QCOMPARE(c.size(), 2);
         QCOMPARE(c.bytes(), per * 2);
         // 3ª entra → o fundo da LRU (bucket 1) sai.
-        c.put(k(3, 64), one.clone());
+        c.put(k(3, 64), one.copy());
         QCOMPARE(c.size(), 2);
         QVERIFY(c.bytes() <= per * 2);
         FrameCache::resetStats();
