@@ -153,6 +153,7 @@ set(PIERROT_APP_SOURCES
     src/main.cpp
     src/Bench.cpp
     src/MainWindow.cpp
+    src/MainWindow.Icons.cpp
     src/ui/panels/MediaPoolWidget.cpp
     src/ui/timeline/TimelineWidget.cpp
     src/ui/timeline/TimelineCommands.cpp
