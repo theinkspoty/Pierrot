@@ -35,6 +35,10 @@ int main(int argc, char** argv) {
     QApplication app(argc, argv);
     app.setOrganizationName("Pierrot");
     app.setApplicationName("Pierrot");
+    // Casa a janela com pierrot.desktop na taskbar/dock. No Wayland (KDE/GNOME)
+    // o gerenciador de janelas associa pelo app_id = nome do desktop file; sem
+    // isto o ícone cai num genérico mesmo com o .desktop instalado.
+    QGuiApplication::setDesktopFileName(QStringLiteral("pierrot"));
     app.setApplicationDisplayName(QString()); // QApplication anexaria " - Pierrot" a toda janela
     app.setWindowIcon(QIcon(QStringLiteral(":/pierrot.ico")));
     // Fechar a janela de boas-vindas (única janela no início) não pode
