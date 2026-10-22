@@ -174,6 +174,7 @@ set(PIERROT_APP_SOURCES
     src/ui/core/Theme.cpp
     src/ui/core/TechnicalWindow.cpp
     src/ui/core/JaTranslator.cpp
+    src/ui/core/EnTranslator.cpp
     src/ui/dialogs/TransformDialog.cpp
     src/ui/dialogs/MaskEditorDialog.cpp
     src/ui/audio/AudioEffectsDialog.cpp

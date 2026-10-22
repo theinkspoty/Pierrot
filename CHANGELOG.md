@@ -2,6 +2,39 @@
 
 ## 0.8 (2026-10-20)
 
+### Interface — tradução em inglês (2026-10-21)
+
+- **Inglês implementado de verdade** — a opção "Inglês (v0.7.5)" existia no
+  combo de idioma desde 0.7.5, mas `savedLanguage()` devolvia `"en"` e
+  `main.cpp` não instalava tradutor nenhum: escolher inglês não mudava nada
+  e a UI continuava em pt-BR. Agora há `src/ui/core/EnTranslator.{h,cpp}`
+  (mesmo desenho do `JaTranslator`: tabela estática embutida, sem
+  lupdate/lrelease) e o tradutor é instalado em `main.cpp` antes de criar
+  qualquer janela.
+- **Cobertura de 100%** — 1271/1271 strings do código traduzidas
+  (verificado por `tools/i18n/check_i18n.py`): menus, painéis, timeline,
+  exportador, ajustes, presets Lazzi, textos de decisão, mensagens de
+  erro e tooltips.
+- **Tooling de i18n consertado** — `tools/i18n/strings.txt` guardava só o
+  *primeiro literal* de cada `tr()` concatenado, enquanto o Qt entrega a
+  string **concatenada** em runtime. Isso fazia as traduções de textos
+  compostos (com `\n`) nunca casarem. Novo `tools/i18n/extract_strings.py`
+  extrai o literal cru e concatenado (chave idêntica à do runtime).
+- **Separador dos arquivos de pares: `|||` → TAB** — o `|||` era ambíguo com
+  chaves que terminam em `|` (ex.: `▶|`), que corrompiam a tabela.
+- **Geradores `gen_ja.py`/`gen_en.py` unificados** em `tools/i18n/i18n_common.py`,
+  com `EXTRAS` do JA removido (as strings já estão no `ja.part1.txt`) e
+  validação relaxada para traduções sem string correspondente no código.
+- **`fromUtf8` também no valor** — chaves/traduções com escape de byte `\xHH`
+  (ex.: a seta `→` em "Clique direito na timeline") agora usam
+  `QString::fromUtf8`; em `QStringLiteral` (u"") o escape viraria code point,
+  não byte UTF-8.
+- **`check_i18n.py`** — verificação de integridade: `strings.txt` em dia com
+  o código, tabelas geradas sincronizadas com os arquivos de pares e
+  cobertura por idioma.
+- **Combo de idioma** — "Inglês (v0.7.5)" → "Inglês"; a dica agora diz que
+  japonês e inglês já estão disponíveis.
+
 ### Estabilização (2026-10-21) — campanha "corrija tudo"
 
 - **Sessão longa agora encerra sozinha** — o `quit()` do autoplay morria
