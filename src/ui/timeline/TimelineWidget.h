@@ -331,6 +331,19 @@ private:
     void renderScene(QPainter& p);
     void renderOverlays(QPainter& p);
     void ensurePlayheadVisible();
+    // COALESCE do playheadChanged durante o arraste da agulha: a posição da
+    // agulha é sempre imediata (setPlayhead), mas o sinal que manda o preview
+    // decodificar é emitido no máximo ~30x/s. Sem isso, um arrasto rápido
+    // dispara dezenas de updateFrame() por segundo na UI thread e a agulha
+    // passa a atrasar o mouse (parece "não acompanhar" no movimento rápido).
+    // O release do gesto faz o flush final com a posição exata.
+    void emitPlayheadThrottled(double t);
+    void flushPlayheadThrottled();
+    void flushPlayheadNow();
+    QTimer* m_playheadThrottle = nullptr;
+    double m_pendingPlayhead = 0.0;
+    bool m_playheadThrottleArmed = false;
+    bool m_playheadThrottleDirty = false;
     // Autoscroll: rola a timeline continuamente enquanto o mouse segura a
     // agulha (ou clipe) perto da borda da view. Retorna a direção (px por tick).
     void startAutoScroll(QMouseEvent* e);
