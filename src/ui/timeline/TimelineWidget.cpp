@@ -196,6 +196,17 @@ TimelineWidget::TimelineWidget(QWidget* parent) : QWidget(parent) {
     m_autoScroll->setInterval(16);
     m_autoScroll->setTimerType(Qt::PreciseTimer);
     connect(m_autoScroll, &QTimer::timeout, this, &TimelineWidget::autoScrollTick);
+
+    // Throttle do playheadChanged durante o arraste da agulha: o preview
+    // decodifica a cada pedido, e o trabalho de updateFrame() na UI thread
+    // segura o mouseMove (a agulha passa a atrasar o cursor em movimentos
+    // rápidos). 33 ms (~30 Hz) é imperceptível no preview; a AGULHA continua
+    // imediata.
+    m_playheadThrottle = new QTimer(this);
+    m_playheadThrottle->setInterval(33);
+    m_playheadThrottle->setSingleShot(false);
+    m_playheadThrottle->setTimerType(Qt::PreciseTimer);
+    connect(m_playheadThrottle, &QTimer::timeout, this, &TimelineWidget::flushPlayheadThrottled);
 }
 
 void TimelineWidget::invalidateScene() {
@@ -1354,6 +1365,41 @@ void TimelineWidget::setPlaying(bool p) {
     m_playing = p;
     if (p) m_cursorT = m_playhead; // ao começar, alinha a branca na vermelha
     update();
+}
+
+// Enfileira a posição para o preview. A agulha JÁ foi movida (setPlayhead,
+// imediato); aqui só se adia o aviso que faz o preview decodificar, para não
+// segurar o mouseMove. O primeiro pedido arma o timer; os seguintes só
+// atualizam o valor alvo (coalesce) — o preview sempre recebe a posição mais
+// recente, nunca uma intermediária.
+void TimelineWidget::emitPlayheadThrottled(double t) {
+    m_pendingPlayhead = t;
+    m_playheadThrottleDirty = true;
+    if (!m_playheadThrottleArmed) {
+        m_playheadThrottleArmed = true;
+        m_playheadThrottle->start();
+    }
+}
+
+// Tick do timer: emite a posição pendente (a mais recente). Se nada mudou
+// desde o último tick, não emite nada — o preview não gasta decode à toa.
+void TimelineWidget::flushPlayheadThrottled() {
+    if (!m_playheadThrottleDirty) return;
+    m_playheadThrottleDirty = false;
+    emit playheadChanged(m_pendingPlayhead);
+}
+
+// Fim do gesto: para o timer e emite a posição EXATA, para o preview nunca
+// ficar um quadro atrás do cursor (o throttle pode ter engolido o último).
+void TimelineWidget::flushPlayheadNow() {
+    if (m_playheadThrottleArmed) {
+        m_playheadThrottle->stop();
+        m_playheadThrottleArmed = false;
+    }
+    if (m_playheadThrottleDirty) {
+        m_playheadThrottleDirty = false;
+        emit playheadChanged(m_pendingPlayhead);
+    }
 }
 
 void TimelineWidget::ensurePlayheadVisible() {

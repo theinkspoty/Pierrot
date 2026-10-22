@@ -1094,7 +1094,10 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
         if (m_dragMode == PlayheadDrag) {
             const double t2 = std::max(0.0, snapTime(xToTime(e->pos().x())));
             setPlayhead(t2);
-            emit playheadChanged(t2);
+            // Throttle: a agulha segue o mouse de imediato; o aviso que manda o
+            // preview decodificar é coalescido (~30 Hz) para o mouseMove não
+            // ficar preso no updateFrame() da UI thread.
+            emitPlayheadThrottled(t2);
             startAutoScroll(e);
             update();
             return;
@@ -1459,6 +1462,11 @@ void TimelineWidget::mouseReleaseEvent(QMouseEvent* e) {
     }
 
     switch (m_dragMode) {
+    case PlayheadDrag:
+        // Fim do arrasto da agulha: garante que o preview receba a posição
+        // EXATA (o throttle pode ter engolido o último pedido).
+        flushPlayheadNow();
+        break;
     case RulerLoop:
     case RulerLoopEdge:
         m_loopEdge = LoopEdgeNone;
@@ -1555,6 +1563,10 @@ void TimelineWidget::mouseReleaseEvent(QMouseEvent* e) {
     // horizontal era alargada, então um encurtamento fica defasado até aqui.
     updateScrollRanges();
     update();
+    // Rede de segurança: se o gesto terminou por outro caminho (o switch acima
+    // já flushou no caso PlayheadDrag), o timer do throttle não fica armado
+    // para o próximo gesto.
+    if (m_playheadThrottleArmed) flushPlayheadNow();
 }
 
 void TimelineWidget::mouseDoubleClickEvent(QMouseEvent* e) {
