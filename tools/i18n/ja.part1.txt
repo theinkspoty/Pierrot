@@ -1,1158 +1,1183 @@
- (deslig.)||| （オフ）
- — Protótipo 4<br><br><b style='color:#c07800'>Ainda em desenvolvimento:</b> mesa, velocidade, pivot, analisador e workspace.<br><br>Pierrot é um editor de vídeo inspirado em 2 programas \"Sony Vegas 8\" e \"Final Cut Express 2003\", totalmente escrito pra linux. Para uso pessoal, baseado nas ferramentas que eu acho úteis.<br><br><b>Agradecimentos:</b> Gumduck, por ajudar a desenvolver o áudio e features.<br><br><b>Inspirações adicionais</b><ul><li><b>Adobe Premiere Pro</b> — painel de Efeitos, Effect Controls (Propriedades), Media Pool, Source Monitor e o mixer de áudio.</li><li><b>Adobe After Effects</b> — o canvas de composição (Mesa), a faixa de efeitos expandível e o Graph Editor de keyframes.</li><li><b>DaVinci Resolve</b> — organização por categorias nas configurações e o visual de cor/timecode.</li><li><b>Blender</b> — o HUD de transformação do canvas Mesa.</li></ul><a href='https://github.com/theinkspoty/Pierrot'>github.com/theinkspoty/Pierrot</a>||| — プロトタイプ 4<br><br><b style='color:#c07800'>開発中:</b> Mesa、スピード、ピボット、アナライザー、ワークスペース。<br><br>Pierrot は「Sony Vegas 8」と「Final Cut Express 2003」の2本にインスピレーションを受けた動画エディターで、完全に Linux 向けに書かれています。個人利用で、自分が有用だと思うツールに基づいています。<br><br><b>謝辞:</b> Gumduck（オーディオと機能の開発を手伝ってくれてありがとう）。<br><br><b>その他のインスピレーション</b><ul><li><b>Adobe Premiere Pro</b> — エフェクトパネル、エフェクトコントロール（プロパティ）、メディアプール、ソースモニター、オーディオミキサー。</li><li><b>Adobe After Effects</b> — 合成キャンバス（Mesa）、展開可能なエフェクトトラック、キーフレームのグラフエディター。</li><li><b>DaVinci Resolve</b> — 設定のカテゴリ分けとカラーパネル/タイムコードの見た目。</li><li><b>Blender</b> — Mesa キャンバスのトランスフォーム HUD。</li></ul><a href='https://github.com/theinkspoty/Pierrot'>github.com/theinkspoty/Pierrot</a>
-%1 (cópia)|||%1（コピー）
-%1 itens|||%1 件
-%1 itens · %2 selecionados|||%1 件 · %2 件選択
-%1 · %2 s — arraste para mover no tempo|||%1 · %2 秒 — ドラッグで時間を移動
-&Ajuda|||ヘルプ(&H)
-&Arquivo|||ファイル(&F)
-&Configurações|||設定(&C)
-&Editar|||編集(&E)
-&Exibir|||表示(&V)
-&Projeto|||プロジェクト(&P)
-&Reproduzir|||再生(&R)
-(instale frei0r-plugins)|||（frei0r-plugins をインストール）
-(nenhum plugin OFX)|||（OFX プラグインなし）
-(sem parâmetros editáveis)|||（編集可能なパラメーターなし）
-(sem quadro)|||（フレームなし）
-(texto vazio)|||（空のテキスト）
-+ Banda|||+ バンド
-+ Elipse|||+ 楕円
-+ Máscara|||+ マスク
-+ Retângulo|||+ 矩形
-<b>Pierrot</b> — editor de vídeo de código aberto<br>Versão |||<b>Pierrot</b> — オープンソース動画エディター<br>バージョン 
-A forma aparece no monitor com alças — arraste para mover, redimensionar ou rotacionar. Os valores aqui acompanham em tempo real. Aplicar grava no clipe.|||シェイプがハンドル付きでモニターに表示されます — ドラッグで移動・リサイズ・回転できます。ここでの値はリアルタイムに反映されます。「適用」でクリップに記録します。
-A interface em inglês será adicionada na versão 0.7.5. Requer reinício do aplicativo para tomar efeito.|||英語インターフェースは 0.7.5 で追加予定です。変更を反映するにはアプリの再起動が必要です。
-A renderização está em andamento. Deseja cancelar?|||レンダリングを実行中です。キャンセルしますか？
-Abra uma mídia no Source Monitor primeiro (duplo-clique na Central de Mídias).|||先にソースモニターでメディアを開いてください（メディアプールでダブルクリック）。
-Abre a correção de cor estilo Lumetri no clipe|||クリップに Lumetri スタイルのカラーコレクションを開きます
-Abre o editor do clipe de texto selecionado|||選択したテキストクリップのエディターを開きます
-Abre o preview em uma janela própria — arraste para um segundo monitor e use F11 para tela cheia.|||プレビューを独立ウィンドウで開きます — セカンドモニターにドラッグして F11 で全画面表示。
-Abrir|||開く
-Abrir a janela inicial (novo projeto / recentes)|||スタートウィンドウを開く（新規プロジェクト／最近使った項目）
-Abrir as configurações do aplicativo|||アプリ設定を開く
-Abrir do disco…|||ディスクから開く…
-Abrir editor de texto|||テキストエディターを開く
-Abrir LUT 3D|||3D LUT を開く
-Abrir Mesa|||Mesa を開く
-Abrir no Source|||ソースで開く
-Abrir o projeto selecionado|||選択したプロジェクトを開く
-Abrir o trimmer ao soltar uma mídia na timeline|||メディアをタイムラインにドロップしたときにトリマーを開く
-Abrir projeto|||プロジェクトを開く
-Abrir projeto… (Ctrl+O)|||プロジェクトを開く… (Ctrl+O)
-Abrir relatório|||レポートを開く
-Abrir script|||スクリプトを開く
-Abrir…|||開く…
-Acentuada|||アクセント
-Adiciona keyframe de transform no playhead|||再生ヘッドにトランスフォームのキーフレームを追加します
-Adiciona uma banda Bell|||ベルバンドを追加します
-Adicionar|||追加
-Adicionar faixa de efeitos|||エフェクトトラックを追加
-Adicionar faixa de gravação|||録画トラックを追加
-Adicionar faixa de vídeo|||映像トラックを追加
-Adicionar faixa de áudio|||オーディオトラックを追加
-Adicionar keyframe aqui|||ここにキーフレームを追加
-Adicionar keyframe no playhead|||再生ヘッドにキーフレームを追加
-Adicionar marcador|||マーカーを追加
-Adicionar marcador nomeado…|||名前付きマーカーを追加…
-Adicionar track|||トラックを追加
-Adicionar à fila|||キューに追加
-Adicionar/remover keyframe no playhead|||再生ヘッドのキーフレームを追加/削除
-Adicionar…|||追加…
-Adicione pastas onde seus plugins OFX (.ofx) estão instalados. O Pierrot já procura em ~/.config/pierrot/ofx e /usr/lib/ofx por padrão.|||OFX プラグイン（.ofx）の入ったフォルダーを追加してください。Pierrot は既定で ~/.config/pierrot/ofx と /usr/lib/ofx を探索します。
-Adição (add)|||加算（add）
-Adjust|||調整
-Agrupar|||グループ化
-Agrupar faixas|||トラックをグループ化
-Agrupar faixas em pasta…|||トラックをフォルダーにグループ化…
-Agudos (6 kHz):|||高域（6 kHz）:
-Agudos:|||高域:
-Ajusta luminosidade (brilho) da imagem|||画像の明るさ（ブライトネス）を調整します
-Ajustar|||調整
-Alguns Reels não tinham caminho absoluto e ficaram sem mídia:\n%1|||一部の Reel に絶対パスがなく、メディアがありません:\n%1
-Alinhamento:|||配置:
-Alinhar|||整列
-Alternar animação|||アニメーションを切り替え
-Alternar entre lista e miniaturas|||リストとサムネイルを切り替え
-Alternar keyframe no playhead|||再生ヘッドのキーフレームを切り替え
-Alvo:|||ターゲット:
-Alça de entrada — entorta para a esquerda|||イン点ハンドル — 左にドラッグでイージング
-Alça de saída — entorta para a direita|||アウト点ハンドル — 右にドラッグでイージング
-Alças criadas — arraste para entortar a velocidade|||ハンドルを作成しました — ドラッグで速度カーブを調整
-Amarelo|||イエロー
-Amostras:|||サンプル:
-Analisadores|||アナライザー
-Animação|||アニメーション
-Aparência|||外観
-Aplica fade-in no clipe selecionado|||選択クリップにフェードインを適用
-Aplica fade-out no clipe selecionado|||選択クリップにフェードアウトを適用
-Aplicar|||適用
-Aplicar Preset|||プリセットを適用
-Aplicar Preset…|||プリセットを適用…
-Arquivo de projeto inválido:\n%1|||無効なプロジェクトファイル:\n%1
-Arquivo:|||ファイル:
-Arquivos de texto (*.txt);;Todos (*.*)|||テキストファイル (*.txt);;すべて (*.*)
-Arquivos MKV são suportados experimentalmente e podem apresentar problemas de reprodução, áudio ou exportação.|||MKV は実験的なサポートで、再生・オーディオ・書き出しに問題が出る場合があります。
-Arrastar move o clipe em H e V ao mesmo tempo|||ドラッグでクリップを水平・垂直同時に移動
-Arrastar move só na horizontal|||ドラッグで水平方向のみ移動
-Arrastar move só na profundidade (Z)|||ドラッグで奥行き（Z）のみ移動
-Arrastar move só na vertical|||ドラッグで垂直方向のみ移動
-Arrastar no canvas gira no eixo X|||キャンバスのドラッグで X 軸回転
-Arrastar no canvas gira no eixo Y|||キャンバスのドラッグで Y 軸回転
-Arrastar no canvas gira no eixo Z (roll)|||キャンバスのドラッグで Z 軸回転（ロール）
-Arraste efeitos da lista para cá\nou selecione um clipe na timeline|||エフェクトをリストからここへドラッグ\nまたはタイムラインでクリップを選択
-Arraste os pontos na vertical (ganho ±12 dB).|||ポイントを垂直にドラッグ（ゲイン ±12 dB）。
-Arraste um keyframe para a esquerda/direita para mover sua posição no tempo|||キーフレームを左右にドラッグして時間上の位置を移動
-As exportações rodam em sequência (um ffmpeg por vez).|||書き出しは順番に実行されます（同時に1つの ffmpeg）。
-Atalho|||ショートカット
-Atalhos do teclado|||キーボードショートカット
-Ativa|||オン
-ativa|||オン
-Ativa campos 3D da Mesa (Z, FOV, rotações). O render 3D completo entra na Fase 1; hoje o visual continua 2D.|||Mesa の 3D フィールド（Z・FOV・回転）を有効化します。完全な 3D レンダリングはフェーズ 1 で実装予定。現在の見た目は 2D のままです。
-Ativa os campos 3D da Mesa (Z, FOV, rotações XYZ). O render 3D completo entra na Fase 1.|||Mesa の 3D フィールド（Z・FOV・XYZ 回転）を有効化します。完全な 3D レンダリングはフェーズ 1 で実装予定。
-Ativar Chroma Key|||クロマキーを有効化
-Ativar EQ Express|||EQ Express を有効化
-Ativar LAINKA|||LAINKA を有効化
-Ativar MotiOn|||MotiOn を有効化
-Ativar PSX|||PSX を有効化
-Ativar Reverb EX|||Reverb EX を有効化
-Ativar salvamento automático|||自動保存を有効化
-Ativar/Desativar|||オン/オフ
-Ativar/desativar banda|||バンドをオン/オフ
-Ativar/Desativar efeito|||エフェクトをオン/オフ
-Audio Effects|||オーディオエフェクト
-Audio Transitions|||オーディオトランジション
-Auto (CRF)|||自動（CRF）
-Auto Bezier|||自動ベジェ
-Auto-keyframe: alterar um valor cria/atualiza o keyframe no playhead|||オートキーフレーム: 値を変更すると再生ヘッドのキーフレームが作成/更新されます
-Automação desligada (ler envelope). Clique para gravar.|||オートメーションはオフ（エンベロープを読み取り）。クリックで記録開始。
-Avançar (JKL)|||早送り（JKL）
-Avançar 1 frame|||1 フレーム進む
-Avançar 1 frame (→)|||1 フレーム進む（→）
-Avançar um|||1 つ進む
-Avisar ao importar arquivos MKV (experimental)|||MKV を取り込むときに警告（実験的）
-Avisos|||警告
-Azul|||ブルー
-Azul ↔ Laranja|||青 ↔ オレンジ
-Ação|||アクション
-Back (overshoot)|||バック（オーバーシュート）
-Baixo|||下
-Base|||ベース
-Base:|||ベース:
-Baseado em textos animados|||アニメーションテキストベース
-Bell|||ベル
-Bem-vindo ao Pierrot|||Pierrot へようこそ
-Bezier|||ベジェ
-Bitrate de vídeo em kbps.\n0 = usar CRF (recomendado), >0 = bitrate fixo.|||ビデオのビットレート（kbps）。\n0 = CRF（推奨）、0より大きい = 固定ビットレート。
-Bitrate do áudio em kbps.\nTípicos: 128k (WebM), 192k (MP4/MKV).|||オーディオのビットレート（kbps）。\n目安: 128k（WebM）、192k（MP4/MKV）。
-Bitrate vídeo:|||ビデオビットレート:
-Bitrate áudio:|||オーディオビットレート:
-Black & White|||ブラック＆ホワイト
-Blend:|||ブレンド:
-Blur & Sharpen|||ブラー＆シャープ
-Borra o movimento do clipe por amostragem temporal (MotiOn).|||時間方向サンプリングでクリップの動きをぼかします（MotiOn）。
-Borra o quadro inteiro por amostragem temporal. Cada camada precisa do flag 'Motion blur (allow)'.|||時間方向サンプリングでフレーム全体をぼかします。各レイヤーに 'Motion blur (allow)' フラグが必要です。
-Bounce|||バウンス
-Branco|||ホワイト
-Brancos|||ホワイト
-Brasileiro|||ポルトガル語（ブラジル）
-Brightness & Contrast|||ブライトネス＆コントラスト
-Brilho & Contraste|||ブライトネス＆コントラスト
-Brilho:|||ブライトネス:
-Build de desenvolvimento — recursos podem estar incompletos ou instáveis.|||開発用ビルド — 機能が未完成または不安定な場合があります。
-Buscar efeitos…|||エフェクトを検索…
-Buscar mídia…|||メディアを検索…
-Básico|||基本
-Cada clipe tem o próprio texto e estilo.|||各クリップが独自のテキストとスタイルを持ちます。
-Caixa|||ボックス
-Camada %1|||レイヤー %1
-CAMADA (MESA)|||レイヤー（MESA）
-Camada: %1|||レイヤー: %1
-Caminho da pasta…|||フォルダーのパス…
-Caminho do arquivo de saída…|||出力ファイルのパス…
-Caminhos de plugins OFX|||OFX プラグインのパス
-Cancelar|||キャンセル
-Cancelar render?|||レンダリングをキャンセルしますか？
-Carrega no Source Monitor para marcar In/Out e inserir|||ソースモニターに読み込んでイン/アウトを設定し、挿入します
-Carregando áudio|||オーディオを読み込み中
-Carregando áudio e miniaturas…|||オーディオとサムネイルを読み込み中…
-Central de Mídias|||メディアプール
-Centro|||中央
-Centro X|||中心 X
-Centro Y|||中心 Y
-Channel|||チャンネル
-Checkboard|||チェッカーボード
-Checkboard %1×%1|||チェッカーボード %1×%1
-Checkboard…|||チェッカーボード…
-Chroma Key|||クロマキー
-Chroma key|||クロマキー
-Claro (Final Cut)|||ライト（Final Cut）
-Clicar cria um ponto suave; arrastar define a curva (B)|||クリックでスムーズポイントを作成 · ドラッグでカーブを調整（B）
-Clicar no gráfico adiciona um keyframe (P)|||グラフのクリックでキーフレームを追加（P）
-Clip Lazzi criado na timeline.|||タイムラインに Lazzi クリップを作成しました。
-CLIPE|||クリップ
-clipe|||クリップ
-Clipe de texto criado no playhead.|||再生ヘッドにテキストクリップを作成しました。
-Clipe: %1|||クリップ: %1
-Clique cria keyframe linear (P)|||クリックでリニアキーフレームを作成（P）
-Clique no gráfico para criar keyframes; arraste para mover; duplo clique remove. Export usa a mesma curva (pré-render).|||グラフのクリックでキーフレーム作成、ドラッグで移動、ダブルクリックで削除。書き出しにも同じカーブを使用（事前レンダリング）。
-Clique num atalho e, em seguida, pressione a nova combinação de teclas para alterá-lo. Esc cancela.|||ショートカットをクリックしてから新しいキーを押すと変更できます。Esc でキャンセル。
-Codificar vídeo por hardware no export (NVENC/VAAPI)|||書き出しでハードウェアエンコードを使用（NVENC/VAAPI）
-Codificação|||エンコード
-Colar|||貼り付け
-Colar Atributos|||属性を貼り付け
-Colar atributos|||属性を貼り付け
-Colar Atributos…|||属性を貼り付け…
-Color Correction (Lumetri)|||カラーコレクション（Lumetri）
-Como os quadros são exibidos no corpo dos clipes de vídeo. \"Todas\" mostra fatias contínuas; \"Início e fim\" só nos extremos; \"Nenhuma\" deixa os clipes sem miniatura.|||クリップ本体にフレームを表示する方法。「すべて」は連続したスライスを表示し、「開始と終了」は端のみ、「なし」はサムネイルなしにします。
-COMPOSIÇÃO (BLUR GLOBAL)|||コンポジション（グローバルブラー）
-Configurar exportação|||書き出しを設定
-Configurações|||設定
-Configurações aplicadas.|||設定を適用しました。
-Configurações do app…|||アプリ設定…
-Configurações do projeto|||プロジェクト設定
-Configurações do projeto atualizadas.|||プロジェクト設定を更新しました。
-Configurações do projeto…|||プロジェクト設定…
-Constant Power|||コンスタントパワー
-Constant Power: o crossfade de áudio já acompanha a sobreposição na mesma faixa.|||コンスタントパワー: 同一トラック上のオーディオのオーバーラップにクロスフェードが自動追随します。
-Constante|||一定
-Contorno|||輪郭
-Contrast|||コントラスト
-Contraste|||コントラスト
-Contraste (%):|||コントラスト（%）:
-Contraste:|||コントラスト:
-Controla diferença entre claros e escuros|||明部と暗部の差を制御します
-Converte o clipe para escala de cinza.|||クリップをグレースケールに変換します。
-Converte para escala de cinza|||グレースケールに変換
-Convertendo .blend com o Blender…|||Blender で .blend を変換中…
-Converter para clipe|||クリップに変換
-Copiar|||コピー
-Copiar todo o log para a área de transferência|||ログ全体をクリップボードにコピー
-Copiar tudo|||すべてコピー
-Cor|||カラー
-Cor %1|||カラー %1
-COR / EFEITOS|||カラー / エフェクト
-Cor 1 do checkboard|||チェッカーボードの色 1
-Cor 2 do checkboard|||チェッカーボードの色 2
-Cor da camada sólida|||単色レイヤーの色
-Cor da mídia|||メディアの色
-Cor do chroma key|||クロマキーの色
-Cor do grão|||グレインの色
-Cor do parâmetro|||パラメーターの色
-Cor do ruído|||ノイズの色
-Cor do texto:|||テキストの色:
-Cor e contorno|||塗りと輪郭
-Cor final do gradiente|||グラデーションの終了色
-Cor inicial do gradiente|||グラデーションの開始色
-Cor sólida|||単色
-Cor — Correction (estilo DaVinci)|||カラー — コレクション（DaVinci スタイル）
-Cor:|||カラー:
-Correção de cor (Lumetri)|||カラーコレクション（Lumetri）
-Correção de cor…|||カラーコレクション…
-Cor…|||カラー…
-CRF (Constant Rate Factor): 0 = sem perda, 51 = pior qualidade.\nValores típicos: 18 (bom), 23 (padrão), 28 (rápido).|||CRF（Constant Rate Factor）: 0 = ロスレス、51 = 最低品質。\n一般的な値: 18（高品質）、23（標準）、28（高速）。
-Criar clipe de texto|||テキストクリップを作成
-Criar Mesa|||Mesa を作成
-Criar multicam|||マルチカメラを作成
-Criar multicam (%1 ângulos)…|||マルチカメラを作成（%1 アングル）…
-Criar mídia gerada (cor sólida, como no Vegas)|||生成メディア（単色）を作成（Vegas 形式）
-Criar projeto|||プロジェクトを作成
-Crie uma Mesa antes de importar .blend.|||.blend を読み込む前に Mesa を作成してください。
-Crie uma Mesa antes de importar .obj.|||.obj を読み込む前に Mesa を作成してください。
-Crie uma Mesa para importar .blend.|||.blend の読み込み用に Mesa を作成してください。
-Crie uma Mesa para importar .obj.|||.obj の読み込み用に Mesa を作成してください。
-Crossfade de áudio quando há sobreposição na mesma faixa|||同一トラックで重なったときのオーディオのクロスフェード
-Crossfade quando o próximo clipe se sobrepõe|||次のクリップが重なったときのクロスフェード
-Curva|||カーブ
-Curva (entortar)|||カーブ（イージング）
-Curva: clique cria · arraste alças entorta|||カーブ: クリックで作成 · ハンドルをドラッグでイージング
-Curvas|||カーブ
-Curvas: adicione pontos X/Y em 0..1. Master afeta R, G e B.|||カーブ: X/Y に 0..1 のポイントを追加。マスターは R・G・B に影響します。
-CÂMERA|||カメラ
-Câmera (Ken Burns)|||カメラ（Ken Burns）
-Câmera — %1|||カメラ — %1
-Células por lado:|||1 辺のセル数:
-Cópia independente|||独立コピー
-Cópia unificada|||統合コピー
-Debian/Ubuntu: pacote frei0r-plugins; ou PIERROT_FREI0R_PATH=/pasta/com/.so|||Debian/Ubuntu: パッケージ frei0r-plugins、または PIERROT_FREI0R_PATH=/pasta/com/.so
-Decodificação de vídeo por hardware (VAAPI)|||ハードウェア映像デコード（VAAPI）
-Deletar keyframes selecionados|||選択したキーフレームを削除
-Desagrupar|||グループ解除
-Desagrupar faixas|||トラックのグループを解除
-desativada|||オフ
-Descarga a codificação da CPU para a placa de vídeo (útil em 4K e projetos longos). Equivale à aceleração por GPU que o Vega oferece na renderização; o retorno ao libx264 é automático se não houver encoders de hardware no sistema.|||エンコードを GPU にオフロードします（4K や長尺プロジェクトに有用）。Vega のレンダリング GPU アクセラレーションに相当し、システムにハードウェアエンコーダーがない場合は自動的に libx264 に戻ります。
-Descartar|||破棄
-Desempenho|||パフォーマンス
-Desfazer|||元に戻す
-Desfazer (Ctrl+Z)|||元に戻す (Ctrl+Z)
-Desfoque|||ブラー
-Desfoque (%):|||ブラー（%）:
-Desfoque gaussiano (box blur no preview/export)|||ガウスぼかし（プレビュー/書き出しではボックスブラー）
-Desfoque:|||ブラー:
-Deslizar (Y)|||スリップ（Y）
-Destravar layout|||レイアウトのロックを解除
-Desvincular grupo|||グループのリンクを解除
-Diferença|||差分
-Digite o texto/título…|||テキスト/タイトルを入力…
-Digite pelo menos um comando.|||少なくとも1つのコマンドを入力してください。
-Direita|||右
-Direita:|||右:
-Dissolve|||ディゾルブ
-Dissolver|||ディゾルブ
-Distribuir|||均等配置
-Dividir clipe no playhead (S)|||再生ヘッドでクリップを分割（S）
-Dividir clipes|||クリップを分割
-Dividir e excluir|||分割して削除
-Dividir no playhead|||再生ヘッドで分割
-Duplicar|||複製
-Duplicar camada|||レイヤーを複製
-Duplicar clipe|||クリップを複製
-Duplo-clique na Central de Mídias\npara abrir no Source|||メディアプールでダブルクリック\nソースで開く
-Duração|||デュレーション
-Easy Ease (F9)|||イージーアイズ（F9）
-Easy Ease (varinha)|||イージーアイズ（ツール）
-Easy Ease aplicado (F9)|||イージーアイズを適用（F9）
-Easy Ease In|||イージーアイズ イン
-Easy Ease In aplicado|||イージーアイズ インを適用
-Easy Ease no keyframe do playhead (F9) — suaviza a transição de velocidade|||再生ヘッドのキーフレームにイージーアイズ（F9）— 速度の変化を滑らかに
-Easy Ease nos keyframes selecionados (F9) — suaviza a animação com handles horizontais|||選択したキーフレームにイージーアイズ（F9）— 水平ハンドルでアニメーションを滑らかに
-Easy Ease Out|||イージーアイズ アウト
-Easy Ease Out aplicado|||イージーアイズ アウトを適用
-Editar keyframe|||キーフレームを編集
-Editar…|||編集…
-Editor de Curvas|||カーブエディター
-Editor de velocidade|||スピードエディター
-Editor de vídeo|||動画エディター
-Edição|||編集
-EDL CMX3600 (*.edl);;Todos os arquivos (*)|||EDL CMX3600 (*.edl);;すべてのファイル (*)
-EDL exportado: %1|||EDL を書き出しました: %1
-EDL importado: %1|||EDL を読み込みました: %1
-Efeitos|||エフェクト
-Efeitos (%1)|||エフェクト（%1）
-Efeitos de vídeo|||映像エフェクト
-Efeitos de vídeo (brilho, contraste, saturação, blur, grayscale, chroma key)|||映像エフェクト（ブライトネス・コントラスト・彩度・ブラー・グレースケール・クロマキー）
-Efeitos de vídeo…|||映像エフェクト…
-Efeitos de áudio|||オーディオエフェクト
-Efeitos de áudio (EQ, denoise, normalizar, fase)|||オーディオエフェクト（EQ・デノイズ・ノーマライズ・フェーズ）
-Efeitos de áudio da faixa|||トラックのオーディオエフェクト
-Efeitos de áudio…|||オーディオエフェクト…
-Efeitos OFX (plugins de terceiros)|||OFX エフェクト（サードパーティプラグイン）
-Effects|||エフェクト
-Elastic|||エラスティック
-Elipse|||楕円
-elipse|||楕円
-Elástico (estilo AE)|||エラスティック（AE スタイル）
-Elásticos|||エラスティック
-Encaixar no grid e nas bordas dos clipes (T). Desligar o ímã também desativa o auto-juntar (ripple) ao cortar/excluir.|||グリッドとクリップの端にスナップ（T）。マグネットをオフにするとカット/削除時の自動リップルもオフになります。
-Encaixar nos frames (S; Ctrl durante o arrasto = livre)|||フレームにスナップ（S · ドラッグ中の Ctrl = 自由）
-Encode acelerado|||高速エンコード
-Entradas|||イントロ
-Envelope (%1 kfs). Clique na linha para criar keyframe; arraste as alças para entortar.|||エンベロープ（%1 個の kf）。ラインをクリックでキーフレーム作成 · ハンドルをドラッグでイージング。
-Envelope (E)|||エンベロープ（E）
-Envelope de velocidade (time remapping) no dock Velocidade|||スピードドックの速度エンベロープ（タイムリマップ）
-Enviar para Mesa|||Mesa へ送る
-Enviar para trás|||背面へ送る
-Equalizador|||イコライザー
-Equalizador de 3 bandas (graves/médios/agudos)|||3 バンドイコライザー（低域/中域/高域）
-Erro na pré-renderização LAINKA: %1|||LAINKA の事前レンダリングエラー: %1
-Erro na pré-renderização OFX: %1|||OFX の事前レンダリングエラー: %1
-Erro: %1|||エラー: %1
-Escala X (%):|||スケール X（%）:
-Escala Y (%):|||スケール Y（%）:
-Escala:|||スケール:
-Escolha uma categoria|||カテゴリを選択
-Escolher cor|||色を選択
-Escorregar (Ctrl+U)|||スライド（Ctrl+U）
-Escuro|||ダーク
-Espelhar Horizontal|||左右反転
-Espelhar Vertical|||上下反転
-Esquerda|||左
-Esquerda:|||左:
-Esse recurso está sendo desenvolvido e pode apresentar problemas de performance ou resultados incorretos no preview e na exportação. Recomendamos acompanhar as próximas versões do Pierrot antes de usá-lo em projetos reais.|||この機能は開発中で、プレビューと書き出しにパフォーマンスの問題や不正確な結果が生じる可能性があります。実際のプロジェクトで使う前に、今後の Pierrot のバージョンを確認することをおすすめします。
-Esticar Velocidade (W)|||スピードストレッチ（W）
-Estilo|||スタイル
-Estilo das faixas: minimizada, normal ou grande (experimental)|||トラックのスタイル: 最小化・標準・大きさ（実験的）
-Excluir|||削除
-Excluir %1 keyframes|||%1 個のキーフレームを削除
-Excluir (deixa espaço)|||削除（空白を残す）
-Excluir (junta os espaços)|||削除（隙間を詰める）
-Excluir clipe|||クリップを削除
-Excluir clipe anterior (D)|||前のクリップを削除（D）
-Excluir clipe posterior (F)|||次のクリップを削除（F）
-Excluir clipes|||クリップを削除
-Excluir clipes (deixando espaço)|||クリップを削除（空白を残す）
-Excluir faixa|||トラックを削除
-Excluir faixa de gravação|||録画トラックを削除
-Excluir faixas selecionadas ou, se não houver, os clipes selecionados (Delete)|||選択したトラックを削除、未選択なら選択したクリップを削除（Delete）
-Excluir keyframe|||キーフレームを削除
-Excluir keyframes selecionados|||選択したキーフレームを削除
-Excluir marcador|||マーカーを削除
-Excluir Mesa|||Mesa を削除
-Excluir projeto|||プロジェクトを削除
-Excluir região de loop|||ループリージョンを削除
-Excluir região de loop (ripple)|||ループリージョンを削除（リップル）
-Excluir tempo da região de loop (deixa espaço)|||ループリージョンの時間を削除（空白を残す）
-Excluir tempo da região de loop (ripple)|||ループリージョンの時間を削除（リップル）
-Exemplos|||サンプル
-Expandir pasta|||フォルダーを展開
-Explorador de Arquivos|||ファイルエクスプローラー
-Exportando…|||書き出し中…
-Exportar|||書き出し
-Exportar apenas cortes como EDL CMX3600 (compatível com Davinci, Premiere).|||カットのみを EDL CMX3600 として書き出し（DaVinci・Premiere 互換）。
-Exportar EDL|||EDL を書き出し
-Exportar EDL…|||EDL を書き出し…
-Exportar quadro|||フレームを書き出し
-Exportar quadro atual|||現在のフレームを書き出し
-Exportar quadro atual (PNG)…|||現在のフレームを書き出し（PNG）…
-Exportar vídeo|||ビデオを書き出し
-Exportar vídeo… (Ctrl+E)|||ビデオを書き出し… (Ctrl+E)
-Exportar…|||書き出し…
-Exportação cancelada pelo encerramento da janela.|||ウィンドウを閉じたため書き出しをキャンセルしました。
-Exportação concluída com sucesso.|||書き出しが正常に完了しました。
-Exportação falhou (código %1).|||書き出しに失敗しました（コード %1）。
-Exposição|||露出
-Fade In|||フェードイン
-Fade in (s):|||フェードイン（秒）:
-Fade In (texto)|||フェードイン（テキスト）
-Fade In aplicado.|||フェードインを適用しました。
-Fade Out|||フェードアウト
-Fade out (s):|||フェードアウト（秒）:
-Fade Out (texto)|||フェードアウト（テキスト）
-Fade Out aplicado.|||フェードアウトを適用しました。
-fadeIn no clipe selecionado|||選択クリップにフェードイン
-fadeOut no clipe selecionado|||選択クリップにフェードアウト
-Faixa %1|||トラック %1
-Falha ao montar o comando de exportação.|||書き出しコマンドの組み立てに失敗しました。
-Falha na exportação. Veja o log acima.|||書き出しに失敗しました。上のログを確認してください。
-Falha no .blend — %1|||.blend の失敗 — %1
-Feather|||フェザー
-Fechar|||閉じる
-Fechar o vão automaticamente ao excluir (ripple)|||削除時に隙間を自動的に詰める（リップル）
-Fechar o vão automaticamente ao excluir (ripple). Desligue para deixar o espaço vazio. Inativo quando o ímã está desligado.|||削除時に隙間を自動的に詰めます（リップル）。オフにすると空白が残ります。マグネットがオフの場合は無効。
-Feche esta janela para abrir o editor vazio.|||このウィンドウを閉じるとエディターが空になります。
-Ferramentas|||ツール
-Ferramentas da timeline|||タイムラインツール
-Fila concluída: %1 exportação(ões) finalizada(s).|||キュー完了: %1 件の書き出しが終了しました。
-Fila de Render|||レンダーキュー
-Fila de render…|||レンダーキュー…
-Filme desbotado|||褪せたフィルム
-Fim|||末尾
-Flicker:|||フリッカー:
-Fonte|||ソース
-Fonte (%1x%2)|||ソース（%1x%2）
-Fontes 2K+ são transcondificadas para o preview e \nthumbs (rápido). Desligue para decodificar o original \nno preview. A exportação sempre usa o original.|||2K 以上の素材はプレビューとサムネイル用に再エンコードされます。\nオフにするとプレビューでオリジナルをデコードします。\n書き出しは常にオリジナルを使用します。
-Formato:|||フォーマット:
-Força da LUT|||LUT の強さ
-FOV (°):|||FOV（°）:
-Frame Rate|||フレームレート
-frei0r (nenhum instalado)|||frei0r（未インストール）
-frei0r — plugins (%1)|||frei0r — プラグイン（%1）
-Freq|||周波数
-Fundo|||背景
-Fundo colorido|||単色の背景
-Fundo transparente|||透明背景
-Gain|||ゲイン
-GAIN  (realces)|||ゲイン（ハイライト）
-Gamma|||ガンマ
-GAMMA (meios)|||ガンマ（ミッドトーン）
-Ganho|||ゲイン
-Gaussian Blur|||ガウスぼかし
-Gera versões leves (H.264 baixo bitrate) de vídeos 2K ou maiores para preview, pan/crop e thumbnails. A exportação sempre usa o original.|||2K 以上のビデオからプレビュー・パン/クロップ・サムネイル用の軽量版（低ビットレート H.264）を生成します。書き出しは常にオリジナルを使用します。
-Gerador|||ジェネレーター
-Geral|||全般
-GIF (*.gif)|||GIF (*.gif)
-GIF: deixa transparente tudo o que não tem clipe\npor cima (o fundo preto vira alfa 0).|||GIF: クリップの上にない部分は透明になります\n（黒背景がアルファ 0 に）。
-Gizmo 3D + keyframes de transform no dock Pivot|||ピボットドックの 3D グリズモ + トランスフォームキーフレーム
-Grade|||グリッド
-Grade de Terços|||三分割グリッド
-Grade:|||グリッド:
-Gradiente|||グラデーション
-Gradiente…|||グラデーション…
-Grande|||大
-Granulado retrô: quantização de cor + dithering estilo PlayStation 1|||レトロなグレイン: PlayStation 1 スタイルの色量化 + ディザリング
-Granulado:|||グレイン:
-Graves (120 Hz):|||低域（120 Hz）:
-Graves:|||低域:
-Grid|||グリッド
-Gráfico|||グラフ
-Habilitada|||有効
-High Shelf|||ハイシェルフ
-Histograma|||ヒストグラム
-Histórico de Edições|||編集履歴
-Hold|||ホールド
-Horizontal|||水平
-Idioma|||言語
-Idle (laço)|||アイドル（ループ）
-Iguala o som do clipe em 3 bandas. 0 dB = sem alteração.|||クリップの音を 3 バンドで均します。0 dB は変更なし。
-imagem|||画像
-Imagem PNG (*.png)|||PNG 画像 (*.png)
-Imagem · arraste=girar · Shift=Z (2.5D) · Ctrl=escala · +kf|||画像 · ドラッグ=回転 · Shift=Z（2.5D）· Ctrl=スケール · +kf
-Importa .obj ou .blend (via Blender CLI) como camada 3D|||.obj または .blend（Blender CLI 経由）を 3D レイヤーとして読み込みます
-Importa as mídias desta pasta para o Media Pool|||このフォルダーのメディアをメディアプールに取り込みます
-Importando mídia…|||メディアを取り込み中…
-Importando mídia… (%1)|||メディアを取り込み中…（%1）
-Importar EDL|||EDL を読み込み
-Importar EDL CMX3600 em um novo projeto (apenas cortes).|||EDL CMX3600 を新しいプロジェクトに読み込み（カットのみ）。
-Importar EDL…|||EDL を読み込み…
-Importar malha 3D|||3D メッシュを読み込み
-Importar mídia|||メディアを取り込み
-Importar mídia (Ctrl+I)|||メディアを取り込み (Ctrl+I)
-Importar mídia…|||メディアを取り込み…
-Importar mídia… (Ctrl+I)|||メディアを取り込み… (Ctrl+I)
-Importar pasta|||フォルダーを取り込み
-Importação .blend concluída (%1 arquivo(s)).|||.blend の取り込みが完了（%1 ファイル）。
-Importação .blend concluída.|||.blend の取り込みが完了。
-Importação .blend: %1 de %2 ok. Falhou: %3|||.blend の取り込み: %1 / %2 成功。失敗: %3
-Importação concluída: %1 arquivo(s) adicionado(s).|||取り込み完了: %1 ファイルを追加しました。
-In|||イン
-In aqui (I)|||ここにイン点（I）
-Informe o caminho de saída.|||出力先のパスを指定してください。
-Inglês (v0.7.5)|||英語（v0.7.5）
-Iniciar fila|||キューを開始
-Insere o trecho In→Out do Source Monitor no playhead da timeline, empurrando os clipes seguintes|||ソースモニターのイン→アウト範囲をタイムラインの再生ヘッドに挿入し、後続クリップを押し広げます
-Insere um clipe de texto no playhead|||再生ヘッドにテキストクリップを挿入します
-Inserir|||挿入
-Inserir do Source|||ソースから挿入
-Inserir no playhead|||再生ヘッドに挿入
-Inserir no playhead (Source)|||再生ヘッドに挿入（ソース）
-Inserir o trecho no playhead da timeline, empurrando os clipes seguintes (,)|||範囲をタイムラインの再生ヘッドに挿入し、後続クリップを押し広げます（,）
-Insert|||挿入
-Intensidade|||強さ
-Intensidade (%):|||強さ（%）:
-Intensidade das cores (0 = preto e branco)|||彩度（0 = モノクロ）
-Intensidade do grade|||グリッドの強さ
-Intensidade:|||強さ:
-Intervalo|||間隔
-Intervalo:|||間隔:
-Inverter|||反転
-Inverter fase|||フェーズ反転
-Início|||先頭
-Início e fim|||開始と終了
-Ir para o fim (End)|||最後へ移動（End）
-Ir para o início (Home)|||先頭へ移動（Home）
-Ir para o keyframe anterior|||前のキーフレームへ移動
-Ir para o próximo keyframe|||次のキーフレームへ移動
-Janela de preview externo|||外部プレビューウィンドウ
-Janela inicial|||スタートウィンドウ
-Janelas|||ウィンドウ
-Junta os clipes de vídeo selecionados num clipe multicam; teclas 1..N cortam o ângulo|||選択した映像クリップをマルチカメラクリップに結合。キー 1..N でアングルを切り替え
-Já existe um keyframe nesse tempo.|||その時間にはすでにキーフレームがあります。
-Já há uma exportação em andamento.|||すでに書き出しを実行中です。
-Keyframe %1/%2  ·  t = %3 (frame %4)  ·  v = %5  ·  %6|||キーフレーム %1/%2  ·  t = %3（フレーム %4）  ·  v = %5  ·  %6
-Keyframe anterior|||前のキーフレーム
-Keyframe criado na curva — arraste as alças|||カーブにキーフレームを作成しました — ハンドルをドラッグ
-Keyframe: altura|||キーフレーム: 高さ
-Keyframe: centro X|||キーフレーム: 中心 X
-Keyframe: centro Y|||キーフレーム: 中心 Y
-Keyframe: largura|||キーフレーム: 幅
-Keyframe: rotação|||キーフレーム: 回転
-Keyframe: suavidade|||キーフレーム: スムーズさ
-Keyframes|||キーフレーム
-Keyframes (tempo relativo ao clipe; sobrepõem o valor base):|||キーフレーム（クリップ基準の相対時間 · ベース値を上書き）:
-keyframes do clipe|||クリップのキーフレーム
-Keyframes do clipe — clique seleciona, arraste move no tempo, Delete apaga. Ctrl=ignora o playhead, Shift=passo de 1 frame.|||クリップのキーフレーム — クリックで選択、ドラッグで時間移動、Delete で削除。Ctrl=再生ヘッドを無視、Shift=1 フレーム刻み。
-Keyframes:|||キーフレーム:
-LAINKA (stop motion)|||LAINKA（ストップモーション）
-LAINKA pré-renderizado: %1 clipe(s)|||LAINKA 事前レンダリング済み: %1 クリップ
-LAINKA: frame %1/%2|||LAINKA: フレーム %1/%2
-Laranja|||オレンジ
-Latch (começa a gravar ao tocar)|||ラッチ（操作で記録開始）
-Layout anterior restaurado.|||以前のレイアウトを復元しました。
-Layout destravado — arraste os painéis para reorganizar.|||レイアウトのロックを解除しました — パネルをドラッグして再配置できます。
-Layout travado e salvo.|||レイアウトをロックして保存しました。
-Lazzi Checkboard|||Lazzi チェッカーボード
-Lazzi Cor|||Lazzi カラー
-Lazzi Gradiente|||Lazzi グラデーション
-Lazzi Ruído|||Lazzi ノイズ
-Lazzi — motion por script: easings elásticos, estilo de texto, motion blur e formas/fundos coloridos (shape:). Converta em clipe animado.|||Lazzi — スクリプトによるモーション: エラスティックイージング、テキストスタイル、モーションブラー、シェイプ/背景カラー（shape:）。アニメーションクリップに変換できます。
-Lento|||低速
-Lift|||リフト
-LIFT  (sombras)|||リフト（シャドウ）
-Lift = sombras · Gamma = meios · Gain = realces|||リフト = シャドウ · ガンマ = ミッドトーン · ゲイン = ハイライト
-Limpar|||クリア
-Limpar loop|||ループをクリア
-Limpar região de loop|||ループリージョンをクリア
-Limpar relatórios|||レポートをクリア
-Limpar todos os marcadores|||すべてのマーカーをクリア
-Linear|||リニア
-Linear (padrão)|||リニア（既定）
-Lista|||リスト
-Log da renderização: %1|||レンダーログ: %1
-Loop (repete o trecho in/out)|||ループ（イン/アウト範囲を再生）
-Low Shelf|||ローシェルフ
-Lupa (Z)|||ズーム（Z）
-LUT: %1|||LUT: %1
-LUTs (*.cube);;Todos (*)|||LUT (*.cube);;すべて (*)
-Luz suave|||ソフトライト
-Língua:|||言語:
-Malha|||メッシュ
-malha|||メッシュ
-Malha 3D (.obj / .blend)…|||3D メッシュ（.obj / .blend）…
-Malha 3D importada na Mesa (%1).|||3D メッシュを Mesa に読み込みました（%1）。
-Malha 3D · arraste=girar · Shift=Z · Ctrl=escala/snap · RX/RY/RZ · +kf|||3D メッシュ · ドラッグ=回転 · Shift=Z · Ctrl=スケール/スナップ · RX/RY/RZ · +kf
-Malha 3×3 para espremer/esticar a mídia|||メディアを引き伸ばすための 3×3 メッシュ
-Marcador|||マーカー
-Marcar fim do loop|||ループの終わりを設定
-Marcar início do loop|||ループの始まりを設定
-Marcar ponto de entrada (I)|||イン点を設定（I）
-Marcar ponto de saída (O)|||アウト点を設定（O）
-Margens de segurança (Ctrl+G)|||セーフエリア（Ctrl+G）
-Master|||マスター
-Matiz|||色相
-Media End|||メディア終了
-Media Start|||メディア開始
-Mesa|||Mesa
-Mesa %1|||Mesa %1
-Mesa %1 · %2|||Mesa %1 · %2
-Mesa %1 · 3D %2|||Mesa %1 · 3D %2
-Mesa %1 · Track %2|||Mesa %1 · トラック %2
-Meu projeto|||マイプロジェクト
-Miniaturas|||サムネイル
-Miniaturas nos clipes:|||クリップのサムネイル:
-Minimizada|||最小化
-Mistura úmida (0–100%)|||ウェットミックス（0–100%）
-Mix|||ミックス
-Mix (úmido):|||ミックス（ウェット）:
-Mixer|||ミキサー
-MKV (*.mkv)|||MKV (*.mkv)
-MKV experimental|||MKV（実験的）
-MKV é experimental: alguns arquivos podem não abrir ou apresentar problemas de áudio/vídeo.|||MKV は実験的サポートです: 一部のファイルは開けないか、オーディオ/映像に問題が出る場合があります。
-Modelos 3D (*.obj *.blend);;Wavefront OBJ (*.obj);;Blender (*.blend);;Todos (*)|||3D モデル (*.obj *.blend);;Wavefront OBJ (*.obj);;Blender (*.blend);;すべて (*)
-Modo 3D (AE Classic)|||3D モード（AE クラシック）
-Modo de automação: %1. Clique para alternar T→W→L→desligado.|||オートメーションモード: %1。クリックで T→W→L→オフ と切り替え。
-Modo de composição|||合成モード
-Modo de mesclagem|||ブレンドモード
-Mostrar o clipe inteiro (F; Ctrl+roda dá zoom)|||クリップ全体を表示（F · Ctrl+ホイールでズーム）
-Mostrar/ocultar grade vertical na timeline|||タイムラインの縦グリッドを表示/非表示
-Mostrar/ocultar linha de keyframes|||キーフレームラインを表示/非表示
-Mostrar/ocultar régua de tempo na timeline|||タイムラインのタイムルーラーを表示/非表示
-MOTION|||モーション
-Motion|||モーション
-MOTION (MESA)|||モーション（MESA）
-MotiOn (motion blur)|||MotiOn（モーションブラー）
-Motion blur|||モーションブラー
-Motion blur (allow)|||モーションブラー（許可）
-Motion blur (Ctrl+Shift+B)|||モーションブラー（Ctrl+Shift+B）
-MOTION BLUR (MOTION)|||モーションブラー（モーション）
-Motion blur global|||グローバルモーションブラー
-Motion blur por amostragem da imagem|||画像サンプリングによるモーションブラー
-Motion básico|||ベーシックモーション
-Mover|||移動
-Mover (M)|||移動（M）
-MP4 (*.mp4)|||MP4 (*.mp4)
-Mudo|||ミュート
-Multicam (%1 ângulos)|||マルチカメラ（%1 アングル）
-Multicam: %1 ângulos (teclas 1..N)|||マルチカメラ: %1 アングル（キー 1..N）
-Multiplicar|||乗算
-Máscara|||マスク
-Máscara %1 · %2 (%3)|||マスク %1 · %2（%3）
-Máscara %1 · %2%3|||マスク %1 · %2%3
-Máscara — %1|||マスク — %1
-Máscaras|||マスク
-Máscaras do clipe. A selecionada vira gizmo editável no viewfinder.|||クリップのマスク。選択したものがビューファーで編集グリズモになります。
-Máscaras/janelas do clipe|||クリップのマスク/ウィンドウ
-Máscara…|||マスク…
-Médios (1 kHz):|||中域（1 kHz）:
-Médios:|||中域:
-Mídia 4K detectada|||4K メディアを検出
-Mídia gerada (gerador)|||生成メディア（ジェネレーター）
-Mídia importada por arrasto.|||ドラッグでメディアを取り込みました。
-Mídia inválida|||無効なメディア
-Nada para importar.|||取り込むものがありません。
-Nativos|||ネイティブ
-Negativo escurece as bordas|||負片は縁が暗くなります
-Negrito|||太字
-Nenhum layout anterior guardado.|||保存されたレイアウトがありません。
-Nenhum parâmetro descoberto.\nO plugin pode não expor parâmetros editáveis.|||パラメーターが見つかりません。\nプラグインが編集可能なパラメーターを公開していない可能性があります。
-Nenhum preset salvo ainda. Use\n“Salvar Preset…” em um clipe para criar um.|||保存されたプリセットはまだありません。\nクリップで「プリセットを保存…」を使って作成してください。
-Nenhum projeto recente.|||最近使ったプロジェクトはありません。
-Nenhuma|||なし
-Nenhuma Mesa selecionada\nClique direito na timeline \xe2\x86\x92 Criar Mesa|||Mesa が選択されていません\nタイムラインで右クリック → Mesa を作成
-Nitidez|||シャープネス
-Nome|||名前
-Nome da pasta:|||フォルダー名:
-Nome do marcador:|||マーカー名:
-Nome do preset:|||プリセット名:
-Nome do projeto|||プロジェクト名
-Nome do workspace:|||ワークスペース名:
-Normal|||標準
-Normal (padrão)|||標準（既定）
-Normalizar (-14 LUFS)|||ノーマライズ（-14 LUFS）
-Nova camada|||新規レイヤー
-Nova Mesa…|||新しい Mesa…
-Novo|||新規
-Novo projeto|||新規プロジェクト
-Novo projeto (Ctrl+N)|||新規プロジェクト (Ctrl+N)
-Novo projeto criado.|||新しいプロジェクトを作成しました。
-Novo texto…|||新しいテキスト…
-Não foi possível abrir o arquivo.|||ファイルを開けませんでした。
-Não foi possível abrir o arquivo:\n%1|||ファイルを開けませんでした:\n%1
-Não foi possível gravar o arquivo:\n%1\n\n%2|||ファイルを書き込めませんでした:\n%1\n\n%2
-Não foi possível iniciar o ffmpeg. Instale o ffmpeg e tente novamente.|||ffmpeg を起動できませんでした。ffmpeg をインストールしてもう一度試してください。
-Não foi possível ler o arquivo.|||ファイルを読み込めませんでした。
-Não foi possível ler o arquivo:\n%1|||ファイルを読み込めませんでした:\n%1
-Não foi possível salvar a imagem.|||画像を保存できませんでした。
-Não foi possível salvar o arquivo.|||ファイルを保存できませんでした。
-Não há quadro para exportar neste momento.|||現在、書き出せるフレームがありません。
-O clipe tem texto. Como criar a cópia?|||クリップにテキストが含まれています。コピーの作成方法は？
-O projeto contém mídia em 4K ou superior. O preview pode engasgar nesses arquivos — reduza a qualidade do preview (botão no monitor) para aliviar a reprodução.|||プロジェクトに 4K 以上のメディアが含まれています。プレビューがカクつくことがあります — モニターのボタンでプレビュー品質を下げて再生を軽くしてください。
-O projeto tem alterações não salvas. Deseja salvá-las antes de continuar?|||プロジェクトに未保存の変更があります。続行前に保存しますか？
-O que deseja fazer com \"%1\"?|||「%1」どうしますか？
-Obturador (%):|||シャッター（%）:
-OFX (nenhum instalado)|||OFX（未インストール）
-OFX pré-renderizado: %1 clipe(s)|||OFX 事前レンダリング済み: %1 クリップ
-OFX — plugins de terceiros (%1)|||OFX — サードパーティプラグイン（%1）
-OFX: frame %1/%2|||OFX: フレーム %1/%2
-On|||オン
-Opacidade (%):|||不透明度（%）:
-Opacidade (0–100%):|||不透明度（0–100%）:
-Opacidade da faixa|||トラックの不透明度
-Opacidade da faixa: %1%|||トラックの不透明度: %1%
-Opacidade:|||不透明度:
-Ordem|||順序
-Os clipes compartilham o mesmo texto e estilo: editar um atualiza os outros.|||クリップ間でテキストとスタイルを共有します: 1 つを編集すると他のクリップも更新されます。
-Os efeitos de vídeo estão em fase de criação e ainda não estão bons para uso.|||映像エフェクトは開発中で、まだ実用に耐えません。
-Out|||アウト
-Out aqui (O)|||ここにアウト点（O）
-Overwrite|||上書き
-Overwrite do Source|||ソースから上書き
-Padrão|||既定
-Painéis embaixo|||パネルを下に
-Painéis à direita|||パネルを右に
-Painéis à esquerda|||パネルを左に
-Pan (posição estéreo). Duplo clique: centro.|||パン（ステレオ位置）。ダブルクリックで中央。
-Pan X:|||パン X:
-Pan Y:|||パン Y:
-Pan/Crop|||パン/クロップ
-Pantalone…|||Pantalone…
-Papel (warp):|||ペーパー（ワープ）:
-Paramétrico|||パラメトリック
-Pasta %1|||フォルダー %1
-Pasta padrão de renderização|||既定のレンダーフォルダー
-Pasta:|||フォルダー:
-Pausar|||一時停止
-Pausar (JKL)|||一時停止（JKL）
-Pausar (K)|||一時停止（K）
-Pena da vinheta|||ビネットのフェザー
-Permite que esta camada borre nas sub-passadas do motion blur global (Ctrl+Shift+B). Desligue para a camada ficar fixa.|||このレイヤーをグローバルモーションブラーのサブパスでぼかせるようにします（Ctrl+Shift+B）。オフにするとレイヤーは固定されます。
-Personalizada…|||カスタム…
-Personalizado…|||カスタム…
-Pierrot %1 — Editor de Vídeo|||Pierrot %1 — 動画エディター
-Pierrot (*.Blanc *.ovp);;Todos os arquivos (*)|||Pierrot (*.Blanc *.ovp);;すべてのファイル (*)
-Pierrot (*.Blanc);;Todos os arquivos (*)|||Pierrot (*.Blanc);;すべてのファイル (*)
-Pierrot fechou inesperadamente|||Pierrot が予期せず終了しました
-Pivot|||ピボット
-Pivot (3D do clipe)|||ピボット（クリップの 3D）
-Pivot · %1  |  arraste=girar  Shift=Z  Ctrl=escala/snap  RX/RY/RZ=eixo|||ピボット · %1  |  ドラッグ=回転  Shift=Z  Ctrl=スケール/スナップ  RX/RY/RZ=軸
-Pivot — %1|||ピボット — %1
-Pivot — 3D do clipe|||ピボット — クリップの 3D
-Pivot: anel X — rotação travada no eixo X|||ピボット: X リング — X 軸回転にロック
-Pivot: anel Y — rotação travada no eixo Y|||ピボット: Y リング — Y 軸回転にロック
-Pivot: anel Z — rotação travada no eixo Z|||ピボット: Z リング — Z 軸回転にロック
-Pivot: arrastar = escala|||ピボット: ドラッグ = スケール
-Pivot: arrastar = rotX|||ピボット: ドラッグ = 回転X
-Pivot: arrastar = rotY|||ピボット: ドラッグ = 回転Y
-Pivot: arrastar = rotZ (roll)|||ピボット: ドラッグ = 回転Z（ロール）
-Pivot: arrastar = Z (profundidade)|||ピボット: ドラッグ = Z（奥行き）
-Pivot: ferramenta limpa — o arraste volta a girar|||ピボット: ツールクリア — ドラッグで再び回転
-Pivot: mover livre (H e V)|||ピボット: 自由移動（H と V）
-Pivot: mover no eixo H|||ピボット: H 軸で移動
-Pivot: mover no eixo V|||ピボット: V 軸で移動
-Pivot: mover no eixo Z (profundidade)|||ピボット: Z 軸で移動（奥行き）
-Pivot: trackball livre — arraste na esfera (Ctrl=snap 15°)|||ピボット: フリートラックボール — 球の上をドラッグ（Ctrl=15° スナップ）
-Plugins|||プラグイン
-Plugins frei0r (Kdenlive/Shotcut/MLT). Instale com o pacote frei0r-plugins ou defina PIERROT_FREI0R_PATH.|||frei0r プラグイン（Kdenlive/Shotcut/MLT）。frei0r-plugins パッケージをインストールするか PIERROT_FREI0R_PATH を設定してください。
-Plugins OFX|||OFX プラグイン
-Plugins OFX (ex.: DaVinci/Resolve, Sapphire, BorisFX) encontrados no sistema.|||システムで見つかった OFX プラグイン（例: DaVinci/Resolve、Sapphire、BorisFX）。
-polígono|||ポリゴン
-Ponto|||ポイント
-Posição|||位置
-Posição X (px):|||位置 X（px）:
-Posição X:|||位置 X:
-Posição Y (px):|||位置 Y（px）:
-Posição Y:|||位置 Y:
-Preset \"%1\" aplicado em %2 clipe(s).|||プリセット「%1」を %2 個のクリップに適用しました。
-Preset de animação aplicado em %1 clipe(s).|||アニメーションプリセットを %1 個のクリップに適用しました。
-Preset:|||プリセット:
-Presets|||プリセット
-Preto|||ブラック
-Preto e Branco|||ブラック＆ホワイト
-Preto e branco|||モノクロ
-Pretos|||ブラック
-Preview externo — Pierrot|||外部プレビュー — Pierrot
-Procurar .cube…|||.cube を探す…
-Profundidade:|||奥行き:
-Program: |||プログラム: 
-Program: %1|||プログラム: %1
-Projeto aberto: %1|||プロジェクトを開きました: %1
-Projeto fechado salvo: %1|||閉じたときに保存: %1
-Projeto salvo automaticamente (%1).|||プロジェクトを自動保存しました（%1）。
-Projeto salvo: %1|||プロジェクトを保存しました: %1
-Projetos recentes|||最近使ったプロジェクト
-Pronto — arraste mídia para a timeline.|||準備完了 — メディアをタイムラインにドラッグしてください。
-Proporção:|||アスペクト比:
-Propriedade|||プロパティ
-Propriedades|||プロパティ
-Propriedades (volume, opacidade, velocidade, fades)|||プロパティ（音量・不透明度・速度・フェード）
-Propriedades da camada…|||レイヤーのプロパティ…
-Propriedades…|||プロパティ…
-Pré-renderizando efeitos LAINKA…|||LAINKA エフェクトを事前レンダリング中…
-Pré-renderizando efeitos OFX…|||OFX エフェクトを事前レンダリング中…
-Próximo keyframe|||次のキーフレーム
-Próximo quadro|||次のフレーム
-Quadro anterior|||前のフレーム
-Quadro anterior (←)|||前のフレーム（←）
-Quadro seguinte|||次のフレーム
-Quadro seguinte (→)|||次のフレーム（→）
-Quadros/s|||フレーム/秒
-Quadros/s:|||フレーム/秒:
-Qualidade (CRF):|||品質（CRF）:
-Qualidade do preview (resolução de decodificação)|||プレビュー品質（デコード解像度）
-Qualidade e Timeline|||品質とタイムライン
-Quando ativado, o diálogo de exportação abre nessa pasta em vez da sua pasta pessoal. Deixe vazio para usar a pasta pessoal.|||有効にすると、書き出しダイアログが個人フォルダーではなくこのフォルダーで開きます。空欄の場合は個人フォルダーを使用します。
-Realces|||ハイライト
-Reaplica o arranjo de painéis guardado antes de uma atualização que dispensou o layout antigo.|||レイアウトを破棄した更新前の状態で保存されたパネル配置を再適用します。
-Reaplicar o arranjo de painéis guardado (versão de layout %1) e substituir o atual?|||保存されたパネル配置（レイアウトバージョン %1）を再適用して、現在の配置を置き換えますか？
-Recarregar|||再読み込み
-Recarregar o projeto do disco (F5)|||プロジェクトをディスクから再読み込み（F5）
-Recolher pasta|||フォルダーを折りたたむ
-Recolher/ampliar painel de propriedades|||プロパティパネルを折りたたむ/展開
-Recortar|||切り取り
-Recorte|||クロップ
-Recorte base:|||クロップ下:
-Recorte direita:|||クロップ右:
-Recorte esquerda:|||クロップ左:
-Recorte topo:|||クロップ上:
-Rectângulo|||矩形
-Recuar um|||1 つ戻る
-Recurso experimental — pode apresentar falhas.|||実験的機能 — 問題が発生する可能性があります。
-Redefinir esta propriedade|||このプロパティをリセット
-Redefinir malha|||メッシュをリセット
-Redefinir Tudo|||すべてリセット
-Redução de ruído|||ノイズリダクション
-Refazer|||やり直す
-Refazer (Ctrl+Shift+Z)|||やり直す (Ctrl+Shift+Z)
-Remove a banda selecionada|||選択したバンドを削除します
-Remove cor (verde por padrão) para transparência|||指定色（既定は緑）を除去して透明にします
-Remove keyframe mais próximo do playhead|||再生ヘッドに最も近いキーフレームを削除します
-Remove o envelope e deixa só a velocidade base|||エンベロープを削除し、ベースの速度だけを残します
-Remove o fundo da cor selecionada no preview.|||プレビューで選択色の背景を除去します。
-Remover|||削除
-Remover a máscara selecionada|||選択したマスクを削除
-Remover a mídia selecionada do projeto|||プロジェクトから選択したメディアを削除
-Remover da Mesa|||Mesa から削除
-Remover e excluir o arquivo|||削除してファイルも消去
-Remover efeito|||エフェクトを削除
-Remover o projeto selecionado dos recentes|||最近使った項目から選択したプロジェクトを削除
-Remover selecionados|||選択項目を削除
-Remover último|||最後のものを削除
-Renderizar|||レンダリング
-Renderização cancelada pelo usuário.|||ユーザーによりレンダリングをキャンセルしました。
-Renomear pasta|||フォルダー名を変更
-Renomear pasta…|||フォルダー名を変更…
-Renomear…|||名前を変更…
-Reproduzir|||再生
-Reproduzir para frente (L); repetir acelera|||早送り再生（L）· 繰り返しで加速
-Reproduzir para trás (J); repetir acelera|||巻き戻し再生（J）· 繰り返しで加速
-Reproduzir/Pausar (Espaço)|||再生/一時停止（スペース）
-Reproduzir/pausar (Espaço)|||再生/一時停止（スペース）
-Requer reinício do aplicativo para tomar efeito.|||変更を反映するにはアプリの再起動が必要です。
-Requer reinício do aplicação para tomar efeito.|||変更を反映するにはアプリの再起動が必要です。
-Reset|||リセット
-Reset de transformação|||トランスフォームをリセット
-Resetar|||リセット
-Resetar grade|||グリッドをリセット
-Resolução|||解像度
-Resolução:|||解像度:
-Restaurar layout anterior|||以前のレイアウトを復元
-Restaurar padrão do atalho selecionado|||選択したショートカットを既定に戻す
-Resto|||残り
-Reta|||直線
-Retroceder (JKL)|||巻き戻し（JKL）
-retângulo|||矩形
-Reverb|||リバーブ
-Reverb EX|||Reverb EX
-Reverb simples (Schroeder) no áudio do clipe|||クリップのオーディオにシンプルなリバーブ（Schroeder）を適用
-Ripple|||リップル
-Ripple (B)|||リップル（B）
-Rodas|||ホイール
-Rolamento (N)|||ローリング（N）
-Rotação|||回転
-Rotação (°):|||回転（°）:
-Rotação:|||回転:
-Ruído|||ノイズ
-Ruído (grão)…|||ノイズ（グレイン）…
-Rápido|||高速
-Régua|||ルーラー
-Sair|||終了
-Sala:|||ルーム:
-Salva o quadro composto no playhead como imagem PNG (a mesma imagem final do monitor).|||再生ヘッドの合成フレームを PNG 画像として保存します（モニターの最終イメージと同じ）。
-Salvamento automático|||自動保存
-Salvamento automático: salve o projeto uma vez (Ctrl+S) para ativar.|||自動保存: 先にプロジェクトを 1 回保存（Ctrl+S）してください。
-Salvamento em andamento — aguarde.|||保存中 — しばらくお待ちください。
-Salvando...|||保存中...
-Salvar|||保存
-Salvar como…|||名前を付けて保存…
-Salvar Preset|||プリセットを保存
-Salvar Preset…|||プリセットを保存…
-Salvar projeto|||プロジェクトを保存
-Salvar projeto (Ctrl+S)|||プロジェクトを保存 (Ctrl+S)
-Salvar projeto?|||プロジェクトを保存しますか？
-Salvar script|||スクリプトを保存
-Salvar vídeo|||ビデオを保存
-Salvar workspace|||ワークスペースを保存
-Salvar workspace atual|||現在のワークスペースを保存
-Salvar workspace como...|||ワークスペースを名前付きで保存...
-Salvar…|||保存…
-Saturation|||彩度
-Saturação|||彩度
-Saturação (%):|||彩度（%）:
-Saturação:|||彩度:
-Saída|||アウト
-Saídas|||アウト
-Selecionar|||選択
-Selecionar (0)|||選択（0）
-Selecionar e mover keyframes (V)|||キーフレームを選択して移動（V）
-Selecionar faixas da pasta|||フォルダー内のトラックを選択
-Selecionar pasta de plugins OFX|||OFX プラグインフォルダーを選択
-Selecionar pasta padrão de render|||既定のレンダーフォルダーを選択
-Selecionar tudo|||すべて選択
-Selecionar/mover keyframes (V)|||キーフレームを選択/移動（V）
-Selecione clipe(s) na timeline e clique num preset para aplicar. Passe o mouse sobre a miniatura para ver a animação.|||タイムラインでクリップを選択してからプリセットをクリックすると適用されます。サムネイルにマウスを乗せるとアニメーションを確認できます。
-Selecione pelo menos um clipe na timeline antes de aplicar um preset.|||プリセットを適用する前に、タイムラインで少なくとも1つのクリップを選択してください。
-Selecione um clipe 3D (imagem ou malha)|||3D クリップ（画像またはメッシュ）を選択
-Selecione um clipe 3D (imagem ou malha).|||3D クリップ（画像またはメッシュ）を選択してください。
-Selecione um clipe de texto para editar.|||編集するテキストクリップを選択してください。
-Selecione um clipe de vídeo|||映像クリップを選択
-Selecione um clipe de vídeo na timeline.|||タイムラインで映像クリップを選択してください。
-Selecione um clipe de vídeo para aplicar a transição.|||トランジションを適用する映像クリップを選択してください。
-Selecione um clipe de vídeo para editar o pantalone.|||Pantalone を編集する映像クリップを選択してください。
-Selecione um clipe na timeline para\neditar os keyframes.|||キーフレームを編集するには\nタイムラインでクリップを選択してください。
-Selecione um clipe na timeline.|||タイムラインでクリップを選択してください。
-Selecione um clipe na timeline\nou uma camada no canvas da Mesa.|||タイムラインでクリップを、または\nMesa のキャンバスでレイヤーを選択してください。
-Selecione um clipe para o Lumetri.|||Lumetri を適用するクリップを選択してください。
-Selecione um clipe.|||クリップを選択してください。
-Selecione um clipe. Arraste=girar · Mover/H/V/Z=posição · setas=nudge (Shift=10px) · Ctrl=escala/snap|||クリップを選択してください。ドラッグ=回転 · 移動/H/V/Z=位置 · 矢印=微調整（Shift=10px）· Ctrl=スケール/スナップ
-Selecione um keyframe para apagar.|||削除するキーフレームを選択してください。
-Selecione uma mídia no painel Projeto\ne arraste para a linha do tempo (Espaço reproduz)|||プロジェクトパネルでメディアを選択し\nタイムラインにドラッグ（スペースで再生）
-Seleção de keyframe limpa.|||キーフレームの選択を解除しました。
-Sem clipe de vídeo aqui|||ここに映像クリップがありません
-Sem LUT. Aceita .cube 3D (IRIDAS/Resolve).|||LUT なし。.cube 3D（IRIDAS/Resolve）に対応。
-Sem projeto|||プロジェクトなし
-Sem quadro|||フレームなし
-Sem quadro - mova o playhead|||フレームなし — 再生ヘッドを動かしてください
-Sem título|||無題
-Sensibilidade das curvas:|||カーブの感度:
-Sensibilidade do arraste vertical no editor de curvas. Acima de 1× deixa as curvas mais exageradas.|||カーブエディターでの垂直ドラッグの感度。1× より大きいとカーブが強調されます。
-Similaridade:|||類似度:
-Snap|||スナップ
-Snap (ímã)|||スナップ（マグネット）
-Snap desligado (Ctrl = livre)|||スナップ オフ（Ctrl = 自由）
-Snap ligado (Ctrl = livre)|||スナップ オン（Ctrl = 自由）
-Sobre o Pierrot|||Pierrot について
-Sobre o Pierrot…|||Pierrot について…
-Sobrepor (overlay)|||オーバーレイ
-Sobrescreve a timeline no playhead com o trecho In→Out do Source Monitor|||タイムラインの再生ヘッドの位置に、ソースモニターのイン→アウト範囲を上書きします
-Sobrescrever a timeline no playhead com o trecho do Source (.)|||タイムラインの再生ヘッドにソースの範囲を上書きします（.）
-Sobrescrever no playhead (Source)|||再生ヘッドに上書き（ソース）
-Solo|||ソロ
-Sombras|||シャドウ
-Source|||ソース
-Source: %1|||ソース: %1
-Source: (nenhuma mídia)|||ソース: （メディアなし）
-Source: defina In e Out antes de inserir.|||ソース: 挿入前にイン点とアウト点を設定してください。
-Source: defina In e Out antes de sobrescrever.|||ソース: 上書き前にイン点とアウト点を設定してください。
-Source: mídia %1 não encontrada.|||ソース: メディア %1 が見つかりません。
-Stop motion: jitter, flicker, warp, dust, scratch|||ストップモーション: ジッター、フリッカー、ワープ、ダスト、スクラッチ
-Stylize|||スタイライズ
-Suave|||スムーズ
-Suavidade borda:|||エッジの滑らかさ:
-Suavidade:|||滑らかさ:
-Subir uma pasta|||フォルダーを 1 階層上へ
-Substitui por 5 bandas sugeridas|||推奨の 5 バンドに置き換えます
-Supressão spill:|||スピル抑制:
-Só as alças de recorte|||クロップハンドルのみ
-Só remover da lista|||リストから削除のみ
-Sólido…|||単色…
-t = %1  ·  frame %2\nv = %3  ·  %4|||t = %1  ·  フレーム %2\nv = %3  ·  %4
-Tamanho da sala (0–100%)|||ルームサイズ（0–100%）
-Tamanho da sala:|||ルームサイズ:
-Tamanho X|||幅
-Tamanho Y|||高さ
-Target FPS:|||ターゲット FPS:
-Tela (screen)|||スクリーン
-Tela cheia (Esc para sair)|||全画面表示（Esc で終了）
-Tela cheia (F11; Esc sai)|||全画面表示（F11 · Esc で終了）
-Tema:|||テーマ:
-Temperatura|||色温度
-Tempo (s)|||時間（秒）
-Tempo:|||時間:
-Tesoura (R)|||シザー（R）
-Text / Animation|||テキスト / アニメーション
-Texto|||テキスト
-Texto do clipe|||クリップのテキスト
-Texto:|||テキスト:
-Texto…|||テキスト…
-Timeline|||タイムライン
-Timeline não vinculada.|||タイムラインがリンクされていません。
-Tipo|||タイプ
-Tipo:|||タイプ:
-Tocar/parar o Source (Espaço)|||ソースの再生/停止（スペース）
-Todas (contínuas)|||すべて（連続）
-Todas as exportações foram concluídas.|||すべての書き出しが完了しました。
-Topo:|||上:
-Touch (grava enquanto segura)|||タッチ（押している間記録）
-Transfere a decodificação de vídeo para a placa de vídeo, aliviando a CPU (útil em 4K e projetos com muitos cortes). Se algum arquivo tiver problema, desligue — o Pierrot volta a decodificar por software.|||映像デコードを GPU に移して CPU を軽くします（4K やカットの多いプロジェクトに有用）。問題のあるファイルがある場合はオフにすると Pierrot はソフトウェアデコードに戻ります。
-Transformar|||トランスフォーム
-Transformar (posição, escala, rotação)|||トランスフォーム（位置・スケール・回転）
-Transformar…|||トランスフォーム…
-Transformação|||トランスフォーム
-Transição|||トランジション
-Transição de saída|||アウトトランジション
-Transição: %1 no clipe selecionado|||トランジション: 選択クリップに %1
-Transparência:|||透明度:
-Travar layout|||レイアウトをロック
-Travar/destravar o layout dos painéis (Ctrl+L)|||パネルのレイアウトをロック/解除（Ctrl+L）
-Trazer para a frente|||前面へ送る
-trecho: %1 → %2  (%3 s)|||範囲: %1 → %2  （%3 秒）
-trecho: —|||範囲: —
-Tremida:|||シェイク:
-Trimmer — %1|||トリマー — %1
-Trocar in/out|||イン/アウトを入れ替え
-Usa a GPU (h264_nvenc ou h264_vaapi) para codificar MP4/MKV.\nSe o ffmpeg do sistema não tiver esses encoders, cai automaticamente para o libx264.|||GPU（h264_nvenc または h264_vaapi）で MP4/MKV をエンコードします。\nシステムの ffmpeg にこれらのエンコーダーがない場合は自動的に libx264 にフォールバックします。
-Usa a GPU para decodificar H.264/HEVC/MJPEG. Requer suporte VAAPI no Linux (Intel/AMD/NVIDIA com driver).|||GPU で H.264/HEVC/MJPEG をデコードします。Linux の VAAPI 対応が必要（Intel/AMD/NVIDIA + ドライバー）。
-Usar pasta padrão ao exportar|||書き出し時に既定のフォルダーを使用
-Usar proxies (editar com transcode leve, qualidade cheia no export)|||プロキシを使用（軽量な再エンコードで編集し、書き出しはフルクオリティ）
-Usar proxies em previews e pan/crop (alta resolução)|||プレビューとパン/クロップでもプロキシを使用（高解像度）
-Valor|||値
-valor padrão|||既定値
-Valor:|||値:
-Varinha|||ツール
-Varinha: clique cria ponto suave; arraste as alças entorta a velocidade (B)|||ツール: クリックでスムーズポイント作成 · ハンドルをドラッグで速度を調整（B）
-Vectorscope|||ベクトルスコープ
-Velocidade|||速度
-Velocidade constante %1×. Clique na linha (ou use Curva) para criar o envelope.|||一定速度 %1×。ラインをクリック（またはカーブを使用）でエンベロープを作成。
-Velocidade constante do clipe (sem envelope)|||クリップの一定速度（エンベロープなし）
-Velocidade do clipe|||クリップの速度
-Velocidade no keyframe selecionado / no playhead|||選択キーフレーム / 再生ヘッドの速度
-Velocidade — %1|||速度 — %1
-Verde|||グリーン
-Verde ↔ Magenta|||緑 ↔ マゼンタ
-Vermelho|||レッド
-Versão %1|||バージョン %1
-Vertical|||垂直
-Vibrance|||ビブランス
-Video Effects (do Pierrot)|||映像エフェクト（Pierrot ネイティブ）
-Video Transitions|||映像トランジション
-Vinheta|||ビネット
-Vinheta / LUT|||ビネット / LUT
-Visualização em lista (colunas, como o Premiere)|||リスト表示（Premiere のようなカラム）
-Visualização em ícones (grade)|||アイコン表示（グリッド）
-Voltar 1 frame|||1 フレーム戻る
-Voltar 1 frame (←)|||1 フレーム戻る（←）
-Volume (%):|||音量（%）:
-Volume (0–200%):|||音量（0–200%）:
-Volume da faixa|||トラックの音量
-Volume da faixa: %1%|||トラックの音量: %1%
-Volume geral (master)|||マスター音量
-Volume:|||音量:
-Várias exportações em sequência (formatos/resoluções diferentes)|||複数の書き出しを順番に実行（異なるフォーマット/解像度）
-Vídeo|||ビデオ
-Vídeo %1|||ビデオ %1
-Vídeo 1|||ビデオ 1
-Vídeo exportado com sucesso.|||ビデオの書き出しが完了しました。
-Vídeo:|||ビデオ:
-Waveform|||波形
-Waveform (mini) — dock Analisadores para o full|||波形（ミニ）— アナライザードックで全体表示
-WebM (*.webm)|||WebM (*.webm)
-Wipe|||ワイプ
-Wipe Bottom-Left|||ワイプ 左下
-Wipe Bottom-Right|||ワイプ 右下
-Wipe Down|||ワイプ 下
-Wipe Left|||ワイプ 左
-Wipe Right|||ワイプ 右
-Wipe Top-Left|||ワイプ 左上
-Wipe Top-Right|||ワイプ 右上
-Wipe Up|||ワイプ 上
-Wipe ← (próximo vem da direita)|||ワイプ ←（次が右から）
-Wipe ↑ (próximo vem de baixo)|||ワイプ ↑（次が下から）
-Wipe → (próximo vem da esquerda)|||ワイプ →（次が左から）
-Wipe ↓ (próximo vem de cima)|||ワイプ ↓（次が上から）
-Wipes diagonais|||斜めワイプ
-Workspace salvo como \"%1\".|||ワークスペース「%1」を保存しました。
-Workspace: %1|||ワークスペース: %1
-Workspaces|||ワークスペース
-Write (grava durante a reprodução)|||ライト（再生中に記録）
-Zera recorte, zoom, posição, rotação, achatamento e âncora do clipe|||クリップのクロップ・ズーム・位置・回転・フラット・アンカーをリセット
-Zera transform 2D/3D do clipe|||クリップの 2D/3D トランスフォームをリセット
-Zoom do preview|||プレビューのズーム
-Zoom e Posição|||ズームと位置
-Zoom, posição, rotação e âncora|||ズーム・位置・回転・アンカー
-Zoom:|||ズーム:
-Áudio|||オーディオ
-Âncora X (px):|||アンカー X（px）:
-Âncora X:|||アンカー X:
-Âncora Y (px):|||アンカー Y（px）:
-Âncora Y:|||アンカー Y:
-Ângulo (°):|||角度（°）:
-Ângulo multicam %1|||マルチカメラアングル %1
-Ângulo:|||アングル:
-Ícones|||アイコン
-↖ Wipe (próximo vem de baixo-direita)|||↖ ワイプ（次が右下から）
-↗ Wipe (próximo vem de baixo-esquerda)|||↗ ワイプ（次が左下から）
-↘ Wipe (próximo vem de cima-esquerda)|||↘ ワイプ（次が左上から）
-↙ Wipe (próximo vem de cima-direita)|||↙ ワイプ（次が右上から）
-● Auto|||● 自動
-1080p (Full HD) · 24fps|||1080p（フルHD）· 24fps
-1080p (Full HD) · 30fps|||1080p（フルHD）· 30fps
-1080p (Full HD) · 60fps|||1080p（フルHD）· 60fps
-720p (HD) · 25fps|||720p（HD）· 25fps
-720p (HD) · 30fps|||720p（HD）· 30fps
-A cada 1 hora|||1 時間ごと
-A cada 10 minutos|||10 分ごと
-A cada 20 minutos|||20 分ごと
-A cada 30 minutos|||30 分ごと
-A cada 5 minutos|||5 分ごと
-Centro horizontal|||水平中央
-Centro vertical|||垂直中央
-Deslocar clipes ←|||クリップをずらす ←
-Deslocar clipes →|||クリップをずらす →
-Envelope|||エンベロープ
-Esticar Velocidade|||スピードストレッチ
-Lupa (Zoom)|||ズーム（Z）
-Personalizado|||カスタム
-Projeto|||プロジェクト
-Reproduzir/Pausar|||再生/一時停止
-Reprodução|||再生
-Rolling|||ローリング
-Salvar como|||名前を付けて保存
-Slide|||スライド
-Slip|||スリップ
-Tesoura|||シザー
-Topo|||上
-  (%1 ignorado(s))|||  （%1 件をスキップ）
-  Erro: %1|||  エラー: %1
-  Não foi possível iniciar o ffmpeg.|||  ffmpeg を起動できませんでした。
-  ✓ Concluído.|||  ✓ 完了。
-  ✗ Falhou (código %1).|||  ✗ 失敗（コード %1）。
-Abrir o editor de texto do clipe|||クリップのテキストエディターを開く
-Na última execução o Pierrot fechou de repente (possível falha).\n\nUm relatório de crash foi gerado com detalhes técnicos:\n%1|||前回の実行中に Pierrot が突然終了しました（クラッシュの可能性）。\n\nクラッシュレポートが技術的な詳細とともに生成されました:\n%1
-Remover keyframe mais próximo do playhead|||再生ヘッドに最も近いキーフレームを削除
-▶ Tocar|||▶ 再生
-⏸ Parar|||⏸ 停止
-Wipe \u2190|||ワイプ \u2190
-Wipe \u2191|||ワイプ \u2191
-Wipe \u2192|||ワイプ →
-Wipe \u2193|||ワイプ \u2193
-Wipe \u2196|||ワイプ \u2196
-Wipe \u2197|||ワイプ \u2197
-Wipe \u2198|||ワイプ \u2198
-Wipe \u2199|||ワイプ \u2199
-2K (2560 × 1440)|||2K（2560 × 1440）
-4K (3840 × 2160)|||4K（3840 × 2160）
-640 × 360|||640 × 360
-Full HD (1920 × 1080)|||フルHD（1920 × 1080）
-HD (1280 × 720)|||HD（1280 × 720）
-SD (720 × 480)|||SD（720 × 480）
-text:Bom dia\nfont:Impact\ncolor:#FFDD00\nease:elastic\ndur:2s\nscale:0->1 @0s-0.6s\ny:120->0 @0s-0.6s\nrot:-10->0 @0s-0.7s|||text:おはよう\nfont:Impact\ncolor:#FFDD00\nease:elastic\ndur:2s\nscale:0->1 @0s-0.6s\ny:120->0 @0s-0.6s\nrot:-10->0 @0s-0.7s
-Vídeo e áudio (*.mp4 *.mov *.mkv *.avi *.webm *.m4v *.ts *.flv *.wmv *.3gp *.mpg *.mpeg *.ogv *.mts *.m2ts *.vob *.mp3 *.wav *.aac *.flac *.ogg *.m4a *.opus *.wma *.aiff *.aif *.au *.ac3 *.amr *.ape *.caf *.dts *.mka *.mid *.midi *.mp2 *.oga *.spx *.w64 *.wv *.alac *.mp1 *.mpa *.ra *.wpl *.tta *.tak *.shn);;Imagens (*.jpg *.jpeg *.png *.bmp *.gif *.webp *.tif *.tiff *.svg);;Todos os arquivos (*)|||映像とオーディオ (*.mp4 *.mov *.mkv *.avi *.webm *.m4v *.ts *.flv *.wmv *.3gp *.mpg *.mpeg *.ogv *.mts *.m2ts *.vob *.mp3 *.wav *.aac *.flac *.ogg *.m4a *.opus *.wma *.aiff *.aif *.au *.ac3 *.amr *.ape *.caf *.dts *.mka *.mid *.midi *.mp2 *.oga *.spx *.w64 *.wv *.alac *.mp1 *.mpa *.ra *.wpl *.tta *.tak *.shn);;画像 (*.jpg *.jpeg *.png *.bmp *.gif *.webp *.tif *.tiff *.svg);;すべてのファイル (*)
+  (%1 ignorado(s))	  （%1 件をスキップ）
+  Erro: %1	  エラー: %1
+  Não foi possível iniciar o ffmpeg.	  ffmpeg を起動できませんでした。
+  ✓ Concluído.	  ✓ 完了。
+  ✗ Falhou (código %1).	  ✗ 失敗（コード %1）。
+ (deslig.)	 （オフ）
+ — Protótipo 4<br><br><b style='color:#c07800'>Ainda em desenvolvimento:</b> mesa, velocidade, pivot, analisador e workspace.<br><br>Pierrot é um editor de vídeo inspirado em 2 programas \"Sony Vegas 8\" e \"Final Cut Express 2003\", totalmente escrito pra linux. Para uso pessoal, baseado nas ferramentas que eu acho úteis.<br><br><b>Agradecimentos:</b> Gumduck, por ajudar a desenvolver o áudio e features.<br><br><b>Inspirações adicionais</b><ul><li><b>Adobe Premiere Pro</b> — painel de Efeitos, Effect Controls (Propriedades), Media Pool, Source Monitor e o mixer de áudio.</li><li><b>Adobe After Effects</b> — o canvas de composição (Mesa), a faixa de efeitos expandível e o Graph Editor de keyframes.</li><li><b>DaVinci Resolve</b> — organização por categorias nas configurações e o visual de cor/timecode.</li><li><b>Blender</b> — o HUD de transformação do canvas Mesa.</li></ul><a href='https://github.com/theinkspoty/Pierrot'>github.com/theinkspoty/Pierrot</a>	 — プロトタイプ 4<br><br><b style='color:#c07800'>開発中:</b> Mesa、スピード、ピボット、アナライザー、ワークスペース。<br><br>Pierrot は「Sony Vegas 8」と「Final Cut Express 2003」の2本にインスピレーションを受けた動画エディターで、完全に Linux 向けに書かれています。個人利用で、自分が有用だと思うツールに基づいています。<br><br><b>謝辞:</b> Gumduck（オーディオと機能の開発を手伝ってくれてありがとう）。<br><br><b>その他のインスピレーション</b><ul><li><b>Adobe Premiere Pro</b> — エフェクトパネル、エフェクトコントロール（プロパティ）、メディアプール、ソースモニター、オーディオミキサー。</li><li><b>Adobe After Effects</b> — 合成キャンバス（Mesa）、展開可能なエフェクトトラック、キーフレームのグラフエディター。</li><li><b>DaVinci Resolve</b> — 設定のカテゴリ分けとカラーパネル/タイムコードの見た目。</li><li><b>Blender</b> — Mesa キャンバスのトランスフォーム HUD。</li></ul><a href='https://github.com/theinkspoty/Pierrot'>github.com/theinkspoty/Pierrot</a>
+%1 (cópia)	%1（コピー）
+%1 itens	%1 件
+%1 itens · %2 selecionados	%1 件 · %2 件選択
+%1 · %2 s — arraste para mover no tempo	%1 · %2 秒 — ドラッグで時間を移動
+&Ajuda	ヘルプ(&H)
+&Arquivo	ファイル(&F)
+&Configurações	設定(&C)
+&Editar	編集(&E)
+&Exibir	表示(&V)
+&Projeto	プロジェクト(&P)
+&Reproduzir	再生(&R)
+(instale frei0r-plugins)	（frei0r-plugins をインストール）
+(nenhum plugin OFX)	（OFX プラグインなし）
+(nenhum)	（なし）
+(sem parâmetros editáveis)	（編集可能なパラメーターなし）
+(sem quadro)	（フレームなし）
+(texto vazio)	（空のテキスト）
++ Banda	+ バンド
++ Elipse	+ 楕円
++ Máscara	+ マスク
++ Retângulo	+ 矩形
+1080p (Full HD) · 24fps	1080p（フルHD）· 24fps
+1080p (Full HD) · 30fps	1080p（フルHD）· 30fps
+1080p (Full HD) · 60fps	1080p（フルHD）· 60fps
+2K (2560 × 1440)	2K（2560 × 1440）
+4K (3840 × 2160)	4K（3840 × 2160）
+640 × 360	640 × 360
+720p (HD) · 25fps	720p（HD）· 25fps
+720p (HD) · 30fps	720p（HD）· 30fps
+<b>Pierrot</b> — editor de vídeo de código aberto<br>Versão 	<b>Pierrot</b> — オープンソース動画エディター<br>バージョン 
+A cada 1 hora	1 時間ごと
+A cada 10 minutos	10 分ごと
+A cada 20 minutos	20 分ごと
+A cada 30 minutos	30 分ごと
+A cada 5 minutos	5 分ごと
+A forma aparece no monitor com alças — arraste para mover, redimensionar ou rotacionar. Os valores aqui acompanham em tempo real. Aplicar grava no clipe.	シェイプがハンドル付きでモニターに表示されます — ドラッグで移動・リサイズ・回転できます。ここでの値はリアルタイムに反映されます。「適用」でクリップに記録します。
+A interface em inglês será adicionada na versão 0.7.5. Requer reinício do aplicativo para tomar efeito.	英語インターフェースは 0.7.5 で追加予定です。変更を反映するにはアプリの再起動が必要です。
+A renderização está em andamento. Deseja cancelar?	レンダリングを実行中です。キャンセルしますか？
+Abra uma mídia no Source Monitor primeiro (duplo-clique na Central de Mídias).	先にソースモニターでメディアを開いてください（メディアプールでダブルクリック）。
+Abre a correção de cor estilo Lumetri no clipe	クリップに Lumetri スタイルのカラーコレクションを開きます
+Abre o editor do clipe de texto selecionado	選択したテキストクリップのエディターを開きます
+Abre o preview em uma janela própria — arraste para um segundo monitor e use F11 para tela cheia.	プレビューを独立ウィンドウで開きます — セカンドモニターにドラッグして F11 で全画面表示。
+Abrir	開く
+Abrir LUT 3D	3D LUT を開く
+Abrir Mesa	Mesa を開く
+Abrir a janela inicial (novo projeto / recentes)	スタートウィンドウを開く（新規プロジェクト／最近使った項目）
+Abrir as configurações do aplicativo	アプリ設定を開く
+Abrir do disco…	ディスクから開く…
+Abrir editor de texto	テキストエディターを開く
+Abrir no Source	ソースで開く
+Abrir o editor de texto do clipe	クリップのテキストエディターを開く
+Abrir o projeto selecionado	選択したプロジェクトを開く
+Abrir o trimmer ao soltar uma mídia na timeline	メディアをタイムラインにドロップしたときにトリマーを開く
+Abrir pasta	フォルダーを開く
+Abrir projeto	プロジェクトを開く
+Abrir projeto… (Ctrl+O)	プロジェクトを開く… (Ctrl+O)
+Abrir relatório	レポートを開く
+Abrir script	スクリプトを開く
+Abrir…	開く…
+Acentuada	アクセント
+Adiciona keyframe de transform no playhead	再生ヘッドにトランスフォームのキーフレームを追加します
+Adiciona uma banda Bell	ベルバンドを追加します
+Adicionar	追加
+Adicionar faixa de efeitos	エフェクトトラックを追加
+Adicionar faixa de gravação	録画トラックを追加
+Adicionar faixa de vídeo	映像トラックを追加
+Adicionar faixa de áudio	オーディオトラックを追加
+Adicionar keyframe aqui	ここにキーフレームを追加
+Adicionar keyframe no playhead	再生ヘッドにキーフレームを追加
+Adicionar marcador	マーカーを追加
+Adicionar marcador nomeado…	名前付きマーカーを追加…
+Adicionar track	トラックを追加
+Adicionar à fila	キューに追加
+Adicionar/remover keyframe no playhead	再生ヘッドのキーフレームを追加/削除
+Adicionar…	追加…
+Adicione pastas onde seus plugins OFX (.ofx) estão instalados. O Pierrot já procura em ~/.config/pierrot/ofx e /usr/lib/ofx por padrão.	OFX プラグイン（.ofx）の入ったフォルダーを追加してください。Pierrot は既定で ~/.config/pierrot/ofx と /usr/lib/ofx を探索します。
+Adição (add)	加算（add）
+Adjust	調整
+Agrupar	グループ化
+Agrupar faixas	トラックをグループ化
+Agrupar faixas em pasta…	トラックをフォルダーにグループ化…
+Agudos (6 kHz):	高域（6 kHz）:
+Agudos:	高域:
+Ajusta luminosidade (brilho) da imagem	画像の明るさ（ブライトネス）を調整します
+Ajustar	調整
+Alguns Reels não tinham caminho absoluto e ficaram sem mídia:\n%1	一部の Reel に絶対パスがなく、メディアがありません:\n%1
+Alinhamento:	配置:
+Alinhar	整列
+Alternar animação	アニメーションを切り替え
+Alternar entre lista e miniaturas	リストとサムネイルを切り替え
+Alternar keyframe no playhead	再生ヘッドのキーフレームを切り替え
+Alvo:	ターゲット:
+Alça de entrada — entorta para a esquerda	イン点ハンドル — 左にドラッグでイージング
+Alça de saída — entorta para a direita	アウト点ハンドル — 右にドラッグでイージング
+Alças criadas — arraste para entortar a velocidade	ハンドルを作成しました — ドラッグで速度カーブを調整
+Amarelo	イエロー
+Amostras:	サンプル:
+Analisadores	アナライザー
+Animação	アニメーション
+Aparência	外観
+Aplica fade-in no clipe selecionado	選択クリップにフェードインを適用
+Aplica fade-out no clipe selecionado	選択クリップにフェードアウトを適用
+Aplica ruído monocromático animado (estética de película).	フレームごとに変化するモノクロノイズを適用（フィルム風）。
+Aplicar	適用
+Aplicar Preset	プリセットを適用
+Aplicar Preset…	プリセットを適用…
+Arquivo de projeto inválido:\n%1	無効なプロジェクトファイル:\n%1
+Arquivo:	ファイル:
+Arquivos MKV são suportados experimentalmente e podem apresentar problemas de reprodução, áudio ou exportação.	MKV は実験的なサポートで、再生・オーディオ・書き出しに問題が出る場合があります。
+Arquivos de texto (*.txt);;Todos (*.*)	テキストファイル (*.txt);;すべて (*.*)
+Arrastar move o clipe em H e V ao mesmo tempo	ドラッグでクリップを水平・垂直同時に移動
+Arrastar move só na horizontal	ドラッグで水平方向のみ移動
+Arrastar move só na profundidade (Z)	ドラッグで奥行き（Z）のみ移動
+Arrastar move só na vertical	ドラッグで垂直方向のみ移動
+Arrastar no canvas gira no eixo X	キャンバスのドラッグで X 軸回転
+Arrastar no canvas gira no eixo Y	キャンバスのドラッグで Y 軸回転
+Arrastar no canvas gira no eixo Z (roll)	キャンバスのドラッグで Z 軸回転（ロール）
+Arraste efeitos da lista para cá\nou selecione um clipe na timeline	エフェクトをリストからここへドラッグ\nまたはタイムラインでクリップを選択
+Arraste os pontos na vertical (ganho ±12 dB).	ポイントを垂直にドラッグ（ゲイン ±12 dB）。
+Arraste um keyframe para a esquerda/direita para mover sua posição no tempo	キーフレームを左右にドラッグして時間上の位置を移動
+As exportações rodam em sequência (um ffmpeg por vez).	書き出しは順番に実行されます（同時に1つの ffmpeg）。
+Atalho	ショートカット
+Atalhos do teclado	キーボードショートカット
+Ativa	オン
+Ativa campos 3D da Mesa (Z, FOV, rotações). O render 3D completo entra na Fase 1; hoje o visual continua 2D.	Mesa の 3D フィールド（Z・FOV・回転）を有効化します。完全な 3D レンダリングはフェーズ 1 で実装予定。現在の見た目は 2D のままです。
+Ativa os campos 3D da Mesa (Z, FOV, rotações XYZ). O render 3D completo entra na Fase 1.	Mesa の 3D フィールド（Z・FOV・XYZ 回転）を有効化します。完全な 3D レンダリングはフェーズ 1 で実装予定。
+Ativar Chroma Key	クロマキーを有効化
+Ativar EQ Express	EQ Express を有効化
+Ativar Grão de Filme	フィルムグレインを有効化
+Ativar LAINKA	LAINKA を有効化
+Ativar MotiOn	MotiOn を有効化
+Ativar PSX	PSX を有効化
+Ativar Reverb EX	Reverb EX を有効化
+Ativar salvamento automático	自動保存を有効化
+Ativar/Desativar	オン/オフ
+Ativar/Desativar efeito	エフェクトをオン/オフ
+Ativar/desativar banda	バンドをオン/オフ
+Audio Effects	オーディオエフェクト
+Audio Transitions	オーディオトランジション
+Auto (CRF)	自動（CRF）
+Auto Bezier	自動ベジェ
+Auto-keyframe: alterar um valor cria/atualiza o keyframe no playhead	オートキーフレーム: 値を変更すると再生ヘッドのキーフレームが作成/更新されます
+Automação desligada (ler envelope). Clique para gravar.	オートメーションはオフ（エンベロープを読み取り）。クリックで記録開始。
+Avançar (JKL)	早送り（JKL）
+Avançar 1 frame	1 フレーム進む
+Avançar 1 frame (→)	1 フレーム進む（→）
+Avançar um	1 つ進む
+Avisar ao importar arquivos MKV (experimental)	MKV を取り込むときに警告（実験的）
+Avisos	警告
+Azul	ブルー
+Azul ↔ Laranja	青 ↔ オレンジ
+Ação	アクション
+Back (overshoot)	バック（オーバーシュート）
+Baixo	下
+Base	ベース
+Base:	ベース:
+Baseado em textos animados	アニメーションテキストベース
+Bell	ベル
+Bem-vindo ao Pierrot	Pierrot へようこそ
+Bezier	ベジェ
+Bitrate de vídeo em kbps.\n0 = usar CRF (recomendado), >0 = bitrate fixo.	ビデオのビットレート（kbps）。\n0 = CRF（推奨）、0より大きい = 固定ビットレート。
+Bitrate do áudio em kbps.\nTípicos: 128k (WebM), 192k (MP4/MKV).	オーディオのビットレート（kbps）。\n目安: 128k（WebM）、192k（MP4/MKV）。
+Bitrate vídeo:	ビデオビットレート:
+Bitrate áudio:	オーディオビットレート:
+Black & White	ブラック＆ホワイト
+Blend:	ブレンド:
+Blur & Sharpen	ブラー＆シャープ
+Borra o movimento do clipe por amostragem temporal (MotiOn).	時間方向サンプリングでクリップの動きをぼかします（MotiOn）。
+Borra o quadro inteiro por amostragem temporal. Cada camada precisa do flag 'Motion blur (allow)'.	時間方向サンプリングでフレーム全体をぼかします。各レイヤーに 'Motion blur (allow)' フラグが必要です。
+Bounce	バウンス
+Branco	ホワイト
+Brancos	ホワイト
+Brasileiro	ポルトガル語（ブラジル）
+Brightness & Contrast	ブライトネス＆コントラスト
+Brilho & Contraste	ブライトネス＆コントラスト
+Brilho:	ブライトネス:
+Build de desenvolvimento — recursos podem estar incompletos ou instáveis.	開発用ビルド — 機能が未完成または不安定な場合があります。
+Buscar efeitos…	エフェクトを検索…
+Buscar mídia…	メディアを検索…
+Básico	基本
+CAMADA (MESA)	レイヤー（MESA）
+CLIPE	クリップ
+COMPOSIÇÃO (BLUR GLOBAL)	コンポジション（グローバルブラー）
+COR / EFEITOS	カラー / エフェクト
+CRF (Constant Rate Factor): 0 = sem perda, 51 = pior qualidade.\nValores típicos: 18 (bom), 23 (padrão), 28 (rápido).	CRF（Constant Rate Factor）: 0 = ロスレス、51 = 最低品質。\n一般的な値: 18（高品質）、23（標準）、28（高速）。
+Cada clipe tem o próprio texto e estilo.	各クリップが独自のテキストとスタイルを持ちます。
+Caixa	ボックス
+Camada %1	レイヤー %1
+Camada: %1	レイヤー: %1
+Caminho da pasta…	フォルダーのパス…
+Caminho do arquivo de saída…	出力ファイルのパス…
+Caminhos de plugins OFX	OFX プラグインのパス
+Cancelar	キャンセル
+Cancelar render?	レンダリングをキャンセルしますか？
+Carrega no Source Monitor para marcar In/Out e inserir	ソースモニターに読み込んでイン/アウトを設定し、挿入します
+Carregando áudio	オーディオを読み込み中
+Carregando áudio e miniaturas…	オーディオとサムネイルを読み込み中…
+Central de Mídias	メディアプール
+Centro	中央
+Centro X	中心 X
+Centro Y	中心 Y
+Centro horizontal	水平中央
+Centro vertical	垂直中央
+Channel	チャンネル
+Checkboard	チェッカーボード
+Checkboard %1×%1	チェッカーボード %1×%1
+Checkboard…	チェッカーボード…
+Chroma Key	クロマキー
+Chroma key	クロマキー
+Claro (Final Cut)	ライト（Final Cut）
+Clicar cria um ponto suave; arrastar define a curva (B)	クリックでスムーズポイントを作成 · ドラッグでカーブを調整（B）
+Clicar no gráfico adiciona um keyframe (P)	グラフのクリックでキーフレームを追加（P）
+Clip Lazzi criado na timeline.	タイムラインに Lazzi クリップを作成しました。
+Clipe de texto criado no playhead.	再生ヘッドにテキストクリップを作成しました。
+Clipe: %1	クリップ: %1
+Clique cria keyframe linear (P)	クリックでリニアキーフレームを作成（P）
+Clique no gráfico para criar keyframes; arraste para mover; duplo clique remove. Export usa a mesma curva (pré-render).	グラフのクリックでキーフレーム作成、ドラッグで移動、ダブルクリックで削除。書き出しにも同じカーブを使用（事前レンダリング）。
+Clique num atalho e, em seguida, pressione a nova combinação de teclas para alterá-lo. Esc cancela.	ショートカットをクリックしてから新しいキーを押すと変更できます。Esc でキャンセル。
+Cobre o aplicativo inteiro (timeline, playhead, monitor, gráficos) por definir as cores de toda a UI. Chaves ausentes herdam do tema acima. Requer reinício do aplicativo.	UI 全体の色を定義するため、アプリ全体（タイムライン、再生ヘッド、モニター、グラフ）を網羅します。欠けたキーは上のテーマから継承されます。変更の反映にはアプリの再起動が必要です。
+Codificar vídeo por hardware no export (NVENC/VAAPI)	書き出しでハードウェアエンコードを使用（NVENC/VAAPI）
+Codificação	エンコード
+Colar	貼り付け
+Colar Atributos	属性を貼り付け
+Colar Atributos…	属性を貼り付け…
+Colar atributos	属性を貼り付け
+Color Correction (Lumetri)	カラーコレクション（Lumetri）
+Como os quadros são exibidos no corpo dos clipes de vídeo. \"Todas\" mostra fatias contínuas; \"Início e fim\" só nos extremos; \"Nenhuma\" deixa os clipes sem miniatura.	クリップ本体にフレームを表示する方法。「すべて」は連続したスライスを表示し、「開始と終了」は端のみ、「なし」はサムネイルなしにします。
+Configurar exportação	書き出しを設定
+Configurações	設定
+Configurações aplicadas.	設定を適用しました。
+Configurações do app…	アプリ設定…
+Configurações do projeto	プロジェクト設定
+Configurações do projeto atualizadas.	プロジェクト設定を更新しました。
+Configurações do projeto…	プロジェクト設定…
+Constant Power	コンスタントパワー
+Constant Power: o crossfade de áudio já acompanha a sobreposição na mesma faixa.	コンスタントパワー: 同一トラック上のオーディオのオーバーラップにクロスフェードが自動追随します。
+Constante	一定
+Contorno	輪郭
+Contrast	コントラスト
+Contraste	コントラスト
+Contraste (%):	コントラスト（%）:
+Contraste:	コントラスト:
+Controla diferença entre claros e escuros	明部と暗部の差を制御します
+Converte o clipe para escala de cinza.	クリップをグレースケールに変換します。
+Converte para escala de cinza	グレースケールに変換
+Convertendo .blend com o Blender…	Blender で .blend を変換中…
+Converter para clipe	クリップに変換
+Copiar	コピー
+Copiar todo o log para a área de transferência	ログ全体をクリップボードにコピー
+Copiar tudo	すべてコピー
+Cor	カラー
+Cor %1	カラー %1
+Cor 1 do checkboard	チェッカーボードの色 1
+Cor 2 do checkboard	チェッカーボードの色 2
+Cor da camada sólida	単色レイヤーの色
+Cor da mídia	メディアの色
+Cor do chroma key	クロマキーの色
+Cor do grão	グレインの色
+Cor do parâmetro	パラメーターの色
+Cor do ruído	ノイズの色
+Cor do texto:	テキストの色:
+Cor e contorno	塗りと輪郭
+Cor final do gradiente	グラデーションの終了色
+Cor inicial do gradiente	グラデーションの開始色
+Cor sólida	単色
+Cor — Correction (estilo DaVinci)	カラー — コレクション（DaVinci スタイル）
+Cor:	カラー:
+Correção de cor (Lumetri)	カラーコレクション（Lumetri）
+Correção de cor…	カラーコレクション…
+Cor…	カラー…
+Criar Mesa	Mesa を作成
+Criar clipe de texto	テキストクリップを作成
+Criar multicam	マルチカメラを作成
+Criar multicam (%1 ângulos)…	マルチカメラを作成（%1 アングル）…
+Criar mídia gerada (cor sólida, como no Vegas)	生成メディア（単色）を作成（Vegas 形式）
+Criar projeto	プロジェクトを作成
+Crie uma Mesa antes de importar .blend.	.blend を読み込む前に Mesa を作成してください。
+Crie uma Mesa antes de importar .obj.	.obj を読み込む前に Mesa を作成してください。
+Crie uma Mesa para importar .blend.	.blend の読み込み用に Mesa を作成してください。
+Crie uma Mesa para importar .obj.	.obj の読み込み用に Mesa を作成してください。
+Crossfade de áudio quando há sobreposição na mesma faixa	同一トラックで重なったときのオーディオのクロスフェード
+Crossfade quando o próximo clipe se sobrepõe	次のクリップが重なったときのクロスフェード
+Curva	カーブ
+Curva (entortar)	カーブ（イージング）
+Curva: clique cria · arraste alças entorta	カーブ: クリックで作成 · ハンドルをドラッグでイージング
+Curvas	カーブ
+Curvas: adicione pontos X/Y em 0..1. Master afeta R, G e B.	カーブ: X/Y に 0..1 のポイントを追加。マスターは R・G・B に影響します。
+CÂMERA	カメラ
+Câmera (Ken Burns)	カメラ（Ken Burns）
+Câmera — %1	カメラ — %1
+Células por lado:	1 辺のセル数:
+Cópia independente	独立コピー
+Cópia unificada	統合コピー
+Debian/Ubuntu: pacote frei0r-plugins; ou PIERROT_FREI0R_PATH=/pasta/com/.so	Debian/Ubuntu: パッケージ frei0r-plugins、または PIERROT_FREI0R_PATH=/pasta/com/.so
+Decodificação de vídeo por hardware (VAAPI)	ハードウェア映像デコード（VAAPI）
+Deletar keyframes selecionados	選択したキーフレームを削除
+Desagrupar	グループ解除
+Desagrupar faixas	トラックのグループを解除
+Descarga a codificação da CPU para a placa de vídeo (útil em 4K e projetos longos). Equivale à aceleração por GPU que o Vega oferece na renderização; o retorno ao libx264 é automático se não houver encoders de hardware no sistema.	エンコードを GPU にオフロードします（4K や長尺プロジェクトに有用）。Vega のレンダリング GPU アクセラレーションに相当し、システムにハードウェアエンコーダーがない場合は自動的に libx264 に戻ります。
+Descartar	破棄
+Desempenho	パフォーマンス
+Desfazer	元に戻す
+Desfazer (Ctrl+Z)	元に戻す (Ctrl+Z)
+Desfoque	ブラー
+Desfoque (%):	ブラー（%）:
+Desfoque gaussiano (box blur no preview/export)	ガウスぼかし（プレビュー/書き出しではボックスブラー）
+Desfoque:	ブラー:
+Deslizar (Y)	スリップ（Y）
+Deslocar clipes ←	クリップをずらす ←
+Deslocar clipes →	クリップをずらす →
+Destravar layout	レイアウトのロックを解除
+Desvincular grupo	グループのリンクを解除
+Diferença	差分
+Digite o texto/título…	テキスト/タイトルを入力…
+Digite pelo menos um comando.	少なくとも1つのコマンドを入力してください。
+Direita	右
+Direita:	右:
+Dissolve	ディゾルブ
+Dissolver	ディゾルブ
+Distribuir	均等配置
+Dividir clipe no playhead (S)	再生ヘッドでクリップを分割（S）
+Dividir clipes	クリップを分割
+Dividir e excluir	分割して削除
+Dividir no playhead	再生ヘッドで分割
+Duplicar	複製
+Duplicar camada	レイヤーを複製
+Duplicar clipe	クリップを複製
+Duplo-clique na Central de Mídias\npara abrir no Source	メディアプールでダブルクリック\nソースで開く
+Duração	デュレーション
+EDL CMX3600 (*.edl);;Todos os arquivos (*)	EDL CMX3600 (*.edl);;すべてのファイル (*)
+EDL exportado: %1	EDL を書き出しました: %1
+EDL importado: %1	EDL を読み込みました: %1
+Easy Ease (F9)	イージーアイズ（F9）
+Easy Ease (varinha)	イージーアイズ（ツール）
+Easy Ease In	イージーアイズ イン
+Easy Ease In aplicado	イージーアイズ インを適用
+Easy Ease Out	イージーアイズ アウト
+Easy Ease Out aplicado	イージーアイズ アウトを適用
+Easy Ease aplicado (F9)	イージーアイズを適用（F9）
+Easy Ease no keyframe do playhead (F9) — suaviza a transição de velocidade	再生ヘッドのキーフレームにイージーアイズ（F9）— 速度の変化を滑らかに
+Easy Ease nos keyframes selecionados (F9) — suaviza a animação com handles horizontais	選択したキーフレームにイージーアイズ（F9）— 水平ハンドルでアニメーションを滑らかに
+Editar keyframe	キーフレームを編集
+Editar…	編集…
+Editor de Curvas	カーブエディター
+Editor de velocidade	スピードエディター
+Editor de vídeo	動画エディター
+Edição	編集
+Efeitos	エフェクト
+Efeitos (%1)	エフェクト（%1）
+Efeitos OFX (plugins de terceiros)	OFX エフェクト（サードパーティプラグイン）
+Efeitos de vídeo	映像エフェクト
+Efeitos de vídeo (brilho, contraste, saturação, blur, grayscale, chroma key)	映像エフェクト（ブライトネス・コントラスト・彩度・ブラー・グレースケール・クロマキー）
+Efeitos de vídeo…	映像エフェクト…
+Efeitos de áudio	オーディオエフェクト
+Efeitos de áudio (EQ, denoise, normalizar, fase)	オーディオエフェクト（EQ・デノイズ・ノーマライズ・フェーズ）
+Efeitos de áudio da faixa	トラックのオーディオエフェクト
+Efeitos de áudio…	オーディオエフェクト…
+Effects	エフェクト
+Elastic	エラスティック
+Elipse	楕円
+Elástico (estilo AE)	エラスティック（AE スタイル）
+Elásticos	エラスティック
+Encaixar no grid e nas bordas dos clipes (T). Desligar o ímã também desativa o auto-juntar (ripple) ao cortar/excluir.	グリッドとクリップの端にスナップ（T）。マグネットをオフにするとカット/削除時の自動リップルもオフになります。
+Encaixar nos frames (S; Ctrl durante o arrasto = livre)	フレームにスナップ（S · ドラッグ中の Ctrl = 自由）
+Encode acelerado	高速エンコード
+Entradas	イントロ
+Envelope	エンベロープ
+Envelope (%1 kfs). Clique na linha para criar keyframe; arraste as alças para entortar.	エンベロープ（%1 個の kf）。ラインをクリックでキーフレーム作成 · ハンドルをドラッグでイージング。
+Envelope (E)	エンベロープ（E）
+Envelope de velocidade (time remapping) no dock Velocidade	スピードドックの速度エンベロープ（タイムリマップ）
+Enviar para Mesa	Mesa へ送る
+Enviar para trás	背面へ送る
+Equalizador	イコライザー
+Equalizador de 3 bandas (graves/médios/agudos)	3 バンドイコライザー（低域/中域/高域）
+Erro na pré-renderização LAINKA: %1	LAINKA の事前レンダリングエラー: %1
+Erro na pré-renderização OFX: %1	OFX の事前レンダリングエラー: %1
+Erro: %1	エラー: %1
+Escala X (%):	スケール X（%）:
+Escala Y (%):	スケール Y（%）:
+Escala:	スケール:
+Escolha uma categoria	カテゴリを選択
+Escolher cor	色を選択
+Escorregar (Ctrl+U)	スライド（Ctrl+U）
+Escuro	ダーク
+Espelhar Horizontal	左右反転
+Espelhar Vertical	上下反転
+Esquerda	左
+Esquerda:	左:
+Esse recurso está sendo desenvolvido e pode apresentar problemas de performance ou resultados incorretos no preview e na exportação. Recomendamos acompanhar as próximas versões do Pierrot antes de usá-lo em projetos reais.	この機能は開発中で、プレビューと書き出しにパフォーマンスの問題や不正確な結果が生じる可能性があります。実際のプロジェクトで使う前に、今後の Pierrot のバージョンを確認することをおすすめします。
+Esticar Velocidade	スピードストレッチ
+Esticar Velocidade (W)	スピードストレッチ（W）
+Estilo	スタイル
+Estilo das faixas: minimizada, normal ou grande (experimental)	トラックのスタイル: 最小化・標準・大きさ（実験的）
+Excluir	削除
+Excluir %1 keyframes	%1 個のキーフレームを削除
+Excluir (deixa espaço)	削除（空白を残す）
+Excluir (junta os espaços)	削除（隙間を詰める）
+Excluir Mesa	Mesa を削除
+Excluir clipe	クリップを削除
+Excluir clipe anterior (D)	前のクリップを削除（D）
+Excluir clipe posterior (F)	次のクリップを削除（F）
+Excluir clipes	クリップを削除
+Excluir clipes (deixando espaço)	クリップを削除（空白を残す）
+Excluir faixa	トラックを削除
+Excluir faixa de gravação	録画トラックを削除
+Excluir faixas selecionadas ou, se não houver, os clipes selecionados (Delete)	選択したトラックを削除、未選択なら選択したクリップを削除（Delete）
+Excluir keyframe	キーフレームを削除
+Excluir keyframes selecionados	選択したキーフレームを削除
+Excluir marcador	マーカーを削除
+Excluir projeto	プロジェクトを削除
+Excluir região de loop	ループリージョンを削除
+Excluir região de loop (ripple)	ループリージョンを削除（リップル）
+Excluir tempo da região de loop (deixa espaço)	ループリージョンの時間を削除（空白を残す）
+Excluir tempo da região de loop (ripple)	ループリージョンの時間を削除（リップル）
+Exemplos	サンプル
+Expandir pasta	フォルダーを展開
+Explorador de Arquivos	ファイルエクスプローラー
+Exportando…	書き出し中…
+Exportar	書き出し
+Exportar EDL	EDL を書き出し
+Exportar EDL…	EDL を書き出し…
+Exportar apenas cortes como EDL CMX3600 (compatível com Davinci, Premiere).	カットのみを EDL CMX3600 として書き出し（DaVinci・Premiere 互換）。
+Exportar quadro	フレームを書き出し
+Exportar quadro atual	現在のフレームを書き出し
+Exportar quadro atual (PNG)…	現在のフレームを書き出し（PNG）…
+Exportar tema	テーマの書き出し
+Exportar tema atual	現在のテーマを書き出し
+Exportar tema atual…	現在のテーマを書き出し…
+Exportar vídeo	ビデオを書き出し
+Exportar vídeo… (Ctrl+E)	ビデオを書き出し… (Ctrl+E)
+Exportar…	書き出し…
+Exportação cancelada pelo encerramento da janela.	ウィンドウを閉じたため書き出しをキャンセルしました。
+Exportação concluída com sucesso.	書き出しが正常に完了しました。
+Exportação falhou (código %1).	書き出しに失敗しました（コード %1）。
+Exposição	露出
+FOV (°):	FOV（°）:
+Fade In	フェードイン
+Fade In (texto)	フェードイン（テキスト）
+Fade In aplicado.	フェードインを適用しました。
+Fade Out	フェードアウト
+Fade Out (texto)	フェードアウト（テキスト）
+Fade Out aplicado.	フェードアウトを適用しました。
+Fade in (s):	フェードイン（秒）:
+Fade out (s):	フェードアウト（秒）:
+Faixa %1	トラック %1
+Falha ao montar o comando de exportação.	書き出しコマンドの組み立てに失敗しました。
+Falha na exportação. Veja o log acima.	書き出しに失敗しました。上のログを確認してください。
+Falha no .blend — %1	.blend の失敗 — %1
+Feather	フェザー
+Fechar	閉じる
+Fechar o vão automaticamente ao excluir (ripple)	削除時に隙間を自動的に詰める（リップル）
+Fechar o vão automaticamente ao excluir (ripple). Desligue para deixar o espaço vazio. Inativo quando o ímã está desligado.	削除時に隙間を自動的に詰めます（リップル）。オフにすると空白が残ります。マグネットがオフの場合は無効。
+Feche esta janela para abrir o editor vazio.	このウィンドウを閉じるとエディターが空になります。
+Ferramentas	ツール
+Ferramentas da timeline	タイムラインツール
+Fila concluída: %1 exportação(ões) finalizada(s).	キュー完了: %1 件の書き出しが終了しました。
+Fila de Render	レンダーキュー
+Fila de render…	レンダーキュー…
+Filme desbotado	褪せたフィルム
+Fim	末尾
+Flicker:	フリッカー:
+Fonte	ソース
+Fonte (%1x%2)	ソース（%1x%2）
+Fontes 2K+ são transcondificadas para o preview e \nthumbs (rápido). Desligue para decodificar o original \nno preview. A exportação sempre usa o original.	2K 以上の素材はプレビューとサムネイル用に再エンコードされます。\nオフにするとプレビューでオリジナルをデコードします。\n書き出しは常にオリジナルを使用します。
+Formato:	フォーマット:
+Força da LUT	LUT の強さ
+Frame Rate	フレームレート
+Freq	周波数
+Full HD (1920 × 1080)	フルHD（1920 × 1080）
+Fundo	背景
+Fundo colorido	単色の背景
+Fundo transparente	透明背景
+GAIN  (realces)	ゲイン（ハイライト）
+GAMMA (meios)	ガンマ（ミッドトーン）
+GIF (*.gif)	GIF (*.gif)
+GIF: deixa transparente tudo o que não tem clipe\npor cima (o fundo preto vira alfa 0).	GIF: クリップの上にない部分は透明になります\n（黒背景がアルファ 0 に）。
+Gain	ゲイン
+Gamma	ガンマ
+Ganho	ゲイン
+Gaussian Blur	ガウスぼかし
+Gera versões leves (H.264 baixo bitrate) de vídeos 2K ou maiores para preview, pan/crop e thumbnails. A exportação sempre usa o original.	2K 以上のビデオからプレビュー・パン/クロップ・サムネイル用の軽量版（低ビットレート H.264）を生成します。書き出しは常にオリジナルを使用します。
+Gerador	ジェネレーター
+Geral	全般
+Gizmo 3D + keyframes de transform no dock Pivot	ピボットドックの 3D グリズモ + トランスフォームキーフレーム
+Grade	グリッド
+Grade de Terços	三分割グリッド
+Grade:	グリッド:
+Gradiente	グラデーション
+Gradiente…	グラデーション…
+Grande	大
+Granulado retrô: quantização de cor + dithering estilo PlayStation 1	レトロなグレイン: PlayStation 1 スタイルの色量化 + ディザリング
+Granulado:	グレイン:
+Graves (120 Hz):	低域（120 Hz）:
+Graves:	低域:
+Grid	グリッド
+Gráfico	グラフ
+Grão de Filme	フィルムグレイン
+Grão de filme	フィルムグレイン
+Grão de filme: ruído monocromático animado por quadro (estética de película)	フィルムグレイン: フレームごとに変化するモノクロノイズ（フィルム風）
+HD (1280 × 720)	HD（1280 × 720）
+Habilitada	有効
+High Shelf	ハイシェルフ
+Histograma	ヒストグラム
+Histórico de Edições	編集履歴
+Hold	ホールド
+Horizontal	水平
+Idioma	言語
+Idle (laço)	アイドル（ループ）
+Iguala o som do clipe em 3 bandas. 0 dB = sem alteração.	クリップの音を 3 バンドで均します。0 dB は変更なし。
+Imagem PNG (*.png)	PNG 画像 (*.png)
+Imagem · arraste=girar · Shift=Z (2.5D) · Ctrl=escala · +kf	画像 · ドラッグ=回転 · Shift=Z（2.5D）· Ctrl=スケール · +kf
+Importa .obj ou .blend (via Blender CLI) como camada 3D	.obj または .blend（Blender CLI 経由）を 3D レイヤーとして読み込みます
+Importa as mídias desta pasta para o Media Pool	このフォルダーのメディアをメディアプールに取り込みます
+Importando mídia…	メディアを取り込み中…
+Importando mídia… (%1)	メディアを取り込み中…（%1）
+Importar EDL	EDL を読み込み
+Importar EDL CMX3600 em um novo projeto (apenas cortes).	EDL CMX3600 を新しいプロジェクトに読み込み（カットのみ）。
+Importar EDL…	EDL を読み込み…
+Importar malha 3D	3D メッシュを読み込み
+Importar mídia	メディアを取り込み
+Importar mídia (Ctrl+I)	メディアを取り込み (Ctrl+I)
+Importar mídia…	メディアを取り込み…
+Importar mídia… (Ctrl+I)	メディアを取り込み… (Ctrl+I)
+Importar pasta	フォルダーを取り込み
+Importar tema	テーマの読み込み
+Importar tema por paleta (.pierrot-theme)	パレットテーマを読み込み (.pierrot-theme)
+Importar…	読み込み…
+Importação .blend concluída (%1 arquivo(s)).	.blend の取り込みが完了（%1 ファイル）。
+Importação .blend concluída.	.blend の取り込みが完了。
+Importação .blend: %1 de %2 ok. Falhou: %3	.blend の取り込み: %1 / %2 成功。失敗: %3
+Importação concluída: %1 arquivo(s) adicionado(s).	取り込み完了: %1 ファイルを追加しました。
+In	イン
+In aqui (I)	ここにイン点（I）
+Informe o caminho de saída.	出力先のパスを指定してください。
+Iniciar fila	キューを開始
+Insere o trecho In→Out do Source Monitor no playhead da timeline, empurrando os clipes seguintes	ソースモニターのイン→アウト範囲をタイムラインの再生ヘッドに挿入し、後続クリップを押し広げます
+Insere um clipe de texto no playhead	再生ヘッドにテキストクリップを挿入します
+Inserir	挿入
+Inserir do Source	ソースから挿入
+Inserir no playhead	再生ヘッドに挿入
+Inserir no playhead (Source)	再生ヘッドに挿入（ソース）
+Inserir o trecho no playhead da timeline, empurrando os clipes seguintes (,)	範囲をタイムラインの再生ヘッドに挿入し、後続クリップを押し広げます（,）
+Insert	挿入
+Intensidade	強さ
+Intensidade (%):	強さ（%）:
+Intensidade das cores (0 = preto e branco)	彩度（0 = モノクロ）
+Intensidade do grade	グリッドの強さ
+Intensidade:	強さ:
+Intervalo	間隔
+Intervalo:	間隔:
+Inverter	反転
+Inverter fase	フェーズ反転
+Início	先頭
+Início e fim	開始と終了
+Ir para o fim (End)	最後へ移動（End）
+Ir para o início (Home)	先頭へ移動（Home）
+Ir para o keyframe anterior	前のキーフレームへ移動
+Ir para o próximo keyframe	次のキーフレームへ移動
+Janela de preview externo	外部プレビューウィンドウ
+Janela inicial	スタートウィンドウ
+Janelas	ウィンドウ
+Junta os clipes de vídeo selecionados num clipe multicam; teclas 1..N cortam o ângulo	選択した映像クリップをマルチカメラクリップに結合。キー 1..N でアングルを切り替え
+Já existe um keyframe nesse tempo.	その時間にはすでにキーフレームがあります。
+Já há uma exportação em andamento.	すでに書き出しを実行中です。
+Keyframe %1/%2  ·  t = %3 (frame %4)  ·  v = %5  ·  %6	キーフレーム %1/%2  ·  t = %3（フレーム %4）  ·  v = %5  ·  %6
+Keyframe anterior	前のキーフレーム
+Keyframe criado na curva — arraste as alças	カーブにキーフレームを作成しました — ハンドルをドラッグ
+Keyframe: altura	キーフレーム: 高さ
+Keyframe: centro X	キーフレーム: 中心 X
+Keyframe: centro Y	キーフレーム: 中心 Y
+Keyframe: largura	キーフレーム: 幅
+Keyframe: rotação	キーフレーム: 回転
+Keyframe: suavidade	キーフレーム: スムーズさ
+Keyframes	キーフレーム
+Keyframes (tempo relativo ao clipe; sobrepõem o valor base):	キーフレーム（クリップ基準の相対時間 · ベース値を上書き）:
+Keyframes do clipe — clique seleciona, arraste move no tempo, Delete apaga. Ctrl=ignora o playhead, Shift=passo de 1 frame.	クリップのキーフレーム — クリックで選択、ドラッグで時間移動、Delete で削除。Ctrl=再生ヘッドを無視、Shift=1 フレーム刻み。
+Keyframes:	キーフレーム:
+LAINKA (stop motion)	LAINKA（ストップモーション）
+LAINKA pré-renderizado: %1 clipe(s)	LAINKA 事前レンダリング済み: %1 クリップ
+LAINKA: frame %1/%2	LAINKA: フレーム %1/%2
+LIFT  (sombras)	リフト（シャドウ）
+LUT: %1	LUT: %1
+LUTs (*.cube);;Todos (*)	LUT (*.cube);;すべて (*)
+Laranja	オレンジ
+Latch (começa a gravar ao tocar)	ラッチ（操作で記録開始）
+Layout anterior restaurado.	以前のレイアウトを復元しました。
+Layout destravado — arraste os painéis para reorganizar.	レイアウトのロックを解除しました — パネルをドラッグして再配置できます。
+Layout travado e salvo.	レイアウトをロックして保存しました。
+Lazzi Checkboard	Lazzi チェッカーボード
+Lazzi Cor	Lazzi カラー
+Lazzi Gradiente	Lazzi グラデーション
+Lazzi Ruído	Lazzi ノイズ
+Lazzi — motion por script: easings elásticos, estilo de texto, motion blur e formas/fundos coloridos (shape:). Converta em clipe animado.	Lazzi — スクリプトによるモーション: エラスティックイージング、テキストスタイル、モーションブラー、シェイプ/背景カラー（shape:）。アニメーションクリップに変換できます。
+Lento	低速
+Lift	リフト
+Lift = sombras · Gamma = meios · Gain = realces	リフト = シャドウ · ガンマ = ミッドトーン · ゲイン = ハイライト
+Limpar	クリア
+Limpar loop	ループをクリア
+Limpar região de loop	ループリージョンをクリア
+Limpar relatórios	レポートをクリア
+Limpar todos os marcadores	すべてのマーカーをクリア
+Linear	リニア
+Linear (padrão)	リニア（既定）
+Lista	リスト
+Log da renderização: %1	レンダーログ: %1
+Loop (repete o trecho in/out)	ループ（イン/アウト範囲を再生）
+Low Shelf	ローシェルフ
+Lupa (Z)	ズーム（Z）
+Lupa (Zoom)	ズーム（Z）
+Luz suave	ソフトライト
+Língua:	言語:
+MKV (*.mkv)	MKV (*.mkv)
+MKV experimental	MKV（実験的）
+MKV é experimental: alguns arquivos podem não abrir ou apresentar problemas de áudio/vídeo.	MKV は実験的サポートです: 一部のファイルは開けないか、オーディオ/映像に問題が出る場合があります。
+MOTION	モーション
+MOTION (MESA)	モーション（MESA）
+MOTION BLUR (MOTION)	モーションブラー（モーション）
+MP4 (*.mp4)	MP4 (*.mp4)
+Malha	メッシュ
+Malha 3D (.obj / .blend)…	3D メッシュ（.obj / .blend）…
+Malha 3D importada na Mesa (%1).	3D メッシュを Mesa に読み込みました（%1）。
+Malha 3D · arraste=girar · Shift=Z · Ctrl=escala/snap · RX/RY/RZ · +kf	3D メッシュ · ドラッグ=回転 · Shift=Z · Ctrl=スケール/スナップ · RX/RY/RZ · +kf
+Malha 3×3 para espremer/esticar a mídia	メディアを引き伸ばすための 3×3 メッシュ
+Marcador	マーカー
+Marcar fim do loop	ループの終わりを設定
+Marcar início do loop	ループの始まりを設定
+Marcar ponto de entrada (I)	イン点を設定（I）
+Marcar ponto de saída (O)	アウト点を設定（O）
+Margens de segurança (Ctrl+G)	セーフエリア（Ctrl+G）
+Master	マスター
+Matiz	色相
+Media End	メディア終了
+Media Start	メディア開始
+Mesa	Mesa
+Mesa %1	Mesa %1
+Mesa %1 · %2	Mesa %1 · %2
+Mesa %1 · 3D %2	Mesa %1 · 3D %2
+Mesa %1 · Track %2	Mesa %1 · トラック %2
+Meu projeto	マイプロジェクト
+Miniaturas	サムネイル
+Miniaturas nos clipes:	クリップのサムネイル:
+Minimizada	最小化
+Mistura úmida (0–100%)	ウェットミックス（0–100%）
+Mix	ミックス
+Mix (úmido):	ミックス（ウェット）:
+Mixer	ミキサー
+Modelos 3D (*.obj *.blend);;Wavefront OBJ (*.obj);;Blender (*.blend);;Todos (*)	3D モデル (*.obj *.blend);;Wavefront OBJ (*.obj);;Blender (*.blend);;すべて (*)
+Modo 3D (AE Classic)	3D モード（AE クラシック）
+Modo de automação: %1. Clique para alternar T→W→L→desligado.	オートメーションモード: %1。クリックで T→W→L→オフ と切り替え。
+Modo de composição	合成モード
+Modo de mesclagem	ブレンドモード
+Mostrar o clipe inteiro (F; Ctrl+roda dá zoom)	クリップ全体を表示（F · Ctrl+ホイールでズーム）
+Mostrar/ocultar grade vertical na timeline	タイムラインの縦グリッドを表示/非表示
+Mostrar/ocultar linha de keyframes	キーフレームラインを表示/非表示
+Mostrar/ocultar régua de tempo na timeline	タイムラインのタイムルーラーを表示/非表示
+MotiOn (motion blur)	MotiOn（モーションブラー）
+Motion	モーション
+Motion blur	モーションブラー
+Motion blur (Ctrl+Shift+B)	モーションブラー（Ctrl+Shift+B）
+Motion blur (allow)	モーションブラー（許可）
+Motion blur global	グローバルモーションブラー
+Motion blur por amostragem da imagem	画像サンプリングによるモーションブラー
+Motion básico	ベーシックモーション
+Mover	移動
+Mover (M)	移動（M）
+Mudo	ミュート
+Multicam (%1 ângulos)	マルチカメラ（%1 アングル）
+Multicam: %1 ângulos (teclas 1..N)	マルチカメラ: %1 アングル（キー 1..N）
+Multiplicar	乗算
+Máscara	マスク
+Máscara %1 · %2 (%3)	マスク %1 · %2（%3）
+Máscara %1 · %2%3	マスク %1 · %2%3
+Máscara — %1	マスク — %1
+Máscaras	マスク
+Máscaras do clipe. A selecionada vira gizmo editável no viewfinder.	クリップのマスク。選択したものがビューファーで編集グリズモになります。
+Máscaras/janelas do clipe	クリップのマスク/ウィンドウ
+Máscara…	マスク…
+Médios (1 kHz):	中域（1 kHz）:
+Médios:	中域:
+Mídia 4K detectada	4K メディアを検出
+Mídia gerada (gerador)	生成メディア（ジェネレーター）
+Mídia importada por arrasto.	ドラッグでメディアを取り込みました。
+Mídia inválida	無効なメディア
+Na última execução o Pierrot fechou de repente (possível falha).\n\nUm relatório de crash foi gerado com detalhes técnicos:\n%1	前回の実行中に Pierrot が突然終了しました（クラッシュの可能性）。\n\nクラッシュレポートが技術的な詳細とともに生成されました:\n%1
+Nada para importar.	取り込むものがありません。
+Nativos	ネイティブ
+Negativo escurece as bordas	負片は縁が暗くなります
+Negrito	太字
+Nenhum layout anterior guardado.	保存されたレイアウトがありません。
+Nenhum parâmetro descoberto.\nO plugin pode não expor parâmetros editáveis.	パラメーターが見つかりません。\nプラグインが編集可能なパラメーターを公開していない可能性があります。
+Nenhum preset salvo ainda. Use\n“Salvar Preset…” em um clipe para criar um.	保存されたプリセットはまだありません。\nクリップで「プリセットを保存…」を使って作成してください。
+Nenhum projeto recente.	最近使ったプロジェクトはありません。
+Nenhuma	なし
+Nenhuma Mesa selecionada\nClique direito na timeline \xe2\x86\x92 Criar Mesa	Mesa が選択されていません\nタイムラインで右クリック → Mesa を作成
+Nitidez	シャープネス
+Nome	名前
+Nome da pasta:	フォルダー名:
+Nome do marcador:	マーカー名:
+Nome do preset:	プリセット名:
+Nome do projeto	プロジェクト名
+Nome do workspace:	ワークスペース名:
+Normal	標準
+Normal (padrão)	標準（既定）
+Normalizar (-14 LUFS)	ノーマライズ（-14 LUFS）
+Nova Mesa…	新しい Mesa…
+Nova camada	新規レイヤー
+Novo	新規
+Novo projeto	新規プロジェクト
+Novo projeto (Ctrl+N)	新規プロジェクト (Ctrl+N)
+Novo projeto criado.	新しいプロジェクトを作成しました。
+Novo texto…	新しいテキスト…
+Não foi possível abrir o arquivo.	ファイルを開けませんでした。
+Não foi possível abrir o arquivo:\n%1	ファイルを開けませんでした:\n%1
+Não foi possível copiar o arquivo.	ファイルをコピーできませんでした。
+Não foi possível escrever o arquivo.	ファイルを書き込めませんでした。
+Não foi possível gravar o arquivo:\n%1\n\n%2	ファイルを書き込めませんでした:\n%1\n\n%2
+Não foi possível iniciar o ffmpeg. Instale o ffmpeg e tente novamente.	ffmpeg を起動できませんでした。ffmpeg をインストールしてもう一度試してください。
+Não foi possível ler o arquivo.	ファイルを読み込めませんでした。
+Não foi possível ler o arquivo:\n%1	ファイルを読み込めませんでした:\n%1
+Não foi possível salvar a imagem.	画像を保存できませんでした。
+Não foi possível salvar o arquivo.	ファイルを保存できませんでした。
+Não há quadro para exportar neste momento.	現在、書き出せるフレームがありません。
+O clipe tem texto. Como criar a cópia?	クリップにテキストが含まれています。コピーの作成方法は？
+O projeto contém mídia em 4K ou superior. O preview pode engasgar nesses arquivos — reduza a qualidade do preview (botão no monitor) para aliviar a reprodução.	プロジェクトに 4K 以上のメディアが含まれています。プレビューがカクつくことがあります — モニターのボタンでプレビュー品質を下げて再生を軽くしてください。
+O projeto tem alterações não salvas. Deseja salvá-las antes de continuar?	プロジェクトに未保存の変更があります。続行前に保存しますか？
+O que deseja fazer com \"%1\"?	「%1」どうしますか？
+OFX (nenhum instalado)	OFX（未インストール）
+OFX pré-renderizado: %1 clipe(s)	OFX 事前レンダリング済み: %1 クリップ
+OFX — plugins de terceiros (%1)	OFX — サードパーティプラグイン（%1）
+OFX: frame %1/%2	OFX: フレーム %1/%2
+Obturador (%):	シャッター（%）:
+On	オン
+Opacidade (%):	不透明度（%）:
+Opacidade (0–100%):	不透明度（0–100%）:
+Opacidade da faixa	トラックの不透明度
+Opacidade da faixa: %1%	トラックの不透明度: %1%
+Opacidade:	不透明度:
+Ordem	順序
+Os clipes compartilham o mesmo texto e estilo: editar um atualiza os outros.	クリップ間でテキストとスタイルを共有します: 1 つを編集すると他のクリップも更新されます。
+Os efeitos de vídeo estão em fase de criação e ainda não estão bons para uso.	映像エフェクトは開発中で、まだ実用に耐えません。
+Out	アウト
+Out aqui (O)	ここにアウト点（O）
+Overwrite	上書き
+Overwrite do Source	ソースから上書き
+Padrão	既定
+Painéis embaixo	パネルを下に
+Painéis à direita	パネルを右に
+Painéis à esquerda	パネルを左に
+Pan (posição estéreo). Duplo clique: centro.	パン（ステレオ位置）。ダブルクリックで中央。
+Pan X:	パン X:
+Pan Y:	パン Y:
+Pan/Crop	パン/クロップ
+Pantalone…	Pantalone…
+Papel (warp):	ペーパー（ワープ）:
+Paramétrico	パラメトリック
+Pasta %1	フォルダー %1
+Pasta padrão de renderização	既定のレンダーフォルダー
+Pasta:	フォルダー:
+Pausar	一時停止
+Pausar (JKL)	一時停止（JKL）
+Pausar (K)	一時停止（K）
+Pena da vinheta	ビネットのフェザー
+Permite que esta camada borre nas sub-passadas do motion blur global (Ctrl+Shift+B). Desligue para a camada ficar fixa.	このレイヤーをグローバルモーションブラーのサブパスでぼかせるようにします（Ctrl+Shift+B）。オフにするとレイヤーは固定されます。
+Personalizada…	カスタム…
+Personalizado	カスタム
+Personalizado…	カスタム…
+Pierrot %1 — Editor de Vídeo	Pierrot %1 — 動画エディター
+Pierrot (*.Blanc *.ovp);;Todos os arquivos (*)	Pierrot (*.Blanc *.ovp);;すべてのファイル (*)
+Pierrot (*.Blanc);;Todos os arquivos (*)	Pierrot (*.Blanc);;すべてのファイル (*)
+Pierrot fechou inesperadamente	Pierrot が予期せず終了しました
+Pivot	ピボット
+Pivot (3D do clipe)	ピボット（クリップの 3D）
+Pivot · %1  |  arraste=girar  Shift=Z  Ctrl=escala/snap  RX/RY/RZ=eixo	ピボット · %1  |  ドラッグ=回転  Shift=Z  Ctrl=スケール/スナップ  RX/RY/RZ=軸
+Pivot — %1	ピボット — %1
+Pivot — 3D do clipe	ピボット — クリップの 3D
+Pivot: anel X — rotação travada no eixo X	ピボット: X リング — X 軸回転にロック
+Pivot: anel Y — rotação travada no eixo Y	ピボット: Y リング — Y 軸回転にロック
+Pivot: anel Z — rotação travada no eixo Z	ピボット: Z リング — Z 軸回転にロック
+Pivot: arrastar = Z (profundidade)	ピボット: ドラッグ = Z（奥行き）
+Pivot: arrastar = escala	ピボット: ドラッグ = スケール
+Pivot: arrastar = rotX	ピボット: ドラッグ = 回転X
+Pivot: arrastar = rotY	ピボット: ドラッグ = 回転Y
+Pivot: arrastar = rotZ (roll)	ピボット: ドラッグ = 回転Z（ロール）
+Pivot: ferramenta limpa — o arraste volta a girar	ピボット: ツールクリア — ドラッグで再び回転
+Pivot: mover livre (H e V)	ピボット: 自由移動（H と V）
+Pivot: mover no eixo H	ピボット: H 軸で移動
+Pivot: mover no eixo V	ピボット: V 軸で移動
+Pivot: mover no eixo Z (profundidade)	ピボット: Z 軸で移動（奥行き）
+Pivot: trackball livre — arraste na esfera (Ctrl=snap 15°)	ピボット: フリートラックボール — 球の上をドラッグ（Ctrl=15° スナップ）
+Plugins	プラグイン
+Plugins OFX	OFX プラグイン
+Plugins OFX (ex.: DaVinci/Resolve, Sapphire, BorisFX) encontrados no sistema.	システムで見つかった OFX プラグイン（例: DaVinci/Resolve、Sapphire、BorisFX）。
+Plugins frei0r (Kdenlive/Shotcut/MLT). Instale com o pacote frei0r-plugins ou defina PIERROT_FREI0R_PATH.	frei0r プラグイン（Kdenlive/Shotcut/MLT）。frei0r-plugins パッケージをインストールするか PIERROT_FREI0R_PATH を設定してください。
+Ponto	ポイント
+Posição	位置
+Posição X (px):	位置 X（px）:
+Posição X:	位置 X:
+Posição Y (px):	位置 Y（px）:
+Posição Y:	位置 Y:
+Preset \"%1\" aplicado em %2 clipe(s).	プリセット「%1」を %2 個のクリップに適用しました。
+Preset de animação aplicado em %1 clipe(s).	アニメーションプリセットを %1 個のクリップに適用しました。
+Preset:	プリセット:
+Presets	プリセット
+Preto	ブラック
+Preto e Branco	ブラック＆ホワイト
+Preto e branco	モノクロ
+Pretos	ブラック
+Preview externo — Pierrot	外部プレビュー — Pierrot
+Procurar .cube…	.cube を探す…
+Profundidade:	奥行き:
+Program: 	プログラム: 
+Program: %1	プログラム: %1
+Projeto	プロジェクト
+Projeto aberto: %1	プロジェクトを開きました: %1
+Projeto fechado salvo: %1	閉じたときに保存: %1
+Projeto salvo automaticamente (%1).	プロジェクトを自動保存しました（%1）。
+Projeto salvo: %1	プロジェクトを保存しました: %1
+Projetos recentes	最近使ったプロジェクト
+Pronto — arraste mídia para a timeline.	準備完了 — メディアをタイムラインにドラッグしてください。
+Proporção:	アスペクト比:
+Propriedade	プロパティ
+Propriedades	プロパティ
+Propriedades (volume, opacidade, velocidade, fades)	プロパティ（音量・不透明度・速度・フェード）
+Propriedades da camada…	レイヤーのプロパティ…
+Propriedades…	プロパティ…
+Pré-renderizando efeitos LAINKA…	LAINKA エフェクトを事前レンダリング中…
+Pré-renderizando efeitos OFX…	OFX エフェクトを事前レンダリング中…
+Próximo keyframe	次のキーフレーム
+Próximo quadro	次のフレーム
+Quadro anterior	前のフレーム
+Quadro anterior (←)	前のフレーム（←）
+Quadro seguinte	次のフレーム
+Quadro seguinte (→)	次のフレーム（→）
+Quadros/s	フレーム/秒
+Quadros/s:	フレーム/秒:
+Qualidade (CRF):	品質（CRF）:
+Qualidade do preview (resolução de decodificação)	プレビュー品質（デコード解像度）
+Qualidade e Timeline	品質とタイムライン
+Quando ativado, o diálogo de exportação abre nessa pasta em vez da sua pasta pessoal. Deixe vazio para usar a pasta pessoal.	有効にすると、書き出しダイアログが個人フォルダーではなくこのフォルダーで開きます。空欄の場合は個人フォルダーを使用します。
+Realces	ハイライト
+Reaplica o arranjo de painéis guardado antes de uma atualização que dispensou o layout antigo.	レイアウトを破棄した更新前の状態で保存されたパネル配置を再適用します。
+Reaplicar o arranjo de painéis guardado (versão de layout %1) e substituir o atual?	保存されたパネル配置（レイアウトバージョン %1）を再適用して、現在の配置を置き換えますか？
+Recarregar	再読み込み
+Recarregar o projeto do disco (F5)	プロジェクトをディスクから再読み込み（F5）
+Recolher pasta	フォルダーを折りたたむ
+Recolher/ampliar painel de propriedades	プロパティパネルを折りたたむ/展開
+Recortar	切り取り
+Recorte	クロップ
+Recorte base:	クロップ下:
+Recorte direita:	クロップ右:
+Recorte esquerda:	クロップ左:
+Recorte topo:	クロップ上:
+Rectângulo	矩形
+Recuar um	1 つ戻る
+Recurso experimental — pode apresentar falhas.	実験的機能 — 問題が発生する可能性があります。
+Redefinir Tudo	すべてリセット
+Redefinir esta propriedade	このプロパティをリセット
+Redefinir malha	メッシュをリセット
+Redução de ruído	ノイズリダクション
+Refazer	やり直す
+Refazer (Ctrl+Shift+Z)	やり直す (Ctrl+Shift+Z)
+Remove a banda selecionada	選択したバンドを削除します
+Remove cor (verde por padrão) para transparência	指定色（既定は緑）を除去して透明にします
+Remove keyframe mais próximo do playhead	再生ヘッドに最も近いキーフレームを削除します
+Remove o envelope e deixa só a velocidade base	エンベロープを削除し、ベースの速度だけを残します
+Remove o fundo da cor selecionada no preview.	プレビューで選択色の背景を除去します。
+Remover	削除
+Remover a máscara selecionada	選択したマスクを削除
+Remover a mídia selecionada do projeto	プロジェクトから選択したメディアを削除
+Remover da Mesa	Mesa から削除
+Remover e excluir o arquivo	削除してファイルも消去
+Remover efeito	エフェクトを削除
+Remover keyframe mais próximo do playhead	再生ヘッドに最も近いキーフレームを削除
+Remover o projeto selecionado dos recentes	最近使った項目から選択したプロジェクトを削除
+Remover o tema \"%1\"?	テーマ「%1」を削除しますか？
+Remover selecionados	選択項目を削除
+Remover tema	テーマの削除
+Remover último	最後のものを削除
+Renderizar	レンダリング
+Renderização cancelada pelo usuário.	ユーザーによりレンダリングをキャンセルしました。
+Renomear pasta	フォルダー名を変更
+Renomear pasta…	フォルダー名を変更…
+Renomear…	名前を変更…
+Reproduzir	再生
+Reproduzir para frente (L); repetir acelera	早送り再生（L）· 繰り返しで加速
+Reproduzir para trás (J); repetir acelera	巻き戻し再生（J）· 繰り返しで加速
+Reproduzir/Pausar	再生/一時停止
+Reproduzir/Pausar (Espaço)	再生/一時停止（スペース）
+Reproduzir/pausar (Espaço)	再生/一時停止（スペース）
+Reprodução	再生
+Requer reinício do aplicativo para tomar efeito.	変更を反映するにはアプリの再起動が必要です。
+Requer reinício do aplicação para tomar efeito.	変更を反映するにはアプリの再起動が必要です。
+Reset	リセット
+Reset de transformação	トランスフォームをリセット
+Resetar	リセット
+Resetar grade	グリッドをリセット
+Resolução	解像度
+Resolução:	解像度:
+Restaurar layout anterior	以前のレイアウトを復元
+Restaurar padrão do atalho selecionado	選択したショートカットを既定に戻す
+Resto	残り
+Reta	直線
+Retroceder (JKL)	巻き戻し（JKL）
+Reverb	リバーブ
+Reverb EX	Reverb EX
+Reverb simples (Schroeder) no áudio do clipe	クリップのオーディオにシンプルなリバーブ（Schroeder）を適用
+Ripple	リップル
+Ripple (B)	リップル（B）
+Rodas	ホイール
+Rolamento (N)	ローリング（N）
+Rolling	ローリング
+Rotação	回転
+Rotação (°):	回転（°）:
+Rotação:	回転:
+Ruído	ノイズ
+Ruído (grão)…	ノイズ（グレイン）…
+Rápido	高速
+Régua	ルーラー
+SD (720 × 480)	SD（720 × 480）
+Sair	終了
+Sala:	ルーム:
+Salva o quadro composto no playhead como imagem PNG (a mesma imagem final do monitor).	再生ヘッドの合成フレームを PNG 画像として保存します（モニターの最終イメージと同じ）。
+Salvamento automático	自動保存
+Salvamento automático: salve o projeto uma vez (Ctrl+S) para ativar.	自動保存: 先にプロジェクトを 1 回保存（Ctrl+S）してください。
+Salvamento em andamento — aguarde.	保存中 — しばらくお待ちください。
+Salvando...	保存中...
+Salvar	保存
+Salvar Preset	プリセットを保存
+Salvar Preset…	プリセットを保存…
+Salvar como	名前を付けて保存
+Salvar como…	名前を付けて保存…
+Salvar projeto	プロジェクトを保存
+Salvar projeto (Ctrl+S)	プロジェクトを保存 (Ctrl+S)
+Salvar projeto?	プロジェクトを保存しますか？
+Salvar script	スクリプトを保存
+Salvar vídeo	ビデオを保存
+Salvar workspace	ワークスペースを保存
+Salvar workspace atual	現在のワークスペースを保存
+Salvar workspace como...	ワークスペースを名前付きで保存...
+Salvar…	保存…
+Saturation	彩度
+Saturação	彩度
+Saturação (%):	彩度（%）:
+Saturação:	彩度:
+Saída	アウト
+Saídas	アウト
+Selecionar	選択
+Selecionar (0)	選択（0）
+Selecionar e mover keyframes (V)	キーフレームを選択して移動（V）
+Selecionar faixas da pasta	フォルダー内のトラックを選択
+Selecionar pasta de plugins OFX	OFX プラグインフォルダーを選択
+Selecionar pasta padrão de render	既定のレンダーフォルダーを選択
+Selecionar tudo	すべて選択
+Selecionar/mover keyframes (V)	キーフレームを選択/移動（V）
+Selecione clipe(s) na timeline e clique num preset para aplicar. Passe o mouse sobre a miniatura para ver a animação.	タイムラインでクリップを選択してからプリセットをクリックすると適用されます。サムネイルにマウスを乗せるとアニメーションを確認できます。
+Selecione pelo menos um clipe na timeline antes de aplicar um preset.	プリセットを適用する前に、タイムラインで少なくとも1つのクリップを選択してください。
+Selecione um clipe 3D (imagem ou malha)	3D クリップ（画像またはメッシュ）を選択
+Selecione um clipe 3D (imagem ou malha).	3D クリップ（画像またはメッシュ）を選択してください。
+Selecione um clipe de texto para editar.	編集するテキストクリップを選択してください。
+Selecione um clipe de vídeo	映像クリップを選択
+Selecione um clipe de vídeo na timeline.	タイムラインで映像クリップを選択してください。
+Selecione um clipe de vídeo para aplicar a transição.	トランジションを適用する映像クリップを選択してください。
+Selecione um clipe de vídeo para editar o pantalone.	Pantalone を編集する映像クリップを選択してください。
+Selecione um clipe na timeline para\neditar os keyframes.	キーフレームを編集するには\nタイムラインでクリップを選択してください。
+Selecione um clipe na timeline.	タイムラインでクリップを選択してください。
+Selecione um clipe na timeline\nou uma camada no canvas da Mesa.	タイムラインでクリップを、または\nMesa のキャンバスでレイヤーを選択してください。
+Selecione um clipe para o Lumetri.	Lumetri を適用するクリップを選択してください。
+Selecione um clipe.	クリップを選択してください。
+Selecione um clipe. Arraste=girar · Mover/H/V/Z=posição · setas=nudge (Shift=10px) · Ctrl=escala/snap	クリップを選択してください。ドラッグ=回転 · 移動/H/V/Z=位置 · 矢印=微調整（Shift=10px）· Ctrl=スケール/スナップ
+Selecione um keyframe para apagar.	削除するキーフレームを選択してください。
+Selecione uma mídia no painel Projeto\ne arraste para a linha do tempo (Espaço reproduz)	プロジェクトパネルでメディアを選択し\nタイムラインにドラッグ（スペースで再生）
+Seleção de keyframe limpa.	キーフレームの選択を解除しました。
+Sem LUT. Aceita .cube 3D (IRIDAS/Resolve).	LUT なし。.cube 3D（IRIDAS/Resolve）に対応。
+Sem clipe de vídeo aqui	ここに映像クリップがありません
+Sem projeto	プロジェクトなし
+Sem quadro	フレームなし
+Sem quadro - mova o playhead	フレームなし — 再生ヘッドを動かしてください
+Sem título	無題
+Sensibilidade das curvas:	カーブの感度:
+Sensibilidade do arraste vertical no editor de curvas. Acima de 1× deixa as curvas mais exageradas.	カーブエディターでの垂直ドラッグの感度。1× より大きいとカーブが強調されます。
+Similaridade:	類似度:
+Slide	スライド
+Slip	スリップ
+Snap	スナップ
+Snap (ímã)	スナップ（マグネット）
+Snap desligado (Ctrl = livre)	スナップ オフ（Ctrl = 自由）
+Snap ligado (Ctrl = livre)	スナップ オン（Ctrl = 自由）
+Sobre o Pierrot	Pierrot について
+Sobre o Pierrot…	Pierrot について…
+Sobrepor (overlay)	オーバーレイ
+Sobrescreve a timeline no playhead com o trecho In→Out do Source Monitor	タイムラインの再生ヘッドの位置に、ソースモニターのイン→アウト範囲を上書きします
+Sobrescrever a timeline no playhead com o trecho do Source (.)	タイムラインの再生ヘッドにソースの範囲を上書きします（.）
+Sobrescrever no playhead (Source)	再生ヘッドに上書き（ソース）
+Solo	ソロ
+Sombras	シャドウ
+Source	ソース
+Source: %1	ソース: %1
+Source: (nenhuma mídia)	ソース: （メディアなし）
+Source: defina In e Out antes de inserir.	ソース: 挿入前にイン点とアウト点を設定してください。
+Source: defina In e Out antes de sobrescrever.	ソース: 上書き前にイン点とアウト点を設定してください。
+Source: mídia %1 não encontrada.	ソース: メディア %1 が見つかりません。
+Stop motion: jitter, flicker, warp, dust, scratch	ストップモーション: ジッター、フリッカー、ワープ、ダスト、スクラッチ
+Stylize	スタイライズ
+Suave	スムーズ
+Suavidade borda:	エッジの滑らかさ:
+Suavidade:	滑らかさ:
+Subir uma pasta	フォルダーを 1 階層上へ
+Substitui por 5 bandas sugeridas	推奨の 5 バンドに置き換えます
+Supressão spill:	スピル抑制:
+Só as alças de recorte	クロップハンドルのみ
+Só remover da lista	リストから削除のみ
+Sólido…	単色…
+Tamanho X	幅
+Tamanho Y	高さ
+Tamanho da sala (0–100%)	ルームサイズ（0–100%）
+Tamanho da sala:	ルームサイズ:
+Tamanho do grão:	グレインサイズ:
+Target FPS:	ターゲット FPS:
+Tela (screen)	スクリーン
+Tela cheia (Esc para sair)	全画面表示（Esc で終了）
+Tela cheia (F11; Esc sai)	全画面表示（F11 · Esc で終了）
+Tema por paleta (.pierrot-theme)	パレットテーマ (.pierrot-theme)
+Tema por paleta Pierrot (*.pierrot-theme)	Pierrot パレットテーマ (*.pierrot-theme)
+Tema:	テーマ:
+Temperatura	色温度
+Tempo (s)	時間（秒）
+Tempo:	時間:
+Tesoura	シザー
+Tesoura (R)	シザー（R）
+Text / Animation	テキスト / アニメーション
+Texto	テキスト
+Texto do clipe	クリップのテキスト
+Texto:	テキスト:
+Texto…	テキスト…
+Timeline	タイムライン
+Timeline não vinculada.	タイムラインがリンクされていません。
+Tipo	タイプ
+Tipo:	タイプ:
+Tocar/parar o Source (Espaço)	ソースの再生/停止（スペース）
+Todas (contínuas)	すべて（連続）
+Todas as exportações foram concluídas.	すべての書き出しが完了しました。
+Topo	上
+Topo:	上:
+Touch (grava enquanto segura)	タッチ（押している間記録）
+Transfere a decodificação de vídeo para a placa de vídeo, aliviando a CPU (útil em 4K e projetos com muitos cortes). Se algum arquivo tiver problema, desligue — o Pierrot volta a decodificar por software.	映像デコードを GPU に移して CPU を軽くします（4K やカットの多いプロジェクトに有用）。問題のあるファイルがある場合はオフにすると Pierrot はソフトウェアデコードに戻ります。
+Transformar	トランスフォーム
+Transformar (posição, escala, rotação)	トランスフォーム（位置・スケール・回転）
+Transformar…	トランスフォーム…
+Transformação	トランスフォーム
+Transição	トランジション
+Transição de saída	アウトトランジション
+Transição: %1 no clipe selecionado	トランジション: 選択クリップに %1
+Transparência:	透明度:
+Travar layout	レイアウトをロック
+Travar/destravar o layout dos painéis (Ctrl+L)	パネルのレイアウトをロック/解除（Ctrl+L）
+Trazer para a frente	前面へ送る
+Tremida:	シェイク:
+Trimmer — %1	トリマー — %1
+Trocar in/out	イン/アウトを入れ替え
+Usa a GPU (h264_nvenc ou h264_vaapi) para codificar MP4/MKV.\nSe o ffmpeg do sistema não tiver esses encoders, cai automaticamente para o libx264.	GPU（h264_nvenc または h264_vaapi）で MP4/MKV をエンコードします。\nシステムの ffmpeg にこれらのエンコーダーがない場合は自動的に libx264 にフォールバックします。
+Usa a GPU para decodificar H.264/HEVC/MJPEG. Requer suporte VAAPI no Linux (Intel/AMD/NVIDIA com driver).	GPU で H.264/HEVC/MJPEG をデコードします。Linux の VAAPI 対応が必要（Intel/AMD/NVIDIA + ドライバー）。
+Usar pasta padrão ao exportar	書き出し時に既定のフォルダーを使用
+Usar proxies (editar com transcode leve, qualidade cheia no export)	プロキシを使用（軽量な再エンコードで編集し、書き出しはフルクオリティ）
+Usar proxies em previews e pan/crop (alta resolução)	プレビューとパン/クロップでもプロキシを使用（高解像度）
+Valor	値
+Valor:	値:
+Varinha	ツール
+Varinha: clique cria ponto suave; arraste as alças entorta a velocidade (B)	ツール: クリックでスムーズポイント作成 · ハンドルをドラッグで速度を調整（B）
+Vectorscope	ベクトルスコープ
+Velocidade	速度
+Velocidade constante %1×. Clique na linha (ou use Curva) para criar o envelope.	一定速度 %1×。ラインをクリック（またはカーブを使用）でエンベロープを作成。
+Velocidade constante do clipe (sem envelope)	クリップの一定速度（エンベロープなし）
+Velocidade do clipe	クリップの速度
+Velocidade no keyframe selecionado / no playhead	選択キーフレーム / 再生ヘッドの速度
+Velocidade — %1	速度 — %1
+Verde	グリーン
+Verde ↔ Magenta	緑 ↔ マゼンタ
+Vermelho	レッド
+Versão %1	バージョン %1
+Vertical	垂直
+Vibrance	ビブランス
+Video Effects (do Pierrot)	映像エフェクト（Pierrot ネイティブ）
+Video Transitions	映像トランジション
+Vinheta	ビネット
+Vinheta / LUT	ビネット / LUT
+Visualização em lista (colunas, como o Premiere)	リスト表示（Premiere のようなカラム）
+Visualização em ícones (grade)	アイコン表示（グリッド）
+Voltar 1 frame	1 フレーム戻る
+Voltar 1 frame (←)	1 フレーム戻る（←）
+Volume (%):	音量（%）:
+Volume (0–200%):	音量（0–200%）:
+Volume da faixa	トラックの音量
+Volume da faixa: %1%	トラックの音量: %1%
+Volume geral (master)	マスター音量
+Volume:	音量:
+Várias exportações em sequência (formatos/resoluções diferentes)	複数の書き出しを順番に実行（異なるフォーマット/解像度）
+Vídeo	ビデオ
+Vídeo %1	ビデオ %1
+Vídeo 1	ビデオ 1
+Vídeo e áudio (*.mp4 *.mov *.mkv *.avi *.webm *.m4v *.ts *.flv *.wmv *.3gp *.mpg *.mpeg *.ogv *.mts *.m2ts *.vob *.mp3 *.wav *.aac *.flac *.ogg *.m4a *.opus *.wma *.aiff *.aif *.au *.ac3 *.amr *.ape *.caf *.dts *.mka *.mid *.midi *.mp2 *.oga *.spx *.w64 *.wv *.alac *.mp1 *.mpa *.ra *.wpl *.tta *.tak *.shn);;Imagens (*.jpg *.jpeg *.png *.bmp *.gif *.webp *.tif *.tiff *.svg);;Todos os arquivos (*)	映像とオーディオ (*.mp4 *.mov *.mkv *.avi *.webm *.m4v *.ts *.flv *.wmv *.3gp *.mpg *.mpeg *.ogv *.mts *.m2ts *.vob *.mp3 *.wav *.aac *.flac *.ogg *.m4a *.opus *.wma *.aiff *.aif *.au *.ac3 *.amr *.ape *.caf *.dts *.mka *.mid *.midi *.mp2 *.oga *.spx *.w64 *.wv *.alac *.mp1 *.mpa *.ra *.wpl *.tta *.tak *.shn);;画像 (*.jpg *.jpeg *.png *.bmp *.gif *.webp *.tif *.tiff *.svg);;すべてのファイル (*)
+Vídeo exportado com sucesso.	ビデオの書き出しが完了しました。
+Vídeo:	ビデオ:
+Waveform	波形
+Waveform (mini) — dock Analisadores para o full	波形（ミニ）— アナライザードックで全体表示
+WebM (*.webm)	WebM (*.webm)
+Wipe	ワイプ
+Wipe Bottom-Left	ワイプ 左下
+Wipe Bottom-Right	ワイプ 右下
+Wipe Down	ワイプ 下
+Wipe Left	ワイプ 左
+Wipe Right	ワイプ 右
+Wipe Top-Left	ワイプ 左上
+Wipe Top-Right	ワイプ 右上
+Wipe Up	ワイプ 上
+Wipe \u2190	ワイプ \u2190
+Wipe \u2191	ワイプ \u2191
+Wipe \u2192	ワイプ →
+Wipe \u2193	ワイプ \u2193
+Wipe \u2196	ワイプ \u2196
+Wipe \u2197	ワイプ \u2197
+Wipe \u2198	ワイプ \u2198
+Wipe \u2199	ワイプ \u2199
+Wipe ← (próximo vem da direita)	ワイプ ←（次が右から）
+Wipe ↑ (próximo vem de baixo)	ワイプ ↑（次が下から）
+Wipe → (próximo vem da esquerda)	ワイプ →（次が左から）
+Wipe ↓ (próximo vem de cima)	ワイプ ↓（次が上から）
+Wipes diagonais	斜めワイプ
+Workspace salvo como \"%1\".	ワークスペース「%1」を保存しました。
+Workspace: %1	ワークスペース: %1
+Workspaces	ワークスペース
+Write (grava durante a reprodução)	ライト（再生中に記録）
+Zera recorte, zoom, posição, rotação, achatamento e âncora do clipe	クリップのクロップ・ズーム・位置・回転・フラット・アンカーをリセット
+Zera transform 2D/3D do clipe	クリップの 2D/3D トランスフォームをリセット
+Zoom do preview	プレビューのズーム
+Zoom e Posição	ズームと位置
+Zoom, posição, rotação e âncora	ズーム・位置・回転・アンカー
+Zoom:	ズーム:
+ativa	オン
+clipe	クリップ
+desativada	オフ
+elipse	楕円
+fadeIn no clipe selecionado	選択クリップにフェードイン
+fadeOut no clipe selecionado	選択クリップにフェードアウト
+frei0r (nenhum instalado)	frei0r（未インストール）
+frei0r — plugins (%1)	frei0r — プラグイン（%1）
+imagem	画像
+keyframes do clipe	クリップのキーフレーム
+malha	メッシュ
+polígono	ポリゴン
+retângulo	矩形
+t = %1  ·  frame %2\nv = %3  ·  %4	t = %1  ·  フレーム %2\nv = %3  ·  %4
+text:Bom dia\nfont:Impact\ncolor:#FFDD00\nease:elastic\ndur:2s\nscale:0->1 @0s-0.6s\ny:120->0 @0s-0.6s\nrot:-10->0 @0s-0.7s	text:おはよう\nfont:Impact\ncolor:#FFDD00\nease:elastic\ndur:2s\nscale:0->1 @0s-0.6s\ny:120->0 @0s-0.6s\nrot:-10->0 @0s-0.7s
+trecho: %1 → %2  (%3 s)	範囲: %1 → %2  （%3 秒）
+trecho: —	範囲: —
+valor padrão	既定値
+Áudio	オーディオ
+Âncora X (px):	アンカー X（px）:
+Âncora X:	アンカー X:
+Âncora Y (px):	アンカー Y（px）:
+Âncora Y:	アンカー Y:
+Ângulo (°):	角度（°）:
+Ângulo multicam %1	マルチカメラアングル %1
+Ângulo:	アングル:
+Ícones	アイコン
+↖ Wipe (próximo vem de baixo-direita)	↖ ワイプ（次が右下から）
+↗ Wipe (próximo vem de baixo-esquerda)	↗ ワイプ（次が左下から）
+↘ Wipe (próximo vem de cima-esquerda)	↘ ワイプ（次が左上から）
+↙ Wipe (próximo vem de cima-direita)	↙ ワイプ（次が右上から）
+⏸ Parar	⏸ 停止
+▶ Tocar	▶ 再生
+● Auto	● 自動
+Inglês	英語
+O japonês e o inglês já estão disponíveis. Requer reinício do aplicativo para tomar efeito.	日本語と英語が利用可能です。変更を反映するにはアプリの再起動が必要です。
+Arquivo não existe:\n%1	ファイルが存在しません:\n%1
+Projeto não encontrado	プロジェクトが見つかりません
+Transições	トランジション

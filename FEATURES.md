@@ -246,14 +246,17 @@ arquivo). O perfil ativo é restaurado na próxima abertura.
 
 ## Idioma
 
-- **Português (Brasil)** e **日本語** (Ajustes ▸ Interface ▸ Idioma). O japonês
-  traduz o app inteiro — menus, diálogos, mensagens e atalhos (1159 entradas,
-  `%1`… preservados) — e troca a fonte da interface pela pilha de gothics
-  japoneses (em qualquer tema). Requer reiniciar o app.
-- **Inglês** reservado ("v0.7.5"), por ora cai no pt-BR.
-- Tradução **embutida em C++** (`src/ui/core/JaTranslator`), sem `lupdate`/`.qm`:
-  string sem tradução aparece no original em pt-BR. A fonte fica em
-  `tools/i18n/` (`gen_ja.py` regenera a tabela no `.cpp`).
+- **Português (Brasil)**, **English** e **日本語** (Ajustes ▸ Interface ▸
+  Idioma). O app inteiro é traduzido — menus, diálogos, mensagens e atalhos
+  (inglês: 1271 entradas, 100% de cobertura; japonês: 1183 entradas), com os
+  `%1`… preservados. O japonês também troca a fonte da interface pela pilha
+  de gothics japoneses (em qualquer tema). Requer reiniciar o app.
+- Tradução **embutida em C++** (`src/ui/core/EnTranslator`,
+  `src/ui/core/JaTranslator`), sem `lupdate`/`.qm`: string sem tradução
+  aparece no original em pt-BR. A fonte fica em `tools/i18n/`
+  (`gen_en.py`/`gen_ja.py` regeneram as tabelas no `.cpp`;
+  `extract_strings.py` extrai as strings do código e `check_i18n.py`
+  verifica cobertura e integridade).
 
 ## Temas
 

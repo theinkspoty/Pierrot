@@ -13,6 +13,7 @@
 #include "MainWindow.h"
 #include "ui/dialogs/WelcomeWindow.h"
 #include "ui/core/ClickLogger.h"
+#include "ui/core/EnTranslator.h"
 #include "ui/core/JaTranslator.h"
 #include "ui/core/Theme.h"
 #include "Bench.h"
@@ -47,6 +48,17 @@ int main(int argc, char** argv) {
 
     ClickLogger::install();
 
+    // Idioma da UI: 0=pt, 1=en, 2=ja. Instala ANTES de criar qualquer
+    // janela (e antes do diálogo de crash), senão os textos fixos ficam em
+    // pt-BR.
+    const QString lang = savedLanguage();
+    static EnTranslator enTranslator;
+    static JaTranslator jaTranslator;
+    if (lang == QLatin1String("en"))
+        app.installTranslator(&enTranslator);
+    else if (lang == QLatin1String("ja"))
+        app.installTranslator(&jaTranslator);
+
     // Se houve um crash na última execução, avisa o usuário e mostra onde está
     // o relatório (com opção de abrir o arquivo e de remover os antigos).
     const QStringList reports = CrashReporter::existingReports();
@@ -72,13 +84,6 @@ int main(int argc, char** argv) {
 
     app.setStyle(QStyleFactory::create("Fusion"));
     applyAppPalette(&app, savedTheme());
-
-    // Idioma da UI: 0=pt, 1=en (0.7.5), 2=ja. Instala ANTES de criar
-    // qualquer janela, senão os textos fixos ficam em pt-BR.
-    const QString lang = savedLanguage();
-    static JaTranslator jaTranslator;
-    if (lang == QLatin1String("ja"))
-        app.installTranslator(&jaTranslator);
 
     // Pilha de fontes: o tema pode definir (Japan95) e a UI em japonês
     // força a pilha de gothics japoneses em QUALQUER tema.

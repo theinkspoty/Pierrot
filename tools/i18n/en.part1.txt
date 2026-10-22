@@ -1,0 +1,1271 @@
+  (%1 ignorado(s))	  (%1 ignored)
+  Erro: %1	  Error: %1
+  Não foi possível iniciar o ffmpeg.	  Could not start ffmpeg.
+  ✓ Concluído.	  ✓ Done.
+  ✗ Falhou (código %1).	  ✗ Failed (code %1).
+ %	 %
+ (deslig.)	 (off)
+ (formato anterior ao versionamento por grupo)	 (format from before per-group versioning)
+ (grupo %1)	 (group %1)
+ kbps	 kbps
+ min	 min
+ px	 px
+ s	 s
+ °	 °
+ — Protótipo 4<br>Motores: <b>Colombina</b> v	 — Prototype 4<br>Engines: <b>Colombina</b> v
+%1 (cópia)	%1 (copy)
+%1 *	%1 *
+%1 itens	%1 items
+%1 itens · %2 selecionados	%1 items · %2 selected
+%1 · %2 s — arraste para mover no tempo	%1 · %2 s — drag to move in time
+%1 · f%2	%1 · f%2
+%1%	%1%
+%1: %2	%1: %2
+&Ajuda	&Help
+&Arquivo	&File
+&Configurações	&Settings
+&Editar	&Edit
+&Exibir	&View
+&Projeto	&Project
+&Reproduzir	&Playback
+(instale frei0r-plugins)	(install frei0r-plugins)
+(nenhum plugin OFX)	(no OFX plugins)
+(nenhum)	(none)
+(sem parâmetros editáveis)	(no editable parameters)
+(sem quadro)	(no frame)
+(texto vazio)	(empty text)
++	+
++ Banda	+ Band
++ Elipse	+ Ellipse
++ Máscara	+ Mask
++ Retângulo	+ Rectangle
++kf	+kf
+, grupo %1	, group %1
+00:00:00:00	00:00:00:00
+3D	3D
+3D %1	3D %1
+<b>Pierrot</b> — editor de vídeo de código aberto<br>Versão 	<b>Pierrot</b> — open source video editor<br>Version 
+A forma aparece no monitor com alças — arraste para mover, redimensionar ou rotacionar. Os valores aqui acompanham em tempo real. Aplicar grava no clipe.	The shape appears in the monitor with handles — drag to move, resize or rotate. The values here follow in real time. Apply saves it to the clip.
+A renderização está em andamento. Deseja cancelar?	Rendering is in progress. Do you want to cancel?
+A:	A:
+Abra uma mídia no Source Monitor primeiro (duplo-clique na Central de Mídias).	Open a media file in the Source Monitor first (double-click it in the Media Pool).
+Abre a correção de cor estilo Lumetri no clipe	Opens the Lumetri-style color correction on the clip
+Abre o editor do clipe de texto selecionado	Opens the editor of the selected text clip
+Abre o preview em uma janela própria — arraste para um segundo monitor e use F11 para tela cheia.	Opens the preview in its own window — drag it to a second monitor and use F11 for fullscreen.
+Abrir	Open
+Abrir LUT 3D	Open 3D LUT
+Abrir Mesa	Open Mesa
+Abrir a janela inicial (novo projeto / recentes)	Opens the start window (new project / recent)
+Abrir as configurações do aplicativo	Opens the application settings
+Abrir do disco…	Open from disk…
+Abrir editor de texto	Open text editor
+Abrir no Source	Open in Source
+Abrir o editor de texto completo do clipe	Open the clip's full text editor
+Abrir o projeto selecionado	Opens the selected project
+Abrir o trimmer ao soltar uma mídia na timeline	Open the trimmer when dropping media on the timeline
+Abrir pasta	Open folder
+Abrir projeto	Open project
+Abrir projeto… (Ctrl+O)	Open project… (Ctrl+O)
+Abrir script	Open script
+Abrir…	Open…
+Acentuada	Accented
+Adiciona keyframe de transform no playhead	Adds a transform keyframe at the playhead
+Adiciona uma banda Bell	Adds a Bell band
+Adicionar	Add
+Adicionar faixa de efeitos	Add effects track
+Adicionar faixa de gravação	Add recording track
+Adicionar faixa de vídeo	Add video track
+Adicionar faixa de áudio	Add audio track
+Adicionar keyframe aqui	Add keyframe here
+Adicionar keyframe no playhead	Add keyframe at the playhead
+Adicionar marcador	Add marker
+Adicionar marcador nomeado…	Add named marker…
+Adicionar track	Add track
+Adicionar à fila	Add to queue
+Adicionar/remover keyframe no playhead	Add/remove keyframe at the playhead
+Adicionar…	Add…
+Adicione pastas onde seus plugins OFX (.ofx) estão instalados. O Pierrot já procura em ~/.config/pierrot/ofx e /usr/lib/ofx por padrão.	Add the folders where your OFX plugins (.ofx) are installed. Pierrot already looks in ~/.config/pierrot/ofx and /usr/lib/ofx by default.
+Adição (add)	Add
+Adjust	Adjust
+Agrupar	Group
+Agrupar faixas	Group tracks
+Agrupar faixas em pasta…	Group tracks into folder…
+Agudos (6 kHz):	Highs (6 kHz):
+Agudos:	Highs:
+Ajusta luminosidade (brilho) da imagem	Adjusts image brightness
+Ajustar	Adjust
+Alguns Reels não tinham caminho absoluto e ficaram sem mídia:\n%1	Some Reels had no absolute path and were left without media:\n%1
+Alinhamento:	Alignment:
+Alinhar	Align
+Alternar animação	Toggle animation
+Alternar entre lista e miniaturas	Toggle between list and thumbnails
+Alternar keyframe no playhead	Toggle keyframe at the playhead
+Alvo:	Target:
+Alça de entrada — entorta para a esquerda	In handle — twists to the left
+Alça de saída — entorta para a direita	Out handle — twists to the right
+Alças criadas — arraste para entortar a velocidade	Handles created — drag to twist the speed
+Amarelo	Yellow
+Amostras:	Samples:
+Analisadores	Analyzers
+Animação	Animation
+Aparência	Appearance
+Aplica fade-in no clipe selecionado	Applies a fade-in to the selected clip
+Aplica fade-out no clipe selecionado	Applies a fade-out to the selected clip
+Aplica ruído monocromático animado (estética de película).	Applies animated monochrome noise (film look).
+Aplicar	Apply
+Aplicar Preset	Apply Preset
+Aplicar Preset…	Apply Preset…
+Arquivo de projeto inválido:\n%1	Invalid project file:\n%1
+Arquivo de projeto recusado (versão não suportada):\n%1	Project file rejected (unsupported version):\n%1
+Arquivo:	File:
+Arquivos MKV são suportados experimentalmente e podem apresentar problemas de reprodução, áudio ou exportação.	MKV files are supported experimentally and may have playback, audio or export issues.
+Arquivos de texto (*.txt);;Todos (*.*)	Text files (*.txt);;All files (*.*)
+Arrastar move o clipe em H e V ao mesmo tempo	Dragging moves the clip in H and V at the same time
+Arrastar move só na horizontal	Dragging moves only horizontally
+Arrastar move só na profundidade (Z)	Dragging moves only in depth (Z)
+Arrastar move só na vertical	Dragging moves only vertically
+Arrastar no canvas gira no eixo X	Dragging on the canvas rotates on the X axis
+Arrastar no canvas gira no eixo Y	Dragging on the canvas rotates on the Y axis
+Arrastar no canvas gira no eixo Z (roll)	Dragging on the canvas rotates on the Z axis (roll)
+Arraste efeitos da lista para cá\nou selecione um clipe na timeline	Drag effects from the list here\nor select a clip on the timeline
+Arraste os pontos na vertical (ganho ±12 dB).	Drag the points vertically (gain ±12 dB).
+Arraste um keyframe para a esquerda/direita para mover sua posição no tempo	Drag a keyframe left/right to move its position in time
+As exportações rodam em sequência (um ffmpeg por vez).	Exports run one after another (one ffmpeg at a time).
+Atalho	Shortcut
+Atalhos do teclado	Keyboard shortcuts
+Ativa	Enables
+Ativa campos 3D da Mesa (Z, FOV, rotações). O render 3D completo entra na Fase 1; hoje o visual continua 2D.	Enables the Mesa 3D fields (Z, FOV, rotations). Full 3D rendering comes in Phase 1; today the look is still 2D.
+Ativa os campos 3D da Mesa (Z, FOV, rotações XYZ). O render 3D completo entra na Fase 1.	Enables the Mesa 3D fields (Z, FOV, XYZ rotations). Full 3D rendering comes in Phase 1.
+Ativar Chroma Key	Enable Chroma Key
+Ativar EQ Express	Enable EQ Express
+Ativar Grão de Filme	Enable Film Grain
+Ativar LAINKA	Enable LAINKA
+Ativar MotiOn	Enable MotiOn
+Ativar PSX	Enable PSX
+Ativar Reverb EX	Enable Reverb EX
+Ativar salvamento automático	Enable autosave
+Ativar/Desativar	Enable/Disable
+Ativar/Desativar efeito	Enable/Disable effect
+Ativar/desativar banda	Enable/disable band
+Atualizar perfil…	Update profile…
+Audio Effects	Audio Effects
+Audio Transitions	Audio Transitions
+Auto (CRF)	Auto (CRF)
+Auto Bezier	Auto Bezier
+Auto-keyframe: alterar um valor cria/atualiza o keyframe no playhead	Auto-keyframe: changing a value creates/updates the keyframe at the playhead
+Automação desligada (ler envelope). Clique para gravar.	Automation off (reading envelope). Click to record.
+Automática	Automatic
+Avançar (JKL)	Shuttle (JKL)
+Avançar 1 frame	Advance 1 frame
+Avançar 1 frame (→)	Advance 1 frame (→)
+Avançar um	Advance one
+Avisar ao importar arquivos MKV (experimental)	Warn when importing MKV files (experimental)
+Avisos	Warnings
+Azul	Blue
+Azul ↔ Laranja	Blue ↔ Orange
+Ação	Action
+B	B
+Back (overshoot)	Back (overshoot)
+Baixo	Low
+Base	Base
+Base:	Base:
+Baseado em textos animados	Based on animated text
+Bell	Bell
+Bem-vindo ao Pierrot	Welcome to Pierrot
+Bezier	Bezier
+Bitrate de vídeo em kbps.\n0 = usar CRF (recomendado), >0 = bitrate fixo.	Video bitrate in kbps.\n0 = use CRF (recommended), >0 = fixed bitrate.
+Bitrate do áudio em kbps.\nTípicos: 128k (WebM), 192k (MP4/MKV).	Audio bitrate in kbps.\nTypical: 128k (WebM), 192k (MP4/MKV).
+Bitrate vídeo:	Video bitrate:
+Bitrate áudio:	Audio bitrate:
+Black & White	Black & White
+Blend:	Blend:
+Blur & Sharpen	Blur & Sharpen
+Borra o movimento do clipe por amostragem temporal (MotiOn).	Blurs the clip motion by temporal sampling (MotiOn).
+Borra o quadro inteiro por amostragem temporal. Cada camada precisa do flag 'Motion blur (allow)'.	Blurs the whole frame by temporal sampling. Each layer needs the 'Motion blur (allow)' flag.
+Bounce	Bounce
+Branco	White
+Brancos	Whites
+Brasileiro	Brazilian
+Brightness & Contrast	Brightness & Contrast
+Brilho & Contraste	Brightness & Contrast
+Brilho:	Brightness:
+Build de desenvolvimento — recursos podem estar incompletos ou instáveis.	Development build — features may be incomplete or unstable.
+Buscar efeitos…	Search effects…
+Buscar mídia…	Search media…
+Básico	Basic
+CAMADA (MESA)	LAYER (MESA)
+CLIPE	CLIP
+COMPOSIÇÃO (BLUR GLOBAL)	COMPOSITION (GLOBAL BLUR)
+COR / EFEITOS	COLOR / EFFECTS
+CRF (Constant Rate Factor): 0 = sem perda, 51 = pior qualidade.\nValores típicos: 18 (bom), 23 (padrão), 28 (rápido).	CRF (Constant Rate Factor): 0 = lossless, 51 = worst quality.\nTypical values: 18 (good), 23 (default), 28 (fast).
+Cada clipe tem o próprio texto e estilo.	Each clip has its own text and style.
+Caixa	Box
+Cam Z:	Cam Z:
+Camada %1	Layer %1
+Camada: %1	Layer: %1
+Caminho da pasta…	Folder path…
+Caminho do arquivo de saída…	Output file path…
+Caminhos de plugins OFX	OFX plugin paths
+Cancelar	Cancel
+Cancelar render?	Cancel render?
+Carrega no Source Monitor para marcar In/Out e inserir	Loads in the Source Monitor to set In/Out and insert
+Carregando áudio	Loading audio
+Carregando áudio e miniaturas…	Loading audio and thumbnails…
+Central de Mídias	Media Pool
+Centro	Center
+Centro X	Center X
+Centro Y	Center Y
+Channel	Channel
+Checkboard	Checkerboard
+Checkboard %1×%1	Checkerboard %1×%1
+Checkboard…	Checkerboard…
+Chroma Key	Chroma Key
+Chroma key	Chroma key
+Claro (Final Cut)	Light (Final Cut)
+Clicar cria um ponto suave; arrastar define a curva (B)	Click creates a smooth point; dragging defines the curve (B)
+Clicar no gráfico adiciona um keyframe (P)	Clicking the graph adds a keyframe (P)
+Clip Lazzi criado na timeline.	Lazzi clip created on the timeline.
+Clipe de texto criado no playhead.	Text clip created at the playhead.
+Clipe: %1	Clip: %1
+Clique cria keyframe linear (P)	Click creates a linear keyframe (P)
+Clique no gráfico para criar keyframes; arraste para mover; duplo clique remove. Export usa a mesma curva (pré-render).	Click the graph to create keyframes; drag to move; double click removes. Export uses the same curve (pre-render).
+Clique num atalho e, em seguida, pressione a nova combinação de teclas para alterá-lo. Esc cancela.	Click a shortcut, then press the new key combination to change it. Esc cancels.
+Cobre o aplicativo inteiro (timeline, playhead, monitor, gráficos) por definir as cores de toda a UI. Chaves ausentes herdam do tema acima. Requer reinício do aplicativo.	Covers the whole application (timeline, playhead, monitor, graphs) by defining the colors of the entire UI. Missing keys inherit from the theme above. Requires an application restart.
+Codificar vídeo por hardware no export (NVENC/VAAPI)	Hardware-encode video on export (NVENC/VAAPI)
+Codificação	Encoding
+Colar	Paste
+Colar Atributos	Paste Attributes
+Colar Atributos…	Paste Attributes…
+Colar atributos	Paste attributes
+Color Correction (Lumetri)	Color Correction (Lumetri)
+Como os quadros são exibidos no corpo dos clipes de vídeo. \"Todas\" mostra fatias contínuas; \"Início e fim\" só nos extremos; \"Nenhuma\" deixa os clipes sem miniatura.	How frames are shown inside video clips. \"All\" shows continuous slices; \"Start and end\" only at the edges; \"None\" leaves the clips without thumbnails.
+Configurar exportação	Configure export
+Configurações	Settings
+Configurações aplicadas.	Settings applied.
+Configurações do app…	App settings…
+Configurações do projeto	Project settings
+Configurações do projeto atualizadas.	Project settings updated.
+Configurações do projeto…	Project settings…
+Constant Power	Constant Power
+Constant Power: o crossfade de áudio já acompanha a sobreposição na mesma faixa.	Constant Power: the audio crossfade already follows the overlap on the same track.
+Constante	Constant
+Contorno	Outline
+Contrast	Contrast
+Contraste	Contrast
+Contraste (%):	Contrast (%):
+Contraste:	Contrast:
+Controla diferença entre claros e escuros	Controls the difference between highlights and shadows
+Converte o clipe para escala de cinza.	Converts the clip to grayscale.
+Converte para escala de cinza	Convert to grayscale
+Convertendo .blend com o Blender…	Converting .blend with Blender…
+Converter para clipe	Convert to clip
+Copiar	Copy
+Copiar todo o log para a área de transferência	Copy the whole log to the clipboard
+Copiar tudo	Copy all
+Cor	Color
+Cor %1	Color %1
+Cor 1 do checkboard	Checkerboard color 1
+Cor 2 do checkboard	Checkerboard color 2
+Cor da camada sólida	Solid layer color
+Cor da mídia	Media color
+Cor do chroma key	Chroma key color
+Cor do grão	Grain color
+Cor do parâmetro	Parameter color
+Cor do ruído	Noise color
+Cor do texto:	Text color:
+Cor e contorno	Color and outline
+Cor final do gradiente	Gradient end color
+Cor inicial do gradiente	Gradient start color
+Cor sólida	Solid color
+Cor — Correction (estilo DaVinci)	Color — Correction (DaVinci style)
+Cor:	Color:
+Correção de cor (Lumetri)	Color correction (Lumetri)
+Correção de cor…	Color correction…
+Cor…	Color…
+Criar Mesa	Create Mesa
+Criar clipe de texto	Create text clip
+Criar multicam	Create multicam
+Criar multicam (%1 ângulos)…	Create multicam (%1 angles)…
+Criar mídia gerada (cor sólida, como no Vegas)	Create generated media (solid color, like in Vegas)
+Criar projeto	Create project
+Crie uma Mesa antes de importar .blend.	Create a Mesa before importing .blend.
+Crie uma Mesa antes de importar .obj.	Create a Mesa before importing .obj.
+Crie uma Mesa para importar .blend.	Create a Mesa to import .blend.
+Crie uma Mesa para importar .obj.	Create a Mesa to import .obj.
+Crossfade de áudio quando há sobreposição na mesma faixa	Audio crossfade when there is overlap on the same track
+Crossfade quando o próximo clipe se sobrepõe	Crossfade when the next clip overlaps
+Curva	Curve
+Curva (entortar)	Curve (twist)
+Curva: clique cria · arraste alças entorta	Curve: click creates · drag handles twist
+Curvas	Curves
+Curvas: adicione pontos X/Y em 0..1. Master afeta R, G e B.	Curves: add X/Y points in 0..1. Master affects R, G and B.
+CÂMERA	CAMERA
+Câmera (Ken Burns)	Camera (Ken Burns)
+Câmera — %1	Camera — %1
+Células por lado:	Cells per side:
+Cópia independente	Independent copy
+Cópia unificada	Unified copy
+Debian/Ubuntu: pacote frei0r-plugins; ou PIERROT_FREI0R_PATH=/pasta/com/.so	Debian/Ubuntu: frei0r-plugins package; or PIERROT_FREI0R_PATH=/path/with/.so
+Decodificação de vídeo por hardware (VAAPI)	Hardware video decoding (VAAPI)
+Deletar keyframes selecionados	Delete selected keyframes
+Desagrupar	Ungroup
+Desagrupar faixas	Ungroup tracks
+Descarga a codificação da CPU para a placa de vídeo (útil em 4K e projetos longos). Equivale à aceleração por GPU que o Vega oferece na renderização; o retorno ao libx264 é automático se não houver encoders de hardware no sistema.	Offloads encoding from the CPU to the graphics card (useful for 4K and long projects). It is the same GPU acceleration that Vegas offers while rendering; it falls back to libx264 automatically when the system has no hardware encoders.
+Descartar	Discard
+Desempenho	Performance
+Desenhar contorno atrás do texto	Draw outline behind the text
+Desfazer	Undo
+Desfazer (Ctrl+Z)	Undo (Ctrl+Z)
+Desfoque	Blur
+Desfoque (%):	Blur (%):
+Desfoque gaussiano (box blur no preview/export)	Gaussian blur (box blur in preview/export)
+Desfoque:	Blur:
+Deslizar (Y)	Slide (Y)
+Destravar layout	Unlock layout
+Desvincular grupo	Unlink group
+Diferença	Difference
+Digite o texto/título…	Type the text/title…
+Digite pelo menos um comando.	Type at least one command.
+Direita	Right
+Direita:	Right:
+Dissolve	Dissolve
+Dissolver	Dissolve
+Distribuir	Distribute
+Dividir clipe no playhead (S)	Split clip at the playhead (S)
+Dividir clipes	Split clips
+Dividir e excluir	Split and delete
+Dividir no playhead	Split at the playhead
+Duplicar	Duplicate
+Duplicar camada	Duplicate layer
+Duplicar clipe	Duplicate clip
+Duplo-clique na Central de Mídias\npara abrir no Source	Double-click in the Media Pool\nto open it in the Source
+Duração	Duration
+EDL CMX3600 (*.edl);;Todos os arquivos (*)	EDL CMX3600 (*.edl);;All files (*)
+EDL exportado: %1	EDL exported: %1
+EDL importado: %1	EDL imported: %1
+EQ Express	EQ Express
+EV	EV
+Easy Ease (F9)	Easy Ease (F9)
+Easy Ease (varinha)	Easy Ease (magic wand)
+Easy Ease In	Easy Ease In
+Easy Ease In aplicado	Easy Ease In applied
+Easy Ease Out	Easy Ease Out
+Easy Ease Out aplicado	Easy Ease Out applied
+Easy Ease aplicado (F9)	Easy Ease applied (F9)
+Easy Ease no keyframe do playhead (F9) — suaviza a transição de velocidade	Easy Ease on the playhead keyframe (F9) — smooths the speed transition
+Easy Ease nos keyframes selecionados (F9) — suaviza a animação com handles horizontais	Easy Ease on the selected keyframes (F9) — smooths the animation with horizontal handles
+Editar keyframe	Edit keyframe
+Editar…	Edit…
+Editor de Curvas	Curve Editor
+Editor de velocidade	Speed editor
+Editor de vídeo	Video editor
+Edição	Editing
+Efeitos	Effects
+Efeitos (%1)	Effects (%1)
+Efeitos OFX (plugins de terceiros)	OFX effects (third-party plugins)
+Efeitos de vídeo	Video effects
+Efeitos de vídeo (brilho, contraste, saturação, blur, grayscale, chroma key)	Video effects (brightness, contrast, saturation, blur, grayscale, chroma key)
+Efeitos de vídeo…	Video effects…
+Efeitos de áudio	Audio effects
+Efeitos de áudio (EQ, denoise, normalizar, fase)	Audio effects (EQ, denoise, normalize, phase)
+Efeitos de áudio da faixa	Track audio effects
+Efeitos de áudio…	Audio effects…
+Effects	Effects
+Elastic	Elastic
+Elipse	Ellipse
+Elástico (estilo AE)	Elastic (AE style)
+Elásticos	Elastics
+Encaixar no grid e nas bordas dos clipes (T). Desligar o ímã também desativa o auto-juntar (ripple) ao cortar/excluir.	Snaps to the grid and to clip edges (T). Turning the magnet off also disables auto-ripple when trimming/deleting.
+Encaixar nos frames (S; Ctrl durante o arrasto = livre)	Snap to frames (S; hold Ctrl while dragging = free)
+Encode acelerado	Accelerated encoding
+Entradas	Inputs
+Envelope (%1 kfs). Clique na linha para criar keyframe; arraste as alças para entortar.	Envelope (%1 kfs). Click the line to create a keyframe; drag the handles to twist.
+Envelope (E)	Envelope (E)
+Envelope de velocidade (time remapping) no dock Velocidade	Speed envelope (time remapping) in the Speed dock
+Enviar para Mesa	Send to Mesa
+Enviar para trás	Send backward
+Equalizador	Equalizer
+Equalizador de 3 bandas (graves/médios/agudos)	3-band equalizer (lows/mids/highs)
+Erro na pré-renderização LAINKA: %1	LAINKA pre-render error: %1
+Erro na pré-renderização OFX: %1	OFX pre-render error: %1
+Erro: %1	Error: %1
+Escala X (%):	Scale X (%):
+Escala Y (%):	Scale Y (%):
+Escala:	Scale:
+Escolha uma categoria	Choose a category
+Escolher cor	Pick a color
+Escorregar (Ctrl+U)	Slip (Ctrl+U)
+Escuro	Dark
+Espelhar Horizontal	Flip Horizontal
+Espelhar Vertical	Flip Vertical
+Espessura contorno (%):	Outline width (%):
+Esquerda	Left
+Esquerda:	Left:
+Esse recurso está sendo desenvolvido e pode apresentar problemas de performance ou resultados incorretos no preview e na exportação. Recomendamos acompanhar as próximas versões do Pierrot antes de usá-lo em projetos reais.	This feature is under development and may have performance issues or give incorrect results in the preview and in the export. We recommend following the next Pierrot versions before using it in real projects.
+Este projeto foi salvo por uma versão mais nova do Pierrot\n(schema %1%2 — este app é o schema %3, grupo 	This project was saved by a newer version of Pierrot\n(schema %1%2 — this app is schema %3, group 
+Esticar Velocidade (W)	Stretch Speed (W)
+Estilo	Style
+Estilo das faixas: minimizada, normal ou grande (experimental)	Track style: minimized, normal or large (experimental)
+Excluir	Delete
+Excluir %1 keyframes	Delete %1 keyframes
+Excluir (deixa espaço)	Delete (leave gap)
+Excluir (junta os espaços)	Delete (close gaps)
+Excluir Mesa	Delete Mesa
+Excluir clipe	Delete clip
+Excluir clipe anterior (D)	Delete previous clip (D)
+Excluir clipe posterior (F)	Delete next clip (F)
+Excluir clipes	Delete clips
+Excluir clipes (deixando espaço)	Delete clips (leaving a gap)
+Excluir faixa	Delete track
+Excluir faixa de gravação	Delete recording track
+Excluir faixas selecionadas ou, se não houver, os clipes selecionados (Delete)	Delete the selected tracks or, if none, the selected clips (Delete)
+Excluir keyframe	Delete keyframe
+Excluir keyframes selecionados	Delete selected keyframes
+Excluir marcador	Delete marker
+Excluir o perfil \"%1\"?	Delete the profile \"%1\"?
+Excluir perfil	Delete profile
+Excluir perfil…	Delete profile…
+Excluir projeto	Delete project
+Excluir região de loop	Delete loop region
+Excluir região de loop (ripple)	Delete loop region (ripple)
+Excluir tempo da região de loop (deixa espaço)	Delete loop region time (leave gap)
+Excluir tempo da região de loop (ripple)	Delete loop region time (ripple)
+Exemplos	Examples
+Expandir pasta	Expand folder
+Explorador de Arquivos	File Explorer
+Exportando…	Exporting…
+Exportar	Export
+Exportar EDL	Export EDL
+Exportar EDL…	Export EDL…
+Exportar apenas cortes como EDL CMX3600 (compatível com Davinci, Premiere).	Export only the cuts as CMX3600 EDL (compatible with Davinci, Premiere).
+Exportar atalhos	Export shortcuts
+Exportar atalhos…	Export shortcuts…
+Exportar quadro	Export frame
+Exportar quadro atual	Export current frame
+Exportar quadro atual (PNG)…	Export current frame (PNG)…
+Exportar tema	Export theme
+Exportar tema atual	Export current theme
+Exportar tema atual…	Export current theme…
+Exportar vídeo	Export video
+Exportar vídeo… (Ctrl+E)	Export video… (Ctrl+E)
+Exportar…	Export…
+Exportação cancelada pelo encerramento da janela.	Export canceled by closing the window.
+Exportação concluída com sucesso.	Export finished successfully.
+Exportação falhou (código %1).	Export failed (code %1).
+Exposição	Exposure
+Express	Express
+FOV (°):	FOV (°):
+Fade In	Fade In
+Fade In (texto)	Fade In (text)
+Fade In aplicado.	Fade In applied.
+Fade Out	Fade Out
+Fade Out (texto)	Fade Out (text)
+Fade Out aplicado.	Fade Out applied.
+Fade in (s):	Fade in (s):
+Fade out (s):	Fade out (s):
+Faixa %1	Track %1
+Falha ao montar o comando de exportação.	Failed to build the export command.
+Falha na exportação. Veja o log acima.	Export failed. See the log above.
+Falha no .blend — %1	.blend failed — %1
+Família da fonte do texto	Text font family
+Feather	Feather
+Fechar	Close
+Fechar o vão automaticamente ao excluir (ripple)	Close the gap automatically on delete (ripple)
+Fechar o vão automaticamente ao excluir (ripple). Desligue para deixar o espaço vazio. Inativo quando o ímã está desligado.	Close the gap automatically on delete (ripple). Turn it off to leave the space empty. Inactive when the magnet is off.
+Feche esta janela para abrir o editor vazio.	Close this window to open the empty editor.
+Ferramentas	Tools
+Ferramentas da timeline	Timeline tools
+Fila concluída: %1 exportação(ões) finalizada(s).	Queue finished: %1 export(s) done.
+Fila de Render	Render Queue
+Fila de render…	Render queue…
+Film Grain	Film Grain
+Filme desbotado	Faded film
+Fim	End
+Flatt X:	Flatt X:
+Flatt Y:	Flatt Y:
+Flicker:	Flicker:
+Fonte	Font
+Fonte (%1x%2)	Font (%1x%2)
+Fonte em negrito	Bold font
+Fonte:	Font:
+Fontes 2K+ são transcondificadas para o preview e \nthumbs (rápido). Desligue para decodificar o original \nno preview. A exportação sempre usa o original.	2K+ sources are transcoded for the preview and \nthumbs (fast). Turn it off to decode the original \nin the preview. The export always uses the original.
+Formato:	Format:
+Força da LUT	LUT strength
+Frame Rate	Frame Rate
+Freq	Freq
+Fundo	Background
+Fundo colorido	Colored background
+Fundo transparente	Transparent background
+G	G
+GAIN  (realces)	GAIN  (highlights)
+GAMMA (meios)	GAMMA (mids)
+GIF (*.gif)	GIF (*.gif)
+GIF: deixa transparente tudo o que não tem clipe\npor cima (o fundo preto vira alfa 0).	GIF: makes everything without a clip on top \ntransparent (the black background becomes alpha 0).
+GPU:	GPU:
+Gain	Gain
+Gamma	Gamma
+Ganho	Gain
+Gaussian Blur	Gaussian Blur
+Gera versões leves (H.264 baixo bitrate) de vídeos 2K ou maiores para preview, pan/crop e thumbnails. A exportação sempre usa o original.	Creates lightweight versions (low bitrate H.264) of 2K or larger videos for preview, pan/crop and thumbnails. The export always uses the original.
+Gerador	Generator
+Geral	General
+Gerando proxy	Generating proxy
+Gerando proxy: %1 restante(s)…	Generating proxy: %1 remaining…
+Gerando proxy…	Generating proxy…
+Gerar proxy a partir de (largura):	Generate proxy from (width):
+Gerenciar perfis de atalhos	Manage shortcut profiles
+Gizmo 3D + keyframes de transform no dock Pivot	3D gizmo + transform keyframes in the Pivot dock
+Grade	Grid
+Grade de Terços	Rule of Thirds
+Grade:	Grid:
+Gradiente	Gradient
+Gradiente…	Gradient…
+Grande	Large
+Granulado retrô: quantização de cor + dithering estilo PlayStation 1	Retro grain: color quantization + PlayStation 1 style dithering
+Granulado:	Grain:
+Graves (120 Hz):	Lows (120 Hz):
+Graves:	Lows:
+Grid	Grid
+Gráfico	Graph
+Grão de Filme	Film Grain
+Grão de filme	Film Grain
+Grão de filme: ruído monocromático animado por quadro (estética de película)	Film grain: animated monochrome noise per frame (film look)
+H	H
+Habilitada	Enabled
+High Shelf	High Shelf
+Histograma	Histogram
+Histórico	History
+Histórico de Edições	Edit History
+Hold	Hold
+Horizontal	Horizontal
+Idioma	Language
+Idle (laço)	Idle (loop)
+Iguala o som do clipe em 3 bandas. 0 dB = sem alteração.	Equalizes the clip sound in 3 bands. 0 dB = no change.
+Imagem PNG (*.png)	PNG image (*.png)
+Imagem · arraste=girar · Shift=Z (2.5D) · Ctrl=escala · +kf	Image · drag=rotate · Shift=Z (2.5D) · Ctrl=scale · +kf
+Importa .obj ou .blend (via Blender CLI) como camada 3D	Imports .obj or .blend (via Blender CLI) as a 3D layer
+Importa as mídias desta pasta para o Media Pool	Imports the media of this folder into the Media Pool
+Importando %v/%m	Importing %v/%m
+Importando mídia…	Importing media…
+Importando mídia… (%1)	Importing media… (%1)
+Importar EDL	Import EDL
+Importar EDL CMX3600 em um novo projeto (apenas cortes).	Imports a CMX3600 EDL into a new project (cuts only).
+Importar EDL…	Import EDL…
+Importar atalhos	Import shortcuts
+Importar atalhos…	Import shortcuts…
+Importar malha 3D	Import 3D mesh
+Importar mídia	Import media
+Importar mídia (Ctrl+I)	Import media (Ctrl+I)
+Importar mídia…	Import media…
+Importar mídia… (Ctrl+I)	Import media… (Ctrl+I)
+Importar pasta	Import folder
+Importar tema	Import theme
+Importar tema por paleta (.pierrot-theme)	Import palette theme (.pierrot-theme)
+Importar…	Import…
+Importação .blend concluída (%1 arquivo(s)).	.blend import finished (%1 file(s)).
+Importação .blend concluída.	.blend import finished.
+Importação .blend: %1 de %2 ok. Falhou: %3	.blend import: %1 of %2 ok. Failed: %3
+Importação concluída: %1 arquivo(s) adicionado(s).	Import finished: %1 file(s) added.
+In	In
+In aqui (I)	In here (I)
+Informe o caminho de saída.	Enter the output path.
+Iniciar fila	Start queue
+Insere o trecho In→Out do Source Monitor no playhead da timeline, empurrando os clipes seguintes	Inserts the In→Out range of the Source Monitor at the timeline playhead, pushing the following clips
+Insere um clipe de texto no playhead	Inserts a text clip at the playhead
+Inserir	Insert
+Inserir do Source	Insert from Source
+Inserir no playhead	Insert at the playhead
+Inserir no playhead (Source)	Insert at the playhead (Source)
+Inserir o trecho no playhead da timeline, empurrando os clipes seguintes (,)	Insert the range at the timeline playhead, pushing the following clips (,)
+Insert	Insert
+Intensidade	Intensity
+Intensidade (%):	Intensity (%):
+Intensidade das cores (0 = preto e branco)	Color intensity (0 = black and white)
+Intensidade do grade	Grid intensity
+Intensidade:	Intensity:
+Intervalo	Interval
+Intervalo:	Interval:
+Inverter	Invert
+Inverter fase	Invert phase
+Início	Start
+Início e fim	Start and end
+Ir para o fim (End)	Go to the end (End)
+Ir para o início (Home)	Go to the start (Home)
+Ir para o keyframe anterior	Go to the previous keyframe
+Ir para o próximo keyframe	Go to the next keyframe
+Janela de painéis técnicos (Mixer, Efeitos, Express, …) — arraste docks até ela ou use o menu Painéis.	Technical panels window (Mixer, Effects, Express, …) — drag docks to it or use the Panels menu.
+Janela de preview externo	External preview window
+Janela inicial	Start window
+Janelas	Windows
+Japan 95	Japan 95
+Junta os clipes de vídeo selecionados num clipe multicam; teclas 1..N cortam o ângulo	Joins the selected video clips into a multicam clip; keys 1..N cut to that angle
+Já existe um keyframe nesse tempo.	A keyframe already exists at that time.
+Já existe um perfil chamado \"%1\".	A profile named \"%1\" already exists.
+Já há uma exportação em andamento.	An export is already running.
+Key	Key
+Keyframe %1/%2  ·  t = %3 (frame %4)  ·  v = %5  ·  %6	Keyframe %1/%2  ·  t = %3 (frame %4)  ·  v = %5  ·  %6
+Keyframe anterior	Previous keyframe
+Keyframe criado na curva — arraste as alças	Keyframe created on the curve — drag the handles
+Keyframe: altura	Keyframe: height
+Keyframe: centro X	Keyframe: center X
+Keyframe: centro Y	Keyframe: center Y
+Keyframe: largura	Keyframe: width
+Keyframe: rotação	Keyframe: rotation
+Keyframe: suavidade	Keyframe: smoothness
+Keyframes	Keyframes
+Keyframes (tempo relativo ao clipe; sobrepõem o valor base):	Keyframes (time relative to the clip; override the base value):
+Keyframes do clipe — clique seleciona, arraste move no tempo, Delete apaga. Ctrl=ignora o playhead, Shift=passo de 1 frame.	Clip keyframes — click to select, drag to move in time, Delete to erase. Ctrl=ignores the playhead, Shift=1 frame step.
+Keyframes:	Keyframes:
+L:	L:
+LAINKA (stop motion)	LAINKA (stop motion)
+LAINKA pré-renderizado: %1 clipe(s)	LAINKA pre-rendered: %1 clip(s)
+LAINKA: frame %1/%2	LAINKA: frame %1/%2
+LIFT  (sombras)	LIFT  (shadows)
+LUT: %1	LUT: %1
+LUTs (*.cube);;Todos (*)	LUTs (*.cube);;All (*)
+Laranja	Orange
+Latch (começa a gravar ao tocar)	Latch (starts recording on touch)
+Layout anterior restaurado.	Previous layout restored.
+Layout destravado — arraste os painéis para reorganizar.	Layout unlocked — drag the panels to rearrange.
+Layout travado e salvo.	Layout locked and saved.
+Lazzi	Lazzi
+Lazzi Checkboard	Lazzi Checkerboard
+Lazzi Cor	Lazzi Color
+Lazzi Gradiente	Lazzi Gradient
+Lazzi Ruído	Lazzi Noise
+Lazzi — motion por script: easings elásticos, estilo de texto, motion blur e formas/fundos coloridos (shape:). Converta em clipe animado.	Lazzi — scripted motion: elastic easings, text styling, motion blur and colored shapes/backgrounds (shape:). Convert it to an animated clip.
+Lento	Slow
+Lift	Lift
+Lift = sombras · Gamma = meios · Gain = realces	Lift = shadows · Gamma = mids · Gain = highlights
+Limpar	Clear
+Limpar loop	Clear loop
+Limpar região de loop	Clear loop region
+Limpar todos os marcadores	Clear all markers
+Linear	Linear
+Linear (padrão)	Linear (default)
+Lista	List
+Log da renderização: %1	Render log: %1
+Loop (repete o trecho in/out)	Loop (repeats the in/out range)
+Low Shelf	Low Shelf
+Lupa (Z)	Zoom (Z)
+Luz suave	Soft light
+Língua:	Language:
+MKV (*.mkv)	MKV (*.mkv)
+MKV experimental	MKV experimental
+MKV é experimental: alguns arquivos podem não abrir ou apresentar problemas de áudio/vídeo.	MKV is experimental: some files may not open or may have audio/video issues.
+MOTION	MOTION
+MOTION (MESA)	MOTION (MESA)
+MOTION BLUR (MOTION)	MOTION BLUR (MOTION)
+MP3 (*.mp3)	MP3 (*.mp3)
+MP3 (só áudio)	MP3 (audio only)
+MP4 (*.mp4)	MP4 (*.mp4)
+Malha	Mesh
+Malha 3D (.obj / .blend)…	3D mesh (.obj / .blend)…
+Malha 3D importada na Mesa (%1).	3D mesh imported into the Mesa (%1).
+Malha 3D · arraste=girar · Shift=Z · Ctrl=escala/snap · RX/RY/RZ · +kf	3D mesh · drag=rotate · Shift=Z · Ctrl=scale/snap · RX/RY/RZ · +kf
+Malha 3×3 para espremer/esticar a mídia	3×3 mesh to squeeze/stretch the media
+Marcador	Marker
+Marcar fim do loop	Mark loop end
+Marcar início do loop	Mark loop start
+Marcar ponto de entrada (I)	Mark in point (I)
+Marcar ponto de saída (O)	Mark out point (O)
+Margens de segurança (Ctrl+G)	Safe margins (Ctrl+G)
+Master	Master
+Matiz	Hue
+Media End	Media End
+Media Start	Media Start
+Mesa	Mesa
+Mesa %1	Mesa %1
+Mesa %1 · %2	Mesa %1 · %2
+Mesa %1 · 3D %2	Mesa %1 · 3D %2
+Mesa %1 · Track %2	Mesa %1 · Track %2
+Meu projeto	My project
+Miniaturas	Thumbnails
+Miniaturas nos clipes:	Thumbnails in clips:
+Minimizada	Minimized
+Mistura úmida (0–100%)	Wet mix (0–100%)
+Mix	Mix
+Mix (úmido):	Mix (wet):
+Mixer	Mixer
+Modelos 3D (*.obj *.blend);;Wavefront OBJ (*.obj);;Blender (*.blend);;Todos (*)	3D models (*.obj *.blend);;Wavefront OBJ (*.obj);;Blender (*.blend);;All (*)
+Modo 3D (AE Classic)	3D mode (AE Classic)
+Modo de automação: %1. Clique para alternar T→W→L→desligado.	Automation mode: %1. Click to cycle T→W→L→off.
+Modo de composição	Composition mode
+Modo de mesclagem	Blend mode
+Mostrar o clipe inteiro (F; Ctrl+roda dá zoom)	Show the whole clip (F; Ctrl+wheel zooms)
+Mostrar/ocultar grade vertical na timeline	Show/hide the vertical grid on the timeline
+Mostrar/ocultar linha de keyframes	Show/hide the keyframe line
+Mostrar/ocultar régua de tempo na timeline	Show/hide the time ruler on the timeline
+MotiOn (motion blur)	MotiOn (motion blur)
+Motion	Motion
+Motion blur	Motion blur
+Motion blur (Ctrl+Shift+B)	Motion blur (Ctrl+Shift+B)
+Motion blur (allow)	Motion blur (allow)
+Motion blur global	Global motion blur
+Motion blur por amostragem da imagem	Motion blur by image sampling
+Motion básico	Basic motion
+Mover	Move
+Mover (M)	Move (M)
+Mudo	Mute
+Multicam (%1 ângulos)	Multicam (%1 angles)
+Multicam: %1 ângulos (teclas 1..N)	Multicam: %1 angles (keys 1..N)
+Multiplicar	Multiply
+Máscara	Mask
+Máscara %1 · %2 (%3)	Mask %1 · %2 (%3)
+Máscara %1 · %2%3	Mask %1 · %2%3
+Máscara — %1	Mask — %1
+Máscaras	Masks
+Máscaras do clipe. A selecionada vira gizmo editável no viewfinder.	Clip masks. The selected one becomes an editable gizmo in the viewfinder.
+Máscaras/janelas do clipe	Clip masks/windows
+Máscara…	Mask…
+Médios (1 kHz):	Mids (1 kHz):
+Médios:	Mids:
+Mídia 4K detectada	4K media detected
+Mídia gerada (gerador)	Generated media (generator)
+Mídia importada por arrasto.	Media imported by drag and drop.
+Mídia inválida	Invalid media
+NVIDIA %1 — GPU %2	NVIDIA %1 — GPU %2
+Nada para importar.	Nothing to import.
+Nativos	Native
+Negativo escurece as bordas	Negative darkens the edges
+Negrito	Bold
+Nenhum layout anterior guardado.	No previous layout saved.
+Nenhum parâmetro descoberto.\nO plugin pode não expor parâmetros editáveis.	No parameter found.\nThe plugin may not expose editable parameters.
+Nenhum preset salvo ainda. Use\n“Salvar Preset…” em um clipe para criar um.	No preset saved yet. Use\n“Save Preset…” on a clip to create one.
+Nenhum projeto recente.	No recent project.
+Nenhuma	None
+Nenhuma Mesa selecionada\nClique direito na timeline \xe2\x86\x92 Criar Mesa	No Mesa selected\nRight click on the timeline \xe2\x86\x92 Create Mesa
+Nitidez	Sharpness
+Nome	Name
+Nome da pasta:	Folder name:
+Nome do marcador:	Marker name:
+Nome do perfil:	Profile name:
+Nome do preset:	Preset name:
+Nome do projeto	Project name
+Nome do workspace:	Workspace name:
+Normal	Normal
+Normal (padrão)	Normal (default)
+Normalizar (-14 LUFS)	Normalize (-14 LUFS)
+Nova Mesa…	New Mesa…
+Nova camada	New layer
+Novo	New
+Novo nome:	New name:
+Novo perfil	New profile
+Novo projeto	New project
+Novo projeto (Ctrl+N)	New project (Ctrl+N)
+Novo projeto criado.	New project created.
+Novo texto…	New text…
+Não foi possível abrir o arquivo.	Could not open the file.
+Não foi possível abrir o arquivo:\n%1	Could not open the file:\n%1
+Não foi possível copiar o arquivo.	Could not copy the file.
+Não foi possível escrever o arquivo.	Could not write the file.
+Não foi possível gravar o arquivo:\n%1\n\n%2	Could not write the file:\n%1\n\n%2
+Não foi possível iniciar o ffmpeg. Instale o ffmpeg e tente novamente.	Could not start ffmpeg. Install ffmpeg and try again.
+Não foi possível ler o arquivo.	Could not read the file.
+Não foi possível ler o arquivo:\n%1	Could not read the file:\n%1
+Não foi possível salvar a imagem.	Could not save the image.
+Não foi possível salvar o arquivo.	Could not save the file.
+Não há quadro para exportar neste momento.	There is no frame to export right now.
+O clipe tem texto. Como criar a cópia?	The clip has text. How should the copy be made?
+O perfil \"%1\" já existe. Sobrescrever?	The profile \"%1\" already exists. Overwrite?
+O projeto contém mídia em 4K ou superior. O preview pode engasgar nesses arquivos — reduza a qualidade do preview (botão no monitor) para aliviar a reprodução.	The project contains 4K or higher media. The preview may stutter on those files — lower the preview quality (button in the monitor) to ease playback.
+O projeto tem alterações não salvas. Deseja salvá-las antes de continuar?	The project has unsaved changes. Do you want to save them before continuing?
+O que deseja fazer com \"%1\"?	What do you want to do with \"%1\"?
+OFX	OFX
+OFX (nenhum instalado)	OFX (none installed)
+OFX pré-renderizado: %1 clipe(s)	OFX pre-rendered: %1 clip(s)
+OFX — plugins de terceiros (%1)	OFX — third-party plugins (%1)
+OFX: frame %1/%2	OFX: frame %1/%2
+OK	OK
+Obturador (%):	Shutter (%):
+On	On
+Opacidade (%):	Opacity (%):
+Opacidade (0–100%):	Opacity (0–100%):
+Opacidade da faixa	Track opacity
+Opacidade da faixa: %1%	Track opacity: %1%
+Opacidade:	Opacity:
+Ordem	Order
+Os clipes compartilham o mesmo texto e estilo: editar um atualiza os outros.	The clips share the same text and style: editing one updates the others.
+Os efeitos de vídeo estão em fase de criação e ainda não estão bons para uso.	The video effects are being created and are not ready for use yet.
+Out	Out
+Out aqui (O)	Out here (O)
+Overwrite	Overwrite
+Overwrite do Source	Source overwrite
+PSX	PSX
+Padrão	Default
+Padrão (Pierrot)	Default (Pierrot)
+Painel técnico	Technical panel
+Painéis	Panels
+Painéis embaixo	Panels at the bottom
+Painéis à direita	Panels on the right
+Painéis à esquerda	Panels on the left
+Pan (posição estéreo). Duplo clique: centro.	Pan (stereo position). Double click: center.
+Pan X:	Pan X:
+Pan Y:	Pan Y:
+Pan/Crop	Pan/Crop
+Pantalone	Pantalone
+Pantalone…	Pantalone…
+Papel (warp):	Paper (warp):
+Paramétrico	Parametric
+Pasta %1	Folder %1
+Pasta padrão de renderização	Default render folder
+Pasta:	Folder:
+Pausar	Pause
+Pausar (JKL)	Pause (JKL)
+Pausar (K)	Pause (K)
+Pena da vinheta	Vignette feather
+Perfil:	Profile:
+Permite que esta camada borre nas sub-passadas do motion blur global (Ctrl+Shift+B). Desligue para a camada ficar fixa.	Lets this layer blur in the global motion blur sub-passes (Ctrl+Shift+B). Turn it off to keep the layer fixed.
+Personalizada…	Custom…
+Personalizado…	Custom…
+Pierrot	Pierrot
+Pierrot %1 — Editor de Vídeo	Pierrot %1 — Video Editor
+Pierrot (*.Blanc *.ovp);;Todos os arquivos (*)	Pierrot (*.Blanc *.ovp);;All files (*)
+Pierrot (*.Blanc);;Todos os arquivos (*)	Pierrot (*.Blanc);;All files (*)
+Pivot	Pivot
+Pivot (3D do clipe)	Pivot (clip 3D)
+Pivot · %1  |  arraste=girar  Shift=Z  Ctrl=escala/snap  RX/RY/RZ=eixo	Pivot · %1  |  drag=rotate  Shift=Z  Ctrl=scale/snap  RX/RY/RZ=axis
+Pivot — %1	Pivot — %1
+Pivot — 3D do clipe	Pivot — clip 3D
+Pivot: anel X — rotação travada no eixo X	Pivot: X ring — rotation locked on the X axis
+Pivot: anel Y — rotação travada no eixo Y	Pivot: Y ring — rotation locked on the Y axis
+Pivot: anel Z — rotação travada no eixo Z	Pivot: Z ring — rotation locked on the Z axis
+Pivot: arrastar = Z (profundidade)	Pivot: drag = Z (depth)
+Pivot: arrastar = escala	Pivot: drag = scale
+Pivot: arrastar = rotX	Pivot: drag = rotX
+Pivot: arrastar = rotY	Pivot: drag = rotY
+Pivot: arrastar = rotZ (roll)	Pivot: drag = rotZ (roll)
+Pivot: ferramenta limpa — o arraste volta a girar	Pivot: clean tool — dragging rotates again
+Pivot: mover livre (H e V)	Pivot: free move (H and V)
+Pivot: mover no eixo H	Pivot: move on the H axis
+Pivot: mover no eixo V	Pivot: move on the V axis
+Pivot: mover no eixo Z (profundidade)	Pivot: move on the Z axis (depth)
+Pivot: trackball livre — arraste na esfera (Ctrl=snap 15°)	Pivot: free trackball — drag on the sphere (Ctrl=snap 15°)
+Placa usada na codificação por hardware.\n\"Automática\" deixa o ffmpeg escolher.	Board used in hardware encoding.\n\"Automatic\" lets ffmpeg choose.
+Plugins	Plugins
+Plugins OFX	OFX plugins
+Plugins OFX (ex.: DaVinci/Resolve, Sapphire, BorisFX) encontrados no sistema.	OFX plugins (e.g. DaVinci/Resolve, Sapphire, BorisFX) found on the system.
+Plugins frei0r (Kdenlive/Shotcut/MLT). Instale com o pacote frei0r-plugins ou defina PIERROT_FREI0R_PATH.	frei0r plugins (Kdenlive/Shotcut/MLT). Install with the frei0r-plugins package or set PIERROT_FREI0R_PATH.
+Ponto	Point
+Posição	Position
+Posição X (px):	Position X (px):
+Posição X:	Position X:
+Posição Y (px):	Position Y (px):
+Posição Y:	Position Y:
+Preset \"%1\" aplicado em %2 clipe(s).	Preset \"%1\" applied to %2 clip(s).
+Preset de animação aplicado em %1 clipe(s).	Animation preset applied to %1 clip(s).
+Preset:	Preset:
+Presets	Presets
+Preto	Black
+Preto e Branco	Black and White
+Preto e branco	Black and white
+Pretos	Blacks
+Preview externo — Pierrot	External preview — Pierrot
+Procurar .cube…	Browse for .cube…
+Profundidade:	Depth:
+Program: 	Program: 
+Program: %1	Program: %1
+Projeto CONVERTIDO para o grupo 	Project CONVERTED to group 
+Projeto aberto: %1	Project opened: %1
+Projeto de versão antiga	Older version project
+Projeto de versão mais nova	Newer version project
+Projeto fechado salvo: %1	Closed project saved: %1
+Projeto salvo automaticamente (%1).	Project auto-saved (%1).
+Projeto salvo: %1	Project saved: %1
+Projetos recentes	Recent projects
+Pronto — arraste mídia para a timeline.	Ready — drag media to the timeline.
+Proporção:	Aspect ratio:
+Propriedade	Property
+Propriedades	Properties
+Propriedades (volume, opacidade, velocidade, fades)	Properties (volume, opacity, speed, fades)
+Propriedades da camada…	Layer properties…
+Propriedades…	Properties…
+Pré-renderizando efeitos LAINKA…	Pre-rendering LAINKA effects…
+Pré-renderizando efeitos OFX…	Pre-rendering OFX effects…
+Próximo keyframe	Next keyframe
+Próximo quadro	Next frame
+Q	Q
+Quadro anterior	Previous frame
+Quadro anterior (←)	Previous frame (←)
+Quadro seguinte	Next frame
+Quadro seguinte (→)	Next frame (→)
+Quadros/s	Frames/s
+Quadros/s:	Frames/s:
+Qualidade (CRF):	Quality (CRF):
+Qualidade do preview (resolução de decodificação)	Preview quality (decoding resolution)
+Qualidade e Timeline	Quality and Timeline
+Quando ativado, o diálogo de exportação abre nessa pasta em vez da sua pasta pessoal. Deixe vazio para usar a pasta pessoal.	When enabled, the export dialog opens in that folder instead of your home folder. Leave it empty to use the home folder.
+R	R
+RX	RX
+RY	RY
+RZ	RZ
+Realces	Highlights
+Reaplica o arranjo de painéis guardado antes de uma atualização que dispensou o layout antigo.	Reapplies the panel layout saved before an update that dropped the old layout.
+Reaplicar o arranjo de painéis guardado (versão de layout %1) e substituir o atual?	Reapply the saved panel layout (layout version %1) and replace the current one?
+Recarregar	Reload
+Recarregar o projeto do disco (F5)	Reload the project from disk (F5)
+Recolher pasta	Collapse folder
+Recolher/ampliar painel de propriedades	Collapse/expand the properties panel
+Recortar	Trim
+Recorte	Crop
+Recorte base:	Base crop:
+Recorte direita:	Crop right:
+Recorte esquerda:	Crop left:
+Recorte topo:	Crop top:
+Rectângulo	Rectangle
+Recuar um	Back one
+Recurso experimental — pode apresentar falhas.	Experimental feature — it may fail.
+Redefinir Tudo	Reset All
+Redefinir esta propriedade	Reset this property
+Redefinir malha	Reset mesh
+Redução de ruído	Noise reduction
+Refazer	Redo
+Refazer (Ctrl+Shift+Z)	Redo (Ctrl+Shift+Z)
+Remove a banda selecionada	Removes the selected band
+Remove cor (verde por padrão) para transparência	Removes a color (green by default) for transparency
+Remove keyframe mais próximo do playhead	Removes the keyframe closest to the playhead
+Remove o envelope e deixa só a velocidade base	Removes the envelope and leaves only the base speed
+Remove o fundo da cor selecionada no preview.	Removes the background of the selected color in the preview.
+Remover	Remove
+Remover a máscara selecionada	Remove the selected mask
+Remover a mídia selecionada do projeto	Remove the selected media from the project
+Remover da Mesa	Remove from the Mesa
+Remover e excluir o arquivo	Remove and delete the file
+Remover efeito	Remove effect
+Remover keyframe mais próximo do playhead	Remove the keyframe closest to the playhead
+Remover o projeto selecionado dos recentes	Remove the selected project from the recent list
+Remover o tema \"%1\"?	Remove the theme \"%1\"?
+Remover selecionados	Remove selected
+Remover tema	Remove theme
+Remover último	Remove last
+Renderizar	Render
+Renderização cancelada pelo usuário.	Rendering canceled by the user.
+Renomear pasta	Rename folder
+Renomear pasta…	Rename folder…
+Renomear perfil	Rename profile
+Renomear perfil…	Rename profile…
+Renomear…	Rename…
+Reproduzir	Play
+Reproduzir para frente (L); repetir acelera	Play forward (L); repeat to speed up
+Reproduzir para trás (J); repetir acelera	Play backward (J); repeat to speed up
+Reproduzir/Pausar (Espaço)	Play/Pause (Space)
+Reproduzir/pausar (Espaço)	Play/pause (Space)
+Requer reinício do aplicativo para tomar efeito.	Requires an application restart to take effect.
+Requer reinício do aplicação para tomar efeito.	Requires an application restart to take effect.
+Reset	Reset
+Reset de transformação	Transform reset
+Resetar	Reset
+Resetar grade	Reset grid
+Resolução	Resolution
+Resolução:	Resolution:
+Restaurar layout anterior	Restore previous layout
+Restaurar padrão do atalho selecionado	Restore the selected shortcut default
+Resto	Rest
+Reta	Straight
+Retroceder (JKL)	Reverse (JKL)
+Reverb	Reverb
+Reverb EX	Reverb EX
+Reverb simples (Schroeder) no áudio do clipe	Simple reverb (Schroeder) on the clip audio
+Ridge Racer (R4)	Ridge Racer (R4)
+Ripple	Ripple
+Ripple (B)	Ripple (B)
+Rodas	Wheels
+Rolamento (N)	Roller (N)
+Rotação	Rotation
+Rotação (°):	Rotation (°):
+Rotação:	Rotation:
+Ruído	Noise
+Ruído (grão)…	Noise (grain)…
+Rápido	Fast
+Régua	Ruler
+Sair	Exit
+Sala:	Room:
+Salva o quadro composto no playhead como imagem PNG (a mesma imagem final do monitor).	Saves the composed frame at the playhead as a PNG image (the same final image as in the monitor).
+Salvamento automático	Autosave
+Salvamento automático: salve o projeto uma vez (Ctrl+S) para ativar.	Autosave: save the project once (Ctrl+S) to enable it.
+Salvamento em andamento — aguarde.	Saving in progress — please wait.
+Salvando...	Saving...
+Salvar	Save
+Salvar Preset	Save Preset
+Salvar Preset…	Save Preset…
+Salvar como novo perfil…	Save as new profile…
+Salvar como…	Save as…
+Salvar projeto	Save project
+Salvar projeto (Ctrl+S)	Save project (Ctrl+S)
+Salvar projeto?	Save project?
+Salvar script	Save script
+Salvar vídeo	Save video
+Salvar workspace	Save workspace
+Salvar workspace atual	Save current workspace
+Salvar workspace como...	Save workspace as...
+Salvar áudio	Save audio
+Salvar…	Save…
+Saturation	Saturation
+Saturação	Saturation
+Saturação (%):	Saturation (%):
+Saturação:	Saturation:
+Saída	Out
+Saídas	Outputs
+Sel	Sel
+Selecionar	Select
+Selecionar (0)	Select (0)
+Selecionar e mover keyframes (V)	Select and move keyframes (V)
+Selecionar faixas da pasta	Select the tracks of the folder
+Selecionar pasta de plugins OFX	Select the OFX plugins folder
+Selecionar pasta padrão de render	Select the default render folder
+Selecionar tudo	Select all
+Selecionar/mover keyframes (V)	Select/move keyframes (V)
+Selecione clipe(s) na timeline e clique num preset para aplicar. Passe o mouse sobre a miniatura para ver a animação.	Select clip(s) on the timeline and click a preset to apply it. Hover the thumbnail to see the animation.
+Selecione pelo menos um clipe na timeline antes de aplicar um preset.	Select at least one clip on the timeline before applying a preset.
+Selecione pelo menos um clipe na timeline antes de aplicar uma transição.	Select at least one clip on the timeline before applying a transition.
+Selecione um clipe 3D (imagem ou malha)	Select a 3D clip (image or mesh)
+Selecione um clipe 3D (imagem ou malha).	Select a 3D clip (image or mesh).
+Selecione um clipe de texto para editar.	Select a text clip to edit.
+Selecione um clipe de vídeo	Select a video clip
+Selecione um clipe de vídeo na timeline.	Select a video clip on the timeline.
+Selecione um clipe de vídeo para aplicar a transição.	Select a video clip to apply the transition.
+Selecione um clipe de vídeo para editar o pantalone.	Select a video clip to edit the pantalone.
+Selecione um clipe na timeline para\neditar os keyframes.	Select a clip on the timeline to\nedit its keyframes.
+Selecione um clipe na timeline.	Select a clip on the timeline.
+Selecione um clipe na timeline\nou uma camada no canvas da Mesa.	Select a clip on the timeline\nor a layer on the Mesa canvas.
+Selecione um clipe para o Lumetri.	Select a clip for Lumetri.
+Selecione um clipe.	Select a clip.
+Selecione um clipe. Arraste=girar · Mover/H/V/Z=posição · setas=nudge (Shift=10px) · Ctrl=escala/snap	Select a clip. Drag=rotate · Move/H/V/Z=position · arrows=nudge (Shift=10px) · Ctrl=scale/snap
+Selecione um keyframe para apagar.	Select a keyframe to erase.
+Seleção de keyframe limpa.	Keyframe selection cleared.
+Sem LUT. Aceita .cube 3D (IRIDAS/Resolve).	No LUT. Accepts 3D .cube (IRIDAS/Resolve).
+Sem projeto	No project
+Sem quadro	No frame
+Sem quadro - mova o playhead	No frame - move the playhead
+Sem título	Untitled
+Sensibilidade das curvas:	Curve sensitivity:
+Sensibilidade do arraste vertical no editor de curvas. Acima de 1× deixa as curvas mais exageradas.	Vertical drag sensitivity in the curve editor. Above 1× makes the curves more exaggerated.
+Seu projeto usa uma versão antiga do Laartman — foi salvo por uma versão anterior do Pierrot%1.\n\nAo CONVERTER para o formato atual (grupo 	Your project uses an older Laartman version — it was saved by an earlier Pierrot version%1.\n\nWhen CONVERTING to the current format (group 
+Similaridade:	Similarity:
+Snap	Snap
+Snap (ímã)	Snap (magnet)
+Snap desligado (Ctrl = livre)	Snap off (Ctrl = free)
+Snap ligado (Ctrl = livre)	Snap on (Ctrl = free)
+Sobre o Pierrot	About Pierrot
+Sobre o Pierrot…	About Pierrot…
+Sobrepor (overlay)	Overlay
+Sobrescreve a timeline no playhead com o trecho In→Out do Source Monitor	Overwrites the timeline at the playhead with the In→Out range of the Source Monitor
+Sobrescrever a timeline no playhead com o trecho do Source (.)	Overwrite the timeline at the playhead with the Source range (.)
+Sobrescrever no playhead (Source)	Overwrite at the playhead (Source)
+Solo	Solo
+Sombras	Shadows
+Source	Source
+Source: %1	Source: %1
+Source: (nenhuma mídia)	Source: (no media)
+Source: defina In e Out antes de inserir.	Source: set In and Out before inserting.
+Source: defina In e Out antes de sobrescrever.	Source: set In and Out before overwriting.
+Source: mídia %1 não encontrada.	Source: media %1 not found.
+Stop motion: jitter, flicker, warp, dust, scratch	Stop motion: jitter, flicker, warp, dust, scratch
+Stylize	Stylize
+Suave	Soft
+Suavidade borda:	Edge softness:
+Suavidade:	Softness:
+Subir uma pasta	Go up one folder
+Substitui por 5 bandas sugeridas	Replaces with 5 suggested bands
+Supressão spill:	Spill suppression:
+Só as alças de recorte	Only the crop handles
+Só remover da lista	Only remove from the list
+Sólido…	Solid…
+T	T
+TEXTO	TEXT
+Tamanho (%):	Size (%):
+Tamanho X	Size X
+Tamanho Y	Size Y
+Tamanho da sala (0–100%)	Room size (0–100%)
+Tamanho da sala:	Room size:
+Tamanho do grão:	Grain size:
+Target FPS:	Target FPS:
+Tela (screen)	Screen
+Tela cheia (Esc para sair)	Fullscreen (Esc to exit)
+Tela cheia (F11; Esc sai)	Fullscreen (F11; Esc exits)
+Tema por paleta (.pierrot-theme)	Palette theme (.pierrot-theme)
+Tema por paleta Pierrot (*.pierrot-theme)	Pierrot palette theme (*.pierrot-theme)
+Tema:	Theme:
+Temperatura	Temperature
+Tempo (s)	Time (s)
+Tempo:	Time:
+Tesoura (R)	Scissors (R)
+Text / Animation	Text / Animation
+Texto	Text
+Texto (*.txt)	Text (*.txt)
+Texto do clipe	Clip text
+Texto:	Text:
+Texto…	Text…
+Timeline	Timeline
+Timeline não vinculada.	Timeline not linked.
+Tipo	Type
+Tipo:	Type:
+Tocar/parar o Source (Espaço)	Play/stop the Source (Space)
+Todas (contínuas)	All (continuous)
+Todas as exportações foram concluídas.	All exports are done.
+Topo:	Top:
+Touch (grava enquanto segura)	Touch (records while held)
+Transfere a decodificação de vídeo para a placa de vídeo, aliviando a CPU (útil em 4K e projetos com muitos cortes). Se algum arquivo tiver problema, desligue — o Pierrot volta a decodificar por software.	Offloads video decoding to the graphics card, easing the CPU (useful for 4K and projects with many cuts). If a file has issues, turn it off — Pierrot goes back to software decoding.
+Transformar	Transform
+Transformar (posição, escala, rotação)	Transform (position, scale, rotation)
+Transformar…	Transform…
+Transformação	Transform
+Transição	Transition
+Transição \"%1\" aplicada em %2 clipe(s).	Transition \"%1\" applied to %2 clip(s).
+Transição \"%1\" aplicada em %2 clipe(s). %3 sem sobreposição — arraste um clipe para sobrepor o anterior.	Transition \"%1\" applied to %2 clip(s). %3 has no overlap — drag a clip to overlap the previous one.
+Transição de saída	Exit transition
+Transição: %1 no clipe selecionado	Transition: %1 on the selected clip
+Transparência:	Opacity:
+Travar layout	Lock layout
+Travar/destravar o layout dos painéis (Ctrl+L)	Lock/unlock the panel layout (Ctrl+L)
+Trazer para a frente	Bring to front
+Tremida:	Shake:
+Trimmer — %1	Trimmer — %1
+Trocar in/out	Swap in/out
+Usa a GPU (h264_nvenc ou h264_vaapi) para codificar MP4/MKV.\nSe o ffmpeg do sistema não tiver esses encoders, cai automaticamente para o libx264.	Uses the GPU (h264_nvenc or h264_vaapi) to encode MP4/MKV.\nIf the system ffmpeg has no such encoders, it falls back to libx264 automatically.
+Usa a GPU para decodificar H.264/HEVC/MJPEG. Requer suporte VAAPI no Linux (Intel/AMD/NVIDIA com driver).	Uses the GPU to decode H.264/HEVC/MJPEG. Requires VAAPI support on Linux (Intel/AMD/NVIDIA with driver).
+Usar pasta padrão ao exportar	Use the default folder when exporting
+Usar proxies (editar com transcode leve, qualidade cheia no export)	Use proxies (edit with a light transcode, full quality on export)
+Usar proxies em previews e pan/crop (alta resolução)	Use proxies in previews and pan/crop (high resolution)
+V	V
+VAAPI — %1	VAAPI — %1
+Valor	Value
+Valor:	Value:
+Varinha	Magic wand
+Varinha: clique cria ponto suave; arraste as alças entorta a velocidade (B)	Magic wand: click creates a smooth point; drag the handles to twist the speed (B)
+Vectorscope	Vectorscope
+Velocidade	Speed
+Velocidade constante %1×. Clique na linha (ou use Curva) para criar o envelope.	Constant speed %1×. Click the line (or use Curve) to create the envelope.
+Velocidade constante do clipe (sem envelope)	Clip constant speed (no envelope)
+Velocidade do clipe	Clip speed
+Velocidade no keyframe selecionado / no playhead	Speed at the selected keyframe / at the playhead
+Velocidade — %1	Speed — %1
+Verde	Green
+Verde ↔ Magenta	Green ↔ Magenta
+Vermelho	Red
+Versão %1	Version %1
+Vertical	Vertical
+Vibrance	Vibrance
+Video Effects (do Pierrot)	Video Effects (from Pierrot)
+Video Transitions	Video Transitions
+Vinheta	Vignette
+Vinheta / LUT	Vignette / LUT
+Visualização em lista (colunas, como o Premiere)	List view (columns, like Premiere)
+Visualização em ícones (grade)	Icon view (grid)
+Voltar 1 frame	Back 1 frame
+Voltar 1 frame (←)	Back 1 frame (←)
+Volume (%):	Volume (%):
+Volume (0–200%):	Volume (0–200%):
+Volume da faixa	Track volume
+Volume da faixa: %1%	Track volume: %1%
+Volume geral (master)	Master volume
+Volume:	Volume:
+Várias exportações em sequência (formatos/resoluções diferentes)	Several exports in sequence (different formats/resolutions)
+Vídeo	Video
+Vídeo %1	Video %1
+Vídeo 1	Video 1
+Vídeo e áudio (*.mp4 *.mov *.mkv *.avi *.webm *.m4v *.ts *.flv *.wmv *.3gp *.mpg *.mpeg *.ogv *.mts *.m2ts *.vob *.mp3 *.wav *.aac *.flac *.ogg *.m4a *.opus *.wma *.aiff *.aif *.au *.ac3 *.amr *.ape *.caf *.dts *.mka *.mid *.midi *.mp2 *.oga *.spx *.w64 *.wv *.alac *.mp1 *.mpa *.ra *.wpl *.tta *.tak *.shn);;Imagens (*.jpg *.jpeg *.png *.bmp *.gif *.webp *.tif *.tiff *.svg);;Todos os arquivos (*)	Video and audio (*.mp4 *.mov *.mkv *.avi *.webm *.m4v *.ts *.flv *.wmv *.3gp *.mpg *.mpeg *.ogv *.mts *.m2ts *.vob *.mp3 *.wav *.aac *.flac *.ogg *.m4a *.opus *.wma *.aiff *.aif *.au *.ac3 *.amr *.ape *.caf *.dts *.mka *.mid *.midi *.mp2 *.oga *.spx *.w64 *.wv *.alac *.mp1 *.mpa *.ra *.wpl *.tta *.tak *.shn);;Images (*.jpg *.jpeg *.png *.bmp *.gif *.webp *.tif *.tiff *.svg);;All files (*)
+Vídeo exportado com sucesso.	Video exported successfully.
+Vídeo:	Video:
+Vídeos com largura >= este valor ganham proxy leve para o preview. Baixe para 1920/2048 se o computador aguentar — arquivos 2K também ganham proxy e os cortes ficam lisos. A exportação sempre usa o original.	Videos whose width is >= this value get a light proxy for the preview. Lower it to 1920/2048 if your computer can handle it — 2K files also get a proxy and the cuts become smooth. The export always uses the original.
+WAV (*.wav)	WAV (*.wav)
+WAV (só áudio, PCM)	WAV (audio only, PCM)
+Waveform	Waveform
+Waveform (mini) — dock Analisadores para o full	Waveform (mini) — use the Analyzers dock for the full one
+WebM (*.webm)	WebM (*.webm)
+Wipe	Wipe
+Wipe Bottom-Left	Wipe Bottom-Left
+Wipe Bottom-Right	Wipe Bottom-Right
+Wipe Down	Wipe Down
+Wipe Left	Wipe Left
+Wipe Right	Wipe Right
+Wipe Top-Left	Wipe Top-Left
+Wipe Top-Right	Wipe Top-Right
+Wipe Up	Wipe Up
+Wipe \u2190	Wipe ←
+Wipe \u2191	Wipe ↑
+Wipe \u2192	Wipe →
+Wipe \u2193	Wipe ↓
+Wipe \u2196	Wipe ↖
+Wipe \u2197	Wipe ↗
+Wipe \u2198	Wipe ↘
+Wipe \u2199	Wipe ↙
+Wipe ← (próximo vem da direita)	Wipe ← (next comes from the right)
+Wipe ↑ (próximo vem de baixo)	Wipe ↑ (next comes from below)
+Wipe → (próximo vem da esquerda)	Wipe → (next comes from the left)
+Wipe ↓ (próximo vem de cima)	Wipe ↓ (next comes from above)
+Wipes diagonais	Diagonal wipes
+Workspace salvo como \"%1\".	Workspace saved as \"%1\".
+Workspace: %1	Workspace: %1
+Workspaces	Workspaces
+Write (grava durante a reprodução)	Write (records during playback)
+X:	X:
+Y:	Y:
+Z	Z
+Zera recorte, zoom, posição, rotação, achatamento, âncora e opacidade do clipe	Resets the clip crop, zoom, position, rotation, flattening, anchor and opacity
+Zera transform 2D/3D do clipe	Resets the clip 2D/3D transform
+Zoom do preview	Preview zoom
+Zoom e Posição	Zoom and Position
+Zoom, posição, rotação e âncora	Zoom, position, rotation and anchor
+Zoom:	Zoom:
+\"Pierrot\" é o perfil padrão e não pode ser sobrescrito.	\"Pierrot\" is the default profile and cannot be overwritten.
+ativa	on
+by InkSpoty	by InkSpoty
+caminho/do/arquivo.cube	path/to/the/file.cube
+clipe	clip
+desativada	off
+elipse	ellipse
+fadeIn no clipe selecionado	fadeIn on the selected clip
+fadeOut no clipe selecionado	fadeOut on the selected clip
+ffmpeg %1	ffmpeg %1
+frei0r	frei0r
+frei0r (nenhum instalado)	frei0r (none installed)
+frei0r — plugins (%1)	frei0r — plugins (%1)
+imagem	image
+keyframes do clipe	clip keyframes
+kf	kf
+malha	mesh
+retângulo	rectangle
+t = %1  ·  frame %2\nv = %3  ·  %4	t = %1  ·  frame %2\nv = %3  ·  %4
+text:Bom dia\nfont:Impact\ncolor:#FFDD00\nease:elastic\ndur:2s\nscale:0->1 @0s-0.6s\ny:120->0 @0s-0.6s\nrot:-10->0 @0s-0.7s	text:Good morning\nfont:Impact\ncolor:#FFDD00\nease:elastic\ndur:2s\nscale:0->1 @0s-0.6s\ny:120->0 @0s-0.6s\nrot:-10->0 @0s-0.7s
+trecho: %1 → %2  (%3 s)	range: %1 → %2  (%3 s)
+trecho: —	range: —
+valor padrão	default value
+x	x
+Áudio	Audio
+Âncora X (px):	Anchor X (px):
+Âncora X:	Anchor X:
+Âncora Y (px):	Anchor Y (px):
+Âncora Y:	Anchor Y:
+Ângulo (°):	Angle (°):
+Ângulo multicam %1	Multicam angle %1
+Ângulo:	Angle:
+Ícones	Icons
+…	…
+↑	↑
+↖ Wipe (próximo vem de baixo-direita)	↖ Wipe (next comes from the bottom-right)
+↗ Wipe (próximo vem de baixo-esquerda)	↗ Wipe (next comes from the bottom-left)
+↘ Wipe (próximo vem de cima-esquerda)	↘ Wipe (next comes from the top-left)
+↙ Wipe (próximo vem de cima-direita)	↙ Wipe (next comes from the top-right)
+−	−
+−kf	−kf
+⏸	⏸
+⏸ Parar	⏸ Stop
+▲	▲
+▶	▶
+▶ Tocar	▶ Play
+▶ [%1/%2] %3	▶ [%1/%2] %3
+▶|	▶|
+▼	▼
+◀	◀
+● Auto	● Auto
+Inglês	English
+O japonês e o inglês já estão disponíveis. Requer reinício do aplicativo para tomar efeito.	Japanese and English are already available. Requires an application restart to take effect.
+Abrir relatório	Open report
+Arquivo não existe:\n%1	File does not exist:\n%1
+Limpar relatórios	Clear reports
+Na última execução o Pierrot fechou de repente (possível falha).\n\nUm relatório de crash foi gerado com detalhes técnicos:\n%1	On the last run Pierrot closed unexpectedly (possible crash).\n\nA crash report was generated with technical details:\n%1
+Pierrot fechou inesperadamente	Pierrot closed unexpectedly
+Projeto não encontrado	Project not found
+Transições	Transitions
+polígono	polygon

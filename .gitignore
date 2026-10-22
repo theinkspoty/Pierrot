@@ -14,3 +14,7 @@ packaging/arch/*.tar.gz
 *.pkg.tar.zst
 tests/media/*
 !.gitkeep
+
+# Python bytecode das ferramentas de i18n
+__pycache__/
+*.pyc

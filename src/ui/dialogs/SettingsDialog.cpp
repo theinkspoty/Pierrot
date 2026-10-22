@@ -353,18 +353,18 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
             QDesktopServices::openUrl(QUrl::fromLocalFile(externalThemesDir()));
         });
         // Idioma da interface (índices casam com savedLanguage():
-        // 0=pt, 1=en 0.7.5, 2=ja).
+        // 0=pt, 1=en, 2=ja).
         auto* langBox = new QGroupBox(tr("Idioma"), page);
         auto* langLay = new QFormLayout(langBox);
         m_langCombo = new QComboBox(page);
         m_langCombo->addItem(tr("Brasileiro"));
-        m_langCombo->addItem(tr("Inglês (v0.7.5)"));
+        m_langCombo->addItem(tr("Inglês"));
         m_langCombo->addItem(QString::fromUtf8("日本語"));
         m_langCombo->setCurrentIndex(qBound(0, s.value("language", 0).toInt(),
                                             m_langCombo->count() - 1));
         langLay->addRow(tr("Língua:"), m_langCombo);
-        auto* langHint = new QLabel(tr("O japonês já está disponível. O inglês chega "
-                                       "na versão 0.7.5. Requer reinício do aplicativo "
+        auto* langHint = new QLabel(tr("O japonês e o inglês já estão disponíveis. "
+                                       "Requer reinício do aplicativo "
                                        "para tomar efeito."), langBox);
         langHint->setStyleSheet(QStringLiteral("color: %1;").arg(themeColors().placeholderText.name()));
         langHint->setWordWrap(true);

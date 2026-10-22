@@ -5,12 +5,14 @@
   ✗ Falhou (código %1).
  %
  (deslig.)
+ (formato anterior ao versionamento por grupo)
+ (grupo %1)
  kbps
  min
  px
  s
  °
- — Protótipo 4<br><br><b style='color:#c07800'>Ainda em desenvolvimento:</b> mesa, velocidade, pivot, analisador e workspace.<br><br>Pierrot é um editor de vídeo inspirado em 2 programas \"Sony Vegas 8\" e \"Final Cut Express 2003\", totalmente escrito pra linux. Para uso pessoal, baseado nas ferramentas que eu acho úteis.<br><br><b>Agradecimentos:</b> Gumduck, por ajudar a desenvolver o áudio e features.<br><br><b>Inspirações adicionais</b><ul><li><b>Adobe Premiere Pro</b> — painel de Efeitos, Effect Controls (Propriedades), Media Pool, Source Monitor e o mixer de áudio.</li><li><b>Adobe After Effects</b> — o canvas de composição (Mesa), a faixa de efeitos expandível e o Graph Editor de keyframes.</li><li><b>DaVinci Resolve</b> — organização por categorias nas configurações e o visual de cor/timecode.</li><li><b>Blender</b> — o HUD de transformação do canvas Mesa.</li></ul><a href='https://github.com/theinkspoty/Pierrot'>github.com/theinkspoty/Pierrot</a>
+ — Protótipo 4<br>Motores: <b>Colombina</b> v
 %1 (cópia)
 %1 *
 %1 itens
@@ -28,6 +30,7 @@
 &Reproduzir
 (instale frei0r-plugins)
 (nenhum plugin OFX)
+(nenhum)
 (sem parâmetros editáveis)
 (sem quadro)
 (texto vazio)
@@ -37,12 +40,12 @@
 + Máscara
 + Retângulo
 +kf
+, grupo %1
 00:00:00:00
 3D
 3D %1
 <b>Pierrot</b> — editor de vídeo de código aberto<br>Versão 
 A forma aparece no monitor com alças — arraste para mover, redimensionar ou rotacionar. Os valores aqui acompanham em tempo real. Aplicar grava no clipe.
-A interface em inglês será adicionada na versão 0.7.5. Requer reinício do aplicativo para tomar efeito.
 A renderização está em andamento. Deseja cancelar?
 A:
 Abra uma mídia no Source Monitor primeiro (duplo-clique na Central de Mídias).
@@ -50,16 +53,17 @@ Abre a correção de cor estilo Lumetri no clipe
 Abre o editor do clipe de texto selecionado
 Abre o preview em uma janela própria — arraste para um segundo monitor e use F11 para tela cheia.
 Abrir
+Abrir LUT 3D
+Abrir Mesa
 Abrir a janela inicial (novo projeto / recentes)
 Abrir as configurações do aplicativo
 Abrir do disco…
 Abrir editor de texto
-Abrir LUT 3D
-Abrir Mesa
 Abrir no Source
-Abrir o editor de texto do clipe
+Abrir o editor de texto completo do clipe
 Abrir o projeto selecionado
 Abrir o trimmer ao soltar uma mídia na timeline
+Abrir pasta
 Abrir projeto
 Abrir projeto… (Ctrl+O)
 Abrir relatório
@@ -108,13 +112,16 @@ Animação
 Aparência
 Aplica fade-in no clipe selecionado
 Aplica fade-out no clipe selecionado
+Aplica ruído monocromático animado (estética de película).
 Aplicar
 Aplicar Preset
 Aplicar Preset…
 Arquivo de projeto inválido:\n%1
+Arquivo de projeto recusado (versão não suportada):\n%1
+Arquivo não existe:\n%1
 Arquivo:
-Arquivos de texto (*.txt);;Todos (*.*)
 Arquivos MKV são suportados experimentalmente e podem apresentar problemas de reprodução, áudio ou exportação.
+Arquivos de texto (*.txt);;Todos (*.*)
 Arrastar move o clipe em H e V ao mesmo tempo
 Arrastar move só na horizontal
 Arrastar move só na profundidade (Z)
@@ -129,25 +136,27 @@ As exportações rodam em sequência (um ffmpeg por vez).
 Atalho
 Atalhos do teclado
 Ativa
-ativa
 Ativa campos 3D da Mesa (Z, FOV, rotações). O render 3D completo entra na Fase 1; hoje o visual continua 2D.
 Ativa os campos 3D da Mesa (Z, FOV, rotações XYZ). O render 3D completo entra na Fase 1.
 Ativar Chroma Key
 Ativar EQ Express
+Ativar Grão de Filme
 Ativar LAINKA
 Ativar MotiOn
 Ativar PSX
 Ativar Reverb EX
 Ativar salvamento automático
 Ativar/Desativar
-Ativar/desativar banda
 Ativar/Desativar efeito
+Ativar/desativar banda
+Atualizar perfil…
 Audio Effects
 Audio Transitions
 Auto (CRF)
 Auto Bezier
 Auto-keyframe: alterar um valor cria/atualiza o keyframe no playhead
 Automação desligada (ler envelope). Clique para gravar.
+Automática
 Avançar (JKL)
 Avançar 1 frame
 Avançar 1 frame (→)
@@ -185,17 +194,19 @@ Brilho:
 Build de desenvolvimento — recursos podem estar incompletos ou instáveis.
 Buscar efeitos…
 Buscar mídia…
-by InkSpoty
 Básico
+CAMADA (MESA)
+CLIPE
+COMPOSIÇÃO (BLUR GLOBAL)
+COR / EFEITOS
+CRF (Constant Rate Factor): 0 = sem perda, 51 = pior qualidade.\nValores típicos: 18 (bom), 23 (padrão), 28 (rápido).
 Cada clipe tem o próprio texto e estilo.
 Caixa
 Cam Z:
 Camada %1
-CAMADA (MESA)
 Camada: %1
 Caminho da pasta…
 Caminho do arquivo de saída…
-caminho/do/arquivo.cube
 Caminhos de plugins OFX
 Cancelar
 Cancelar render?
@@ -216,22 +227,20 @@ Claro (Final Cut)
 Clicar cria um ponto suave; arrastar define a curva (B)
 Clicar no gráfico adiciona um keyframe (P)
 Clip Lazzi criado na timeline.
-CLIPE
-clipe
 Clipe de texto criado no playhead.
 Clipe: %1
 Clique cria keyframe linear (P)
 Clique no gráfico para criar keyframes; arraste para mover; duplo clique remove. Export usa a mesma curva (pré-render).
 Clique num atalho e, em seguida, pressione a nova combinação de teclas para alterá-lo. Esc cancela.
+Cobre o aplicativo inteiro (timeline, playhead, monitor, gráficos) por definir as cores de toda a UI. Chaves ausentes herdam do tema acima. Requer reinício do aplicativo.
 Codificar vídeo por hardware no export (NVENC/VAAPI)
 Codificação
 Colar
 Colar Atributos
-Colar atributos
 Colar Atributos…
+Colar atributos
 Color Correction (Lumetri)
 Como os quadros são exibidos no corpo dos clipes de vídeo. \"Todas\" mostra fatias contínuas; \"Início e fim\" só nos extremos; \"Nenhuma\" deixa os clipes sem miniatura.
-COMPOSIÇÃO (BLUR GLOBAL)
 Configurar exportação
 Configurações
 Configurações aplicadas.
@@ -257,7 +266,6 @@ Copiar todo o log para a área de transferência
 Copiar tudo
 Cor
 Cor %1
-COR / EFEITOS
 Cor 1 do checkboard
 Cor 2 do checkboard
 Cor da camada sólida
@@ -276,9 +284,8 @@ Cor:
 Correção de cor (Lumetri)
 Correção de cor…
 Cor…
-CRF (Constant Rate Factor): 0 = sem perda, 51 = pior qualidade.\nValores típicos: 18 (bom), 23 (padrão), 28 (rápido).
-Criar clipe de texto
 Criar Mesa
+Criar clipe de texto
 Criar multicam
 Criar multicam (%1 ângulos)…
 Criar mídia gerada (cor sólida, como no Vegas)
@@ -305,10 +312,10 @@ Decodificação de vídeo por hardware (VAAPI)
 Deletar keyframes selecionados
 Desagrupar
 Desagrupar faixas
-desativada
 Descarga a codificação da CPU para a placa de vídeo (útil em 4K e projetos longos). Equivale à aceleração por GPU que o Vega oferece na renderização; o retorno ao libx264 é automático se não houver encoders de hardware no sistema.
 Descartar
 Desempenho
+Desenhar contorno atrás do texto
 Desfazer
 Desfazer (Ctrl+Z)
 Desfoque
@@ -335,26 +342,29 @@ Duplicar camada
 Duplicar clipe
 Duplo-clique na Central de Mídias\npara abrir no Source
 Duração
+EDL CMX3600 (*.edl);;Todos os arquivos (*)
+EDL exportado: %1
+EDL importado: %1
+EQ Express
+EV
 Easy Ease (F9)
 Easy Ease (varinha)
-Easy Ease aplicado (F9)
 Easy Ease In
 Easy Ease In aplicado
-Easy Ease no keyframe do playhead (F9) — suaviza a transição de velocidade
-Easy Ease nos keyframes selecionados (F9) — suaviza a animação com handles horizontais
 Easy Ease Out
 Easy Ease Out aplicado
+Easy Ease aplicado (F9)
+Easy Ease no keyframe do playhead (F9) — suaviza a transição de velocidade
+Easy Ease nos keyframes selecionados (F9) — suaviza a animação com handles horizontais
 Editar keyframe
 Editar…
 Editor de Curvas
 Editor de velocidade
 Editor de vídeo
 Edição
-EDL CMX3600 (*.edl);;Todos os arquivos (*)
-EDL exportado: %1
-EDL importado: %1
 Efeitos
 Efeitos (%1)
+Efeitos OFX (plugins de terceiros)
 Efeitos de vídeo
 Efeitos de vídeo (brilho, contraste, saturação, blur, grayscale, chroma key)
 Efeitos de vídeo…
@@ -362,11 +372,9 @@ Efeitos de áudio
 Efeitos de áudio (EQ, denoise, normalizar, fase)
 Efeitos de áudio da faixa
 Efeitos de áudio…
-Efeitos OFX (plugins de terceiros)
 Effects
 Elastic
 Elipse
-elipse
 Elástico (estilo AE)
 Elásticos
 Encaixar no grid e nas bordas dos clipes (T). Desligar o ímã também desativa o auto-juntar (ripple) ao cortar/excluir.
@@ -378,7 +386,6 @@ Envelope (E)
 Envelope de velocidade (time remapping) no dock Velocidade
 Enviar para Mesa
 Enviar para trás
-EQ Express
 Equalizador
 Equalizador de 3 bandas (graves/médios/agudos)
 Erro na pré-renderização LAINKA: %1
@@ -393,17 +400,19 @@ Escorregar (Ctrl+U)
 Escuro
 Espelhar Horizontal
 Espelhar Vertical
+Espessura contorno (%):
 Esquerda
 Esquerda:
 Esse recurso está sendo desenvolvido e pode apresentar problemas de performance ou resultados incorretos no preview e na exportação. Recomendamos acompanhar as próximas versões do Pierrot antes de usá-lo em projetos reais.
+Este projeto foi salvo por uma versão mais nova do Pierrot\n(schema %1%2 — este app é o schema %3, grupo 
 Esticar Velocidade (W)
 Estilo
 Estilo das faixas: minimizada, normal ou grande (experimental)
-EV
 Excluir
 Excluir %1 keyframes
 Excluir (deixa espaço)
 Excluir (junta os espaços)
+Excluir Mesa
 Excluir clipe
 Excluir clipe anterior (D)
 Excluir clipe posterior (F)
@@ -415,7 +424,9 @@ Excluir faixas selecionadas ou, se não houver, os clipes selecionados (Delete)
 Excluir keyframe
 Excluir keyframes selecionados
 Excluir marcador
-Excluir Mesa
+Excluir o perfil \"%1\"?
+Excluir perfil
+Excluir perfil…
 Excluir projeto
 Excluir região de loop
 Excluir região de loop (ripple)
@@ -426,12 +437,17 @@ Expandir pasta
 Explorador de Arquivos
 Exportando…
 Exportar
-Exportar apenas cortes como EDL CMX3600 (compatível com Davinci, Premiere).
 Exportar EDL
 Exportar EDL…
+Exportar apenas cortes como EDL CMX3600 (compatível com Davinci, Premiere).
+Exportar atalhos
+Exportar atalhos…
 Exportar quadro
 Exportar quadro atual
 Exportar quadro atual (PNG)…
+Exportar tema
+Exportar tema atual
+Exportar tema atual…
 Exportar vídeo
 Exportar vídeo… (Ctrl+E)
 Exportar…
@@ -440,20 +456,20 @@ Exportação concluída com sucesso.
 Exportação falhou (código %1).
 Exposição
 Express
+FOV (°):
 Fade In
-Fade in (s):
 Fade In (texto)
 Fade In aplicado.
 Fade Out
-Fade out (s):
 Fade Out (texto)
 Fade Out aplicado.
-fadeIn no clipe selecionado
-fadeOut no clipe selecionado
+Fade in (s):
+Fade out (s):
 Faixa %1
 Falha ao montar o comando de exportação.
 Falha na exportação. Veja o log acima.
 Falha no .blend — %1
+Família da fonte do texto
 Feather
 Fechar
 Fechar o vão automaticamente ao excluir (ripple)
@@ -461,10 +477,10 @@ Fechar o vão automaticamente ao excluir (ripple). Desligue para deixar o espaç
 Feche esta janela para abrir o editor vazio.
 Ferramentas
 Ferramentas da timeline
-ffmpeg %1
 Fila concluída: %1 exportação(ões) finalizada(s).
 Fila de Render
 Fila de render…
+Film Grain
 Filme desbotado
 Fim
 Flatt X:
@@ -472,30 +488,34 @@ Flatt Y:
 Flicker:
 Fonte
 Fonte (%1x%2)
+Fonte em negrito
+Fonte:
 Fontes 2K+ são transcondificadas para o preview e \nthumbs (rápido). Desligue para decodificar o original \nno preview. A exportação sempre usa o original.
 Formato:
 Força da LUT
-FOV (°):
 Frame Rate
-frei0r
-frei0r (nenhum instalado)
-frei0r — plugins (%1)
 Freq
 Fundo
 Fundo colorido
 Fundo transparente
 G
-Gain
 GAIN  (realces)
-Gamma
 GAMMA (meios)
+GIF (*.gif)
+GIF: deixa transparente tudo o que não tem clipe\npor cima (o fundo preto vira alfa 0).
+GPU:
+Gain
+Gamma
 Ganho
 Gaussian Blur
 Gera versões leves (H.264 baixo bitrate) de vídeos 2K ou maiores para preview, pan/crop e thumbnails. A exportação sempre usa o original.
 Gerador
 Geral
-GIF (*.gif)
-GIF: deixa transparente tudo o que não tem clipe\npor cima (o fundo preto vira alfa 0).
+Gerando proxy
+Gerando proxy: %1 restante(s)…
+Gerando proxy…
+Gerar proxy a partir de (largura):
+Gerenciar perfis de atalhos
 Gizmo 3D + keyframes de transform no dock Pivot
 Grade
 Grade de Terços
@@ -509,32 +529,41 @@ Graves (120 Hz):
 Graves:
 Grid
 Gráfico
+Grão de Filme
+Grão de filme
+Grão de filme: ruído monocromático animado por quadro (estética de película)
 H
 Habilitada
 High Shelf
 Histograma
+Histórico
 Histórico de Edições
 Hold
 Horizontal
 Idioma
 Idle (laço)
 Iguala o som do clipe em 3 bandas. 0 dB = sem alteração.
-imagem
 Imagem PNG (*.png)
 Imagem · arraste=girar · Shift=Z (2.5D) · Ctrl=escala · +kf
 Importa .obj ou .blend (via Blender CLI) como camada 3D
 Importa as mídias desta pasta para o Media Pool
+Importando %v/%m
 Importando mídia…
 Importando mídia… (%1)
 Importar EDL
 Importar EDL CMX3600 em um novo projeto (apenas cortes).
 Importar EDL…
+Importar atalhos
+Importar atalhos…
 Importar malha 3D
 Importar mídia
 Importar mídia (Ctrl+I)
 Importar mídia…
 Importar mídia… (Ctrl+I)
 Importar pasta
+Importar tema
+Importar tema por paleta (.pierrot-theme)
+Importar…
 Importação .blend concluída (%1 arquivo(s)).
 Importação .blend concluída.
 Importação .blend: %1 de %2 ok. Falhou: %3
@@ -542,7 +571,7 @@ Importação concluída: %1 arquivo(s) adicionado(s).
 In
 In aqui (I)
 Informe o caminho de saída.
-Inglês (v0.7.5)
+Inglês
 Iniciar fila
 Insere o trecho In→Out do Source Monitor no playhead da timeline, empurrando os clipes seguintes
 Insere um clipe de texto no playhead
@@ -567,12 +596,14 @@ Ir para o fim (End)
 Ir para o início (Home)
 Ir para o keyframe anterior
 Ir para o próximo keyframe
+Janela de painéis técnicos (Mixer, Efeitos, Express, …) — arraste docks até ela ou use o menu Painéis.
 Janela de preview externo
 Janela inicial
 Janelas
 Japan 95
 Junta os clipes de vídeo selecionados num clipe multicam; teclas 1..N cortam o ângulo
 Já existe um keyframe nesse tempo.
+Já existe um perfil chamado \"%1\".
 Já há uma exportação em andamento.
 Key
 Keyframe %1/%2  ·  t = %3 (frame %4)  ·  v = %5  ·  %6
@@ -586,14 +617,15 @@ Keyframe: rotação
 Keyframe: suavidade
 Keyframes
 Keyframes (tempo relativo ao clipe; sobrepõem o valor base):
-keyframes do clipe
 Keyframes do clipe — clique seleciona, arraste move no tempo, Delete apaga. Ctrl=ignora o playhead, Shift=passo de 1 frame.
 Keyframes:
-kf
 L:
 LAINKA (stop motion)
 LAINKA pré-renderizado: %1 clipe(s)
 LAINKA: frame %1/%2
+LIFT  (sombras)
+LUT: %1
+LUTs (*.cube);;Todos (*)
 Laranja
 Latch (começa a gravar ao tocar)
 Layout anterior restaurado.
@@ -607,7 +639,6 @@ Lazzi Ruído
 Lazzi — motion por script: easings elásticos, estilo de texto, motion blur e formas/fundos coloridos (shape:). Converta em clipe animado.
 Lento
 Lift
-LIFT  (sombras)
 Lift = sombras · Gamma = meios · Gain = realces
 Limpar
 Limpar loop
@@ -621,12 +652,18 @@ Log da renderização: %1
 Loop (repete o trecho in/out)
 Low Shelf
 Lupa (Z)
-LUT: %1
-LUTs (*.cube);;Todos (*)
 Luz suave
 Língua:
+MKV (*.mkv)
+MKV experimental
+MKV é experimental: alguns arquivos podem não abrir ou apresentar problemas de áudio/vídeo.
+MOTION
+MOTION (MESA)
+MOTION BLUR (MOTION)
+MP3 (*.mp3)
+MP3 (só áudio)
+MP4 (*.mp4)
 Malha
-malha
 Malha 3D (.obj / .blend)…
 Malha 3D importada na Mesa (%1).
 Malha 3D · arraste=girar · Shift=Z · Ctrl=escala/snap · RX/RY/RZ · +kf
@@ -654,9 +691,6 @@ Mistura úmida (0–100%)
 Mix
 Mix (úmido):
 Mixer
-MKV (*.mkv)
-MKV experimental
-MKV é experimental: alguns arquivos podem não abrir ou apresentar problemas de áudio/vídeo.
 Modelos 3D (*.obj *.blend);;Wavefront OBJ (*.obj);;Blender (*.blend);;Todos (*)
 Modo 3D (AE Classic)
 Modo de automação: %1. Clique para alternar T→W→L→desligado.
@@ -666,20 +700,16 @@ Mostrar o clipe inteiro (F; Ctrl+roda dá zoom)
 Mostrar/ocultar grade vertical na timeline
 Mostrar/ocultar linha de keyframes
 Mostrar/ocultar régua de tempo na timeline
-MOTION
-Motion
-MOTION (MESA)
 MotiOn (motion blur)
+Motion
 Motion blur
-Motion blur (allow)
 Motion blur (Ctrl+Shift+B)
-MOTION BLUR (MOTION)
+Motion blur (allow)
 Motion blur global
 Motion blur por amostragem da imagem
 Motion básico
 Mover
 Mover (M)
-MP4 (*.mp4)
 Mudo
 Multicam (%1 ângulos)
 Multicam: %1 ângulos (teclas 1..N)
@@ -698,6 +728,7 @@ Mídia 4K detectada
 Mídia gerada (gerador)
 Mídia importada por arrasto.
 Mídia inválida
+NVIDIA %1 — GPU %2
 Na última execução o Pierrot fechou de repente (possível falha).\n\nUm relatório de crash foi gerado com detalhes técnicos:\n%1
 Nada para importar.
 Nativos
@@ -713,21 +744,26 @@ Nitidez
 Nome
 Nome da pasta:
 Nome do marcador:
+Nome do perfil:
 Nome do preset:
 Nome do projeto
 Nome do workspace:
 Normal
 Normal (padrão)
 Normalizar (-14 LUFS)
-Nova camada
 Nova Mesa…
+Nova camada
 Novo
+Novo nome:
+Novo perfil
 Novo projeto
 Novo projeto (Ctrl+N)
 Novo projeto criado.
 Novo texto…
 Não foi possível abrir o arquivo.
 Não foi possível abrir o arquivo:\n%1
+Não foi possível copiar o arquivo.
+Não foi possível escrever o arquivo.
 Não foi possível gravar o arquivo:\n%1\n\n%2
 Não foi possível iniciar o ffmpeg. Instale o ffmpeg e tente novamente.
 Não foi possível ler o arquivo.
@@ -736,16 +772,18 @@ Não foi possível salvar a imagem.
 Não foi possível salvar o arquivo.
 Não há quadro para exportar neste momento.
 O clipe tem texto. Como criar a cópia?
+O japonês e o inglês já estão disponíveis. Requer reinício do aplicativo para tomar efeito.
+O perfil \"%1\" já existe. Sobrescrever?
 O projeto contém mídia em 4K ou superior. O preview pode engasgar nesses arquivos — reduza a qualidade do preview (botão no monitor) para aliviar a reprodução.
 O projeto tem alterações não salvas. Deseja salvá-las antes de continuar?
 O que deseja fazer com \"%1\"?
-Obturador (%):
 OFX
 OFX (nenhum instalado)
 OFX pré-renderizado: %1 clipe(s)
 OFX — plugins de terceiros (%1)
 OFX: frame %1/%2
 OK
+Obturador (%):
 On
 Opacidade (%):
 Opacidade (0–100%):
@@ -759,7 +797,11 @@ Out
 Out aqui (O)
 Overwrite
 Overwrite do Source
+PSX
 Padrão
+Padrão (Pierrot)
+Painel técnico
+Painéis
 Painéis embaixo
 Painéis à direita
 Painéis à esquerda
@@ -778,6 +820,7 @@ Pausar
 Pausar (JKL)
 Pausar (K)
 Pena da vinheta
+Perfil:
 Permite que esta camada borre nas sub-passadas do motion blur global (Ctrl+Shift+B). Desligue para a camada ficar fixa.
 Personalizada…
 Personalizado…
@@ -794,22 +837,22 @@ Pivot — 3D do clipe
 Pivot: anel X — rotação travada no eixo X
 Pivot: anel Y — rotação travada no eixo Y
 Pivot: anel Z — rotação travada no eixo Z
+Pivot: arrastar = Z (profundidade)
 Pivot: arrastar = escala
 Pivot: arrastar = rotX
 Pivot: arrastar = rotY
 Pivot: arrastar = rotZ (roll)
-Pivot: arrastar = Z (profundidade)
 Pivot: ferramenta limpa — o arraste volta a girar
 Pivot: mover livre (H e V)
 Pivot: mover no eixo H
 Pivot: mover no eixo V
 Pivot: mover no eixo Z (profundidade)
 Pivot: trackball livre — arraste na esfera (Ctrl=snap 15°)
+Placa usada na codificação por hardware.\n\"Automática\" deixa o ffmpeg escolher.
 Plugins
-Plugins frei0r (Kdenlive/Shotcut/MLT). Instale com o pacote frei0r-plugins ou defina PIERROT_FREI0R_PATH.
 Plugins OFX
 Plugins OFX (ex.: DaVinci/Resolve, Sapphire, BorisFX) encontrados no sistema.
-polígono
+Plugins frei0r (Kdenlive/Shotcut/MLT). Instale com o pacote frei0r-plugins ou defina PIERROT_FREI0R_PATH.
 Ponto
 Posição
 Posição X (px):
@@ -829,8 +872,12 @@ Procurar .cube…
 Profundidade:
 Program: 
 Program: %1
+Projeto CONVERTIDO para o grupo 
 Projeto aberto: %1
+Projeto de versão antiga
+Projeto de versão mais nova
 Projeto fechado salvo: %1
+Projeto não encontrado
 Projeto salvo automaticamente (%1).
 Projeto salvo: %1
 Projetos recentes
@@ -845,7 +892,6 @@ Pré-renderizando efeitos LAINKA…
 Pré-renderizando efeitos OFX…
 Próximo keyframe
 Próximo quadro
-PSX
 Q
 Quadro anterior
 Quadro anterior (←)
@@ -858,6 +904,9 @@ Qualidade do preview (resolução de decodificação)
 Qualidade e Timeline
 Quando ativado, o diálogo de exportação abre nessa pasta em vez da sua pasta pessoal. Deixe vazio para usar a pasta pessoal.
 R
+RX
+RY
+RZ
 Realces
 Reaplica o arranjo de painéis guardado antes de uma atualização que dispensou o layout antigo.
 Reaplicar o arranjo de painéis guardado (versão de layout %1) e substituir o atual?
@@ -874,9 +923,9 @@ Recorte topo:
 Rectângulo
 Recuar um
 Recurso experimental — pode apresentar falhas.
+Redefinir Tudo
 Redefinir esta propriedade
 Redefinir malha
-Redefinir Tudo
 Redução de ruído
 Refazer
 Refazer (Ctrl+Shift+Z)
@@ -893,12 +942,16 @@ Remover e excluir o arquivo
 Remover efeito
 Remover keyframe mais próximo do playhead
 Remover o projeto selecionado dos recentes
+Remover o tema \"%1\"?
 Remover selecionados
+Remover tema
 Remover último
 Renderizar
 Renderização cancelada pelo usuário.
 Renomear pasta
 Renomear pasta…
+Renomear perfil
+Renomear perfil…
 Renomear…
 Reproduzir
 Reproduzir para frente (L); repetir acelera
@@ -918,7 +971,6 @@ Restaurar padrão do atalho selecionado
 Resto
 Reta
 Retroceder (JKL)
-retângulo
 Reverb
 Reverb EX
 Reverb simples (Schroeder) no áudio do clipe
@@ -932,9 +984,6 @@ Rotação (°):
 Rotação:
 Ruído
 Ruído (grão)…
-RX
-RY
-RZ
 Rápido
 Régua
 Sair
@@ -945,9 +994,10 @@ Salvamento automático: salve o projeto uma vez (Ctrl+S) para ativar.
 Salvamento em andamento — aguarde.
 Salvando...
 Salvar
-Salvar como…
 Salvar Preset
 Salvar Preset…
+Salvar como novo perfil…
+Salvar como…
 Salvar projeto
 Salvar projeto (Ctrl+S)
 Salvar projeto?
@@ -956,6 +1006,7 @@ Salvar vídeo
 Salvar workspace
 Salvar workspace atual
 Salvar workspace como...
+Salvar áudio
 Salvar…
 Saturation
 Saturação
@@ -974,6 +1025,7 @@ Selecionar tudo
 Selecionar/mover keyframes (V)
 Selecione clipe(s) na timeline e clique num preset para aplicar. Passe o mouse sobre a miniatura para ver a animação.
 Selecione pelo menos um clipe na timeline antes de aplicar um preset.
+Selecione pelo menos um clipe na timeline antes de aplicar uma transição.
 Selecione um clipe 3D (imagem ou malha)
 Selecione um clipe 3D (imagem ou malha).
 Selecione um clipe de texto para editar.
@@ -988,9 +1040,7 @@ Selecione um clipe para o Lumetri.
 Selecione um clipe.
 Selecione um clipe. Arraste=girar · Mover/H/V/Z=posição · setas=nudge (Shift=10px) · Ctrl=escala/snap
 Selecione um keyframe para apagar.
-Selecione uma mídia no painel Projeto\ne arraste para a linha do tempo (Espaço reproduz)
 Seleção de keyframe limpa.
-Sem clipe de vídeo aqui
 Sem LUT. Aceita .cube 3D (IRIDAS/Resolve).
 Sem projeto
 Sem quadro
@@ -998,6 +1048,7 @@ Sem quadro - mova o playhead
 Sem título
 Sensibilidade das curvas:
 Sensibilidade do arraste vertical no editor de curvas. Acima de 1× deixa as curvas mais exageradas.
+Seu projeto usa uma versão antiga do Laartman — foi salvo por uma versão anterior do Pierrot%1.\n\nAo CONVERTER para o formato atual (grupo 
 Similaridade:
 Snap
 Snap (ímã)
@@ -1029,23 +1080,27 @@ Só as alças de recorte
 Só remover da lista
 Sólido…
 T
-t = %1  ·  frame %2\nv = %3  ·  %4
-Tamanho da sala (0–100%)
-Tamanho da sala:
+TEXTO
+Tamanho (%):
 Tamanho X
 Tamanho Y
+Tamanho da sala (0–100%)
+Tamanho da sala:
+Tamanho do grão:
 Target FPS:
 Tela (screen)
 Tela cheia (Esc para sair)
 Tela cheia (F11; Esc sai)
+Tema por paleta (.pierrot-theme)
+Tema por paleta Pierrot (*.pierrot-theme)
 Tema:
 Temperatura
 Tempo (s)
 Tempo:
 Tesoura (R)
 Text / Animation
-text:Bom dia\nfont:Impact\ncolor:#FFDD00\nease:elastic\ndur:2s\nscale:0->1 @0s-0.6s\ny:120->0 @0s-0.6s\nrot:-10->0 @0s-0.7s
 Texto
+Texto (*.txt)
 Texto do clipe
 Texto:
 Texto…
@@ -1064,14 +1119,15 @@ Transformar (posição, escala, rotação)
 Transformar…
 Transformação
 Transição
+Transição \"%1\" aplicada em %2 clipe(s).
+Transição \"%1\" aplicada em %2 clipe(s). %3 sem sobreposição — arraste um clipe para sobrepor o anterior.
 Transição de saída
 Transição: %1 no clipe selecionado
+Transições
 Transparência:
 Travar layout
 Travar/destravar o layout dos painéis (Ctrl+L)
 Trazer para a frente
-trecho: %1 → %2  (%3 s)
-trecho: —
 Tremida:
 Trimmer — %1
 Trocar in/out
@@ -1081,8 +1137,8 @@ Usar pasta padrão ao exportar
 Usar proxies (editar com transcode leve, qualidade cheia no export)
 Usar proxies em previews e pan/crop (alta resolução)
 V
+VAAPI — %1
 Valor
-valor padrão
 Valor:
 Varinha
 Varinha: clique cria ponto suave; arraste as alças entorta a velocidade (B)
@@ -1120,18 +1176,13 @@ Vídeo 1
 Vídeo e áudio (*.mp4 *.mov *.mkv *.avi *.webm *.m4v *.ts *.flv *.wmv *.3gp *.mpg *.mpeg *.ogv *.mts *.m2ts *.vob *.mp3 *.wav *.aac *.flac *.ogg *.m4a *.opus *.wma *.aiff *.aif *.au *.ac3 *.amr *.ape *.caf *.dts *.mka *.mid *.midi *.mp2 *.oga *.spx *.w64 *.wv *.alac *.mp1 *.mpa *.ra *.wpl *.tta *.tak *.shn);;Imagens (*.jpg *.jpeg *.png *.bmp *.gif *.webp *.tif *.tiff *.svg);;Todos os arquivos (*)
 Vídeo exportado com sucesso.
 Vídeo:
+Vídeos com largura >= este valor ganham proxy leve para o preview. Baixe para 1920/2048 se o computador aguentar — arquivos 2K também ganham proxy e os cortes ficam lisos. A exportação sempre usa o original.
+WAV (*.wav)
+WAV (só áudio, PCM)
 Waveform
 Waveform (mini) — dock Analisadores para o full
 WebM (*.webm)
 Wipe
-Wipe \u2190
-Wipe \u2191
-Wipe \u2192
-Wipe \u2193
-Wipe \u2196
-Wipe \u2197
-Wipe \u2198
-Wipe \u2199
 Wipe Bottom-Left
 Wipe Bottom-Right
 Wipe Down
@@ -1140,6 +1191,14 @@ Wipe Right
 Wipe Top-Left
 Wipe Top-Right
 Wipe Up
+Wipe \u2190
+Wipe \u2191
+Wipe \u2192
+Wipe \u2193
+Wipe \u2196
+Wipe \u2197
+Wipe \u2198
+Wipe \u2199
 Wipe ← (próximo vem da direita)
 Wipe ↑ (próximo vem de baixo)
 Wipe → (próximo vem da esquerda)
@@ -1149,16 +1208,40 @@ Workspace salvo como \"%1\".
 Workspace: %1
 Workspaces
 Write (grava durante a reprodução)
-x
 X:
 Y:
 Z
-Zera recorte, zoom, posição, rotação, achatamento e âncora do clipe
+Zera recorte, zoom, posição, rotação, achatamento, âncora e opacidade do clipe
 Zera transform 2D/3D do clipe
 Zoom do preview
 Zoom e Posição
 Zoom, posição, rotação e âncora
 Zoom:
+\"Pierrot\" é o perfil padrão e não pode ser sobrescrito.
+ativa
+by InkSpoty
+caminho/do/arquivo.cube
+clipe
+desativada
+elipse
+fadeIn no clipe selecionado
+fadeOut no clipe selecionado
+ffmpeg %1
+frei0r
+frei0r (nenhum instalado)
+frei0r — plugins (%1)
+imagem
+keyframes do clipe
+kf
+malha
+polígono
+retângulo
+t = %1  ·  frame %2\nv = %3  ·  %4
+text:Bom dia\nfont:Impact\ncolor:#FFDD00\nease:elastic\ndur:2s\nscale:0->1 @0s-0.6s\ny:120->0 @0s-0.6s\nrot:-10->0 @0s-0.7s
+trecho: %1 → %2  (%3 s)
+trecho: —
+valor padrão
+x
 Áudio
 Âncora X (px):
 Âncora X:
@@ -1180,43 +1263,9 @@ Zoom:
 ⏸ Parar
 ▲
 ▶
-▶ [%1/%2] %3
 ▶ Tocar
+▶ [%1/%2] %3
 ▶|
 ▼
 ◀
 ● Auto
-1080p (Full HD) · 24fps
-1080p (Full HD) · 30fps
-1080p (Full HD) · 60fps
-2K (2560 × 1440)
-4K (3840 × 2160)
-4K UHD · 30fps
-640 × 360
-720p (HD) · 25fps
-720p (HD) · 30fps
-A cada 1 hora
-A cada 10 minutos
-A cada 20 minutos
-A cada 30 minutos
-A cada 5 minutos
-Centro horizontal
-Centro vertical
-Deslocar clipes ←
-Deslocar clipes →
-Envelope
-Esticar Velocidade
-Full HD (1920 × 1080)
-HD (1280 × 720)
-Lupa (Zoom)
-Personalizado
-Projeto
-Reproduzir/Pausar
-Reprodução
-Rolling
-SD (720 × 480)
-Salvar como
-Slide
-Slip
-Tesoura
-Topo
