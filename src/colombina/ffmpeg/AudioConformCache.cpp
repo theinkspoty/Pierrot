@@ -22,6 +22,12 @@ qint64 nowMs() {
                std::chrono::steady_clock::now().time_since_epoch())
         .count();
 }
+
+// Um pedido é "fresco" se um leitor o renovou recentemente (o mixer pede a
+// cada tick/chunk). Só esses competem pela prioridade por `dueSec`; janelas
+// que sobraram de um trecho já reproduzido são atendidas por último, quando
+// não há nada atual para decodificar.
+constexpr qint64 kFreshRequestMs = 1000;
 } // namespace
 
 AudioConformCache& AudioConformCache::instance() {
@@ -74,12 +80,23 @@ AudioConformCache::Ref AudioConformCache::get(const QString& filePath, int strea
     return Ref(slot);
 }
 
-void AudioConformCache::request(const Ref& cache, double startSec, double lenSec) {
+void AudioConformCache::request(const Ref& cache, double startSec, double lenSec,
+                                double dueSec) {
     Chunk* c = cache.get();
     if (!c || lenSec <= 0.0 || startSec < 0.0) return;
     {
         QMutexLocker l(&c->mtx);
         mergeWanted(c, startSec, startSec + lenSec);
+        // Vários leitores pedem no mesmo tick (ativo + warm do mesmo arquivo):
+        // fica com o menor due, que é o primeiro instante em que o trecho é
+        // necessário. Pedidos separados no tempo substituem a urgência — o
+        // chunk não é mais candidato "fresco" pelo pedido anterior.
+        const qint64 now = nowMs();
+        if (now - c->lastRequestMs <= 50)
+            c->requestDueSec = std::min(c->requestDueSec, dueSec);
+        else
+            c->requestDueSec = dueSec;
+        c->lastRequestMs = now;
     }
     // Acorda o worker (ou re-scan, se ele já estiver mid-fill).
     m_workCv.notify_all();
@@ -296,29 +313,77 @@ void AudioConformCache::workerLoop() {
 
     for (;;) {
         Chunk* chosen = nullptr;
-        int pending = 0;
+        int pendingFresh = 0;
+        int pendingAll = 0;
         {
             QMutexLocker l(&m_regMtx);
-            qint64 best = -1;
+            struct Cand {
+                Chunk* c;
+                qint64 firstUncovered;
+                double due;
+                qint64 served;
+                bool fresh;
+            };
+            QVector<Cand> cands;
+            cands.reserve(m_byKey.size());
+            const qint64 now = nowMs();
             for (Chunk* c : m_byKey) {
                 qint64 cand = -1;
+                double due = 0.0;
+                qint64 served = 0;
+                bool fresh = false;
                 {
                     QMutexLocker lc(&c->mtx);
                     for (const auto& w : c->wanted) {
                         const qint64 uw = uncoveredStart(*c, w.first, w.second);
                         if (uw >= 0) { cand = uw; break; }
                     }
+                    if (cand >= 0) {
+                        fresh = (now - c->lastRequestMs) <= kFreshRequestMs;
+                        due = c->requestDueSec;
+                        served = c->lastServedMs;
+                    }
                 }
                 if (cand < 0) continue;
-                ++pending;
-                // Atende primeiro o chunk cujo trecho mais próximo do playhead
-                // ainda não foi preenchido (rotacionado entre caches).
-                if (best < 0 || cand < best) {
-                    best = cand;
-                    chosen = c;
+                ++pendingAll;
+                if (fresh) ++pendingFresh;
+                cands.append({c, cand, due, served, fresh});
+            }
+
+            // Prioridade: pedidos frescos primeiro; entre eles, o que toca
+            // mais cedo na timeline (`dueSec`) e, em empate, o servido há mais
+            // tempo (rodízio entre fontes ativas simultâneas). Janelas velhas
+            // só entram quando não há pedido fresco — antes o menor frame de
+            // MÍDIA vencia e um trecho antigo/flood de SFX curtos segurava o
+            // worker enquanto o áudio atual ficava sem PCM.
+            const bool anyFresh = pendingFresh > 0;
+            double bestDue = 0.0;
+            qint64 bestServed = 0;
+            qint64 bestCand = -1;
+            for (const Cand& k : cands) {
+                if (anyFresh && !k.fresh) continue;
+                bool better = false;
+                if (!chosen) {
+                    better = true;
+                } else if (anyFresh) {
+                    if (k.due != bestDue) better = k.due < bestDue;
+                    else if (k.served != bestServed) better = k.served < bestServed;
+                    else better = k.firstUncovered < bestCand;
+                } else {
+                    better = k.firstUncovered < bestCand;
+                }
+                if (better) {
+                    chosen = k.c;
+                    bestDue = k.due;
+                    bestServed = k.served;
+                    bestCand = k.firstUncovered;
                 }
             }
-            if (chosen) chosen->addRef(); // segura o chunk durante a sessão
+            if (chosen) {
+                chosen->addRef(); // segura o chunk durante a sessão
+                QMutexLocker lc(&chosen->mtx);
+                chosen->lastServedMs = now;
+            }
         }
         if (!chosen) {
             std::unique_lock<std::mutex> lk(m_workMtx);
@@ -343,7 +408,10 @@ void AudioConformCache::workerLoop() {
         }
 
         // Vários chunks disputando → sessão curta para o rodízio; sozinho →
-        // sessão cheia (com decoder persistente, sem custo de re-open).
+        // sessão cheia (com decoder persistente, sem custo de re-open). Só
+        // contam os pedidos FRESCOS: um backlog antigo não pode encolher a
+        // sessão do áudio que está tocando agora.
+        const int pending = pendingFresh > 0 ? pendingFresh : pendingAll;
         const double capSec = (pending > 1) ? 0.75 : 2.0;
         double s0 = 0.0, h0 = 0.0;
         if (nextFillWork(chosen, 0.0, s0, h0) < 0) {

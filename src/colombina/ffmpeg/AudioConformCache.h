@@ -61,6 +61,14 @@ public:
         // Janelas pedidas, em SEGUNDOS: [inicio, fim). Coalescidas.
         QVector<QPair<double, double>> wanted;
         qint64 lastUseMs = 0;
+        // Urgência do pedido mais recente (tempo de TIMELINE em que o trecho
+        // precisa tocar). O worker atende primeiro o menor `dueSec`: uma fonte
+        // ativa (due = playhead) passa na frente de uma warm (due = início do
+        // clipe) e, principalmente, de janelas antigas que sobraram de um
+        // trecho já reproduzido.
+        double requestDueSec = 0.0;
+        qint64 lastRequestMs = 0; // quando um leitor pediu trabalho pela última vez
+        qint64 lastServedMs = 0;  // quando o worker dedicou uma sessão a este chunk
         std::atomic<int> refs{1}; // 1 permanente do registro
         void addRef() { refs.fetch_add(1, std::memory_order_relaxed); }
         void release() {
@@ -94,7 +102,14 @@ public:
     // Garante, async, que [startSec, startSec+lenSec) do cache seja
     // decodificado. Coalesce janelas próximas e pode ser chamado de qualquer
     // thread. Já preenchido ⇒ não adiciona trabalho.
-    void request(const Ref& cache, double startSec, double lenSec);
+    //
+    // `dueSec` é o instante da TIMELINE em que o trecho é necessário (playhead
+    // para fontes ativas, início do clipe para as warm). O worker usa isso
+    // para priorizar o áudio que vai tocar agora em vez de terminar janelas
+    // antigas — com muitos SFX curtos em sequência, a ordem por frame de mídia
+    // fazia os clipes seguintes chegarem sem PCM (silêncio).
+    void request(const Ref& cache, double startSec, double lenSec,
+                 double dueSec = 0.0);
 
     // Lê até `maxFrames` frames (S16 estéreo) a partir de `startFrame`.
     // Preenche `out`; as amostras de regiões ainda não decodificadas saem em

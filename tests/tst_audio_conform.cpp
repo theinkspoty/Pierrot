@@ -7,10 +7,10 @@
 // leitura posicional de um buffer PCM com falhas (regiões ainda não
 // decodificadas) e refcounting manual do buffer.
 //
-// Não toca em FFmpeg: o worker fica à espera porque nunca pedimos janelas
-// (wanted vazio), e as regiões são plantadas à mão em Chunk::filled. Os
-// ficheiros não existem — o cache só indexa o áudio quando o worker
-// descodifica, o que não acontece aqui.
+// Não toca em FFmpeg: as janelas pedidas usam chunks LOCAIS (fora do registo,
+// logo invisíveis ao worker) e as regiões são plantadas à mão em
+// Chunk::filled. Os ficheiros não existem — o cache só indexa o áudio quando o
+// worker descodifica, o que não acontece aqui.
 
 #include <QtTest>
 
@@ -82,6 +82,8 @@ private slots:
 
     // request / diagnóstico
     void requestIgnoresInvalidInput();
+    void requestRecordsUrgency();
+    void requestKeepsSmallestDueWithinSameTick();
     void totalBytesStartsAtZero();
 };
 
@@ -306,6 +308,32 @@ void TestAudioConformCache::requestIgnoresInvalidInput() {
     cache.request(r, -1.0, 1.0);
     cache.request(nada, 0.0, 1.0);
     QVERIFY(r->wanted.isEmpty());
+    QCOMPARE(r->lastRequestMs, (qint64)0);
+}
+
+void TestAudioConformCache::requestRecordsUrgency() {
+    auto& cache = AudioConformCache::instance();
+    // Chunk local (fora do registo): testa só a metadata do pedido, sem
+    // acordar o worker para um ficheiro que não existe.
+    Ref r(new Chunk);
+    cache.request(r, 10.0, 2.0, 7.5);
+    QCOMPARE(r->wanted.size(), 1);
+    QCOMPARE(r->requestDueSec, 7.5);
+    QVERIFY(r->lastRequestMs > 0);
+}
+
+void TestAudioConformCache::requestKeepsSmallestDueWithinSameTick() {
+    auto& cache = AudioConformCache::instance();
+    Ref r(new Chunk);
+    // Mesmo tick: ativo (playhead 7,5) + warm (início 10) do mesmo arquivo.
+    // O worker deve enxergar a urgência do ATIVO, não a do último pedido.
+    cache.request(r, 10.0, 2.0, 10.0);
+    cache.request(r, 10.0, 2.0, 7.5);
+    QCOMPARE(r->requestDueSec, 7.5);
+    // Separado no tempo, o pedido novo substitui a urgência anterior.
+    QTest::qWait(60);
+    cache.request(r, 20.0, 2.0, 30.0);
+    QCOMPARE(r->requestDueSec, 30.0);
 }
 
 void TestAudioConformCache::totalBytesStartsAtZero() {

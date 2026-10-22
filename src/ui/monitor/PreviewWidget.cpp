@@ -1532,8 +1532,12 @@ void PreviewWidget::startAudio(double t) {
     // Nada de waitReadyBeforeSink() aqui: ele segurava a UI por até 150ms no
     // play (C1 do relatório). `updateSources` já dispara a conform em
     // background; aceitamos 1-2 frames de silêncio no warm-up frio.
-    m_audioFeed->updateSources(sources, /*reseek=*/true,
-                               QVector<AudioMixer::SourceInfo>(), -1, t);
+    // Inclui o lookahead (mesmo se o play começa colado num corte): o sink
+    // enche o buffer à frente do playhead e um clipe curto que começa logo
+    // precisa já estar no mix para não ser pulado.
+    const QVector<AudioMixer::SourceInfo> warm =
+        buildWarmSources(m_project, t, sources);
+    m_audioFeed->updateSources(sources, /*reseek=*/true, warm, -1, t);
     const qint64 afterSourcesMs = tStage.elapsed();
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
@@ -2723,8 +2727,14 @@ void PreviewWidget::warmPlayhead() {
         AudioConformCache& conform = AudioConformCache::instance();
         for (const AudioMixer::SourceInfo& w : sources) {
             if (w.path.isEmpty()) continue;
+            // Só até o fim do clipe (um SFX de 0,2 s não pede 6 s de decode).
+            const double remainingOut =
+                qMax(0.0, w.clipPos + w.clipDur - m_playhead);
+            const double reqLen =
+                qMin(6.0, remainingOut * qMax(0.01, w.speed) + 0.1);
+            if (reqLen <= 0.0) continue;
             const AudioConformCache::Ref c = conform.get(w.path, w.audioStream);
-            conform.request(c, w.mediaPos, 6.0);
+            conform.request(c, w.mediaPos, reqLen, m_playhead);
         }
     }
 }

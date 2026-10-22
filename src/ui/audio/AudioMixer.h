@@ -135,6 +135,12 @@ public:
             s->readFrame = (qint64)std::llround(w.mediaStart * sr)
                          + (qint64)std::llround((outStart - clipStartSr) * w.speed);
             s->step = qMax(0.01, w.speed);
+            // Fim da mídia deste clipe (frame S16/48k), independente de o
+            // Source ter entrado no meio (warm -> ativo). Limita os pedidos
+            // de conform ao trecho que o clipe realmente usa: SFX de 0,2 s
+            // não devem enfileirar 6 s de decode cada um.
+            s->readEnd = (qint64)std::llround(w.mediaStart * sr)
+                       + (qint64)std::llround((s->srcOutEnd - clipStartSr) * s->step);
             s->fx.resetState();
         };
         auto applyParams = [&](Source* s, const SourceInfo& w) {
@@ -144,6 +150,9 @@ public:
             s->isAudioTrack = w.isAudioTrack;
             s->step = qMax(0.01, w.speed);
             s->srcOutEnd = (qint64)std::llround((w.clipPos + w.clipDur) * sr);
+            const qint64 clipStartSr = (qint64)std::llround(w.clipPos * sr);
+            s->readEnd = (qint64)std::llround(w.mediaStart * sr)
+                       + (qint64)std::llround((s->srcOutEnd - clipStartSr) * s->step);
             s->fx.configure(w.eqLow, w.eqMid, w.eqHigh, w.denoise,
                             w.denoiseAmount, w.invertPhase, w.normalize,
                             w.reverb, w.reverbMix, w.reverbSize);
@@ -202,11 +211,15 @@ public:
                 s->stream = w.audioStream;
                 initSource(s, w);
             }
-            // Conform: garante o trecho sob o playhead + horizonte de leitura.
-            // 4s (era 3s): dá folga para o worker preencher à frente sem
-            // lacuna no corte, mesmo com sessões do doFill em rodízio.
-            conform.request(s->cache, w.mediaPos, 4.0);
             applyParams(s, w);
+            // Conform: garante o trecho sob o playhead + horizonte de leitura,
+            // mas SEM passar do fim do clipe. O pedido de 4 s fixos enchia o
+            // worker de janelas inúteis quando havia muitos clipes curtos em
+            // sequência — o áudio seguinte chegava sem PCM (issue #13).
+            const double mediaEndSec = (double)s->readEnd / sr;
+            const double reqLen = qMin(4.0, qMax(0.0, mediaEndSec - w.mediaPos) + 0.1);
+            if (reqLen > 0.0)
+                conform.request(s->cache, w.mediaPos, reqLen, anchorSec);
             if (w.isAudioTrack) {
                 AudioFx& tfx = m_trackFx[qMakePair(w.isAudioTrack, w.trackIndex)];
                 tfx.configure(w.trackFxEqLow, w.trackFxEqMid, w.trackFxEqHigh,
@@ -236,8 +249,13 @@ public:
                 s->stream = w.audioStream;
                 initSource(s, w);
             }
-            conform.request(s->cache, w.mediaPos, 6.0);
             applyParams(s, w);
+            // Warm: só o material do próprio clipe (antes: 6 s por SFX, o que
+            // atrasava os clipes seguintes no worker).
+            const double mediaEndSec = (double)s->readEnd / sr;
+            const double reqLen = qMin(6.0, qMax(0.0, mediaEndSec - w.mediaPos) + 0.1);
+            if (reqLen > 0.0)
+                conform.request(s->cache, w.mediaPos, reqLen, w.clipPos);
         }
 
         // Recolhe fontes fora da janela (dropa o Ref; o LRU libera a memória).
@@ -456,10 +474,16 @@ public:
             // retorna cedo no PlaybackEngine e nunca re-pediria o trecho —
             // o áudio ia mudo depois da 1ª janela (~metade). Aqui o worker está
             // sempre sendo alimentado na frente do que o sink lê.
-            conform.request(s->cache,
-                            (double)s->readFrame
-                                / (double)AudioConformCache::kSampleRate,
-                            3.0);
+            // Do ponto de leitura ATÉ o fim do clipe (não 3 s fixos): o que
+            // sobra de um clipe curto não vira trabalho que disputa com o
+            // áudio seguinte. due=0: este é o áudio sendo consumido agora.
+            const double readSec =
+                (double)s->readFrame / (double)AudioConformCache::kSampleRate;
+            const double mediaEndSec =
+                (double)s->readEnd / (double)AudioConformCache::kSampleRate;
+            const double reqLen = qMin(3.0, qMax(0.0, mediaEndSec - readSec));
+            if (reqLen > 0.0)
+                conform.request(s->cache, readSec, reqLen, 0.0);
 
             s->fx.process(srcBuf.data(), nFrames);
 
@@ -661,6 +685,7 @@ private:
                                 // contribuição desta fonte (== mídia(srcOutStart))
         qint64 srcOutStart = 0; // frame de saída absoluto: começa a contribuir
         qint64 srcOutEnd = 0;   // frame de saída absoluto (exclusivo): para
+        qint64 readEnd = 0;     // frame de mídia (S16/48k) do fim do clipe
         double step = 1.0;      // frames de mídia por frame de saída (=speed)
         double vol = 1.0;
         AudioFx fx;
