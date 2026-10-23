@@ -2557,7 +2557,10 @@ void MainWindow::createActions() {
                " (kernel) · <b>Laartman</b> v" PIERROT_LAARTMAN_VERSION
                " (codecs)<br><br>"
                "<b style='color:#c07800'>Ainda em desenvolvimento:</b> mesa, "
-               "velocidade, pivot, analisador e workspace.<br><br>"
+               "lazzi, technicolor, Dottore, velocidade, pivot, analisador, "
+               "workspace, mixer + equalizador e animações.<br><br>"
+               "<b>Workspaces:</b> workspaces + workspace bancada.<br>"
+               "<b>Temas:</b> Japan 95, R4 e Claro.<br><br>"
                "Pierrot é um editor de vídeo inspirado em 2 programas \"Sony Vegas 8\" "
                "e \"Final Cut Express 2003\", totalmente escrito pra linux. Para uso "
                "pessoal, baseado nas ferramentas que eu acho úteis.<br><br>"
