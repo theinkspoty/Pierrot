@@ -274,7 +274,7 @@ private:
     TextEditorWidget* m_textEditor = nullptr; // Editor de Texto (dock, live)
     LazziDock* m_lazziWidget = nullptr;  // Lazzi — editor de motion por script (dock)
     AnimPresetDock* m_animPresetWidget = nullptr; // presets de animação (dock)
-    ColorDock* m_colorWidget = nullptr;  // Cor — correção estilo DaVinci (dock)
+    ColorDock* m_colorWidget = nullptr;  // Technicolor
     VelocityEditorWidget* m_velocity = nullptr; // Editor de Velocidade (dock)
     PivotWidget* m_pivot = nullptr; // Pivot — edição 3D do clipe (dock)
     DottoreWidget* m_dottore = nullptr; // Dottore — motion graphics por forma (dock)
@@ -299,7 +299,7 @@ private:
     QDockWidget* m_textDock = nullptr;      // Editor de Texto (dock, live)
     QDockWidget* m_lazziDock = nullptr;    // Lazzi — editor de motion por script (dock)
     QDockWidget* m_animPresetDock = nullptr; // presets de animação (dock)
-    QDockWidget* m_colorDock = nullptr;    // Cor — correção estilo DaVinci (dock)
+    QDockWidget* m_colorDock = nullptr;    // Technicolor (dock)
     QDockWidget* m_velocityDock = nullptr;  // Editor de Velocidade do clipe
     QDockWidget* m_pivotDock = nullptr;    // Pivot — 3D do clipe
     QDockWidget* m_dottoreDock = nullptr;  // Dottore — motion graphics de forma
