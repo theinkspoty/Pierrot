@@ -316,26 +316,41 @@ desenho deixa de ser um bloco único.
 
 ### Fase 2 — Shape layers (MVP)
 
-**Objetivo**: criar uma camada de forma na Mesa com fill/stroke e animar
-posição/escala/rotação/opacidade/trim.
+**Objetivo**: formas geométricas sólidas (estilo shape layer do AE), animáveis
+pelas curvas, editadas por um segundo viewer (**Dottore**) dockável ao lado do
+Preview — sem passar pela Mesa.
 
-**Arquivos previstos**:
+> **Direção revisada (Dottore).** A primeira tentativa plugou as formas na Mesa
+> (`Track::shape`), mas a Mesa é o compositor de multicamadas: obrigar o motion
+> a viver lá é pouco prático. O Dottore reaproveita o gerador de mídia que já
+> existe: `generator == "shape"` em `MediaItem` é renderizado por
+> `generatorFrame()` — a MESMA função usada por Preview, Pantalone, Timeline e
+> exportação — logo preview e export batem de graça, sem caminho duplicado e
+> sem depender da Mesa. A forma entra na timeline como qualquer clipe sólido e
+> é animada pelas keyframes normais (transform/opacidade) + Editor de Curvas.
+>
+> Implementado: campos `shape*` em `MediaItem` + serialização; caso `"shape"`
+> em `generatorFrame()` (fill/stroke/roundness/elipse); criação "Forma →
+> Retângulo/Elipse" na Central de Mídias; `DottoreWidget` (viewer + gizmo de
+> mover/escalar/girar + painel de fill/stroke/dimensões) dockado à direita do
+> Preview; `tests/tst_shape_generator.cpp` + round-trip em `tst_serialization`.
 
-- `src/colombina/motion/ShapeLayer.h`
-- `src/colombina/render/ShapeRenderer.h/.cpp`
-- mudanças em `Project.h` (`Track::shape`), `Project.cpp` (serialização),
-  `MesaRenderer.cpp` (render), `MesaCanvasOps.cpp` (criar forma)
-- `tests/tst_motion_shape.cpp`
+**Arquivos**:
+
+- `src/colombina/models/Project.h` (`MediaItem::shape*`), `Project.cpp`
+  (serialização condicional quando `generator == "shape"`)
+- `src/colombina/generators.h` (caso `"shape"`)
+- `src/ui/panels/MediaPoolWidget.cpp` (criação)
+- `src/ui/motion/DottoreWidget.h/.cpp` (viewer + gizmo + propriedades)
+- `src/MainWindow.cpp` (dock ao lado do Preview)
+- `tests/tst_shape_generator.cpp`, `tests/tst_serialization.cpp`
 
 **Testes**:
 
-- retângulo/elipse/caminho renderizados em `QImage` offscreen com amostragem
-  de pixels;
-- fill e stroke independentes;
-- trim 0..1 recorta o caminho;
-- transform da camada aplicado igual ao de uma camada de mídia;
-- serialização round-trip `.Blanc`;
-- projeto antigo (schema 2) carrega com shape vazio.
+- retângulo/elipse renderizados em `QImage` offscreen com amostragem de pixels;
+- fill e stroke independentes; cantos arredondados recortam o canto;
+- serialização round-trip `.Blanc` preserva os campos de forma;
+- projeto antigo (sem os campos) carrega com os defaults (retângulo 50%).
 
 **Critério de saída**: forma aparece no preview e no export com o mesmo
 resultado; testes de render e serialização passam.

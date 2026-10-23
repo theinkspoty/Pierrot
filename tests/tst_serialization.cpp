@@ -45,6 +45,19 @@ static Project makeProject() {
     solid.genCells = 16;
     p.media.append(solid);
 
+    MediaItem shape;
+    shape.id = QStringLiteral("m4");
+    shape.isSolid = true;
+    shape.generator = QStringLiteral("shape");
+    shape.shapeType = QStringLiteral("ellipse");
+    shape.solidColor = QColor(10, 200, 90);
+    shape.solidColor2 = QColor(255, 255, 255);
+    shape.shapeW = 0.35;
+    shape.shapeH = 0.6;
+    shape.shapeRoundness = 0.25;
+    shape.shapeStrokeWidth = 6.0;
+    p.media.append(shape);
+
     Track vt;
     vt.id = QStringLiteral("t1");
     vt.name = QStringLiteral("V1");
@@ -322,6 +335,18 @@ void TestSerialization::roundTripPreservesKeyFields() {
     QVERIFY(solid.isSolid);
     QCOMPARE(solid.generator, QStringLiteral("gradient"));
     QCOMPARE(solid.solidColor.alpha(), 128);
+
+    const MediaItem& shape = q.media[2];
+    QVERIFY(shape.isSolid);
+    QCOMPARE(shape.generator, QStringLiteral("shape"));
+    QCOMPARE(shape.shapeType, QStringLiteral("ellipse"));
+    QCOMPARE(shape.solidColor, QColor(10, 200, 90));
+    QCOMPARE(shape.solidColor2, QColor(255, 255, 255));
+    QVERIFY(qAbs(shape.shapeW - 0.35) < 1e-9);
+    QVERIFY(qAbs(shape.shapeH - 0.6) < 1e-9);
+    QVERIFY(qAbs(shape.shapeRoundness - 0.25) < 1e-9);
+    QVERIFY(qAbs(shape.shapeStrokeWidth - 6.0) < 1e-9);
+    QCOMPARE(shape.solidColor.alpha(), 255);
 
     const Track& at = q.audioTracks[0];
     QCOMPARE(at.clips[0].audioStreamIndex, 1);

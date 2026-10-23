@@ -5,12 +5,14 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 
 #include <QImage>
 #include <QLinearGradient>
 #include <QPainter>
+#include <QPainterPath>
 
 #include "colombina/models/Project.h"
 
@@ -19,6 +21,8 @@
 //   "gradient"  → gradiente linear vertical solidColor → solidColor2
 //   "checkerboard" → tabuleiro de genCells×genCells (alternando as duas cores)
 //   "noise"     → grão aleatório entre solidColor e solidColor2
+//   "shape"     → forma geométrica sólida (retângulo/elipse) com fill
+//                 (solidColor) e stroke (solidColor2), centrada no quadro
 // O ruído é determinístico por id: o mesmo gerador sempre produz o mesmo
 // padrão, independente do tamanho/tempo pedido.
 inline QImage generatorFrame(const MediaItem& m, int w, int h) {
@@ -26,6 +30,32 @@ inline QImage generatorFrame(const MediaItem& m, int w, int h) {
     h = qMax(1, h);
     QImage img(w, h, QImage::Format_ARGB32);
     const QString& g = m.generator;
+
+    if (g == QLatin1String("shape")) {
+        img.fill(Qt::transparent);
+        QPainter p(&img);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        const double bw = std::clamp(m.shapeW, 0.0, 4.0) * w;
+        const double bh = std::clamp(m.shapeH, 0.0, 4.0) * h;
+        const QRectF r((w - bw) / 2.0, (h - bh) / 2.0, bw, bh);
+        QPainterPath path;
+        if (m.shapeType == QLatin1String("ellipse")) {
+            path.addEllipse(r);
+        } else if (m.shapeRoundness > 1e-6) {
+            const double rad = std::clamp(m.shapeRoundness, 0.0, 0.5)
+                               * std::min(bw, bh);
+            path.addRoundedRect(r, rad, rad);
+        } else {
+            path.addRect(r);
+        }
+        p.fillPath(path, m.solidColor);
+        if (m.shapeStrokeWidth > 1e-6) {
+            QPen pen(m.solidColor2, m.shapeStrokeWidth,
+                     Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+            p.strokePath(path, pen);
+        }
+        return img;
+    }
 
     if (g == QLatin1String("gradient")) {
         QPainter p(&img);

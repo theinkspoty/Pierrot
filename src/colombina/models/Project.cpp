@@ -32,6 +32,13 @@ static QJsonObject mediaToJson(const MediaItem& m) {
     o["generator"] = m.generator;
     o["solidColor2"] = m.solidColor2.name(QColor::HexArgb);
     o["genCells"] = m.genCells;
+    if (m.generator == QLatin1String("shape")) {
+        o["shapeType"] = m.shapeType;
+        o["shapeW"] = m.shapeW;
+        o["shapeH"] = m.shapeH;
+        o["shapeRoundness"] = m.shapeRoundness;
+        o["shapeStrokeWidth"] = m.shapeStrokeWidth;
+    }
     return o;
 }
 
@@ -57,6 +64,11 @@ static MediaItem mediaFromJson(const QJsonObject& o) {
     const QString sc2 = o["solidColor2"].toString();
     if (QColor::isValidColorName(sc2)) m.solidColor2 = QColor(sc2);
     m.genCells = o["genCells"].toInt(8);
+    m.shapeType = o["shapeType"].toString(QStringLiteral("rect"));
+    m.shapeW = o["shapeW"].toDouble(0.5);
+    m.shapeH = o["shapeH"].toDouble(0.5);
+    m.shapeRoundness = o["shapeRoundness"].toDouble(0.0);
+    m.shapeStrokeWidth = o["shapeStrokeWidth"].toDouble(0.0);
     return m;
 }
 

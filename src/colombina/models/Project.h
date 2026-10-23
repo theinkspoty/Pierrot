@@ -77,10 +77,23 @@ struct MediaItem {
     bool isMesh = false;
     // Tipo do gerador quando isSolid: "" = cor sólida, "gradient" (gradiente
     // linear vertical sólida→solidColor2), "checkerboard" (tabuleiro com
-    // genCells células por lado) ou "noise" (grão aleatório entre as cores).
+    // genCells células por lado), "noise" (grão aleatório entre as cores) ou
+    // "shape" (forma geométrica sólida — motion graphics; ver solidColor/
+    // solidColor2 como fill/stroke e os campos shape* abaixo).
     QString generator;
     QColor solidColor2{Qt::white};
     int genCells = 8;
+
+    // ── Forma geométrica (generator == "shape") ──────────────────────────
+    // Formas sólidas estilo shape layer: retângulo ou elipse com fill e stroke,
+    // centradas no quadro. `shapeW/shapeH` são frações do tamanho do quadro
+    // (1.0 = largura/altura cheia). O clipe é animado pelas propriedades
+    // normais (transform/opacidade/keyframes); não há motor de curvas próprio.
+    QString shapeType{QStringLiteral("rect")}; // "rect" | "ellipse"
+    double shapeW = 0.5;
+    double shapeH = 0.5;
+    double shapeRoundness = 0.0; // raio dos cantos do retângulo, fração do menor lado
+    double shapeStrokeWidth = 0.0; // opacidade/largura do stroke em px (0 = sem stroke)
 };
 
 struct Marker {

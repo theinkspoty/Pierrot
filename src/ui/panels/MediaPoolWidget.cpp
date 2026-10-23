@@ -1177,6 +1177,9 @@ void MediaPoolWidget::addGenerator() {
     QAction* gradAct = menu.addAction(tr("Gradiente…"));
     QAction* checkAct = menu.addAction(tr("Checkboard…"));
     QAction* noiseAct = menu.addAction(tr("Ruído (grão)…"));
+    QMenu* shapeMenu = menu.addMenu(tr("Forma"));
+    QAction* shapeRect = shapeMenu->addAction(tr("Retângulo…"));
+    QAction* shapeEllipse = shapeMenu->addAction(tr("Elipse…"));
     QAction* chosen = menu.exec(QCursor::pos());
 
     MediaItem m;
@@ -1234,6 +1237,18 @@ void MediaPoolWidget::addGenerator() {
         m.solidColor = a;
         m.solidColor2 = b;
         m.name = tr("Ruído");
+    } else if (chosen == shapeRect || chosen == shapeEllipse) {
+        const QColor fill = QColorDialog::getColor(QColor(230, 60, 60), this,
+                                                   tr("Cor da forma"));
+        if (!fill.isValid()) return;
+        m.generator = QStringLiteral("shape");
+        m.shapeType = (chosen == shapeEllipse) ? QStringLiteral("ellipse")
+                                               : QStringLiteral("rect");
+        m.solidColor = fill;
+        m.solidColor2 = QColor(255, 255, 255);
+        m.shapeW = 0.5;
+        m.shapeH = 0.5;
+        m.name = (chosen == shapeEllipse) ? tr("Elipse") : tr("Retângulo");
     } else {
         return;
     }
