@@ -128,6 +128,7 @@ set(COLOMBINA_HEADERS
     src/colombina/ffmpeg/FrameCache.h
     src/colombina/ffmpeg/FFmpegEncoder.h
     src/colombina/export/ProjectExporter.h
+    src/colombina/export/ProjectExporterPriv.h
     src/colombina/export/LainkaFx.h
     src/colombina/export/LainkaRenderer.h
     src/colombina/export/OfxExportRenderer.h
@@ -154,20 +155,52 @@ set(PIERROT_APP_SOURCES
     src/Bench.cpp
     src/MainWindow.cpp
     src/MainWindow.Icons.cpp
+    src/MainWindowWorkspace.cpp
+    src/MainWindowSettings.cpp
+    src/MainWindowDocks.cpp
+    src/MainWindowActions.cpp
+    src/MainWindowUndo.cpp
+    src/MainWindowProjects.cpp
     src/ui/panels/MediaPoolWidget.cpp
     src/ui/timeline/TimelineWidget.cpp
+    src/ui/timeline/TimelineSource.cpp
+    src/ui/timeline/TimelineMesa.cpp
+    src/ui/timeline/TimelineMenus.cpp
+    src/ui/timeline/TimelineClipboard.cpp
+    src/ui/timeline/TimelineInput.cpp
+    src/ui/timeline/TimelineDialogs.cpp
     src/ui/timeline/TimelineCommands.cpp
     src/ui/timeline/TimelineSelection.cpp
     src/ui/timeline/TimelinePaint.cpp
+    src/ui/timeline/TimelinePaintClips.cpp
+    src/ui/timeline/TimelinePaintHeader.cpp
+    src/ui/timeline/TimelinePaintFx.cpp
     src/ui/timeline/TimelineDrag.cpp
+    src/ui/timeline/TimelineDragPress.cpp
+    src/ui/timeline/TimelineDragMove.cpp
+    src/ui/timeline/TimelineDragRelease.cpp
+    src/ui/timeline/TimelineDragDnd.cpp
     src/ui/monitor/PlaybackEngine.cpp
     src/ui/monitor/PreviewProfiler.cpp
     src/ui/monitor/PreviewWidget.cpp
+    src/ui/monitor/PreviewRender.cpp
+    src/ui/monitor/PreviewPlayback.cpp
+    src/ui/monitor/PreviewAudio.cpp
+    src/ui/monitor/PreviewFrames.cpp
+    src/ui/monitor/PreviewReady.cpp
+    src/ui/monitor/PreviewEffects.cpp
+    src/ui/monitor/PreviewOverlay.cpp
     src/ui/monitor/FrameWorker.cpp
     src/ui/monitor/MonitorScrubBar.cpp
     src/ui/timeline/TlLog.cpp
     src/ui/monitor/UiDecode.cpp
     src/ui/mesa/PantaloneWidget.cpp
+    src/ui/mesa/PantaloneData.cpp
+    src/ui/mesa/PantaloneKeys.cpp
+    src/ui/mesa/PantaloneMask.cpp
+    src/ui/mesa/PantalonePaint.cpp
+    src/ui/mesa/PantaloneViewport.cpp
+    src/ui/mesa/PantaloneStrip.cpp
     src/ui/dialogs/ExportDialog.cpp
     src/ui/dialogs/ProjectSettingsDialog.cpp
     src/ui/dialogs/SettingsDialog.cpp
@@ -186,6 +219,9 @@ set(PIERROT_APP_SOURCES
     src/ui/panels/ColorDock.cpp
     src/ui/dialogs/WelcomeWindow.cpp
     src/ui/motion/GraphEditorWidget.cpp
+    src/ui/motion/GraphEditorCanvas.cpp
+    src/ui/motion/GraphEditorStrip.cpp
+    src/ui/motion/GraphEditorRows.cpp
     src/ui/motion/DottoreWidget.cpp
     src/ui/timeline/ClipPropertiesWidget.cpp
     src/ui/core/ClickLogger.cpp
@@ -214,6 +250,7 @@ set(PIERROT_APP_SOURCES
 
 set(PIERROT_APP_HEADERS
     src/MainWindow.h
+    src/MainWindowPriv.h
     src/Bench.h
     src/version.h
     src/ui/monitor/TrimmerDialog.h
@@ -225,6 +262,7 @@ set(PIERROT_APP_HEADERS
     src/ui/monitor/ScopeWidget.h
     src/ui/panels/MediaPoolWidget.h
     src/ui/timeline/TimelineWidget.h
+    src/ui/timeline/TimelinePaintPriv.h
     src/ui/timeline/TimelineCommands.h
     src/ui/monitor/PreviewWidget.h
     src/ui/monitor/PreviewDebug.h
@@ -234,6 +272,7 @@ set(PIERROT_APP_HEADERS
     src/ui/monitor/PreviewMonitor.h
     src/ui/monitor/MonitorUtils.h
     src/ui/mesa/PantaloneWidget.h
+    src/ui/mesa/PantalonePriv.h
     src/ui/dialogs/ExportDialog.h
     src/ui/dialogs/ProjectSettingsDialog.h
     src/ui/dialogs/SettingsDialog.h
@@ -253,6 +292,7 @@ set(PIERROT_APP_HEADERS
     src/ui/panels/ColorDock.h
     src/ui/dialogs/WelcomeWindow.h
     src/ui/motion/GraphEditorWidget.h
+    src/ui/motion/GraphEditorPriv.h
     src/ui/motion/DottoreWidget.h
     src/ui/timeline/ClipPropertiesWidget.h
     src/ui/core/ClickLogger.h
