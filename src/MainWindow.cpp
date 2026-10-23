@@ -1297,7 +1297,7 @@ void MainWindow::ensureTechnicalWindow() {
         {m_scopesDock, tr("Analisadores")},
         {m_propsDock, tr("Propriedades")},
         {m_sourceDock, tr("Source")},
-        {m_colorDock, tr("Cor")},
+        {m_colorDock, tr("Technicolor")},
         {m_textDock, tr("Texto")},
         {m_lazziDock, tr("Lazzi")},
         {m_animPresetDock, tr("Animação")},
@@ -1988,11 +1988,11 @@ void MainWindow::createDocks() {
                     2500);
             });
 
-    // Cor — correção de cor estilo DaVinci (trackballs Lift/Gamma/Gain).
+    // Technicolor — correção de cor e looks analógicos.
     m_colorWidget = new ColorDock(this);
     m_colorWidget->setTimeline(m_timeline);
     m_colorWidget->setPreview(m_preview);
-    m_colorDock = makeDock(QStringLiteral("colorDock"), tr("Cor"),
+    m_colorDock = makeDock(QStringLiteral("colorDock"), tr("Technicolor"),
                            m_colorWidget, Qt::RightDockWidgetArea);
     tabifyDockWidget(m_animPresetDock, m_colorDock);
     connect(m_timeline, &TimelineWidget::selectionChanged, m_colorWidget,

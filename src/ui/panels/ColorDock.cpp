@@ -62,7 +62,7 @@ void ColorDock::buildUi() {
     root->setContentsMargins(4, 4, 4, 4);
     root->setSpacing(4);
 
-    auto* title = new QLabel(tr("Cor"), this);
+    auto* title = new QLabel(tr("Technicolor"), this);
     title->setStyleSheet(QStringLiteral("font-weight:bold;"));
     root->addWidget(title);
 
