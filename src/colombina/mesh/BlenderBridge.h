@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 //
-// Ponte Blender CLI: converte .blend em .obj via `blender -b`.
-// Requer Blender instalado e alcançável pelo PATH (ou por PIERROT_BLENDER).
+// Ponte Blender CLI: converte .blend em .obj via `blender -b` (ou
+// `flatpak run org.blender.Blender -b`). Requer Blender instalado: PATH,
+// Flatpak ou o caminho em PIERROT_BLENDER.
 
 #pragma once
 
@@ -23,7 +24,7 @@ namespace mesh {
 QString blendToObj(const QString& blendPath, QString* error = nullptr,
                    int timeoutMs = 120000, const QString& outDir = QString());
 
-// true se existe um executável `blender` utilizável.
+// true se existe um Blender utilizável (PATH, PIERROT_BLENDER ou Flatpak).
 bool blenderAvailable(QString* resolvedPath = nullptr);
 
 } // namespace mesh

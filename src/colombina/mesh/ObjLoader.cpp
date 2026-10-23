@@ -50,6 +50,12 @@ void ObjMesh::normalize(double target) {
 }
 
 bool ObjMesh::loadTexture() {
+    if (matTextures.size() != matTexturePaths.size())
+        matTextures.resize(matTexturePaths.size());
+    for (int i = 0; i < matTexturePaths.size(); ++i) {
+        if (matTexturePaths[i].isEmpty() || !matTextures[i].isNull()) continue;
+        matTextures[i] = QImage(matTexturePaths[i]);
+    }
     if (texturePath.isEmpty()) return false;
     if (!texture.isNull()) return true;
     texture = QImage(texturePath);
@@ -74,28 +80,34 @@ QColor ObjMesh::averageColor() const {
 
 static QString resolveTexturePath(const QString& objPath, const QString& mapKdIn,
                                   ObjMesh& out) {
+    Q_UNUSED(out);
     const QDir objDir = QFileInfo(objPath).dir();
-    QString mapKd = mapKdIn;
-    mapKd.replace(QLatin1Char('\\'), QLatin1Char('/'));
-    const QStringList candidates = {
-        mapKdIn,
-        mapKd,
-        objDir.filePath(QFileInfo(mapKdIn).fileName()),
-        objDir.filePath(QFileInfo(mapKd).fileName()),
-        // Basenames comuns ao lado do OBJ (ex.: "Buggy texture.png").
-        objDir.filePath(QFileInfo(objPath).completeBaseName() + QStringLiteral(".png")),
-        objDir.filePath(QFileInfo(objPath).completeBaseName() + QStringLiteral(" texture.png")),
-        objDir.filePath(QFileInfo(objPath).completeBaseName() + QStringLiteral("_texture.png")),
-    };
+    QStringList candidates;
+    // Candidatos vindos do map_Kd só quando há referência: com ela vazia,
+    // objDir.filePath("") = o próprio diretório, que "existe" — o dir do .obj
+    // viraria uma textura fantasma (hasTexture() true com QImage nulo).
+    const QString raw = mapKdIn.trimmed();
+    if (!raw.isEmpty()) {
+        QString mapKd = raw;
+        mapKd.replace(QLatin1Char('\\'), QLatin1Char('/'));
+        candidates << raw << mapKd
+                   << objDir.filePath(QFileInfo(raw).fileName())
+                   << objDir.filePath(QFileInfo(mapKd).fileName());
+    }
+    // Basenames comuns ao lado do OBJ (ex.: "Buggy texture.png") — valem
+    // mesmo sem map_Kd: cobre OBJ de terceiros com mtllib/path quebrado.
+    candidates << objDir.filePath(QFileInfo(objPath).completeBaseName() + QStringLiteral(".png"))
+               << objDir.filePath(QFileInfo(objPath).completeBaseName() + QStringLiteral(" texture.png"))
+               << objDir.filePath(QFileInfo(objPath).completeBaseName() + QStringLiteral("_texture.png"));
     for (const QString& c : candidates) {
         if (c.isEmpty()) continue;
-        if (QFileInfo::exists(c)) return QFileInfo(c).absoluteFilePath();
+        const QFileInfo fi(c);
+        if (fi.exists() && fi.isFile()) return fi.absoluteFilePath();
     }
     // NÃO existe mais o fallback "primeiro .png da pasta". Ele era uma roleta:
     // num diretório com várias malhas, o OBJ A acabava com a textura da B, e o
     // resultado era uma malha com a textura errada em vez de nenhuma — erro
     // que ninguém consegue ver de relance. Sem match, sem textura.
-    Q_UNUSED(out);
     return QString();
 }
 
@@ -110,7 +122,9 @@ bool loadObjFile(const QString& path, ObjMesh& out, QString* error) {
     QVector<double> px, py, pz;
     QVector<QPointF> uvs;
     QString mtllib;
-    QString mapKd;
+    QString mapKd;    // map_Kd colado no próprio .obj (ferramentas estranhas)
+    QString curMat;   // usemtl corrente
+    QVector<QString> faceMatName; // material declarado em cada face aceita
     // Faces: índices de vértice + UV paralelos.
     QVector<QVector<int>> faces;
     QVector<QVector<int>> faceUVs;
@@ -139,6 +153,10 @@ bool loadObjFile(const QString& path, ObjMesh& out, QString* error) {
             // mtllib pode ter espaços: junta o resto.
             for (int i = 2; i < parts.size(); ++i)
                 mtllib += QLatin1Char(' ') + parts[i];
+        } else if (parts[0] == QLatin1String("usemtl") && parts.size() >= 2) {
+            curMat = parts[1];
+            for (int i = 2; i < parts.size(); ++i)
+                curMat += QLatin1Char(' ') + parts[i];
         } else if (parts[0] == QLatin1String("map_Kd") && parts.size() >= 2) {
             mapKd = parts.mid(1).join(QLatin1Char(' '));
         } else if (parts[0] == QLatin1String("f") && parts.size() >= 4) {
@@ -167,6 +185,7 @@ bool loadObjFile(const QString& path, ObjMesh& out, QString* error) {
             if (idx.size() >= 3) {
                 faces.append(idx);
                 faceUVs.append(uidx);
+                faceMatName.append(curMat);
             }
         }
     }
@@ -198,24 +217,55 @@ bool loadObjFile(const QString& path, ObjMesh& out, QString* error) {
         out.maxZ = std::max(out.maxZ, pz[i]);
     }
 
-    // Material / textura.
+    // Material / textura. O mtl completo é lido (todos os newmtl + map_Kd):
+    // um só map_Kd global errava em malha multi-material (Tin, por exemplo,
+    // tem corpo, rótulo e tampa com texturas diferentes).
+    QVector<QString> matNames;
+    QVector<QString> matMapKd;
     if (!mtllib.isEmpty()) {
-        const QString mtlPath = QFileInfo(QFileInfo(path).dir().filePath(mtllib))
-                                    .absoluteFilePath();
+        QString mtlPath = QFileInfo(QFileInfo(path).dir().filePath(mtllib))
+                              .absoluteFilePath();
+        // OBJs de terceiros citam um mtllib que não existe ("Buggy car.mtl"
+        // quando o arquivo é "Buggy.mtl"): tenta o nome do próprio .obj.
+        if (!QFileInfo::exists(mtlPath)) {
+            const QString alt = QFileInfo(path).dir().filePath(
+                QFileInfo(path).completeBaseName() + QStringLiteral(".mtl"));
+            if (QFileInfo::exists(alt)) mtlPath = alt;
+        }
         out.mtlPath = mtlPath;
         QFile mf(mtlPath);
         if (mf.open(QIODevice::ReadOnly | QIODevice::Text)) {
             QTextStream ms(&mf);
             while (!ms.atEnd()) {
                 const QString ml = ms.readLine().trimmed();
-                if (ml.startsWith(QLatin1String("map_Kd")) && ml.size() > 6) {
-                    mapKd = ml.mid(6).trimmed();
-                    break;
+                if (ml.startsWith(QLatin1String("newmtl")) && ml.size() > 6) {
+                    matNames.append(ml.mid(6).trimmed());
+                    matMapKd.append(QString());
+                } else if (ml.startsWith(QLatin1String("map_Kd")) && ml.size() > 6
+                           && !matMapKd.isEmpty()) {
+                    matMapKd.last() = ml.mid(6).trimmed();
                 }
             }
         }
     }
-    out.texturePath = resolveTexturePath(path, mapKd, out);
+    out.matTexturePaths.resize(matNames.size());
+    for (int i = 0; i < matNames.size(); ++i) {
+        if (matMapKd[i].trimmed().isEmpty()) continue;
+        out.matTexturePaths[i] = resolveTexturePath(path, matMapKd[i], out);
+    }
+    out.faceMat.resize(faces.size());
+    for (int i = 0; i < faces.size(); ++i) {
+        const int mi = faceMatName.value(i).isEmpty() ? -1
+                                                      : matNames.indexOf(faceMatName[i]);
+        out.faceMat[i] = mi;
+    }
+    // API legada: primeira textura encontrada (gate "alguma textura existe"
+    // nos renderers + miniatura do Pivot).
+    for (const QString& t : out.matTexturePaths) {
+        if (!t.isEmpty()) { out.texturePath = t; break; }
+    }
+    if (out.texturePath.isEmpty())
+        out.texturePath = resolveTexturePath(path, mapKd, out);
     out.loadTexture();
 
     out.normalize(200.0);
@@ -255,10 +305,27 @@ static bool affineFromTri(const QPointF& uv0, const QPointF& uv1, const QPointF&
     return true;
 }
 
+// Textura da face: a do SEU material (usemtl). Face sem info de material
+// (mtl ausente / sem usemtl) cai na textura global; face cujo material não
+// tem map_Kd devolve nullptr — o chamador pinta cor chapada (material liso
+// é melhor que a textura de OUTRA parte do modelo esticada em cima).
+static const QImage* faceTexture(const ObjMesh& mesh, int faceIndex) {
+    if (faceIndex >= 0 && faceIndex < mesh.faceMat.size()) {
+        const int fm = mesh.faceMat[faceIndex];
+        if (fm >= 0)
+            return (fm < mesh.matTextures.size() && !mesh.matTextures[fm].isNull())
+                       ? &mesh.matTextures[fm]
+                       : nullptr;
+        return mesh.texture.isNull() ? nullptr : &mesh.texture;
+    }
+    return mesh.texture.isNull() ? nullptr : &mesh.texture;
+}
+
 bool fillFaceTextured(QPainter& painter, const ObjMesh& mesh, int faceIndex,
                       const QPolygonF& poly, double opacity) {
     if (poly.size() < 3) return false;
-    if (mesh.texture.isNull()) return false;
+    const QImage* tex = faceTexture(mesh, faceIndex);
+    if (!tex) return false;
     if (faceIndex < 0 || faceIndex >= mesh.faceUVs.size()) return false;
 
     const QVector<int>& fuv = mesh.faceUVs[faceIndex];
@@ -270,8 +337,8 @@ bool fillFaceTextured(QPainter& painter, const ObjMesh& mesh, int faceIndex,
 
     // UV -> pixel da textura. OBJ tem V crescendo para CIMA e a QImage tem a
     // linha 0 no topo, entao o V precisa ser invertido.
-    const double tw = std::max(1, mesh.texture.width() - 1);
-    const double th = std::max(1, mesh.texture.height() - 1);
+    const double tw = std::max(1, tex->width() - 1);
+    const double th = std::max(1, tex->height() - 1);
     QVector<QPointF> src;
     src.reserve(fuv.size());
     for (int k = 0; k < poly.size(); ++k) {
@@ -281,7 +348,7 @@ bool fillFaceTextured(QPainter& painter, const ObjMesh& mesh, int faceIndex,
         src.append(QPointF(uv.x() * tw, (1.0 - uv.y()) * th));
     }
 
-    const QBrush brush(QPixmap::fromImage(mesh.texture));
+    const QBrush brush(QPixmap::fromImage(*tex));
 
     painter.save();
     painter.setPen(Qt::NoPen);
@@ -342,7 +409,8 @@ void drawMeshTextured(QPainter& painter, const ObjMesh& mesh, double scale,
         }
         if (poly.size() < 3) continue;
 
-        if (tex) {
+        const QImage* ftex = faceTexture(mesh, fd.fi);
+        if (ftex) {
             // Raster aproximado: para cada face, amostra a textura nas UVs
             // e pinta o polígono com a cor interpolada (Gouraud leve).
             // MVP: preenche com a cor média da região UV + desenha a textura
@@ -357,12 +425,12 @@ void drawMeshTextured(QPainter& painter, const ObjMesh& mesh, double scale,
                 int ui = (i < uvidx.size()) ? uvidx[i] : -1;
                 if (ui < 0 || ui >= mesh.uvs.size()) continue;
                 const QPointF& uv = mesh.uvs[ui];
-                const int tx = std::clamp(int(uv.x() * (mesh.texture.width() - 1)),
-                                          0, mesh.texture.width() - 1);
+                const int tx = std::clamp(int(uv.x() * (ftex->width() - 1)),
+                                          0, ftex->width() - 1);
                 // V do OBJ: 0 embaixo; QImage: 0 em cima.
-                const int ty = std::clamp(int((1.0 - uv.y()) * (mesh.texture.height() - 1)),
-                                          0, mesh.texture.height() - 1);
-                samples[ns++] = QColor(mesh.texture.pixel(tx, ty));
+                const int ty = std::clamp(int((1.0 - uv.y()) * (ftex->height() - 1)),
+                                          0, ftex->height() - 1);
+                samples[ns++] = QColor(ftex->pixel(tx, ty));
             }
             QColor fill = face;
             if (ns > 0) {
@@ -384,7 +452,7 @@ void drawMeshTextured(QPainter& painter, const ObjMesh& mesh, double scale,
                 clip.addPolygon(poly);
                 painter.setClipPath(clip);
                 painter.setOpacity(std::clamp(opacity * 0.85, 0.0, 1.0));
-                painter.drawImage(bbox, mesh.texture);
+                painter.drawImage(bbox, *ftex);
                 painter.restore();
             }
         } else {

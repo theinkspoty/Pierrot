@@ -4,8 +4,9 @@
 // Licenciado sob a GNU GPL v3 ou superior. Veja LICENSE.
 //
 // Loader de OBJ (Wavefront) com textura — malhas para a Mesa 3D / Pivot.
-// Suporta: v, vt, f (v / v/vt / v/vt/vn), mtllib + map_Kd.
+// Suporta: v, vt, f (v / v/vt / v/vt/vn), mtllib + newmtl/usemtl + map_Kd.
 // Resolve textura: caminho do MTL → mesmo diretório do OBJ → *.png vizinho.
+// Multi-material: cada face usa a textura do SEU material (usemtl).
 
 #pragma once
 
@@ -31,6 +32,13 @@ struct ObjMesh {
     QString mtlPath;
     QString texturePath; // caminho resolvido da textura (pode ser vazio)
     QImage texture;      // carregada sob demanda
+    // ── multi-material ──
+    // `texture`/`texturePath` continuam sendo o PRIMEIRO material texturado
+    // (port API: gate de "alguma textura existe" nos renderers); o desenho
+    // por face usa os arrays abaixo.
+    QVector<QString> matTexturePaths; // por material (vazio = sem textura)
+    QVector<QImage> matTextures;      // por material, carregadas em loadTexture()
+    QVector<int> faceMat;             // material de cada face; -1 = desconhecido
 
     bool isEmpty() const { return faces.isEmpty() || vertsXY.isEmpty(); }
     bool hasTexture() const { return !texturePath.isEmpty(); }
