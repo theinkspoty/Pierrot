@@ -10,6 +10,7 @@
 #include "ui/timeline/TimelineWidget.h"
 #include "ui/monitor/PreviewWidget.h"
 #include "ui/mesa/PantaloneWidget.h"
+#include "ui/motion/DottoreWidget.h"
 #include "ui/dialogs/MaskEditorDialog.h"
 #include "ui/motion/GraphEditorWidget.h"
 #include "ui/panels/EffectsWidget.h"
@@ -245,6 +246,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // Pivot — edição 3D do clipe (gizmo + keyframes), mais simples que a Mesa.
     m_pivot = new PivotWidget(this);
     m_pivot->setProject(&m_project);
+
+    // Dottore — edição de motion graphics por forma (segundo viewer, dockável
+    // ao lado do Preview).
+    m_dottore = new DottoreWidget(this);
+    m_dottore->setProject(&m_project);
 
     m_effects = new EffectsWidget(this);
     m_express = new ExpressWidget(this);
@@ -878,6 +884,19 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         m_timeline->update();
         m_preview->refreshView();
         setModified();
+    });
+    connect(m_timeline, &TimelineWidget::selectionChanged, m_dottore, &DottoreWidget::setClipId);
+    connect(m_timeline, &TimelineWidget::playheadChanged, m_dottore, &DottoreWidget::setPlayhead);
+    connect(m_dottore, &DottoreWidget::editStart, this, &MainWindow::pushUndo);
+    connect(m_dottore, &DottoreWidget::modified, this, [this]() {
+        m_timeline->update();
+        m_timeline->invalidateScene();
+        m_preview->refreshView();
+        if (m_graph) m_graph->refresh();
+        setModified();
+    });
+    connect(m_dottore, &DottoreWidget::keyframesChanged, this, [this]() {
+        if (m_graph) m_graph->refresh();
     });
     connect(m_velocity, &VelocityEditorWidget::editStart, this, &MainWindow::pushUndo);
     connect(m_velocity, &VelocityEditorWidget::modified, this, [this]() {
@@ -1912,6 +1931,14 @@ void MainWindow::createDocks() {
     tabifyDockWidget(m_velocityDock, m_pivotDock);
     m_pivotDock->hide();
 
+    // Dottore — segundo viewer de edição de motion (formas). Nasce à direita,
+    // ao lado do Preview (mesma área do Pantalone), para editar e ver o
+    // resultado sem abrir a Mesa.
+    m_dottoreDock = makeDock(QStringLiteral("dottoreDock"), tr("Dottore"),
+                             m_dottore, Qt::RightDockWidgetArea);
+    if (m_pantaloneDock)
+        splitDockWidget(m_pantaloneDock, m_dottoreDock, Qt::Vertical);
+    m_dottoreDock->hide();
     m_effectsDock = makeDock(QStringLiteral("effectsDock"), tr("Effects"),
                              m_effects, Qt::RightDockWidgetArea);
     m_effectsDock->hide();

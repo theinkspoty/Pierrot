@@ -186,6 +186,7 @@ set(PIERROT_APP_SOURCES
     src/ui/panels/ColorDock.cpp
     src/ui/dialogs/WelcomeWindow.cpp
     src/ui/motion/GraphEditorWidget.cpp
+    src/ui/motion/DottoreWidget.cpp
     src/ui/timeline/ClipPropertiesWidget.cpp
     src/ui/core/ClickLogger.cpp
     src/ui/panels/EffectsWidget.cpp
@@ -252,6 +253,7 @@ set(PIERROT_APP_HEADERS
     src/ui/panels/ColorDock.h
     src/ui/dialogs/WelcomeWindow.h
     src/ui/motion/GraphEditorWidget.h
+    src/ui/motion/DottoreWidget.h
     src/ui/timeline/ClipPropertiesWidget.h
     src/ui/core/ClickLogger.h
     src/ui/panels/EffectsWidget.h
@@ -422,6 +424,19 @@ target_link_libraries(tst_serialization PRIVATE
     ${PIERROT_QT_GUI}
 )
 add_test(NAME tst_serialization COMMAND tst_serialization)
+
+# tst_shape_generator: gerador de forma (motion graphics) — render offscreen.
+add_executable(tst_shape_generator
+    tests/tst_shape_generator.cpp
+    src/colombina/models/Project.cpp
+)
+target_include_directories(tst_shape_generator PRIVATE src src/colombina/ofx/sdk)
+target_link_libraries(tst_shape_generator PRIVATE
+    ${PIERROT_QT_TEST}
+    ${PIERROT_QT_CORE}
+    ${PIERROT_QT_GUI}
+)
+add_test(NAME tst_shape_generator COMMAND tst_shape_generator)
 
 add_executable(tst_edl
     tests/tst_edl.cpp
