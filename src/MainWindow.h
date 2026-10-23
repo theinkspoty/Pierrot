@@ -42,6 +42,7 @@ class MesaWidget;
 class SourceMonitorWidget;
 class VelocityEditorWidget;
 class PivotWidget;
+class DottoreWidget;
 class OfxPluginManager;
 class Frei0rPluginManager;
 class QListWidget;
@@ -276,6 +277,7 @@ private:
     ColorDock* m_colorWidget = nullptr;  // Cor — correção estilo DaVinci (dock)
     VelocityEditorWidget* m_velocity = nullptr; // Editor de Velocidade (dock)
     PivotWidget* m_pivot = nullptr; // Pivot — edição 3D do clipe (dock)
+    DottoreWidget* m_dottore = nullptr; // Dottore — motion graphics por forma (dock)
     QPointer<MaskEditorDialog> m_maskDialog;  // janela de máscara (única)
     QString m_maskDialogClipId;               // clipe que está sendo editado no momento
     QDockWidget* m_poolDock = nullptr;
@@ -300,6 +302,7 @@ private:
     QDockWidget* m_colorDock = nullptr;    // Cor — correção estilo DaVinci (dock)
     QDockWidget* m_velocityDock = nullptr;  // Editor de Velocidade do clipe
     QDockWidget* m_pivotDock = nullptr;    // Pivot — 3D do clipe
+    QDockWidget* m_dottoreDock = nullptr;  // Dottore — motion graphics de forma
     // Registro de todos os docks criados por makeDock(), na ordem de criação.
     // O menu Exibir e o salvamento do layout percorrem esta lista em vez de
     // repetir os nomes à mão.
