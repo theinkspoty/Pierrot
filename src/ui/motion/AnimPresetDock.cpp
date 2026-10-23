@@ -25,6 +25,7 @@
 #include <QEnterEvent>
 #endif
 #include <algorithm>
+#include <limits>
 
 namespace {
 
@@ -45,6 +46,33 @@ void setKf(QVector<Keyframe>& kf, double& base, const QVector<K>& keys) {
         upsertKeyframe(kf, k.t, k.v, k.i);
     }
     if (!kf.isEmpty()) base = kf.first().value;
+}
+
+// Clipes curtos passam pelo mesmo deslocamento em menos tempo — o movimento
+// some antes de "ler". Abaixo de ~1 s, amplia os offsets espaciais (até 1,6×)
+// sem mexer nos tempos das keyframes, que já escalam com a duração do clipe.
+double distanceBoost(double dur) {
+    return 1.0 + 0.6 * qBound(0.0, 1.0 - dur, 1.0);
+}
+
+// Afasta os valores do centro neutro (0 nos offsets/rotação; 1 na escala).
+// `maxDev` evita exagerar movimentos que já são grandes de propósito (giro de
+// 360°, flip em scaleX −1, zoom de entrada a partir de 0): só a amplitude
+// pequena ganha reforço.
+void amplifyKeys(QVector<Keyframe>& keys, double center, double factor,
+                 double maxDev) {
+    for (Keyframe& k : keys) {
+        const double dev = k.value - center;
+        if (qAbs(dev) <= maxDev) k.value = center + dev * factor;
+    }
+}
+
+// Tamanho aparente do clipe (zoom reduzido + escala X/Y) para calibrar os
+// deslocamentos das entradas reduzidas. A escala dos keyframes usa só c.scale,
+// para não multiplicar duas vezes a escala X/Y que o clipe já tinha.
+double pipScale(const Clip& c) { return qMax(0.01, c.scale); }
+double pipSize(const Clip& c) {
+    return pipScale(c) * qMax(0.01, qMax(qAbs(c.scaleX), qAbs(c.scaleY)));
 }
 
 using PresetFn = void (*)(Clip&, double W, double H);
@@ -135,6 +163,74 @@ void pFadeCine(Clip& c, double, double) {
     const double d = qBound(0.8, c.dur, 3.0);
     setKf(c.kfOpacity, c.opacity, {{0, 0, Sm}, {d * 0.45, 1, KfLinear}});
     setKf(c.kfScale, c.scale, {{0, 1.06, Sm}, {d * 0.55, 1, KfLinear}});
+}
+
+// ─── ENTRADAS REDUZIDAS (PiP) ─────────────────────────────────────────────
+// Partem do transform ATUAL e terminam em `kRedFator` × a escala atual —
+// o preset sempre deixa o clipe menor que estava. Os deslocamentos
+// acompanham o tamanho APARENTE final (escala atual × fator).
+
+// Escala final das entradas reduzidas: quanto do tamanho atual o clipe
+// mantém no fim do preset (0.5 = termina com metade). Único ponto de ajuste.
+constexpr double kRedFator = 0.5;
+
+void pRedPop(Clip& c, double, double H) {
+    const double d = qBound(0.6, c.dur, 2.5);
+    const double sc = pipScale(c) * kRedFator, sz = pipSize(c) * kRedFator,
+                 y = c.ty, o = c.opacity;
+    setKf(c.kfOpacity, c.opacity,
+          {{0, 0, Sm}, {qMin(0.12, d * 0.1), o, KfLinear}});
+    setKf(c.kfScale, c.scale, {{0, sc * 0.4, El}, {d * 0.35, sc, KfLinear}});
+    setKf(c.kfTy, c.ty, {{0, y - 0.10 * H * sz, El}, {d * 0.35, y, KfLinear}});
+}
+
+void pRedEsq(Clip& c, double W, double) {
+    const double d = qBound(0.6, c.dur, 2.5);
+    const double sc = pipScale(c), sz = pipSize(c) * kRedFator, x = c.tx,
+                 o = c.opacity;
+    setKf(c.kfOpacity, c.opacity,
+          {{0, 0, Sm}, {qMin(0.12, d * 0.1), o, KfLinear}});
+    setKf(c.kfTx, c.tx,
+          {{0, x - 0.35 * W * sz, Bk}, {d * 0.32, x, KfLinear}});
+    setKf(c.kfScale, c.scale,
+          {{0, sc, KfLinear}, {d * 0.32, sc * kRedFator, KfLinear}});
+}
+
+void pRedDir(Clip& c, double W, double) {
+    const double d = qBound(0.6, c.dur, 2.5);
+    const double sc = pipScale(c), sz = pipSize(c) * kRedFator, x = c.tx,
+                 o = c.opacity;
+    setKf(c.kfOpacity, c.opacity,
+          {{0, 0, Sm}, {qMin(0.12, d * 0.1), o, KfLinear}});
+    setKf(c.kfTx, c.tx,
+          {{0, x + 0.35 * W * sz, Bk}, {d * 0.32, x, KfLinear}});
+    setKf(c.kfScale, c.scale,
+          {{0, sc, KfLinear}, {d * 0.32, sc * kRedFator, KfLinear}});
+}
+
+void pRedSobe(Clip& c, double, double H) {
+    const double d = qBound(0.6, c.dur, 2.5);
+    const double sc = pipScale(c), sz = pipSize(c) * kRedFator, y = c.ty,
+                 o = c.opacity;
+    setKf(c.kfOpacity, c.opacity,
+          {{0, 0, Sm}, {qMin(0.12, d * 0.1), o, KfLinear}});
+    setKf(c.kfTy, c.ty,
+          {{0, y + 0.35 * H * sz, Bk}, {d * 0.32, y, KfLinear}});
+    setKf(c.kfScale, c.scale,
+          {{0, sc, KfLinear}, {d * 0.32, sc * kRedFator, KfLinear}});
+}
+
+void pRedZoom(Clip& c, double, double) {
+    const double d = qBound(0.6, c.dur, 2.5);
+    const double sc = pipScale(c) * kRedFator, o = c.opacity;
+    setKf(c.kfOpacity, c.opacity,
+          {{0, 0, Sm}, {qMin(0.12, d * 0.1), o, KfLinear}});
+    setKf(c.kfScale, c.scale, {{0, sc * 0.8, Sm}, {d * 0.4, sc, KfLinear}});
+}
+
+void pRedFade(Clip& c, double, double) {
+    const double d = qBound(0.8, c.dur, 3.0);
+    setKf(c.kfOpacity, c.opacity, {{0, 0, Sm}, {d * 0.45, c.opacity, KfLinear}});
 }
 
 // ─── SAÍDAS ───────────────────────────────────────────────────────────────
@@ -573,6 +669,15 @@ const Preset kEntradas[] = {
     {"Semeia (AE)", pSemear},
 };
 
+const Preset kEntradasReduzidas[] = {
+    {"Pop Reduzido", pRedPop},
+    {"Deslizar Esquerda", pRedEsq},
+    {"Deslizar Direita", pRedDir},
+    {"Subir Suave", pRedSobe},
+    {"Zoom Suave", pRedZoom},
+    {"Fade Reduzido", pRedFade},
+};
+
 const Preset kSaidas[] = {
     {"Sair Pop", pSairPop},
     {"Sair p/ Direita", pSairDir},
@@ -991,6 +1096,10 @@ AnimPresetDock::AnimPresetDock(QWidget* parent) : QWidget(parent) {
     v->addWidget(makeGroup(tr("Entradas"), kEntradas,
                            int(sizeof(kEntradas) / sizeof(kEntradas[0])),
                            this, QStringLiteral("#2E7D32")));
+    v->addWidget(makeGroup(tr("Entrada Reduzida"), kEntradasReduzidas,
+                           int(sizeof(kEntradasReduzidas)
+                               / sizeof(kEntradasReduzidas[0])),
+                           this, QStringLiteral("#00897B")));
     v->addWidget(makeGroup(tr("Saídas"), kSaidas,
                            int(sizeof(kSaidas) / sizeof(kSaidas[0])),
                            this, QStringLiteral("#C62828")));
@@ -1062,7 +1171,11 @@ void AnimPresetDock::applyPreset(const QString& name) {
             }
         return false;
     };
-    if (!findIn(kEntradas, int(sizeof(kEntradas) / sizeof(kEntradas[0])))
+    const bool reduced =
+        findIn(kEntradasReduzidas,
+               int(sizeof(kEntradasReduzidas) / sizeof(kEntradasReduzidas[0])));
+    if (!reduced
+        && !findIn(kEntradas, int(sizeof(kEntradas) / sizeof(kEntradas[0])))
         && !findIn(kSaidas, int(sizeof(kSaidas) / sizeof(kSaidas[0])))
         && !findIn(kCamera, int(sizeof(kCamera) / sizeof(kCamera[0])))
         && !findIn(kIdle, int(sizeof(kIdle) / sizeof(kIdle[0])))
@@ -1080,6 +1193,21 @@ void AnimPresetDock::applyPreset(const QString& name) {
             if (!ids.contains(c.id)) continue;
             // O preset substitui as keyframes das props que ele toca.
             fn(c, W, H);
+            // As entradas reduzidas já dimensionam o movimento pelo tamanho
+            // aparente do clipe; ampliar offsets ao redor de 0 deslocaria a
+            // posição/escala atuais que elas justamente preservam.
+            if (!reduced) {
+                const double boost = distanceBoost(c.dur);
+                if (boost > 1.0) {
+                    const double inf = std::numeric_limits<double>::max();
+                    amplifyKeys(c.kfTx, 0.0, boost, inf);
+                    amplifyKeys(c.kfTy, 0.0, boost, inf);
+                    amplifyKeys(c.kfRotation, 0.0, boost, 30.0);
+                    amplifyKeys(c.kfScale, 1.0, boost, 0.35);
+                    amplifyKeys(c.kfScaleX, 1.0, boost, 0.35);
+                    amplifyKeys(c.kfScaleY, 1.0, boost, 0.35);
+                }
+            }
             ++applied;
         }
     }
