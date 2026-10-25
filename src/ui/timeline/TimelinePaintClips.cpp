@@ -66,9 +66,9 @@ void TimelineWidget::drawClip(QPainter& p, const QRect& r, const Clip& c,
                                 : themeColors().clipBorder;
         }
     }
-    p.setPen(QPen(border, sel ? 2 : sel2 ? 1.5 : 1));
+    p.setPen(QPen(sel ? QColor(255,255,255,235) : border, sel ? 2 : sel2 ? 1.5 : 1));
     p.setBrush(fill);
-    p.drawRoundedRect(r, 2, 2);
+    p.drawRoundedRect(r, 6, 6);
 
     const MediaItem* mi = m_project ? m_project->findMedia(c.mediaId) : nullptr;
     const QString path = mi ? mi->filePath : QString();
@@ -246,14 +246,17 @@ void TimelineWidget::drawTextClipBody(QPainter& p, const QRect& r, const Clip& c
 void TimelineWidget::drawAudioWaveform(QPainter& p, const QRect& r, const Clip& c,
                                        const QString& path, const QColor& tint) {
     if (path.isEmpty() || r.width() < 2) return;
-    const qreal hue = tint.hslHueF() < 0.0 ? 0.36 : tint.hslHueF();
-    const qreal sat = tint.hslSaturationF() > 0.0 ? tint.hslSaturationF() : 0.65;
+    const qreal hue = tint.hslHueF() < 0.0 ? 0.58 : tint.hslHueF();
+    const qreal sat = tint.hslSaturationF() > 0.0 ? qMin(0.9, tint.hslSaturationF() + 0.15) : 0.7;
 
     MediaCache& cache = MediaCache::instance();
     if (!cache.hasPeaks(path, c.audioStreamIndex)) {
         cache.requestPeaks(path, c.audioStreamIndex);
-        p.fillRect(r, QColor::fromHslF(hue, sat, 0.38));
-        p.setPen(QColor(10, 10, 12, 80));
+        QLinearGradient bg(r.topLeft(), r.bottomLeft());
+        bg.setColorAt(0.0, QColor::fromHslF(hue, sat, 0.32));
+        bg.setColorAt(1.0, QColor::fromHslF(hue, sat, 0.26));
+        p.fillRect(r, bg);
+        p.setPen(QPen(QColor(255, 255, 255, 40), 1));
         p.drawLine(r.left(), r.center().y(), r.right(), r.center().y());
         return;
     }
@@ -264,19 +267,28 @@ void TimelineWidget::drawAudioWaveform(QPainter& p, const QRect& r, const Clip& 
     const int x1 = r.right();
     const double dur = c.dur;
     const int midY = r.center().y();
-    const double amp = qMax(1.0, r.height() / 2.0 - 4.0);
+    const double amp = qMax(2.0, r.height() / 2.0 - 3.0);
     const bool sel = isSelected(c.id);
     const bool sel2 = !sel && isSecondarySelected(c.id);
 
-    // Corpo do clipe = cor sólida do label, ton escuro (Premiere); a onda clara
-    // fica em destaque por cima.
-    p.fillRect(r, sel ? QColor::fromHslF(hue, sat, 0.50)
-                      : sel2 ? QColor::fromHslF(hue, sat, 0.34)
-                             : QColor::fromHslF(hue, sat, 0.38));
+    // Corpo do clipe com gradiente mais limpo
+    {
+        QLinearGradient bg(r.topLeft(), r.bottomLeft());
+        if (sel) {
+            bg.setColorAt(0.0, QColor::fromHslF(hue, sat, 0.52));
+            bg.setColorAt(1.0, QColor::fromHslF(hue, sat, 0.38));
+        } else if (sel2) {
+            bg.setColorAt(0.0, QColor::fromHslF(hue, sat, 0.42));
+            bg.setColorAt(1.0, QColor::fromHslF(hue, sat, 0.32));
+        } else {
+            bg.setColorAt(0.0, QColor::fromHslF(hue, sat, 0.38));
+            bg.setColorAt(1.0, QColor::fromHslF(hue, sat, 0.28));
+        }
+        p.fillRect(r, bg);
+    }
 
-    // Baseline sempre visível (inclusive em silêncio): a onda não "some"
-    // em cortes pequenos com poucos picos nem em corte 100% silêncio.
-    p.setPen(QPen(QColor(10, 10, 12, 90), 1));
+    // Linha central mais sutil
+    p.setPen(QPen(QColor(0, 0, 0, 70), 1));
     p.drawLine(x0, midY, x1, midY);
 
     if (pk.min.isEmpty()) return;
@@ -298,10 +310,7 @@ void TimelineWidget::drawAudioWaveform(QPainter& p, const QRect& r, const Clip& 
         }
     };
 
-    // Autogain por percentil p95 em vez do pico máximo: um transiente isolado
-    // num corte com muito silêncio não estoura a altura nem faz o resto da
-    // onda desaparecer. Fallback: se o p95 for ~0 (corte quase todo silêncio),
-    // usa o máximo absoluto para pelo menos um pico aparecer.
+    // Autogain por percentil p95
     QVector<float> peaks;
     peaks.reserve(x1 - x0 + 1);
     for (int x = x0; x <= x1; ++x) {
@@ -313,43 +322,83 @@ void TimelineWidget::drawAudioWaveform(QPainter& p, const QRect& r, const Clip& 
     float gPeak = 0.0f;
     if (!peaks.isEmpty()) {
         const qsizetype idx = qMin<qsizetype>(peaks.size() - 1,
-                                              (qsizetype)(peaks.size() * 0.95));
+                                              (qsizetype)(peaks.size() * 0.96));
         gPeak = peaks[idx];
         if (gPeak < 1e-4f) gPeak = peaks.last();
     }
-    // Ganho limitado: um corte quase todo silêncio tem só ruído de fundo
-    // (~1e-4..1e-3). Sem teto, `0.92/gPeak` viraria milhares e a onda "falsa"
-    // encheria o clipe inteiro (o clássico "buga ao cortar em silêncio"). O
-    // teto mantém o silêncio plano e não afeta cortes com sinal real.
-    constexpr double kMaxWaveGain = 20.0;
-    const double gain = gPeak > 1e-4 ? std::min(0.92 / gPeak, kMaxWaveGain) : 1.0;
+    constexpr double kMaxWaveGain = 24.0;
+    const double gain = gPeak > 1e-4 ? std::min(0.98 / gPeak, kMaxWaveGain) : 1.0;
 
-    // Onda em tom CLARO do matiz do clipe, quase opaca (Premiere: waveform
-    // claro sobre o corpo sólido, sem transparência crescendo por amplitude).
-    const qreal waveVal = 0.78;
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setRenderHint(QPainter::SmoothPixmapTransform, true);
 
+    QPainterPath fillPath;
+    QPainterPath linePath;
+    bool first = true;
     for (int x = x0; x <= x1; ++x) {
         float mn = 0.0f, mx = 0.0f;
         colMinMax(x, mn, mx);
         const float absPeak = std::max(std::fabs(mx), std::fabs(mn));
-        // Coluna de silêncio: não desenha barra (a baseline já cobre); a onda
-        // contínua evita "buracos" em cortes pequenos com silêncio.
-        if (absPeak <= 1e-4f) continue;
-
-        const int top = qBound(r.top(), (int)std::lround(midY - mx * amp * gain),
-                               r.bottom());
-        const int bot = qBound(r.top(), (int)std::lround(midY - mn * amp * gain),
-                               r.bottom());
-        if (top >= bot) continue;
-
-        const float norm = std::clamp(absPeak * (float)gain, 0.0f, 1.0f);
-        const qreal alph = qBound(0.80, 0.86 + 0.14 * norm, 1.0);
-        p.setPen(Qt::NoPen);
-        p.setBrush(QColor::fromHslF(hue, sat, waveVal, alph));
-        // Coluna sólida de -pico a +pico, espelhada em torno do zero, como o
-        // waveform "unificado" (mono/estéreo somados) do Premiere.
-        p.drawRect(x, top, 1, bot - top + 1);
+        if (absPeak <= 8e-5f) {
+            if (!first) {
+                // manter continuidade suave
+                const int yMid = midY;
+                if (first) { fillPath.moveTo(x, yMid); linePath.moveTo(x, yMid); first = false; }
+                else { fillPath.lineTo(x, yMid); linePath.lineTo(x, yMid); }
+            }
+            continue;
+        }
+        const int top = qBound(r.top() + 1, (int)std::lround(midY - mx * amp * gain), r.bottom() - 1);
+        const int bot = qBound(r.top() + 1, (int)std::lround(midY - mn * amp * gain), r.bottom() - 1);
+        if (top > bot) continue;
+        if (first) {
+            fillPath.moveTo(x, midY);
+            linePath.moveTo(x, top);
+            first = false;
+        }
+        linePath.lineTo(x, top);
     }
+    // fechar fill
+    for (int x = x1; x >= x0; --x) {
+        float mn = 0.0f, mx = 0.0f;
+        colMinMax(x, mn, mx);
+        const float absPeak = std::max(std::fabs(mx), std::fabs(mn));
+        if (absPeak <= 8e-5f) {
+            fillPath.lineTo(x, midY);
+            continue;
+        }
+        const int bot = qBound(r.top() + 1, (int)std::lround(midY - mn * amp * gain), r.bottom() - 1);
+        fillPath.lineTo(x, bot);
+    }
+    fillPath.closeSubpath();
+
+    // Sombra da waveform pra destacar
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(0, 0, 0, 60));
+    p.translate(0, 1);
+    p.drawPath(fillPath);
+    p.translate(0, -1);
+
+    // Fill da waveform
+    QLinearGradient wf(r.topLeft(), r.bottomLeft());
+    wf.setColorAt(0.0, QColor(235, 245, 255, 230));
+    wf.setColorAt(0.5, QColor(210, 230, 255, 210));
+    wf.setColorAt(1.0, QColor(190, 215, 255, 190));
+    p.setBrush(wf);
+    p.drawPath(fillPath);
+
+    // Contorno da waveform
+    p.setBrush(Qt::NoBrush);
+    p.setPen(QPen(QColor(255, 255, 255, 160), 1));
+    p.drawPath(linePath);
+
+    // Segundo contorno mais fino pra dar definição
+    p.setPen(QPen(QColor(120, 170, 255, 90), 0.8));
+    QPainterPath linePath2 = linePath;
+    p.drawPath(linePath2);
+
+    p.restore();
 }
 
 void TimelineWidget::drawVideoThumbs(QPainter& p, const QRect& r, const Clip& c,
