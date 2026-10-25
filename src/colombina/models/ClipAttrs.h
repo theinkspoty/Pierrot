@@ -8,6 +8,8 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonValue>
+#include <QPointF>
+#include <QStringList>
 #include <QVariant>
 
 #include "colombina/models/Project.h"
@@ -47,6 +49,45 @@ inline QVector<Keyframe> kfVec(const QJsonValue& val) {
         v.append(k);
     }
     return v;
+}
+
+// Curvas da color grade: ["x,y", ...] — mesmo formato do save do projeto.
+inline QJsonArray curveArr(const QVector<QPointF>& v) {
+    QJsonArray a;
+    for (const QPointF& p : v)
+        a.append(QStringLiteral("%1,%2").arg(p.x()).arg(p.y()));
+    return a;
+}
+
+inline QVector<QPointF> curveVec(const QJsonValue& val) {
+    QVector<QPointF> pts;
+    for (const QJsonValue& sv : val.toArray()) {
+        const QStringList xy = sv.toString().split(QLatin1Char(','));
+        if (xy.size() >= 2)
+            pts.append(QPointF(xy[0].toDouble(), xy[1].toDouble()));
+    }
+    return pts;
+}
+
+inline QJsonArray meshArr(const QVector<QPointF>& v) {
+    QJsonArray a;
+    for (const QPointF& p : v) {
+        QJsonArray qa;
+        qa.append(p.x());
+        qa.append(p.y());
+        a.append(qa);
+    }
+    return a;
+}
+
+inline QVector<QPointF> meshVec(const QJsonValue& val) {
+    QVector<QPointF> pts;
+    for (const QJsonValue& pv : val.toArray()) {
+        const QJsonArray qa = pv.toArray();
+        if (qa.size() >= 2)
+            pts.append(QPointF(qa.at(0).toDouble(), qa.at(1).toDouble()));
+    }
+    return pts;
 }
 
 inline QJsonObject toJson(const Clip& c) {
@@ -94,6 +135,10 @@ inline QJsonObject toJson(const Clip& c) {
     o["cgBlend"] = c.cgBlend;
     o["cgLutStrength"] = c.cgLutStrength;
     o["cgLutPath"] = c.cgLutPath;
+    o["cgMasterCurve"] = curveArr(c.cgMasterCurve);
+    o["cgRCurve"] = curveArr(c.cgRCurve);
+    o["cgGCurve"] = curveArr(c.cgGCurve);
+    o["cgBCurve"] = curveArr(c.cgBCurve);
 
     o["lainkaEnabled"] = c.lainkaEnabled;
     o["lainkaSkip"] = c.lainkaSkip;
@@ -112,6 +157,11 @@ inline QJsonObject toJson(const Clip& c) {
     o["lainkaMotionBlur"] = c.lainkaMotionBlur;
     o["lainkaOpacity"] = c.lainkaOpacity;
     o["lainkaAntialias"] = c.lainkaAntialias;
+    o["lainkaHold"] = c.lainkaHold;
+    o["lainkaStutter"] = c.lainkaStutter;
+    o["lainkaPosterize"] = c.lainkaPosterize;
+    o["lainkaColorShift"] = c.lainkaColorShift;
+    o["lainkaGate"] = c.lainkaGate;
 
     o["motionEnabled"] = c.motionEnabled;
     o["motionAmount"] = c.motionAmount;
@@ -127,6 +177,14 @@ inline QJsonObject toJson(const Clip& c) {
     o["anchorX"] = c.anchorX;
     o["anchorY"] = c.anchorY;
 
+    // Transform 3D (dock Pivot) e malha de deformação.
+    o["clipZ"] = c.clipZ;
+    o["clipRotX"] = c.clipRotX;
+    o["clipRotY"] = c.clipRotY;
+    o["meshCols"] = c.meshCols;
+    o["meshRows"] = c.meshRows;
+    o["mesh"] = meshArr(c.mesh);
+
     o["cropL"] = c.cropL;
     o["cropR"] = c.cropR;
     o["cropT"] = c.cropT;
@@ -139,6 +197,9 @@ inline QJsonObject toJson(const Clip& c) {
     o["denoiseAmount"] = c.denoiseAmount;
     o["normalize"] = c.normalize;
     o["invertPhase"] = c.invertPhase;
+    o["reverb"] = c.reverb;
+    o["reverbMix"] = c.reverbMix;
+    o["reverbSize"] = c.reverbSize;
 
     QJsonArray ofxArr;
     for (const OfxPluginInstance& fx : c.ofxFx) {
@@ -190,6 +251,9 @@ inline QJsonObject toJson(const Clip& c) {
     o["kfCropT"] = kfArr(c.kfCropT);
     o["kfCropB"] = kfArr(c.kfCropB);
     o["kfSpeed"] = kfArr(c.kfSpeed);
+    o["kfClipZ"] = kfArr(c.kfClipZ);
+    o["kfClipRotX"] = kfArr(c.kfClipRotX);
+    o["kfClipRotY"] = kfArr(c.kfClipRotY);
     return o;
 }
 
@@ -252,6 +316,10 @@ inline void applyJson(Clip& c, const QJsonObject& o) {
     if (key("cgBlend")) c.cgBlend = d("cgBlend", c.cgBlend);
     if (key("cgLutStrength")) c.cgLutStrength = d("cgLutStrength", c.cgLutStrength);
     if (key("cgLutPath")) c.cgLutPath = o["cgLutPath"].toString(c.cgLutPath);
+    if (key("cgMasterCurve")) c.cgMasterCurve = curveVec(o["cgMasterCurve"]);
+    if (key("cgRCurve")) c.cgRCurve = curveVec(o["cgRCurve"]);
+    if (key("cgGCurve")) c.cgGCurve = curveVec(o["cgGCurve"]);
+    if (key("cgBCurve")) c.cgBCurve = curveVec(o["cgBCurve"]);
 
     if (key("lainkaEnabled")) c.lainkaEnabled = b("lainkaEnabled", c.lainkaEnabled);
     if (key("lainkaSkip")) c.lainkaSkip = qMax(1, o["lainkaSkip"].toInt(c.lainkaSkip));
@@ -270,6 +338,11 @@ inline void applyJson(Clip& c, const QJsonObject& o) {
     if (key("lainkaMotionBlur")) c.lainkaMotionBlur = d("lainkaMotionBlur", c.lainkaMotionBlur);
     if (key("lainkaOpacity")) c.lainkaOpacity = d("lainkaOpacity", c.lainkaOpacity);
     if (key("lainkaAntialias")) c.lainkaAntialias = o["lainkaAntialias"].toInt(c.lainkaAntialias);
+    if (key("lainkaHold")) c.lainkaHold = qMax(0, qMin(6, o["lainkaHold"].toInt(c.lainkaHold)));
+    if (key("lainkaStutter")) c.lainkaStutter = d("lainkaStutter", c.lainkaStutter);
+    if (key("lainkaPosterize")) c.lainkaPosterize = qMax(0, qMin(8, o["lainkaPosterize"].toInt(c.lainkaPosterize)));
+    if (key("lainkaColorShift")) c.lainkaColorShift = d("lainkaColorShift", c.lainkaColorShift);
+    if (key("lainkaGate")) c.lainkaGate = d("lainkaGate", c.lainkaGate);
 
     if (key("motionEnabled")) c.motionEnabled = b("motionEnabled", c.motionEnabled);
     if (key("motionAmount")) c.motionAmount = d("motionAmount", c.motionAmount);
@@ -285,6 +358,13 @@ inline void applyJson(Clip& c, const QJsonObject& o) {
     if (key("anchorX")) c.anchorX = d("anchorX", c.anchorX);
     if (key("anchorY")) c.anchorY = d("anchorY", c.anchorY);
 
+    if (key("clipZ")) c.clipZ = d("clipZ", c.clipZ);
+    if (key("clipRotX")) c.clipRotX = d("clipRotX", c.clipRotX);
+    if (key("clipRotY")) c.clipRotY = d("clipRotY", c.clipRotY);
+    if (key("meshCols")) c.meshCols = qMax(2, o["meshCols"].toInt(c.meshCols));
+    if (key("meshRows")) c.meshRows = qMax(2, o["meshRows"].toInt(c.meshRows));
+    if (key("mesh")) c.mesh = meshVec(o["mesh"]);
+
     if (key("cropL")) c.cropL = d("cropL", c.cropL);
     if (key("cropR")) c.cropR = d("cropR", c.cropR);
     if (key("cropT")) c.cropT = d("cropT", c.cropT);
@@ -297,6 +377,9 @@ inline void applyJson(Clip& c, const QJsonObject& o) {
     if (key("denoiseAmount")) c.denoiseAmount = d("denoiseAmount", c.denoiseAmount);
     if (key("normalize")) c.normalize = b("normalize", c.normalize);
     if (key("invertPhase")) c.invertPhase = b("invertPhase", c.invertPhase);
+    if (key("reverb")) c.reverb = b("reverb", c.reverb);
+    if (key("reverbMix")) c.reverbMix = d("reverbMix", c.reverbMix);
+    if (key("reverbSize")) c.reverbSize = d("reverbSize", c.reverbSize);
 
     if (key("ofxFx")) {
         c.ofxFx.clear();
@@ -361,6 +444,9 @@ inline void applyJson(Clip& c, const QJsonObject& o) {
     if (key("kfCropT")) c.kfCropT = kfVec(o["kfCropT"]);
     if (key("kfCropB")) c.kfCropB = kfVec(o["kfCropB"]);
     if (key("kfSpeed")) c.kfSpeed = kfVec(o["kfSpeed"]);
+    if (key("kfClipZ")) c.kfClipZ = kfVec(o["kfClipZ"]);
+    if (key("kfClipRotX")) c.kfClipRotX = kfVec(o["kfClipRotX"]);
+    if (key("kfClipRotY")) c.kfClipRotY = kfVec(o["kfClipRotY"]);
 }
 
 } // namespace clipattrs

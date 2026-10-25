@@ -248,7 +248,6 @@ void TimelineWidget::applyClipPreset() {
 
 void TimelineWidget::pasteAttributes() {
     if (m_clipboard.isEmpty() || m_selected.isEmpty() || !m_project) return;
-    emit undoLabel(tr("Colar atributos"));
     const Clip& src = m_clipboard.first().clip;
     // Diálogo de seleção de atributos (estilo Vegas: Colar Propriedades).
     QDialog dlg(this);
@@ -256,21 +255,33 @@ void TimelineWidget::pasteAttributes() {
     auto* lay = new QVBoxLayout(&dlg);
 
     auto* chkVideoFx = new QCheckBox(tr("Efeitos de vídeo (brilho, contraste, saturação, blur, grayscale, chroma key)"));
+    auto* chkColor = new QCheckBox(tr("Cor / Technicolor (lift/gamma/gain, curvas, LUT)"));
+    auto* chkLainka = new QCheckBox(tr("LAINKA (stop motion)"));
+    auto* chkMotion = new QCheckBox(tr("MotiOn (motion blur)"));
     auto* chkOfxFx = new QCheckBox(tr("Efeitos OFX (plugins de terceiros)"));
+    auto* chkFrei0r = new QCheckBox(tr("Efeitos Frei0r (plugins)"));
     auto* chkTransform = new QCheckBox(tr("Transformar (posição, escala, rotação)"));
     auto* chkCrop = new QCheckBox(tr("Pan/Crop"));
     auto* chkAudioFx = new QCheckBox(tr("Efeitos de áudio (EQ, denoise, normalizar, fase)"));
     auto* chkProperties = new QCheckBox(tr("Propriedades (volume, opacidade, velocidade, fades)"));
     auto* chkKeyframes = new QCheckBox(tr("Keyframes"));
     chkVideoFx->setChecked(true);
+    chkColor->setChecked(true);
+    chkLainka->setChecked(true);
+    chkMotion->setChecked(true);
     chkOfxFx->setChecked(true);
+    chkFrei0r->setChecked(true);
     chkTransform->setChecked(true);
     chkCrop->setChecked(true);
     chkAudioFx->setChecked(true);
     chkProperties->setChecked(true);
     chkKeyframes->setChecked(true);
     lay->addWidget(chkVideoFx);
+    lay->addWidget(chkColor);
+    lay->addWidget(chkLainka);
+    lay->addWidget(chkMotion);
     lay->addWidget(chkOfxFx);
+    lay->addWidget(chkFrei0r);
     lay->addWidget(chkTransform);
     lay->addWidget(chkCrop);
     lay->addWidget(chkAudioFx);
@@ -279,11 +290,11 @@ void TimelineWidget::pasteAttributes() {
     auto* btnAll = new QCheckBox(tr("Selecionar tudo"));
     btnAll->setChecked(true);
     lay->addWidget(btnAll);
-    connect(btnAll, &QCheckBox::toggled, [&](bool on) {
-        chkVideoFx->setChecked(on); chkOfxFx->setChecked(on);
-        chkTransform->setChecked(on); chkCrop->setChecked(on);
-        chkAudioFx->setChecked(on); chkProperties->setChecked(on);
-        chkKeyframes->setChecked(on);
+    const QList<QCheckBox*> allBoxes = { chkVideoFx, chkColor, chkLainka, chkMotion,
+                                         chkOfxFx, chkFrei0r, chkTransform, chkCrop,
+                                         chkAudioFx, chkProperties, chkKeyframes };
+    connect(btnAll, &QCheckBox::toggled, [allBoxes](bool on) {
+        for (QCheckBox* b : allBoxes) b->setChecked(on);
     });
     auto* btns = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     lay->addWidget(btns);
@@ -291,68 +302,66 @@ void TimelineWidget::pasteAttributes() {
     connect(btns, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
     if (dlg.exec() != QDialog::Accepted) return;
 
+    emit undoLabel(tr("Colar atributos"));
     emit editStart();
+
+    // Base única: os mesmos atributos serializados pelos presets (ClipAttrs.h).
+    // Grupos desmarcados têm as próprias chaves removidas antes de aplicar —
+    // assim nenhum efeito (cor, LAINKA, Motion, plugins…) fica de fora.
+    QJsonObject obj = clipattrs::toJson(src);
+    // Transição é relação de sobreposição na timeline, não atributo do clipe.
+    obj.remove(QStringLiteral("transitionType"));
+
+    auto drop = [&obj](const QStringList& keys) {
+        for (const QString& k : keys) obj.remove(k);
+    };
+    auto dropPrefix = [&obj](const QString& prefix) {
+        for (auto it = obj.begin(); it != obj.end(); ) {
+            if (it.key().startsWith(prefix)) it = obj.erase(it);
+            else ++it;
+        }
+    };
+
+    if (!chkVideoFx->isChecked()) drop({
+        "brightness", "contrast", "saturation", "blur", "grayscale",
+        "chromaKey", "chromaKeyColor", "chromaKeySimilarity",
+        "chromaKeySoftness", "chromaKeySpillSuppress",
+        "filmGrain", "filmGrainAmount", "filmGrainSize",
+        "psxEnabled", "psxDither", "psxBits" });
+    if (!chkColor->isChecked()) drop({
+        "liftR", "liftG", "liftB", "gammaR", "gammaG", "gammaB",
+        "gainR", "gainG", "gainB",
+        "cgExposure", "cgContrast", "cgHighlights", "cgShadows",
+        "cgWhites", "cgBlacks", "cgSaturation", "cgVibrance",
+        "cgTemperature", "cgTint", "cgFadedFilm", "cgSharpen",
+        "cgVignette", "cgVignetteFeather", "cgBlend",
+        "cgLutStrength", "cgLutPath",
+        "cgMasterCurve", "cgRCurve", "cgGCurve", "cgBCurve" });
+    if (!chkLainka->isChecked()) dropPrefix(QStringLiteral("lainka"));
+    if (!chkMotion->isChecked()) drop({
+        "motionEnabled", "motionAmount", "motionAngle", "motionSamples" });
+    if (!chkOfxFx->isChecked()) drop({ "ofxFx" });
+    if (!chkFrei0r->isChecked()) drop({ "frei0rFx" });
+    if (!chkTransform->isChecked()) drop({
+        "tx", "ty", "scale", "scaleX", "scaleY", "rotation",
+        "anchorX", "anchorY", "clipZ", "clipRotX", "clipRotY",
+        "mesh", "meshCols", "meshRows" });
+    if (!chkCrop->isChecked()) drop({
+        "cropL", "cropR", "cropT", "cropB" });
+    if (!chkAudioFx->isChecked()) drop({
+        "eqLow", "eqMid", "eqHigh", "denoise", "denoiseAmount",
+        "normalize", "invertPhase", "reverb", "reverbMix", "reverbSize" });
+    if (!chkProperties->isChecked()) drop({
+        "volume", "opacity", "fadeIn", "fadeOut", "speed" });
+    // Keyframes seguem o grupo de origem: só entram se "Keyframes" estiver
+    // marcado (os kfs de transform/crop já saíram junto com o grupo dele).
+    if (!chkKeyframes->isChecked()) dropPrefix(QStringLiteral("kf"));
 
     // Copia atributos para cada clipe selecionado.
     for (const QString& id : expandToGroups(m_selected)) {
         Clip* dst = findClipById(id);
         if (!dst || trackLocked(dst)) continue;
-
-        if (chkVideoFx->isChecked()) {
-            dst->brightness = src.brightness;
-            dst->contrast = src.contrast;
-            dst->saturation = src.saturation;
-            dst->blur = src.blur;
-            dst->grayscale = src.grayscale;
-            dst->chromaKey = src.chromaKey;
-            dst->chromaKeyColor = src.chromaKeyColor;
-            dst->chromaKeySimilarity = src.chromaKeySimilarity;
-            dst->chromaKeySoftness = src.chromaKeySoftness;
-            dst->chromaKeySpillSuppress = src.chromaKeySpillSuppress;
-            dst->psxEnabled = src.psxEnabled;
-            dst->psxDither = src.psxDither;
-            dst->psxBits = src.psxBits;
-            dst->filmGrain = src.filmGrain;
-            dst->filmGrainAmount = src.filmGrainAmount;
-            dst->filmGrainSize = src.filmGrainSize;
-        }
-        if (chkOfxFx->isChecked()) {
-            dst->ofxFx = src.ofxFx;
-        }
-        if (chkTransform->isChecked()) {
-            dst->tx = src.tx; dst->ty = src.ty;
-            dst->scale = src.scale;
-            dst->scaleX = src.scaleX; dst->scaleY = src.scaleY;
-            dst->rotation = src.rotation;
-            dst->anchorX = src.anchorX; dst->anchorY = src.anchorY;
-        }
-        if (chkCrop->isChecked()) {
-            dst->cropL = src.cropL; dst->cropR = src.cropR;
-            dst->cropT = src.cropT; dst->cropB = src.cropB;
-        }
-        if (chkAudioFx->isChecked()) {
-            dst->eqLow = src.eqLow; dst->eqMid = src.eqMid; dst->eqHigh = src.eqHigh;
-            dst->denoise = src.denoise; dst->denoiseAmount = src.denoiseAmount;
-            dst->normalize = src.normalize;
-            dst->invertPhase = src.invertPhase;
-        }
-        if (chkProperties->isChecked()) {
-            dst->volume = src.volume;
-            dst->opacity = src.opacity;
-            dst->speed = src.speed;
-            dst->kfSpeed = src.kfSpeed;
-            dst->fadeIn = src.fadeIn; dst->fadeOut = src.fadeOut;
-        }
-        if (chkKeyframes->isChecked()) {
-            dst->kfOpacity = src.kfOpacity;
-            dst->kfVolume = src.kfVolume;
-            dst->kfTx = src.kfTx; dst->kfTy = src.kfTy;
-            dst->kfScale = src.kfScale; dst->kfRotation = src.kfRotation;
-            dst->kfScaleX = src.kfScaleX; dst->kfScaleY = src.kfScaleY;
-            dst->kfAnchorX = src.kfAnchorX; dst->kfAnchorY = src.kfAnchorY;
-            dst->kfCropL = src.kfCropL; dst->kfCropR = src.kfCropR;
-            dst->kfCropT = src.kfCropT; dst->kfCropB = src.kfCropB;
-        }
+        clipattrs::applyJson(*dst, obj);
     }
     invalidateScene();
     update();
