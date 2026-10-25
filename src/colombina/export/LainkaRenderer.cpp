@@ -59,7 +59,6 @@ QString LainkaRenderer::renderClip(const Project& project,
         return {};
     }
 
-    const double srcFps = dec.fps() > 0 ? dec.fps() : (double)project.fps;
     const double speed = clip->speed > 0 ? clip->speed : 1.0;
 
     // d é a duração que o buildCommand usa: -t (dur * speed).
@@ -109,9 +108,15 @@ QString LainkaRenderer::renderClip(const Project& project,
         // Tempo na fonte = in + (f/outputFps) * speed.
         const double srcT = clip->in + (double)f / outputFps * speed;
 
-        // Quantiza o tempo para simular skip de frames.
-        const double fxT = LainkaFx::lainkaQuantizeTime(
-            srcT, clip->lainkaSkip, srcFps);
+        // Quantiza o tempo para simular stop motion com a MESMA fórmula do
+        // preview (PreviewFrames/PreviewReady): skip derivado de targetFps no
+        // fps da PROJETO — usar clip->lainkaSkip/fps da fonte dava outra
+        // cadência no export e a pré-render divergia do preview.
+        const double pfps = project.fps > 0.0 ? project.fps : 30.0;
+        const int effSkip = (clip->lainkaTargetFps > 0 && pfps > 1.0)
+            ? std::max(1, (int)std::lround(pfps / clip->lainkaTargetFps))
+            : std::max(1, clip->lainkaSkip);
+        const double fxT = LainkaFx::lainkaQuantizeTime(srcT, effSkip, pfps);
 
         // Decodifica o frame.
         QImage frame = decodeFrame(dec, fxT);
@@ -149,7 +154,9 @@ QString LainkaRenderer::renderClip(const Project& project,
             clip->lainkaScratchAmount,
             clip->lainkaMotionBlur, clip->lainkaOpacity,
             clip->lainkaTargetFps, clip->lainkaAntialias,
-            prevFrame);
+            prevFrame,
+            clip->lainkaHold, clip->lainkaStutter, clip->lainkaPosterize,
+            clip->lainkaColorShift, clip->lainkaGate);
 
         // Salva para motion blur / onion skin do próximo frame.
         if (clip->lainkaMotionBlur > 1e-6 || clip->lainkaOnionSkin > 1e-6)

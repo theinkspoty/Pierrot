@@ -34,7 +34,10 @@ bool PreRenderSession::start(QString* error, const QString& label) {
          << "-c:v" << "prores_ks"
          << "-profile:v" << "4444"
          << "-pix_fmt" << "yuva444p10le"
-         << "-sample_aspect_ratio" << "1:1"
+         // Sem -sample_aspect_ratio: o ffmpeg 9 (n9.0.2, Arch) rejeita a opção
+         // ("Unrecognized option", exit 8) e o pré-render LAINKA/OFX inteiro
+         // falhava — o export caía no fallback parcial dos filtros. SAR não
+         // especificado = 1:1 (default), mesmo resultado.
          << "-vendor" << "apl0"
          << m_tmpPath;
 
@@ -66,10 +69,12 @@ bool PreRenderSession::finish(QString* error, const QString& label) {
     m_proc.closeWriteChannel();
     m_proc.waitForFinished(30000);
     if (m_proc.exitCode() != 0) {
-        const QString stderr = QString::fromUtf8(m_proc.readAllStandardError());
+        const QString stderr = QString::fromUtf8(m_proc.readAllStandardError()).trimmed();
+        // O banner do ffmpeg ocupa >500 chars e escondia o erro real — fica com
+        // o FIM do stderr (a mensagem de fato), descartando o banner.
         if (error)
             *error = QString("ffmpeg falhou na pré-renderização %1: %2")
-                         .arg(label, stderr.left(500));
+                         .arg(label, stderr.right(500));
         return false;
     }
     return true;

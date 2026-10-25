@@ -307,6 +307,16 @@ void ExportDialog::startExport() {
     const ExportSettings s = currentSettings();
     if (s.outputPath.isEmpty()) { log(tr("Informe o caminho de saída.")); return; }
 
+    // Log da renderização criado/limpo ANTES do pré-render: com o clear() lá
+    // embaixo, as mensagens de LAINKA/OFX (inclusive erros de pré-render) eram
+    // apagadas da caixa de texto e nunca gravadas no arquivo (m_logFile ainda
+    // não existia) — o usuário via só o comando ffmpeg sem nenhuma pista.
+    m_logEdit->clear();
+    m_logFile = QFileInfo(s.outputPath).dir().filePath(
+        QStringLiteral("pierrot-render-%1.log")
+            .arg(QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss")));
+    log(tr("Log da renderização: %1").arg(m_logFile));
+
     // Trabalha numa CÓPIA do projeto: pré-renderização substitui mediaId dos
     // clipes e cria MediaItems temporários, mas o projeto vivo nunca é tocado.
     // Um crash ou o fechamento da janela durante o export não corrompe o
@@ -340,10 +350,14 @@ void ExportDialog::startExport() {
 
             m_progress->setRange(0, 100);
 
-            if (!lainkaError.isEmpty() && lainkaRenders.isEmpty()) {
+            if (!lainkaError.isEmpty()) {
                 log(tr("Erro na pré-renderização LAINKA: %1").arg(lainkaError));
-                // Continua mesmo assim — o export vai usar os filtros ffmpeg
-                // como fallback (qualidade parcial).
+                // Continua mesmo assim — o clip afetado (e os demais sem
+                // arquivo) sai pelos filtros ffmpeg, que só cobrem stop motion,
+                // jitter e flicker: warp, pó, arranhões, onion skin, posterize
+                // e gate ficam de fora.
+                log(tr("Fallback LAINKA via filtros ffmpeg: apenas stop motion, "
+                       "jitter e flicker."));
             }
 
             if (!lainkaRenders.isEmpty()) {
@@ -409,8 +423,9 @@ void ExportDialog::startExport() {
 
             m_progress->setRange(0, 100);
 
-            if (!ofxError.isEmpty() && ofxRenders.isEmpty()) {
+            if (!ofxError.isEmpty()) {
                 log(tr("Erro na pré-renderização OFX: %1").arg(ofxError));
+                log(tr("Os efeitos OFX afetados não entram na exportação."));
             }
 
             if (!ofxRenders.isEmpty()) {
@@ -450,11 +465,6 @@ void ExportDialog::startExport() {
 
     m_total = work.duration();
     m_progress->setValue(0);
-    m_logEdit->clear();
-    m_logFile = QFileInfo(s.outputPath).dir().filePath(
-        QStringLiteral("pierrot-render-%1.log")
-            .arg(QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss")));
-    log(tr("Log da renderização: %1").arg(m_logFile));
 
     m_process = new QProcess(this);
     m_process->setProcessChannelMode(QProcess::MergedChannels);
