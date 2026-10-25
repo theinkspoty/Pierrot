@@ -511,6 +511,11 @@ struct Clip {
     double lainkaMotionBlur = 0.0; // motion blur (0..100)
     double lainkaOpacity = 100.0;  // opacidade global (0..100)
     int lainkaAntialias = 1;       // 0=off, 1=on, 2=high quality
+    int lainkaHold = 0;           // manter frame por N repetições (0..6)
+    double lainkaStutter = 0.0;   // stutter aleatório (0..100)
+    int lainkaPosterize = 0;      // posterização (0 off, 2..8)
+    double lainkaColorShift = 0.0;// shift de cor/hue (0..100)
+    double lainkaGate = 0.0;      // gate/flash (0..100)
 
     // ── Efeito Pierrot: MotiOn (motion blur) ──────────────────────────
     bool motionEnabled = false;

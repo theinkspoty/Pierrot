@@ -26,6 +26,7 @@
 #include "colombina/ffmpeg/FrameCache.h"
 #include "ui/monitor/PreviewDebug.h"
 #include "ui/monitor/PreviewWidget.h" // FrameFx + estáticos de efeito
+#include "colombina/export/LainkaFx.h"
 
 class OfxPluginManager;
 class Frei0rPluginManager;
@@ -132,10 +133,7 @@ public slots:
                           .arg(dbgMs, 0, 'f', 1);
         }
         // Caminho rápido: crop + efeitos básicos/máscaras + MotiOn/OFX/frei0r
-        // aplicados AQUI, na thread de vídeo — o C2 (copy do applyCropTo), o C3
-        // (per-pixel dos básicos) e a cadeia temporal saem do tiquinho da UI.
-        // LAINKA continua fora (fx.active=false): onion skin/motion blur dependem
-        // do quadro anterior mantido na UI.
+        // aplicados AQUI, na thread de vídeo — tira da UI.
         const bool fxApplied = fx.active && !img.isNull();
         if (fxApplied) {
             img = PreviewWidget::applyCropTo(img, fx.cropL, fx.cropR, fx.cropT, fx.cropB);

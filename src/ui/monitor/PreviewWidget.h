@@ -56,6 +56,32 @@ struct FrameFx {
     double rel = 0.0;     // tempo relativo do clipe p/ keyframes (máscaras/efeitos)
     double absTime = 0.0; // tempo absoluto da timeline (OFX usa o playhead cru)
     Clip clip;            // efeitos + máscaras (snapshot; COW barato)
+    // LAINKA params (p/ aplicar na thread de vídeo quando possível)
+    bool lainkaEnabled = false;
+    QString lainkaId;
+    double lainkaFxT = 0.0;
+    int lainkaSkip = 1;
+    double lainkaJitterPos = 0.0;
+    double lainkaJitterRot = 0.0;
+    double lainkaJitterScale = 0.0;
+    double lainkaFlicker = 0.0;
+    double lainkaFlickerSpeed = 50.0;
+    double lainkaWarpAmount = 0.0;
+    double lainkaWarpSpeed = 50.0;
+    int lainkaWarpGrid = 8;
+    double lainkaOnionSkin = 0.0;
+    double lainkaDustAmount = 0.0;
+    double lainkaScratchAmount = 0.0;
+    double lainkaMotionBlur = 0.0;
+    double lainkaOpacity = 100.0;
+    int lainkaTargetFps = 8;
+    int lainkaAntialias = 1;
+    int lainkaHold = 0;
+    double lainkaStutter = 0.0;
+    int lainkaPosterize = 0;
+    double lainkaColorShift = 0.0;
+    double lainkaGate = 0.0;
+    bool lainkaNeedsPrev = false;
 };
 Q_DECLARE_METATYPE(FrameFx)
 
@@ -260,6 +286,11 @@ private:
     double m_clipLainkaMotionBlur = 0.0;
     double m_clipLainkaOpacity = 100.0;
     int m_clipLainkaAntialias = 1;
+    int m_clipLainkaHold = 0;
+    double m_clipLainkaStutter = 0.0;
+    int m_clipLainkaPosterize = 0;
+    double m_clipLainkaColorShift = 0.0;
+    double m_clipLainkaGate = 0.0;
     QString m_clipLainkaId;
     double m_lainkaQuantizedTime = -1.0; // tempo quantizado para efeitos LAINKA
     QImage m_lainkaPrevFrame; // para onion skin (ghosting)

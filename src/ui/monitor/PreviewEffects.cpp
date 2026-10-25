@@ -751,8 +751,11 @@ void PreviewWidget::applyCrop() {
     // motion mesmo com o tempo quantizado parado.
     const bool memoOk = m_clipLainkaEnabled
                         && m_clipOfxFx.isEmpty()
+                        && m_clipFrei0rFx.isEmpty()
+                        && m_clipMotionEnabled == false
                         && m_clipLainkaOnionSkin < 1e-6
-                        && m_clipLainkaMotionBlur < 1e-6;
+                        && m_clipLainkaMotionBlur < 1e-6
+                        && !isPlaying();
     if (memoOk && !m_cropMemo.isNull() && m_cropMemoClipId == m_clipLainkaId
         && m_cropMemoFile == m_lastFile
         && m_cropMemoTime == m_lainkaQuantizedTime
@@ -782,7 +785,9 @@ void PreviewWidget::applyCrop() {
                                 m_clipLainkaDustAmount, m_clipLainkaScratchAmount,
                                 m_clipLainkaMotionBlur, m_clipLainkaOpacity,
                                 m_clipLainkaTargetFps, m_clipLainkaAntialias,
-                                prevFrame);
+                                prevFrame,
+                                m_clipLainkaHold, m_clipLainkaStutter, m_clipLainkaPosterize,
+                                m_clipLainkaColorShift, m_clipLainkaGate);
     }
     if (m_clipMotionEnabled && m_clipMotionAmount > 0.0 && !m_frame.isNull()) {
         Clip motionSnap;

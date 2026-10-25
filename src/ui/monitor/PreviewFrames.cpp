@@ -152,6 +152,11 @@ void PreviewWidget::updateFrame() {
     m_clipLainkaMotionBlur = clip->lainkaMotionBlur;
     m_clipLainkaOpacity = clip->lainkaOpacity;
     m_clipLainkaAntialias = clip->lainkaAntialias;
+    m_clipLainkaHold = clip->lainkaHold;
+    m_clipLainkaStutter = clip->lainkaStutter;
+    m_clipLainkaPosterize = clip->lainkaPosterize;
+    m_clipLainkaColorShift = clip->lainkaColorShift;
+    m_clipLainkaGate = clip->lainkaGate;
     m_clipLainkaId = clip->id;
     m_clipMotionEnabled = clip->motionEnabled;
     m_clipMotionAmount = clip->motionAmount;
@@ -337,14 +342,41 @@ void PreviewWidget::updateFrame() {
     // O snapshot usa os MESMOS valores que applyCrop() usaria (crop avaliado
     // em m_playhead e máscaras em srcT).
     FrameFx topFx;
+    const bool lainkaNeedsPrev = (m_clipLainkaEnabled && (m_clipLainkaOnionSkin > 1e-6 || m_clipLainkaMotionBlur > 1e-6));
     topFx.active = !m_clipLainkaEnabled;
+    if (m_clipLainkaEnabled) topFx.active = false;
     topFx.cropL = m_lastCropL;
     topFx.cropR = m_lastCropR;
     topFx.cropT = m_lastCropT;
     topFx.cropB = m_lastCropB;
     topFx.rel = srcT;
     topFx.absTime = m_playhead;
-    if (topFx.active) topFx.clip = *clip;
+    topFx.clip = *clip;
+    topFx.lainkaEnabled = m_clipLainkaEnabled;
+    topFx.lainkaId = m_clipLainkaId;
+    topFx.lainkaFxT = (m_lainkaQuantizedTime >= 0.0) ? m_lainkaQuantizedTime : srcT;
+    topFx.lainkaSkip = m_clipLainkaSkip;
+    topFx.lainkaJitterPos = m_clipLainkaJitterPos;
+    topFx.lainkaJitterRot = m_clipLainkaJitterRot;
+    topFx.lainkaJitterScale = m_clipLainkaJitterScale;
+    topFx.lainkaFlicker = m_clipLainkaFlicker;
+    topFx.lainkaFlickerSpeed = m_clipLainkaFlickerSpeed;
+    topFx.lainkaWarpAmount = m_clipLainkaWarpAmount;
+    topFx.lainkaWarpSpeed = m_clipLainkaWarpSpeed;
+    topFx.lainkaWarpGrid = m_clipLainkaWarpGrid;
+    topFx.lainkaOnionSkin = m_clipLainkaOnionSkin;
+    topFx.lainkaDustAmount = m_clipLainkaDustAmount;
+    topFx.lainkaScratchAmount = m_clipLainkaScratchAmount;
+    topFx.lainkaMotionBlur = m_clipLainkaMotionBlur;
+    topFx.lainkaOpacity = m_clipLainkaOpacity;
+    topFx.lainkaTargetFps = m_clipLainkaTargetFps;
+    topFx.lainkaAntialias = m_clipLainkaAntialias;
+    topFx.lainkaHold = m_clipLainkaHold;
+    topFx.lainkaStutter = m_clipLainkaStutter;
+    topFx.lainkaPosterize = m_clipLainkaPosterize;
+    topFx.lainkaColorShift = m_clipLainkaColorShift;
+    topFx.lainkaGate = m_clipLainkaGate;
+    topFx.lainkaNeedsPrev = lainkaNeedsPrev;
 
     // Path efetivo de vídeo do clipe do topo: proxy se houver (consistente com
     // requestFrame/onFrameReady e o cache).
